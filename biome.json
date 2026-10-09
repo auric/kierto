@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": [
+      "**",
+      "!BRIEF.md",
+      "!PROJECT_BRIEF_GPT_ASTRA_6.md",
+      "!IMPLEMENTATION_PROMPTS_GPT_ASTRA_6.md",
+      "!integration-check.md",
+      "!skills-lock.json",
+      "!docs",
+      "!fixtures",
+      "!prototype",
+      "!.claude",
+      "!scripts/gate0"
+    ]
+  },
+  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 140 },
+  "css": { "parser": { "tailwindDirectives": true } },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+}

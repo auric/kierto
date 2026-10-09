@@ -31,7 +31,14 @@ Ship:    bun build --compile, one executable per OS with the UI embedded.
 
 Planned layout: `src/web/`, `src/server/{bitbucket,sync,inbox,review,publish,storage}/`, `src/shared/`, `fixtures/`, `tests/`. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
 
-Commands: none yet. Add the dev, build, test, and lint commands here when the scaffold exists. Do not invent them before that.
+Commands:
+- `bun install`: install the pinned dependencies.
+- `bun run dev`: start Hono with `--watch` on 127.0.0.1:7317 and Vite with HMR on 127.0.0.1:5173. Open the Vite URL.
+- `bun run build`: build the UI into `dist/web`.
+- `bun run start`: serve the API and the built UI on 127.0.0.1:7317. `REVIEW_LOOP_PORT` overrides the port.
+- `bun run typecheck`: run strict `tsc --noEmit`.
+- `bun run lint`: run Biome lint and format checks. `bun run format` applies the fixes.
+- `bun test`: run the tests under `tests/`. Each group ends green on typecheck, lint, and test.
 
 ## Skills
 
