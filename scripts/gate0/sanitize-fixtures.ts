@@ -14,7 +14,9 @@ const FAKE_SSH_PORT = "7999";
 
 // Raw probe step -> fixture file.
 const FILES: Record<string, string> = {
+  "01-pull-request.json": "pull-request.json",
   "02-application-properties.json": "application-properties.json",
+  "03-dashboard-REVIEWER.json": "dashboard-reviewer-page.json",
   "04-dashboard-AUTHOR.json": "dashboard-pull-requests-page.json",
   "05-activities-p0.json": "activities-opened-only.json",
   "06-changes.json": "pull-request-changes.json",

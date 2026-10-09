@@ -8,7 +8,9 @@ Regenerate: run the probe (`bun scripts/gate0/bitbucket-probe.ts --pr <PR> --wri
 
 | File | Raw probe step | Request |
 |---|---|---|
+| `pull-request.json` | 01 pull-request | `GET .../pull-requests/{id}` of a personal-repository PR. Project key `~JDOE`, `links.self` in the `/users/<slug>/...` form. No `description` and no `properties` key. |
 | `application-properties.json` | 02 application-properties | `GET /rest/api/1.0/application-properties` |
+| `dashboard-reviewer-page.json` | 03 dashboard-REVIEWER | `GET /rest/api/1.0/dashboard/pull-requests?state=OPEN&role=REVIEWER&limit=1`. Last page: `nextPageStart` is absent. Another user is the author. The reviewer entry has `lastReviewedCommit`. |
 | `dashboard-pull-requests-page.json` | 04 dashboard-AUTHOR | `GET /rest/api/1.0/dashboard/pull-requests?state=OPEN&role=AUTHOR&limit=1`. Not the last page: `isLastPage: false`, `nextPageStart: 1`. |
 | `activities-opened-only.json` | 05 activities-p0 | `GET .../pull-requests/{id}/activities`. Last page: `nextPageStart` is absent. |
 | `pull-request-changes.json` | 06 changes | `GET .../pull-requests/{id}/changes`. Last page: `nextPageStart` is `null`. |
@@ -22,3 +24,9 @@ Regenerate: run the probe (`bun scripts/gate0/bitbucket-probe.ts --pr <PR> --wri
 | `comment-delete-204.json` | 26 delete-0 | `DELETE .../comments/{id}?version=1`. 204, empty body. |
 | `comment-get-after-delete-404.json` | 27 post-delete-0 | `GET .../comments/{id}` after the delete. 404 with `errors[].message` only, no `exceptionName`. |
 | `activities-after-delete.json` | 28 trace-delete | Activities after all deletes. The comment activities are gone. The server shows no deleted-comment shape in activities. |
+
+## Synthetic scenarios
+
+`tests/support/scenarios.ts` derives synthetic states from these files at test time: page splits, both last-page forms, a missing cursor, duplicates, reordering, a version-0 state before the recorded edit, and comments by a second user. The server did not send these states. The second user comes from `dashboard-reviewer-page.json`, because every recorded comment is by the token owner.
+
+`fixtures/tls/` holds a test-only CA (`ca.pem`) and a server certificate for `127.0.0.1` (`server.pem`, `server.key`). The fake server uses them for the https test. The CA key was deleted after signing.

@@ -1,0 +1,188 @@
+{
+  "status": 200,
+  "body": {
+    "size": 1,
+    "limit": 1,
+    "isLastPage": true,
+    "values": [
+      {
+        "id": 1001,
+        "version": 4,
+        "title": "Sample pull request",
+        "description": "Sample description.",
+        "state": "OPEN",
+        "open": true,
+        "closed": false,
+        "draft": false,
+        "createdDate": 1790878499451,
+        "updatedDate": 1791312942194,
+        "fromRef": {
+          "id": "refs/heads/topic/sample-3",
+          "displayId": "topic/sample-3",
+          "latestCommit": "5eddef788d950cac943fc54068fc8cc185a9a2d4",
+          "type": "BRANCH",
+          "repository": {
+            "slug": "sample-repo-2",
+            "id": 1003,
+            "name": "sample-repo-2",
+            "hierarchyId": "12ca826314115a1b7be8",
+            "scmId": "git",
+            "state": "AVAILABLE",
+            "statusMessage": "Available",
+            "forkable": true,
+            "project": {
+              "key": "PROJ1",
+              "id": 1002,
+              "name": "Sample Project 2",
+              "description": "Sample description.",
+              "public": false,
+              "type": "NORMAL",
+              "links": {
+                "self": [
+                  {
+                    "href": "https://bitbucket.example.test/projects/PROJ1"
+                  }
+                ]
+              }
+            },
+            "public": false,
+            "partition": 13,
+            "archived": false,
+            "links": {
+              "clone": [
+                {
+                  "href": "ssh://git@bitbucket.example.test:7999/PROJ1/sample-repo-2.git",
+                  "name": "ssh"
+                },
+                {
+                  "href": "https://bitbucket.example.test/scm/PROJ1/sample-repo-2.git",
+                  "name": "http"
+                }
+              ],
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/projects/PROJ1/repos/sample-repo-2/browse"
+                }
+              ]
+            }
+          }
+        },
+        "toRef": {
+          "id": "refs/heads/topic/sample-4",
+          "displayId": "topic/sample-4",
+          "latestCommit": "e396f46e3e6e049f1c26a6c65848146434fb12ee",
+          "type": "BRANCH",
+          "repository": {
+            "slug": "sample-repo-2",
+            "id": 1003,
+            "name": "sample-repo-2",
+            "hierarchyId": "12ca826314115a1b7be8",
+            "scmId": "git",
+            "state": "AVAILABLE",
+            "statusMessage": "Available",
+            "forkable": true,
+            "project": {
+              "key": "PROJ1",
+              "id": 1002,
+              "name": "Sample Project 2",
+              "description": "Sample description.",
+              "public": false,
+              "type": "NORMAL",
+              "links": {
+                "self": [
+                  {
+                    "href": "https://bitbucket.example.test/projects/PROJ1"
+                  }
+                ]
+              }
+            },
+            "public": false,
+            "partition": 13,
+            "archived": false,
+            "links": {
+              "clone": [
+                {
+                  "href": "ssh://git@bitbucket.example.test:7999/PROJ1/sample-repo-2.git",
+                  "name": "ssh"
+                },
+                {
+                  "href": "https://bitbucket.example.test/scm/PROJ1/sample-repo-2.git",
+                  "name": "http"
+                }
+              ],
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/projects/PROJ1/repos/sample-repo-2/browse"
+                }
+              ]
+            }
+          }
+        },
+        "locked": false,
+        "author": {
+          "user": {
+            "name": "asmith",
+            "emailAddress": "asmith@example.test",
+            "active": true,
+            "displayName": "Alex Smith",
+            "id": 1005,
+            "slug": "asmith",
+            "type": "NORMAL",
+            "links": {
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/users/asmith"
+                }
+              ]
+            }
+          },
+          "role": "AUTHOR",
+          "approved": false,
+          "status": "UNAPPROVED"
+        },
+        "reviewers": [
+          {
+            "user": {
+              "name": "jdoe",
+              "emailAddress": "jdoe@example.test",
+              "active": true,
+              "displayName": "Jane Doe",
+              "id": 10001,
+              "slug": "jdoe",
+              "type": "NORMAL",
+              "links": {
+                "self": [
+                  {
+                    "href": "https://bitbucket.example.test/users/jdoe"
+                  }
+                ]
+              }
+            },
+            "lastReviewedCommit": "c5bf8bfcb823b4949bc9bfe280c5ffc3ffd0a151",
+            "role": "REVIEWER",
+            "approved": false,
+            "status": "UNAPPROVED"
+          }
+        ],
+        "participants": [],
+        "properties": {
+          "mergeResult": {
+            "outcome": "CLEAN",
+            "current": true
+          },
+          "resolvedTaskCount": 0,
+          "commentCount": 7,
+          "openTaskCount": 0
+        },
+        "links": {
+          "self": [
+            {
+              "href": "https://bitbucket.example.test/projects/PROJ1/repos/sample-repo-2/pull-requests/1001"
+            }
+          ]
+        }
+      }
+    ],
+    "start": 0
+  }
+}

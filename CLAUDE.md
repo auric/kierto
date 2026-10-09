@@ -2,7 +2,7 @@
 
 Review Loop is a local-first inbox for Bitbucket Server pull requests (PRs). It runs the user's own Claude Code CLI (`claude -p`) for reviews. The app runs on localhost and keeps all data on the user's machine.
 
-Status: no application code yet. Work starts at Gate 0 (M0). Do not assume that a file in the planned layout exists. Check first.
+Status: Gate 0 is complete. M1 is in progress; see docs/plans/m1.md. Do not assume that a file in the planned layout exists. Check first.
 
 ## Document map
 
