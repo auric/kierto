@@ -43,7 +43,8 @@ Load the skill before you start the task. Read its SKILL.md for details.
 | Write or review React components, data fetching, TanStack Query use, bundle size. | `vercel-react-best-practices` | This is a Vite SPA. Ignore the Next.js-only rules (RSC, server actions, next/*). |
 | Review UI code for accessibility and UX. | `web-design-guidelines` | Run it before a milestone ends. |
 | Server routes, middleware (`csrf`, validator), SSE streaming, typed client. | `hono` | Keep BRIEF 3.6 server safety rules. |
-| Browser acceptance checks of the running app. | `webapp-testing` | It uses Playwright. Its helper scripts need Python. Point it only at fixture data. |
+| Browser acceptance tests. | none | Use TypeScript `@playwright/test` with files named `*.e2e.ts`, run by Node. Point tests only at fixture data. |
+| Ad-hoc browser checks and screenshots of the running app. | `webapp-testing` | Its helper scripts need Python. Point it only at fixture data. |
 | Visual direction for new screens. | `frontend-design:frontend-design` (plugin) | Stay consistent with `prototype/index.html`. |
 | Maintain this file. | `claude-md-management:claude-md-improver` | Keep it compact and current. |
 
