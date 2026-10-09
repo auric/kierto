@@ -1,4 +1,5 @@
 // Polling sync (plan G4): dashboard, PR states, comments, delete checks, events. One cycle at a time.
+import type { CheckpointReason } from "../../shared/dto";
 import type { ForgeErrorInfo, IncompleteReason, PrRef, PullRequest } from "../../shared/types";
 import { ForgeError } from "../bitbucket/client";
 import type { ForgeProvider } from "../bitbucket/provider";
@@ -25,9 +26,6 @@ export type SyncStatus = {
   nextAt: number | null;
   error: string | null;
 };
-
-// Values of sync_checkpoint.incomplete_reason. "gap": a comment is absent from complete activities, but its GET returns 200.
-export type CheckpointReason = IncompleteReason | "gap";
 
 type Params = Record<string, string | number | null>;
 type PrKey = { id: number; project: string; repo: string; pr_id: number };

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { csrf } from "hono/csrf";
 import { secureHeaders } from "hono/secure-headers";
 import { allowedOrigins, type GuardOptions, guard } from "./guard";
+import { createInboxRoutes } from "./inbox/routes";
 import type { Live } from "./live";
 import { createSettings, type Settings } from "./settings";
 import { createSyncEngine, type SyncEngine } from "./sync/engine";
@@ -43,7 +44,8 @@ export function createApp(opts: AppOptions) {
     .post("/api/sync", (c) => {
       void sync.syncNow();
       return c.json(sync.status(), 202);
-    });
+    })
+    .route("/api", createInboxRoutes({ settings, sync, live: opts.live }));
 
   if (opts.assets) app.use("/assets/*", opts.assets);
   if (page !== undefined) {
