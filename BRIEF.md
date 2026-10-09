@@ -192,7 +192,7 @@ User stories, in priority order:
 US1 Inbox (P1). As a reviewer, I see one list of open pull requests where I am a reviewer or the author. Each row shows the title, repository, author, my role, my review state, the last activity time, and the unread count. Each row also gives a concrete reason: "Reply to your comment", "New commits since your review", or "Review requested". Rows with unread events come first. I can filter by text and by repository.
 Acceptance: a new comment on a listed pull request shows as unread within one check interval. A merged or declined pull request leaves the open views but keeps its unread conversation.
 
-US2 Read state and following (P1). As a reviewer, I track each message, not only each pull request. The first check imports old history silently: no unread flood, no notifications. Marking read covers only the messages that the tool showed me. An edited message can become unread again. A deleted message shows as deleted only when the code host confirms the deletion. A failed or partial check never deletes anything. I can follow, unfollow, and archive a pull request. A merged pull request stays followed until I archive or unfollow it. Read is not the same as resolved or reviewed.
+US2 Read state and following (P1). As a reviewer, I track each message, not only each pull request. The first check imports old history silently: no unread flood, no notifications. Marking read covers only the messages that the tool showed me. An edited message can become unread again. A deleted message shows as deleted only after the tool confirms that the code host no longer has it. A failed or partial check never deletes anything. I can follow, unfollow, and archive a pull request. A merged pull request stays followed until I archive or unfollow it. Read is not the same as resolved or reviewed.
 
 US3 Notifications (P1). As a reviewer, I can turn on desktop notifications. I get one in these cases: someone replies in a thread that I started or joined; someone comments on my pull request; someone adds me as a reviewer; someone pushes commits to a pull request that I already reviewed. A click opens that pull request. Events for one pull request combine into one notification. After the tool was closed, I see one digest instead of many notifications.
 Acceptance: each event gives one notification only. My own actions give no notification. A denied notification permission never blocks the inbox.
@@ -221,7 +221,7 @@ Acceptance scenarios:
 | A1 | Someone replies to a comment that I posted. | One unread event appears in the correct thread. It stays unread after a restart. |
 | A2 | A new message arrives while I mark a thread read. | Only the messages that I saw become read. The new message stays unread. |
 | A3 | The same event arrives twice or out of order. | No duplicate message, thread, or notification appears. |
-| A4 | A colleague edits or deletes a reply. | An edit shows the new text and can become unread. A deletion shows only after the code host confirms it. |
+| A4 | A colleague edits or deletes a reply. | An edit shows the new text and can become unread. A deletion shows only after the tool confirms that the message is gone from the code host. |
 | A5 | A discussion has many pages, nested replies, or replies whose parent is gone. | No message is lost silently. Any gap shows on screen. |
 | A6 | The network or VPN drops during a check, or a check gets only part of the data. | The previous state stays. Nothing shows as deleted. The next check continues from the last complete point. |
 | A7 | New commits arrive on either branch during a review. | The result stays tied to the reviewed commits and shows as stale. |
@@ -272,26 +272,29 @@ Layout:
 - src/shared/ (IDs, DTOs, zod schemas)
 - fixtures/ (sanitized Bitbucket payloads, fake CLI output), tests/ (unit, contract, Playwright)
 
-Bitbucket Server REST 1.0, auth with an HTTP access token as Bearer:
+Bitbucket Server REST 1.0, auth with an HTTP access token as Bearer (Gate 0: Data Center 9.4.26):
+- Current user: the X-AUSERNAME response header gives the slug of the token owner.
 - Discovery: GET /rest/api/1.0/dashboard/pull-requests?state=OPEN&role=REVIEWER, then role=AUTHOR. Users can also follow a PR by URL.
 - Timeline: GET /rest/api/1.0/projects/{key}/repos/{slug}/pull-requests/{id}/activities.
-- Inline comment: POST .../pull-requests/{id}/comments with text and anchor {path, srcPath for renames, line, lineType: ADDED|REMOVED|CONTEXT, fileType: TO|FROM, diffType: COMMIT|EFFECTIVE|RANGE, fromHash, toHash}. Pin fromHash and toHash to the reviewed commits. Confirm srcPath and the best diffType in Gate 0.
+- Inline comment: POST .../pull-requests/{id}/comments with text and anchor {path, srcPath for renames, line, lineType: ADDED|REMOVED|CONTEXT, fileType: TO|FROM, diffType: COMMIT|EFFECTIVE|RANGE, fromHash, toHash}. Pin fromHash and toHash to the reviewed commits. diffType COMMIT works with fromHash = target head and toHash = source head (Gate 0). The response anchor adds orphaned. Verify EFFECTIVE and srcPath.
 - General comment: the same endpoint without an anchor. Reply: the same endpoint with parent {id}.
-- Comments carry an integer version. Edits and deletes need it.
-- Not verified: the commentAction values for edit, delete, and reply, and the shape of a deleted comment. Gate 0 records real payloads. Sync code depends only on recorded fixtures.
+- Comments carry an integer version. Edits and deletes need the current version. A stale version returns 409 CommentOutOfDateException. Delete replies before their parent.
+- Gate 0 observed: only commentAction ADDED occurs. An edit changes the existing activity in place: comment version goes from 0 to 1, and updatedDate changes. A reply has no activity. It sits in the parent's comment.comments[] and has no parent field. A delete returns 204 and removes the activity. The server keeps no tombstone. GET of a deleted comment returns 404. Sync code depends only on recorded fixtures.
 - All Bitbucket calls live in src/server/bitbucket/. It returns plain types (PullRequest, Activity, Comment) without Bitbucket names.
 
 Sync rules:
 - Poll followed active PRs about every 60 s. At most 2 concurrent requests. Add jitter. Back off on errors. No source or full diff downloads during polling.
-- Follow the server's paging fields (isLastPage, nextPageStart). Never compute the next page.
+- Follow the server's paging fields (isLastPage, nextPageStart). Never compute the next page. Treat a missing nextPageStart and nextPageStart: null the same: both mark the last page.
 - Detect truncation and capped responses. Record them as incomplete, never as complete.
 - Activity IDs form a seen-set. Do not assume they are ordered. Do not rely on updatedDate or local clocks.
+- A seen-set misses edits, replies, and deletes, because they create no new activity. On each poll of a followed PR, compare each comment's version and its nested reply IDs with stored state.
 - Comment identity: instance, repository, PR, comment ID, plus version.
 - Flatten nested replies. Keep the parent ID and the root thread ID.
 - Advance checkpoints only after the database transaction commits.
-- Resume safely after sleep, VPN loss, and restart. A partial fetch never deletes anything. A tombstone needs a confirmed delete from the server.
+- Resume safely after sleep, VPN loss, and restart. A partial or failed fetch never deletes anything.
+- Deletion needs two checks. A complete activities fetch (all pages) does not contain the comment. A direct GET of the comment returns 404. Only then mark it deleted. The app keeps its own local tombstone, because the server keeps none.
 - First sync of a PR imports history as read and silent. Own events never create unread markers or notifications.
-- Reconcile followed threads from time to time to catch missed edits and events.
+- Reconcile followed threads on every poll. Edits, replies, and deletes show only as comment changes.
 - A merged or declined PR stays followed until the user archives or unfollows it.
 
 Read state:
@@ -299,7 +302,7 @@ Read state:
 - Unread is separate from provider state and from review state.
 
 Review runner:
-- Snapshot: fetch refs/pull-requests/{id}/from into one bare cache clone per repository. If the server blocks these refs, fetch the source branch by name. Pin the source, target, and merge-base commits. On Windows, set core.longpaths=true.
+- Snapshot: fetch refs/pull-requests/{id}/from into one bare cache clone per repository. If the server blocks these refs, fetch the source branch by name. Gate 0: git ls-remote lists refs/pull-requests/{id}/from, and it equals the source head. No merge ref is listed. Verify the fetch of /from in M2. Pin the source, target, and merge-base commits. On Windows, set core.longpaths=true.
 - Export with git archive of the pinned head into an app-owned temp folder. Put "* -export-ignore -export-subst" into the cache's info/attributes, so the PR cannot hide or rewrite files (verify in Gate 0).
 - Extraction rejects absolute paths, ".." parts, and links. Reject link entries (tar typeflag 1 for hard links, 2 for symlinks) during extraction, not after. On Windows, use the system tar.exe or extract in-process. Do not use Git for Windows GNU tar, because it fails on drive-letter paths. Remove .claude/ folders, .mcp.json files, and symlinks. Rename every CLAUDE.md and CLAUDE.local.md to <name>.untrusted.md. No submodules. No repository scripts run.
 - The app writes context files beside the snapshot: the diff, the changed-file list, the PR text, and the existing comments. The snapshot has no .git folder, so the review uses no git commands.
@@ -312,7 +315,7 @@ Review runner:
 - --settings JSON sets permissions.blockReadsOutsideWorkingDirectories: true.
 - With --setting-sources user, project settings, hooks, .mcp.json, CLAUDE.md, and skills do not load (Gate 0, CLI 2.1.295). The snapshot rename and remove steps stay as defense in depth.
 - Read-only list: Read, Grep, Glob, and the read-only MCP tools from review-mcp.json.
-- Deny list (also when user settings allow more): Bash, Edit, Write, NotebookEdit, WebFetch, WebSearch, Agent, and every code-host write tool. --allowedTools does not limit the tool set. Gate 0 saw the model start a subagent through the Agent tool.
+- Deny list (also when user settings allow more): Bash, Edit, Write, NotebookEdit, WebFetch, WebSearch, Agent, and every code-host write tool. Name the Bitbucket MCP write tools create_pull_request_comment and edit_pull_request_comment explicitly. --strict-mcp-config already removes that MCP, so this is defense in depth. --allowedTools does not limit the tool set. Gate 0 saw the model start a subagent through the Agent tool.
 - review-mcp.json ships Microsoft Learn (https://learn.microsoft.com/api/mcp) and DeepWiki (https://mcp.deepwiki.com/mcp). Users can add Jira and CodeGraph only with a read-only tool list. If read-only cannot be enforced, leave that MCP out and give the data as context files.
 - Prompt: the profile prompt, the output schema, and the context files. Mark all PR text and repository files as untrusted data. Point Claude to the *.untrusted.md files as untrusted project documentation. Tell it to send only public API names to documentation MCPs.
 - Structured result: --json-schema puts the result in structured_output. With stream-json, only the result event with subtype success carries structured_output (Gate 0).
@@ -414,16 +417,16 @@ Phase 5, reach:
 
 ## 10. Open questions (defaults in brackets)
 
-1. Bitbucket version and auth? [Data Center 8 or later. HTTP access token with read and write access to PRs. Record the real values in Gate 0.]
-2. Can clients fetch refs/pull-requests/*? [Try it. Fall back to a branch fetch.]
+1. Bitbucket version and auth? [Answered in Gate 0: Data Center 9.4.26. An HTTP access token as Bearer works for reads and writes.]
+2. Can clients fetch refs/pull-requests/*? [Partly answered in Gate 0: ls-remote lists refs/pull-requests/<id>/from, and no merge ref. Verify the fetch in M2. Fall back to a branch fetch.]
 3. Mark AI-assisted comments? [No marker. The user owns every posted comment.]
 4. Which local repository paths may the app read? [None at first. The app uses its own cache clones.]
 5. Which MCP servers run in reviews? [Microsoft Learn and DeepWiki. Add Jira and CodeGraph only with a read-only tool list.]
-6. The existing Bitbucket MCP: tool names, schemas, and paging? [Record them in Gate 0. Sync and publish use REST either way.]
+6. The existing Bitbucket MCP: tool names, schemas, and paging? [Answered in Gate 0: names and schemas are recorded in integration-check.md. It has comment write tools and no delete tool. Sync and publish use REST either way.]
 7. The colleague's app: source and license? [Inspect it when available. Reuse working modules. Not a blocker for fixture work.]
 8. Company AI policy and external MCP policy? [Get approval to send source to Claude and to use the documentation MCPs before the first real review.]
 9. Installed Claude Code and Ponytail versions? [Record them in Gate 0. Claude Code must be v2.1.257 or later.]
-10. Real payloads for edit, delete, and reply activities? [Unknown. Record them in Gate 0 on the test PR.]
+10. Real payloads for edit, delete, and reply activities? [Answered in Gate 0: payload shapes are recorded in fixtures/bitbucket/ and section 7.]
 
 ## 11. Sources (checked 2026-10-09)
 
