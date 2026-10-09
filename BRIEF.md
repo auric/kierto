@@ -98,10 +98,11 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 
 - `claude -p` never shows the workspace trust dialog. In an untrusted folder it still uses project hooks, the project `env` block, and `apiKeyHelper`. So never run Claude Code in a raw PR checkout.
 - The app exports the pinned PR head with `git archive` into an app-owned temp folder. It removes `.claude/`, `.mcp.json`, and symlinks. It renames CLAUDE.md files.
-- `--setting-sources user` stops the project settings files and `.mcp.json`. It is not verified that project CLAUDE.md and skills stop too. The snapshot steps cover that gap.
+- With `--setting-sources user`, project settings, hooks, `.mcp.json`, CLAUDE.md, and skills do not load (Gate 0, CLI 2.1.295). The snapshot rename and remove steps stay as defense in depth.
+- `--setting-sources user` still loads the user's own CLAUDE.md, agents, plugins, hooks, and MCP servers, including claude.ai connectors. Only `--strict-mcp-config` removes the MCP servers.
 - Never use `--bare`. It never reads OAuth credentials or the keychain, so the subscription login fails with it.
 - `ANTHROPIC_API_KEY` in the environment wins over the subscription. The app removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment.
-- Before each run, the app calls `claude auth status`. It runs only when `authMethod` is `claude.ai`. Otherwise it stops and explains.
+- Before each run, the app calls `claude auth status`. It runs only when `authMethod` is `claude.ai`. Otherwise it stops and explains. Log only `authMethod` from `claude auth status`, because its output also holds the email and organization.
 - `permissions.blockReadsOutsideWorkingDirectories: true` (Claude Code v2.1.257 or later) keeps file tools inside the snapshot. The app refuses an older CLI.
 - A separate folder is not an OS sandbox. The review gets read-only tools only, no shell, and no code-host token.
 
@@ -253,7 +254,7 @@ Stack:
 - Tests: bun test for logic and integration, Playwright for browser acceptance.
 - Later: @pierre/diffs only when the diff viewer is built (Release 2).
 - Distribution: bun build --compile makes one executable per OS with the UI embedded. Users need no runtime install.
-- Windows checks first (Gate 0): start claude.exe, send the prompt on stdin, cancel a run, read and write Bun.secrets. Cancel must stop the whole process tree, including MCP servers (taskkill /T /F on Windows). If Bun fails one check, switch to Node. Keep the code on web-standard APIs plus a thin spawn, SQLite, and secrets layer.
+- Windows checks first (Gate 0): start claude.exe, send the prompt on stdin, cancel a run, read and write Bun.secrets. Cancel must stop the whole process tree, including MCP servers (taskkill /T /F on Windows). If Bun fails one check, switch to Node. Keep the code on web-standard APIs plus a thin spawn, SQLite, and secrets layer. Gate 0 passed all Windows checks on Bun 1.4.2; the Node fallback stays for Linux and future regressions.
 
 Boundaries (build each only when its milestone needs it):
 - ForgeProvider: Bitbucket REST adapter (M1) and a fixture provider for tests. Provider payloads stay inside the adapter. Keep raw IDs, versions, and anchor data.
@@ -300,24 +301,26 @@ Read state:
 Review runner:
 - Snapshot: fetch refs/pull-requests/{id}/from into one bare cache clone per repository. If the server blocks these refs, fetch the source branch by name. Pin the source, target, and merge-base commits. On Windows, set core.longpaths=true.
 - Export with git archive of the pinned head into an app-owned temp folder. Put "* -export-ignore -export-subst" into the cache's info/attributes, so the PR cannot hide or rewrite files (verify in Gate 0).
-- Extraction rejects absolute paths, ".." parts, and links. Remove .claude/ folders, .mcp.json files, and symlinks. Rename every CLAUDE.md and CLAUDE.local.md to <name>.untrusted.md. No submodules. No repository scripts run.
+- Extraction rejects absolute paths, ".." parts, and links. Reject link entries (tar typeflag 1 for hard links, 2 for symlinks) during extraction, not after. On Windows, use the system tar.exe or extract in-process. Do not use Git for Windows GNU tar, because it fails on drive-letter paths. Remove .claude/ folders, .mcp.json files, and symlinks. Rename every CLAUDE.md and CLAUDE.local.md to <name>.untrusted.md. No submodules. No repository scripts run.
 - The app writes context files beside the snapshot: the diff, the changed-file list, the PR text, and the existing comments. The snapshot has no .git folder, so the review uses no git commands.
 - Spawn the native claude binary (claude.exe on Windows) with the shell off. Do not spawn claude.cmd, because a .cmd file needs a shell. If only claude.cmd exists, run the CLI JavaScript entry file with bun. cwd = the run folder. Send the prompt on stdin, because Windows limits the command-line length.
 - Before spawn: require CLI v2.1.257 or later. Run claude auth status (JSON, exit 0 when logged in). Run only when authMethod is claude.ai. Values such as api_key, oauth_token, or none stop the run with an explanation.
-- Child environment: remove ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN.
-- Flags: -p --output-format stream-json --verbose --json-schema <findings schema> --setting-sources user --strict-mcp-config --mcp-config <app review-mcp.json> --settings <app settings JSON> --permission-mode default --allowedTools <read-only list> --disallowedTools <deny list> --max-turns <cap>.
+- Child environment: remove ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDECODE, CLAUDE_PID, and all CLAUDE_CODE_* variables. Then a run started from inside a Claude Code session behaves like a normal run.
+- Flags: -p --output-format stream-json --verbose --json-schema <findings schema> --setting-sources user --strict-mcp-config --mcp-config <app review-mcp.json> --settings <app settings JSON> --permission-mode default --tools <read-only built-ins: Read, Grep, Glob> --allowedTools <read-only list> --disallowedTools <deny list> --max-turns <cap>.
+- With --json-schema, --max-turns must be at least 2, because the schema answer takes one turn.
 - Never use --bare. It never reads OAuth credentials or the keychain, so the subscription login fails.
 - --settings JSON sets permissions.blockReadsOutsideWorkingDirectories: true.
-- --setting-sources user stops project settings files and .mcp.json. It is not verified for project CLAUDE.md and project skills, so the snapshot steps stay mandatory.
+- With --setting-sources user, project settings, hooks, .mcp.json, CLAUDE.md, and skills do not load (Gate 0, CLI 2.1.295). The snapshot rename and remove steps stay as defense in depth.
 - Read-only list: Read, Grep, Glob, and the read-only MCP tools from review-mcp.json.
-- Deny list (also when user settings allow more): Bash, Edit, Write, NotebookEdit, WebFetch, WebSearch, and every code-host write tool. --allowedTools alone is not a deny-by-default boundary.
+- Deny list (also when user settings allow more): Bash, Edit, Write, NotebookEdit, WebFetch, WebSearch, Agent, and every code-host write tool. --allowedTools does not limit the tool set. Gate 0 saw the model start a subagent through the Agent tool.
 - review-mcp.json ships Microsoft Learn (https://learn.microsoft.com/api/mcp) and DeepWiki (https://mcp.deepwiki.com/mcp). Users can add Jira and CodeGraph only with a read-only tool list. If read-only cannot be enforced, leave that MCP out and give the data as context files.
 - Prompt: the profile prompt, the output schema, and the context files. Mark all PR text and repository files as untrusted data. Point Claude to the *.untrusted.md files as untrusted project documentation. Tell it to send only public API names to documentation MCPs.
-- Structured result: --json-schema puts the result in structured_output. The docs show this with --output-format json. Confirm it with stream-json in Gate 0.
-- Recognize structured error results (is_error, subtype), not only exit codes. Map usage limit, auth error, and max turns to job states (verify values in Gate 0).
-- Cancel kills the whole process tree. On Windows use taskkill /T /F with the PID.
+- Structured result: --json-schema puts the result in structured_output. With stream-json, only the result event with subtype success carries structured_output (Gate 0).
+- Recognize structured error results (is_error, subtype), not only exit codes. Map usage limit, auth error, and max turns to job states. Gate 0 did not record the error subtypes, so verify their values.
+- Cancel kills the whole process tree. On Windows use taskkill /T /F with the PID. In Gate 0, proc.kill() also ended the MCP child. The app must not rely on that.
 - For each run, store the session ID. Never resume a session from another PR.
-- Shipped profiles hold the full prompt text in the config. Explain asks only for the summary and questions, with a lower turn cap. A profile can say "use skill X" for users with that skill; confirm user skills load with --setting-sources user in Gate 0.
+- Each run writes a transcript to ~/.claude/projects/<encoded cwd>/. The transcript holds the reviewed code. The app deletes that folder after each run, unless the user keeps the session for follow-up questions. --no-session-persistence exists, but Gate 0 did not test it, and it blocks --resume. Decide in M2.
+- Shipped profiles hold the full prompt text in the config. Explain asks only for the summary and questions, with a lower turn cap. A profile can say "use skill X" for users with that skill; Gate 0 confirmed that user skills load with --setting-sources user.
 - Record the Ponytail skill version when a profile uses it.
 
 Job states: queued, running, completed, incomplete, cancelled, failed. Freshness: fresh or stale. A result turns stale when the source or target head changes. One active job by default. Job start is idempotent: the key is PR, source head, target head, and profile. A second tab or a refresh gets the existing job.
