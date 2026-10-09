@@ -197,6 +197,18 @@ describe("POST /api/read (A2)", () => {
   });
 });
 
+describe("reviewers", () => {
+  test("rows give the stored reviewers, and an empty list before the first write", async () => {
+    const h = await setup();
+    const fresh = h.pr();
+    const synced = h.pr();
+    const list = [{ slug: "kito", name: "Kenji Ito", status: "APPROVED" }];
+    h.db.query("UPDATE pull_request SET reviewers_json = $j WHERE id = $id").run({ j: JSON.stringify(list), id: synced });
+    expect((await h.row(fresh))?.reviewers).toEqual([]);
+    expect((await h.row(synced))?.reviewers).toEqual(list);
+  });
+});
+
 describe("POST /api/notifications/claim (A14)", () => {
   test("two concurrent claims return each event once", async () => {
     const h = await setup();

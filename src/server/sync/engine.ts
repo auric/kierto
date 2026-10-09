@@ -28,14 +28,15 @@ const SQL = {
   prBefore:
     "SELECT id, my_role, source_head, initialized_at, followed, archived_at FROM pull_request WHERE project = $project AND repo = $repo AND pr_id = $pr_id",
   prUpsert: `INSERT INTO pull_request (project, repo, pr_id, title, description, author_slug, author_name, my_role, my_status, last_reviewed_commit,
-      state, pr_version, source_head, target_head, source_branch, target_branch, web_url, updated_date, on_dashboard)
+      state, pr_version, source_head, target_head, source_branch, target_branch, web_url, updated_date, on_dashboard, reviewers_json)
     VALUES ($project, $repo, $pr_id, $title, $description, $author_slug, $author_name, $my_role, $my_status, $last_reviewed_commit,
-      $state, $pr_version, $source_head, $target_head, $source_branch, $target_branch, $web_url, $updated_date, $on_dashboard)
+      $state, $pr_version, $source_head, $target_head, $source_branch, $target_branch, $web_url, $updated_date, $on_dashboard, $reviewers_json)
     ON CONFLICT (project, repo, pr_id) DO UPDATE SET title = excluded.title, description = excluded.description,
       author_slug = excluded.author_slug, author_name = excluded.author_name, my_role = excluded.my_role, my_status = excluded.my_status,
       last_reviewed_commit = excluded.last_reviewed_commit, state = excluded.state, pr_version = excluded.pr_version,
       source_head = excluded.source_head, target_head = excluded.target_head, source_branch = excluded.source_branch,
-      target_branch = excluded.target_branch, web_url = excluded.web_url, updated_date = excluded.updated_date, on_dashboard = excluded.on_dashboard
+      target_branch = excluded.target_branch, web_url = excluded.web_url, updated_date = excluded.updated_date, on_dashboard = excluded.on_dashboard,
+      reviewers_json = excluded.reviewers_json
     RETURNING id`,
   offDashboard:
     "UPDATE pull_request SET on_dashboard = 0 WHERE on_dashboard = 1 AND id NOT IN (SELECT value FROM json_each($ids)) RETURNING id",
@@ -163,6 +164,9 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
         web_url: pr.webUrl ?? null,
         updated_date: pr.updatedDate,
         on_dashboard: onDashboard ? 1 : 0,
+        reviewers_json: JSON.stringify(
+          pr.reviewers.map((r) => ({ slug: r.slug, name: r.name, status: r.status, lastReviewedCommit: r.lastReviewedCommit })),
+        ),
       }) as { id: number };
       const before = row && {
         role: row.my_role,

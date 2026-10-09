@@ -1,5 +1,6 @@
 // Server state through TanStack Query. Keys: ['prs'], ['pr', id], ['status'], ['settings'].
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "@/components/ui/toast";
 import type { CheckpointDto, ClaimedEvent, FollowState, PrDetail, PrRow, SettingsDto, SettingsInput, SyncStatus } from "../../shared/dto";
 import { api } from "../api";
 import type { AckItem } from "../pr/ack";
@@ -64,12 +65,31 @@ export function useFollow() {
   });
 }
 
+const postArchive = async (id: number, archived: boolean) =>
+  read<FollowState>(await api.api.prs[":id"].archive.$post({ param: { id: String(id) }, json: { archived } }));
+
+// The PR leaves the list before the request, so its detail unmounts and never refetches into a 404.
+// Hook-level callbacks run also after the detail unmounts. Per-call callbacks would not.
 export function useArchive() {
   const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries({ queryKey: ["prs"] });
   return useMutation({
-    mutationFn: async ({ id, archived }: { id: number; archived: boolean }) =>
-      read<FollowState>(await api.api.prs[":id"].archive.$post({ param: { id: String(id) }, json: { archived } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["prs"] }),
+    mutationFn: ({ id }: { id: number; label: string }) => postArchive(id, true),
+    onMutate: async ({ id }) => {
+      await qc.cancelQueries({ queryKey: ["prs"] });
+      qc.setQueryData<PrRow[]>(["prs"], (old) => old?.filter((p) => p.id !== id));
+    },
+    onSuccess: (_, { id, label }) =>
+      toast.add({
+        title: `Archived ${label}`,
+        description: "It no longer shows in any view.",
+        actionProps: {
+          children: "Undo",
+          onClick: () => postArchive(id, false).then(refresh, (e: Error) => toast.add({ title: "Undo failed", description: e.message })),
+        },
+      }),
+    onError: (e) => toast.add({ title: "Archive failed", description: e.message }),
+    onSettled: refresh,
   });
 }
 

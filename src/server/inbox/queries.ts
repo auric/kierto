@@ -1,7 +1,7 @@
 // Inbox reads and writes (plan G5). Unread: followed, not tombstoned (D8), and ack_version IS NULL OR ack_version < version.
 import type { Database } from "bun:sqlite";
 import type { CheckpointDto, CheckpointReason, ClaimedEvent, CommentDto, FollowState, PrDetail, PrRow, Reason } from "../../shared/dto";
-import type { Role } from "../../shared/types";
+import type { Reviewer, Role } from "../../shared/types";
 import { byInbox } from "../../shared/views";
 
 const CLAIMED_TTL_MS = 30 * 86_400_000;
@@ -9,7 +9,7 @@ const UNREAD = "c.pr = p.id AND p.followed = 1 AND c.tombstoned_at IS NULL AND (
 
 const SQL = {
   rows: `SELECT p.id, p.project, p.repo, p.pr_id, p.title, p.author_slug, p.author_name, p.my_role, p.state, p.my_status, p.last_reviewed_commit,
-      p.source_head, p.source_branch, p.target_branch, p.web_url, p.on_dashboard, p.followed,
+      p.source_head, p.source_branch, p.target_branch, p.web_url, p.on_dashboard, p.followed, p.reviewers_json,
       (SELECT COUNT(*) FROM comment c WHERE ${UNREAD}) AS unread,
       EXISTS (SELECT 1 FROM comment c WHERE ${UNREAD}
         AND EXISTS (SELECT 1 FROM comment m WHERE m.pr = c.pr AND m.root_id = c.root_id AND m.author_slug = $me)) AS reply,
@@ -54,6 +54,7 @@ type RawRow = {
   source_branch: string | null;
   target_branch: string | null;
   web_url: string | null;
+  reviewers_json: string | null;
   on_dashboard: number;
   followed: number;
   unread: number;
@@ -98,6 +99,7 @@ const toRow = (r: RawRow): PrRow => ({
   sourceBranch: r.source_branch,
   targetBranch: r.target_branch,
   webUrl: r.web_url,
+  reviewers: r.reviewers_json === null ? [] : (JSON.parse(r.reviewers_json) as Reviewer[]),
   onDashboard: r.on_dashboard === 1,
   followed: r.followed === 1,
   unread: r.unread,

@@ -481,6 +481,38 @@ describe("follow state (A15)", () => {
   });
 });
 
+describe("reviewers", () => {
+  const reviewers = (h: Awaited<ReturnType<typeof setup>>) => JSON.parse(String(h.pr(1001).reviewers_json));
+
+  test("the first sync stores every reviewer", async () => {
+    world.reviewer = [reviewPr()];
+    const h = await setup();
+    await h.cycle();
+    expect(reviewers(h)).toEqual([
+      { slug: "jdoe", name: "Jane Doe", status: "UNAPPROVED", lastReviewedCommit: "c5bf8bfcb823b4949bc9bfe280c5ffc3ffd0a151" },
+    ]);
+  });
+
+  test("a status change updates the reviewers and gives no unread and no event", async () => {
+    world.reviewer = [reviewPr()];
+    const h = await setup();
+    await h.cycle();
+    const changed = reviewPr() as ReturnType<typeof reviewPr> & { reviewers: Record<string, unknown>[] };
+    changed.reviewers = [
+      { ...changed.reviewers[0], status: "NEEDS_WORK" },
+      { user: OTHER, role: "REVIEWER", approved: true, status: "APPROVED" },
+    ];
+    world.reviewer = [changed];
+    await h.cycle();
+    expect(reviewers(h).map((r: { slug: string; status: string }) => [r.slug, r.status])).toEqual([
+      ["jdoe", "NEEDS_WORK"],
+      [OTHER.slug, "APPROVED"],
+    ]);
+    expect(h.events()).toEqual([]);
+    expect(h.unread()).toBe(0);
+  });
+});
+
 describe("events", () => {
   test("reviewer_added appears after the first complete dashboard only", async () => {
     world.reviewer = [reviewPr()];

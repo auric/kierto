@@ -1,6 +1,6 @@
 // API request and response shapes shared by server and UI.
 import { z } from "zod";
-import type { IncompleteReason, Role } from "./types";
+import type { IncompleteReason, Reviewer, Role } from "./types";
 
 export const settingsInput = z.object({
   baseUrl: z.string().trim().min(1),
@@ -63,6 +63,8 @@ export type PrRow = {
   sourceBranch: string | null;
   targetBranch: string | null;
   webUrl: string | null;
+  // Empty until the first sync cycle that writes the PR.
+  reviewers: Reviewer[];
   onDashboard: boolean;
   followed: boolean;
   // 0 for an unfollowed PR.

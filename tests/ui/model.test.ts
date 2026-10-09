@@ -27,6 +27,7 @@ const row = (o: Partial<PrRow>): PrRow => ({
   sourceBranch: "feature",
   targetBranch: "main",
   webUrl: null,
+  reviewers: [],
   onDashboard: true,
   followed: true,
   unread: 0,

@@ -224,7 +224,15 @@ function Shell({ stale }: { stale: boolean }) {
           <>
             <BackBar onBack={() => go({ mobile: "list", focus: "list" }, "focus-list")} />
             <div data-scroll className="flex-1 overflow-auto overscroll-contain">
-              <PrDetail key={current.id} pr={current} me={s?.user ?? null} />
+              <PrDetail
+                key={current.id}
+                pr={current}
+                me={s?.user ?? null}
+                onLeave={() => {
+                  const i = rows.indexOf(current);
+                  setKs((k) => ({ ...k, selected: (rows[i + 1] ?? rows[i - 1])?.id ?? null }));
+                }}
+              />
             </div>
           </>
         ) : (

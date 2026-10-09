@@ -1,18 +1,27 @@
 // PR detail (plan G7): header, tabs, and the Activity timeline.
 import { ExternalLink } from "lucide-react";
-import { type MouseEvent, useState } from "react";
+import { lazy, type MouseEvent, Suspense, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import type { CommentDto, PrDetail as Detail, PrRow } from "../../shared/dto";
 import { ApiError, useArchive, useFollow, usePr } from "../shell/data";
 import { ago, initials, prKey } from "../shell/model";
 import { Calm, CheckBanner } from "../states";
-import { Markdown } from "./Markdown";
 import { anchorOf, buildThreads, type Msg, mergeHighlights, openThreads } from "./threads";
 import { useAck } from "./useAck";
+
+// The Markdown renderer loads on first use, so the main chunk stays small. Plain text shows until then.
+const Markdown = lazy(() => import("./Markdown").then((m) => ({ default: m.Markdown })));
+
+function Text({ text }: { text: string }) {
+  return (
+    <Suspense fallback={<p className="m-0 whitespace-pre-wrap">{text}</p>}>
+      <Markdown text={text} />
+    </Suspense>
+  );
+}
 
 const STATUS_TEXT: Record<string, string> = { APPROVED: "Approved", NEEDS_WORK: "Needs work", UNAPPROVED: "Not reviewed" };
 
@@ -26,12 +35,13 @@ function webLink(url: string | null): string | null {
   }
 }
 
-export function PrDetail({ pr: row, me }: { pr: PrRow; me: string | null }) {
+// onLeave: the shell moves the selection away before the PR leaves the list.
+export function PrDetail({ pr: row, me, onLeave }: { pr: PrRow; me: string | null; onLeave: () => void }) {
   const q = usePr(row.id);
   const pr = q.data?.pr ?? row;
   return (
     <>
-      <Header pr={pr} />
+      <Header pr={pr} me={me} onLeave={onLeave} />
       <div className="flex items-center gap-0.5 overflow-x-auto border-b px-6 max-[759px]:px-3" role="tablist" aria-label="Pull request">
         <button type="button" role="tab" id="tab-activity" aria-selected="true" aria-controls="panel-activity" className="rl-tab">
           Activity
@@ -80,26 +90,16 @@ export function PrDetail({ pr: row, me }: { pr: PrRow; me: string | null }) {
   );
 }
 
-function Header({ pr }: { pr: PrRow }) {
+function Header({ pr, me, onLeave }: { pr: PrRow; me: string | null; onLeave: () => void }) {
   const follow = useFollow();
   const archive = useArchive();
   const key = prKey(pr);
   const web = webLink(pr.webUrl);
-  const status = pr.role === "REVIEWER" ? (STATUS_TEXT[pr.status ?? ""] ?? pr.status) : null;
 
-  const onArchive = () =>
-    archive.mutate(
-      { id: pr.id, archived: true },
-      {
-        onSuccess: () =>
-          toast.add({
-            title: `Archived ${key}`,
-            description: "It no longer shows in any view.",
-            actionProps: { children: "Undo", onClick: () => archive.mutate({ id: pr.id, archived: false }) },
-          }),
-        onError: (e) => toast.add({ title: "Archive failed", description: e.message }),
-      },
-    );
+  const onArchive = () => {
+    onLeave();
+    archive.mutate({ id: pr.id, label: key });
+  };
 
   return (
     <header className="grid gap-2 border-b px-6 pt-4 pb-3 max-[759px]:px-4">
@@ -146,7 +146,19 @@ function Header({ pr }: { pr: PrRow }) {
             {pr.authorName ?? pr.authorSlug}, author
           </span>
         )}
-        {status && <span>Your review: {status}</span>}
+        {pr.reviewers.length > 0 && (
+          <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+            Reviewers
+            {pr.reviewers.map((r) => (
+              <span key={r.slug} className="inline-flex items-center gap-1.5">
+                <Avatar name={r.name} ring={RING[r.status]} />
+                <span>
+                  {r.slug === me ? "You" : r.name}, {(STATUS_TEXT[r.status] ?? r.status).toLowerCase()}
+                </span>
+              </span>
+            ))}
+          </span>
+        )}
         {!pr.followed && <span>Not followed</span>}
         <span className="ml-auto flex gap-2">
           <Button
@@ -166,11 +178,18 @@ function Header({ pr }: { pr: PrRow }) {
   );
 }
 
-function Avatar({ name }: { name: string }) {
+// The ring repeats the status text in color (prototype/index.html:139).
+const RING: Record<string, string> = { APPROVED: "ring-ok", NEEDS_WORK: "ring-warn" };
+
+function Avatar({ name, ring }: { name: string; ring?: string | undefined }) {
   return (
     <span
       aria-hidden
-      className="inline-grid size-5 shrink-0 place-items-center rounded-full bg-muted text-[9.5px] font-semibold text-foreground"
+      className={cn(
+        "inline-grid size-5 shrink-0 place-items-center rounded-full bg-muted text-[9.5px] font-semibold text-foreground",
+        ring && "ring-2 ring-offset-1 ring-offset-pane",
+        ring,
+      )}
     >
       {initials(name)}
     </span>
@@ -210,7 +229,7 @@ function Activity({ detail, me }: { detail: Detail; me: string | null }) {
       )}
       {detail.description && (
         <section aria-label="Description" className="max-w-[760px] rounded-md border bg-card px-3 py-2.5 [overflow-wrap:anywhere]">
-          <Markdown text={detail.description} />
+          <Text text={detail.description} />
         </section>
       )}
       {mine.length > 0 && (
@@ -314,11 +333,7 @@ function Message({ m, hl, ackRef, now }: { m: Msg } & Shared) {
           isNew ? "border-transparent bg-accent" : "bg-card",
         )}
       >
-        {m.deleted || m.text === null ? (
-          <p className="m-0 text-muted-foreground italic">Deleted on Bitbucket</p>
-        ) : (
-          <Markdown text={m.text} />
-        )}
+        {m.deleted || m.text === null ? <p className="m-0 text-muted-foreground italic">Deleted on Bitbucket</p> : <Text text={m.text} />}
       </div>
     </article>
   );
