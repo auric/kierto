@@ -38,7 +38,7 @@ export const notifyPermission = (): NotificationPermission | "unsupported" =>
   typeof Notification === "undefined" ? "unsupported" : Notification.permission;
 
 // Claims once on load and on each `events` message, also with notifications off, so no backlog floods later.
-// ready: the settings are loaded, so the first claim knows whether notifications are on.
+// ready: the settings are loaded and hold a base URL. An unconfigured server refuses the claim, and the next claim would count as the first.
 export function useClaims(claim: () => Promise<ClaimedEvent[]>, ready: boolean, enabled: boolean, onOpen: (pr: number | null) => void) {
   const latest = useRef({ claim, enabled, onOpen });
   latest.current = { claim, enabled, onOpen };

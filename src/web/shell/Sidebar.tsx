@@ -98,7 +98,9 @@ export function Sidebar(props: {
                   onClick={() => props.onRepo(on ? null : r.repo)}
                 >
                   <span className="rl-abbr w-[22px] text-center font-mono text-[11px] font-bold">{abbr(r.repo)}</span>
-                  <span className="rl-lbl truncate font-mono text-[11.5px]">{r.repo}</span>
+                  <span translate="no" className="rl-lbl truncate font-mono text-[11.5px]">
+                    {r.repo}
+                  </span>
                   <span className={cn("rl-lbl ml-auto text-xs", r.unread ? "font-bold text-primary" : "text-muted-foreground")}>
                     {r.unread ? (
                       <>

@@ -70,6 +70,7 @@ export function Settings({
                 defaultValue={settings.baseUrl ?? ""}
                 placeholder="https://bitbucket.example.com"
                 autoComplete="url"
+                spellCheck={false}
               />
               <FieldDescription>The base URL only. Include the context path if your server has one.</FieldDescription>
             </Field>
@@ -80,9 +81,10 @@ export function Settings({
                 name="token"
                 type="password"
                 autoComplete="off"
+                spellCheck={false}
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
-                placeholder={settings.tokenStored ? "Stored. Leave empty to keep it." : "Personal access token"}
+                placeholder={settings.tokenStored ? "Stored. Leave empty to keep it." : "Personal access token…"}
               />
               <FieldDescription>
                 {memory
@@ -97,6 +99,8 @@ export function Settings({
                 name="caFile"
                 type="text"
                 className="font-mono"
+                autoComplete="off"
+                spellCheck={false}
                 defaultValue={settings.caFile ?? ""}
                 placeholder="C:\certs\company-ca.pem"
               />
@@ -105,7 +109,11 @@ export function Settings({
             {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
             {settings.user && (
               <p className="m-0 text-[12.5px] text-muted-foreground">
-                Signed in as <span className="font-mono">{settings.user}</span>.
+                Signed in as{" "}
+                <span translate="no" className="font-mono">
+                  {settings.user}
+                </span>
+                .
               </p>
             )}
           </FieldGroup>

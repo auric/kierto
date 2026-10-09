@@ -2,7 +2,7 @@
 
 Review Loop is a local-first inbox for Bitbucket Server pull requests (PRs). It runs the user's own Claude Code CLI (`claude -p`) for reviews. The app runs on localhost and keeps all data on the user's machine.
 
-Status: Gate 0 is complete. M1 is in progress; see docs/plans/m1.md. Do not assume that a file in the planned layout exists. Check first.
+Status: M1 is complete pending the manual smoke test (docs/smoke-m1.md); see docs/plans/m1.md. Do not assume that a file in the planned layout exists. Check first.
 
 ## Document map
 
@@ -29,16 +29,18 @@ Tests:   bun test for logic and integration. Playwright for browser acceptance.
 Ship:    bun build --compile, one executable per OS with the UI embedded.
 ```
 
-Planned layout: `src/web/`, `src/server/{bitbucket,sync,inbox,review,publish,storage}/`, `src/shared/`, `fixtures/`, `tests/`. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
+Layout: `src/web/`, `src/server/{bitbucket,sync,inbox,storage}/`, `src/shared/`, `fixtures/`, `tests/` exist. `src/server/{review,publish}/` arrive in M2 and M3. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
 
 Commands:
 - `bun install`: install the pinned dependencies.
 - `bun run dev`: start Hono with `--watch` on 127.0.0.1:7317 and Vite with HMR on 127.0.0.1:5173. Open the Vite URL.
 - `bun run build`: build the UI into `dist/web`.
-- `bun run start`: serve the API and the built UI on 127.0.0.1:7317. `REVIEW_LOOP_PORT` overrides the port.
+- `bun run start`: serve the API and the built UI on 127.0.0.1:7317. `REVIEW_LOOP_PORT` overrides the port. `REVIEW_LOOP_DATA_DIR` sets the data folder. `REVIEW_LOOP_SECRETS=memory` keeps the token out of the OS store.
 - `bun run typecheck`: run strict `tsc --noEmit`.
 - `bun run lint`: run Biome lint and format checks. `bun run format` applies the fixes.
+- `bun run demo`: serve the built UI on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. It uses a temp data folder and memory secrets.
 - `bun test`: run the tests under `tests/`. Each group ends green on typecheck, lint, and test.
+- `bun run test:e2e`: build the UI, then run the Playwright suite `tests/e2e/*.e2e.ts` with Node. `tests/e2e/serve.ts` starts the fake Bitbucket on 7398 and the app on 7399. Stop `bun run demo` first, because it uses port 7399.
 
 ## Skills
 
@@ -50,7 +52,7 @@ Load the skill before you start the task. Read its SKILL.md for details.
 | Write or review React components, data fetching, TanStack Query use, bundle size. | `vercel-react-best-practices` | This is a Vite SPA. Ignore the Next.js-only rules (RSC, server actions, next/*). |
 | Review UI code for accessibility and UX. | `web-design-guidelines` | Run it before a milestone ends. |
 | Server routes, middleware (`csrf`, validator), SSE streaming, typed client. | `hono` | Keep BRIEF 3.6 server safety rules. |
-| Browser acceptance tests. | none | Use TypeScript `@playwright/test` with files named `*.e2e.ts`, run by Node. Point tests only at fixture data. |
+| Browser acceptance tests. | none | Use TypeScript `@playwright/test` with files named `*.e2e.ts`, run by Node. Point tests only at fixture data. See Testing notes. |
 | Ad-hoc browser checks and screenshots of the running app. | `webapp-testing` | Its helper scripts need Python. Point it only at fixture data. |
 | Visual direction for new screens. | `frontend-design:frontend-design` (plugin) | Stay consistent with `prototype/index.html`. |
 | Maintain this file. | `claude-md-management:claude-md-improver` | Keep it compact and current. |
@@ -61,6 +63,13 @@ Add or update a project skill:
 - Use `--copy`, because symlinks are unreliable on Windows.
 - The skills CLI needs Node 22.20 or later.
 - Commit `skills-lock.json` together with the skill files.
+
+## Testing notes
+
+- Run e2e only through `bun run test:e2e`. A plain `npx playwright` can resolve a global Playwright of another version.
+- The e2e control routes (`/__control/*`) live on the fake Bitbucket in `tests/e2e/serve.ts`, never in the app.
+- The detail pane shows the first row and acknowledges its visible messages after about 1 s. A test that needs a message to stay unread selects another PR first.
+- Headless Chromium denies notifications. The e2e tests grant the permission and replace `window.Notification` with a recorder.
 
 ## Hard rules
 

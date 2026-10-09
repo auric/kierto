@@ -14,9 +14,10 @@ export type Reply =
   // Sends the status line, then resets the connection mid-body.
   | { drop: true };
 
-export type Route = Reply | ((req: Request) => Reply);
+export type Route = Reply | ((req: Request) => Reply | Promise<Reply>);
 
-export type FakeOptions = { routes?: Record<string, Route>; https?: boolean };
+// port: absent picks a free port.
+export type FakeOptions = { routes?: Record<string, Route>; https?: boolean; port?: number };
 
 // A route key is "METHOD /path" or "METHOD /path start=N". The start form wins.
 export const key = (method: string, path: string, start?: number) => `${method} ${path}${start === undefined ? "" : ` start=${start}`}`;
@@ -40,7 +41,7 @@ export function startFakeBitbucket(opts: FakeOptions = {}) {
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
-    port: 0,
+    port: opts.port ?? 0,
     tls: opts.https
       ? { cert: readFileSync(join(TLS_DIR, "server.pem"), "utf8"), key: readFileSync(join(TLS_DIR, "server.key"), "utf8") }
       : undefined,
@@ -57,7 +58,7 @@ export function startFakeBitbucket(opts: FakeOptions = {}) {
         }
         const route = (start !== null ? routes[`${base} start=${start}`] : undefined) ?? routes[base];
         const reply: Reply =
-          typeof route === "function" ? route(req) : (route ?? { status: 404, body: { errors: [{ message: "Not found." }] } });
+          typeof route === "function" ? await route(req) : (route ?? { status: 404, body: { errors: [{ message: "Not found." }] } });
         if ("hang" in reply) {
           await released;
           return new Response(null, { status: 503 });

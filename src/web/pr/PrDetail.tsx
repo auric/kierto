@@ -115,9 +115,11 @@ function Header({ pr, me, onLeave }: { pr: PrRow; me: string | null; onLeave: ()
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-[12.5px] text-muted-foreground">
-        <span className="font-mono text-[11.5px] [overflow-wrap:anywhere]">{key}</span>
+        <span translate="no" className="font-mono text-[11.5px] [overflow-wrap:anywhere]">
+          {key}
+        </span>
         {pr.sourceBranch && (
-          <span className="font-mono text-[11.5px] [overflow-wrap:anywhere]">
+          <span translate="no" className="font-mono text-[11.5px] [overflow-wrap:anywhere]">
             {pr.sourceBranch} → {pr.targetBranch ?? "?"}
           </span>
         )}
@@ -322,7 +324,11 @@ function Message({ m, hl, ackRef, now }: { m: Msg } & Shared) {
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12.5px] text-muted-foreground">
         <b className="font-semibold text-foreground">{who(m)}</b>
         {m.parentId === null ? (anchor ? "commented on" : "commented") : "replied"}
-        {m.parentId === null && anchor && <span className="font-mono text-[11.5px] [overflow-wrap:anywhere]">{where(m)}</span>}
+        {m.parentId === null && anchor && (
+          <span translate="no" className="font-mono text-[11.5px] [overflow-wrap:anywhere]">
+            {where(m)}
+          </span>
+        )}
         <span title={new Date(m.createdAt).toLocaleString()}>· {ago(m.createdAt, now)}</span>
         {isNew && <Badge variant="soft">New</Badge>}
         {anchor?.orphaned && <Badge variant="quiet">outdated</Badge>}

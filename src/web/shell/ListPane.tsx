@@ -70,7 +70,7 @@ export function ListPane(props: {
             aria-label={`Clear the repository filter ${props.repo}`}
             onClick={() => props.onRepo(null)}
           >
-            {props.repo}
+            <span translate="no">{props.repo}</span>
             <X aria-hidden className="size-3" />
           </button>
         )}
@@ -78,7 +78,7 @@ export function ListPane(props: {
           ref={props.filterRef}
           type="search"
           className="w-full basis-full rounded-md border bg-pane px-2.5 py-1.5 placeholder:text-muted-foreground"
-          placeholder="Filter, or paste a pull request URL"
+          placeholder="Filter, or paste a pull request URL…"
           aria-label="Filter the list"
           title="Filter (/)"
           autoComplete="off"
@@ -87,7 +87,7 @@ export function ListPane(props: {
         />
       </header>
       <div>{props.banner}</div>
-      <div className="overflow-auto overscroll-contain" id="rows">
+      <div className="overflow-auto overscroll-contain" id="rows" tabIndex={-1}>
         {props.candidate && (
           <div className="grid gap-1 border-b bg-pane px-4 py-2.5">
             <button
@@ -162,7 +162,9 @@ function Row({
       <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
         <span aria-hidden className={cn("size-[7px] shrink-0 rounded-full", unread && "bg-primary")} />
         {unread && <span className="sr-only">Unread.</span>}
-        <span className="min-w-0 flex-auto truncate font-mono text-[11.5px]">{prKey(p)}</span>
+        <span translate="no" className="min-w-0 flex-auto truncate font-mono text-[11.5px]">
+          {prKey(p)}
+        </span>
         {incomplete && (
           <span className="inline-flex shrink-0 items-center gap-1 text-warn" title={incomplete}>
             <CircleAlert aria-hidden className="size-3.5" />
@@ -174,7 +176,7 @@ function Row({
       </span>
       <span className="flex min-w-0 items-center gap-2 pl-[15px]">
         {p.title === null ? (
-          <span className="min-w-0 flex-1 truncate text-muted-foreground italic">Loading details</span>
+          <span className="min-w-0 flex-1 truncate text-muted-foreground italic">Loading details…</span>
         ) : (
           <span className={cn("min-w-0 flex-1 truncate", unread ? "font-bold" : "font-medium")}>{p.title}</span>
         )}

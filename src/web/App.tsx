@@ -83,7 +83,7 @@ function Shell({ stale }: { stale: boolean }) {
   const mobile = showSettings && locked ? "detail" : ks.mobile;
 
   // A notification click opens its PR in a view that holds it. A digest opens Needs you.
-  useClaims(claimEvents, s !== undefined, !!s?.notifications, (id) => {
+  useClaims(claimEvents, !!s?.baseUrl, !!s?.notifications, (id) => {
     const pr = id === null ? undefined : all.find((p) => p.id === id);
     const v = pr ? ((Object.keys(VIEWS) as View[]).find((x) => VIEWS[x](pr)) ?? "following") : "needs";
     setView(v);
@@ -152,6 +152,12 @@ function Shell({ stale }: { stale: boolean }) {
 
   return (
     <div className="rl-app" data-m={mobile}>
+      <a
+        href="#rows"
+        className="sr-only rounded-md bg-pane text-primary focus:not-sr-only focus:fixed focus:px-3 focus:py-1.5 focus:top-2 focus:left-2 focus:z-50"
+      >
+        Skip to the list
+      </a>
       <Sidebar
         view={showSettings ? null : view}
         counts={viewCounts(all)}
