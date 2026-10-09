@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parsePrUrl } from "../../src/server/bitbucket/pr-url";
+import { parsePrUrl } from "../../src/shared/pr-url";
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
 

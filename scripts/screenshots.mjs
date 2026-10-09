@@ -22,11 +22,15 @@ try {
       await page.goto(BASE);
       await page.locator("[data-row]").first().waitFor();
       await shot("inbox");
-      if (size.name === "phone") {
-        await page.locator("[data-row]").first().click();
-        await shot("detail");
-        await page.getByRole("button", { name: "Back to the list" }).click();
-      }
+      const detail = async (title, what) => {
+        await page.locator("[data-row]", { hasText: title }).click();
+        await page.locator("#panel-activity :is(article, details)").first().waitFor();
+        await shot(what);
+        if (size.name === "phone") await page.getByRole("button", { name: "Back to the list" }).first().click();
+      };
+      // The first pass acknowledges the new messages, so only it shows the divider.
+      await detail("Add retry budget", "detail");
+      await detail("Paginate the audit log", "detail-incomplete");
       await page.keyboard.press("/");
       await page.keyboard.type("no such pull request");
       await shot("empty");

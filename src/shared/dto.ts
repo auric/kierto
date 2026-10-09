@@ -32,6 +32,20 @@ export type CheckpointReason = IncompleteReason | "gap";
 
 export type CheckpointDto = { lastCompleteAt: number | null; reason: CheckpointReason | null; error: string | null };
 
+// offline: no request reached the server. auth: 401, paused until the settings change. unconfigured: no settings or no token, paused.
+// error: a local failure; a CA file error pauses until the settings change.
+export type SyncState = "idle" | "ok" | "offline" | "auth" | "unconfigured" | "error";
+
+export type SyncStatus = {
+  running: boolean;
+  state: SyncState;
+  // Local clock in ms: the start of the last cycle that ended "ok".
+  lastCompleteAt: number | null;
+  // Local clock in ms. null while a cycle runs or polling is paused.
+  nextAt: number | null;
+  error: string | null;
+};
+
 export type Reason = "reply_to_you" | "review_requested" | "new_commits" | "closed";
 
 // Metadata fields are null for a PR followed by URL until its first sync cycle.
@@ -76,7 +90,7 @@ export type CommentDto = {
   deleted: boolean;
 };
 
-export type PrDetail = { pr: PrRow; comments: CommentDto[] };
+export type PrDetail = { pr: PrRow; description: string | null; comments: CommentDto[] };
 
 export type FollowState = { id: number; followed: boolean; archivedAt: number | null };
 

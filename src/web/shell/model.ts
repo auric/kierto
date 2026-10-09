@@ -1,7 +1,7 @@
 // Pure list and sidebar rules. No DOM access, so bun test runs them directly.
-import { parsePrUrl } from "../../server/bitbucket/pr-url";
-import type { SyncStatus } from "../../server/sync/engine";
-import type { CheckpointDto, PrRow } from "../../shared/dto";
+
+import type { CheckpointDto, PrRow, SyncStatus } from "../../shared/dto";
+import { parsePrUrl } from "../../shared/pr-url";
 import type { PrRef } from "../../shared/types";
 import { REASON_TEXT, VIEWS, type View } from "../../shared/views";
 
@@ -25,7 +25,7 @@ export function badges(p: PrRow): BadgeInfo[] {
   return out;
 }
 
-const REASON_LABEL: Record<NonNullable<CheckpointDto["reason"]>, string> = {
+export const REASON_LABEL: Record<NonNullable<CheckpointDto["reason"]>, string> = {
   network: "no answer from Bitbucket",
   timeout: "Bitbucket timed out",
   auth: "Bitbucket rejected the token",

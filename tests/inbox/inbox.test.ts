@@ -214,6 +214,18 @@ describe("POST /api/notifications/claim (A14)", () => {
     expect((await h.json<ClaimedEvent[]>("/api/notifications/claim", { method: "POST" })).body).toEqual([]);
   });
 
+  test("events of archived or unfollowed PRs are claimed but not returned", async () => {
+    const h = await setup();
+    const shown = h.pr();
+    const unfollowed = h.pr({ followed: 0 });
+    const archived = h.pr({ archived_at: 5 });
+    const ins = h.db.query("INSERT INTO event (pr, kind, ref, created_at) VALUES ($pr, 'comment_new', $ref, 1)");
+    for (const pr of [shown, unfollowed, archived]) ins.run({ pr, ref: String(pr) });
+    const res = await h.json<ClaimedEvent[]>("/api/notifications/claim", { method: "POST" });
+    expect(res.body.map((e) => e.pr)).toEqual([shown]);
+    expect(h.db.query("SELECT COUNT(*) AS n FROM event WHERE claimed_at IS NULL").get()).toEqual({ n: 0 });
+  });
+
   test("claimed events older than 30 days are deleted when the inbox first opens the database", async () => {
     const h = await setup();
     const p = h.pr();

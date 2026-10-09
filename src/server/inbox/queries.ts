@@ -1,6 +1,6 @@
 // Inbox reads and writes (plan G5). Unread: followed, not tombstoned (D8), and ack_version IS NULL OR ack_version < version.
 import type { Database } from "bun:sqlite";
-import type { CheckpointDto, CheckpointReason, ClaimedEvent, CommentDto, FollowState, PrRow, Reason } from "../../shared/dto";
+import type { CheckpointDto, CheckpointReason, ClaimedEvent, CommentDto, FollowState, PrDetail, PrRow, Reason } from "../../shared/dto";
 import type { Role } from "../../shared/types";
 import { byInbox } from "../../shared/views";
 
@@ -31,8 +31,10 @@ const SQL = {
   claim: `UPDATE event SET claimed_at = $now WHERE claimed_at IS NULL
     RETURNING id, pr, kind, ref, created_at, digest,
       (SELECT project FROM pull_request WHERE id = event.pr) AS project, (SELECT repo FROM pull_request WHERE id = event.pr) AS repo,
-      (SELECT pr_id FROM pull_request WHERE id = event.pr) AS pr_id, (SELECT title FROM pull_request WHERE id = event.pr) AS title`,
+      (SELECT pr_id FROM pull_request WHERE id = event.pr) AS pr_id, (SELECT title FROM pull_request WHERE id = event.pr) AS title,
+      (SELECT followed = 1 AND archived_at IS NULL FROM pull_request WHERE id = event.pr) AS shown`,
   cleanup: "DELETE FROM event WHERE claimed_at IS NOT NULL AND claimed_at < $cutoff",
+  description: "SELECT description FROM pull_request WHERE id = $id",
   checkpoint: "SELECT last_complete_at, incomplete_reason, last_error FROM sync_checkpoint WHERE scope = $scope",
 };
 
@@ -111,7 +113,7 @@ export function listPrs(db: Database, me: string): PrRow[] {
 }
 
 // null for an unknown, archived, or unlisted PR.
-export function prDetail(db: Database, me: string, id: number): { pr: PrRow; comments: CommentDto[] } | null {
+export function prDetail(db: Database, me: string, id: number): PrDetail | null {
   const pr = selectRows(db, me, id)[0];
   if (!pr) return null;
   type Raw = {
@@ -147,7 +149,8 @@ export function prDetail(db: Database, me: string, id: number): { pr: PrRow; com
       deleted,
     };
   });
-  return { pr, comments };
+  const { description } = db.query(SQL.description).get({ id }) as { description: string | null };
+  return { pr, description, comments };
 }
 
 export function markRead(db: Database, pr: number, items: { id: number; version: number }[]): number {
@@ -181,9 +184,11 @@ export function followKey(db: Database, key: { project: string; repo: string; pr
 }
 
 export function claimEvents(db: Database, now: number): ClaimedEvent[] {
-  type Raw = Omit<ClaimedEvent, "createdAt" | "digest" | "prId"> & { created_at: number; digest: number; pr_id: number };
+  type Raw = Omit<ClaimedEvent, "createdAt" | "digest" | "prId"> & { created_at: number; digest: number; pr_id: number; shown: number };
+  // Events of archived or unfollowed PRs stay claimed, so they never notify later.
   return (db.query(SQL.claim).all({ now }) as Raw[])
-    .map(({ created_at, digest, pr_id, ...e }) => ({ ...e, createdAt: created_at, digest: digest === 1, prId: pr_id }))
+    .filter((e) => e.shown === 1)
+    .map(({ created_at, digest, pr_id, shown: _, ...e }) => ({ ...e, createdAt: created_at, digest: digest === 1, prId: pr_id }))
     .sort((a, b) => a.id - b.id);
 }
 

@@ -1,8 +1,8 @@
 // Server state through TanStack Query. Keys: ['prs'], ['pr', id], ['status'], ['settings'].
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { SyncStatus } from "../../server/sync/engine";
-import type { CheckpointDto, FollowState, PrRow, SettingsDto, SettingsInput } from "../../shared/dto";
+import type { CheckpointDto, ClaimedEvent, FollowState, PrDetail, PrRow, SettingsDto, SettingsInput, SyncStatus } from "../../shared/dto";
 import { api } from "../api";
+import type { AckItem } from "../pr/ack";
 
 export class ApiError extends Error {
   constructor(
@@ -42,6 +42,36 @@ export const usePrs = () => useQuery({ queryKey: ["prs"], queryFn: async () => r
 export const useStatus = () => useQuery({ queryKey: ["status"], queryFn: async () => read<Status>(await api.api.status.$get()) });
 export const useSettings = () =>
   useQuery({ queryKey: ["settings"], queryFn: async () => read<SettingsDto>(await api.api.settings.$get()) });
+
+export const usePr = (id: number) =>
+  useQuery({ queryKey: ["pr", id], queryFn: async () => read<PrDetail>(await api.api.prs[":id"].$get({ param: { id: String(id) } })) });
+
+export const claimEvents = async () => read<ClaimedEvent[]>(await api.api.notifications.claim.$post());
+
+// keepalive: the request also completes when the page closes.
+export const sendRead = async (pr: number, items: AckItem[]) =>
+  read<{ updated: number }>(await api.api.read.$post({ json: { pr, items } }, { init: { keepalive: true } }));
+
+export function useFollow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, followed }: { id: number; followed: boolean }) =>
+      read<FollowState>(await api.api.prs[":id"].follow.$post({ param: { id: String(id) }, json: { followed } })),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["prs"] });
+      qc.invalidateQueries({ queryKey: ["pr", id] });
+    },
+  });
+}
+
+export function useArchive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, archived }: { id: number; archived: boolean }) =>
+      read<FollowState>(await api.api.prs[":id"].archive.$post({ param: { id: String(id) }, json: { archived } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["prs"] }),
+  });
+}
 
 export function useCheckNow() {
   const qc = useQueryClient();

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SyncStatus } from "../../src/server/sync/engine";
-import type { PrRow } from "../../src/shared/dto";
+import type { PrRow, SyncStatus } from "../../src/shared/dto";
 import {
   ago,
   badges,

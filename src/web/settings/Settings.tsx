@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import type { SettingsDto } from "../../shared/dto";
+import { notifyPermission } from "../notify";
 import { useSaveSettings } from "../shell/data";
 
 export function Settings({
@@ -119,7 +120,53 @@ export function Settings({
             )}
           </div>
         </form>
+        {settings.baseUrl !== null && <Notifications settings={settings} />}
       </div>
     </>
+  );
+}
+
+const PERMISSION_NOTE: Partial<Record<ReturnType<typeof notifyPermission>, string>> = {
+  denied: "This browser blocks notifications for Review Loop. Allow them in the site settings. The inbox badges still show new activity.",
+  unsupported: "This browser does not support notifications. The inbox badges still show new activity.",
+};
+
+function Notifications({ settings }: { settings: SettingsDto }) {
+  const save = useSaveSettings();
+  const [permission, setPermission] = useState(notifyPermission);
+  const on = settings.notifications && permission === "granted";
+
+  async function toggle() {
+    let next = !on;
+    if (next && permission !== "granted") {
+      const p = permission === "default" ? await Notification.requestPermission() : permission;
+      setPermission(p);
+      next = p === "granted";
+    }
+    // Only the notifications flag changes, so the server saves without a Bitbucket request.
+    if (next !== settings.notifications)
+      save.mutate({ baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", notifications: next });
+  }
+
+  const note = PERMISSION_NOTE[permission];
+  return (
+    <section aria-labelledby="notify-title" className="mt-6 grid max-w-[560px] gap-2 border-t pt-4">
+      <h2 id="notify-title" className="m-0 text-[14px] font-semibold">
+        Notifications
+      </h2>
+      <label className="flex cursor-pointer items-center gap-2.5">
+        <input
+          type="checkbox"
+          className="size-4 accent-primary"
+          checked={on}
+          disabled={save.isPending || permission === "unsupported"}
+          onChange={() => void toggle()}
+        />
+        Show a desktop notification for new activity
+      </label>
+      <p className="m-0 text-[12.5px] text-muted-foreground">One notification per pull request. Several open tabs never repeat it.</p>
+      {note && <p className="m-0 text-[12.5px] text-warn">{note}</p>}
+      {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
+    </section>
   );
 }

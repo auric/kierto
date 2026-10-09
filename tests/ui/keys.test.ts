@@ -81,3 +81,19 @@ describe("typing, help, and settings", () => {
     expect(reduceKey(S, "n", C).handled).toBe(false);
   });
 });
+
+describe("detail keys", () => {
+  test("n and 1 to 3 move focus to the detail and name their effect", () => {
+    const r = reduceKey({ ...S, selected: 20 }, "n", C);
+    expect(r.state).toMatchObject({ focus: "detail", mobile: "detail" });
+    expect(r.effect).toBe("next-new");
+    expect(reduceKey({ ...S, selected: 20, focus: "detail" }, "1", C).effect).toBe("tab-1");
+    expect(reduceKey({ ...S, selected: 20 }, "3", C).effect).toBe("tab-3");
+  });
+
+  test("detail keys do nothing without a PR or while typing", () => {
+    expect(reduceKey(S, "n", C).handled).toBe(false);
+    expect(reduceKey({ ...S, selected: 20 }, "n", { ...C, typing: true }).handled).toBe(false);
+    expect(reduceKey({ ...S, selected: 20, settings: true }, "n", { ...C, settingsLocked: true }).handled).toBe(false);
+  });
+});

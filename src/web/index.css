@@ -254,3 +254,66 @@
     display: none;
   }
 }
+
+/* Detail tabs (prototype/index.html:160). */
+.rl-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rl-tab[aria-selected="true"] {
+  color: var(--foreground);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+.rl-tab[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Comment Markdown. */
+.rl-md > :first-child {
+  margin-top: 0;
+}
+.rl-md > :last-child {
+  margin-bottom: 0;
+}
+.rl-md :where(p, ul, ol, pre, blockquote) {
+  margin: 0 0 0.5em;
+}
+.rl-md :where(ul, ol) {
+  padding-left: 1.4em;
+}
+.rl-md ul {
+  list-style: disc;
+}
+.rl-md ol {
+  list-style: decimal;
+}
+.rl-md a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.rl-md code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.rl-md pre {
+  overflow-x: auto;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--muted);
+}
+.rl-md blockquote {
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+}

@@ -4,13 +4,26 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Toaster, toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import type { View } from "../shared/views";
+import { VIEWS, type View } from "../shared/views";
 import { type Effect, type KeyState, reduceKey } from "./keys";
 import { useLive } from "./live";
-import { PrDetail } from "./pr/PrDetail";
+import { useClaims } from "./notify";
+import { jumpTo, PrDetail } from "./pr/PrDetail";
 import { Settings } from "./settings/Settings";
-import { isStale, isStopped, retry, type Status, useCheckNow, useFollowUrl, usePrs, useSettings, useStatus } from "./shell/data";
+import {
+  claimEvents,
+  isStale,
+  isStopped,
+  retry,
+  type Status,
+  useCheckNow,
+  useFollowUrl,
+  usePrs,
+  useSettings,
+  useStatus,
+} from "./shell/data";
 import { HelpSheet } from "./shell/HelpSheet";
 import { ListPane } from "./shell/ListPane";
 import { filterRows, followCandidate, incompleteText, repoCounts, statusInfo, unreadTotal, viewCounts } from "./shell/model";
@@ -31,7 +44,9 @@ export function App() {
   useLive(qc);
   return (
     <QueryClientProvider client={qc}>
-      <Shell stale={stale} />
+      <Toaster>
+        <Shell stale={stale} />
+      </Toaster>
     </QueryClientProvider>
   );
 }
@@ -67,6 +82,17 @@ function Shell({ stale }: { stale: boolean }) {
   const state: KeyState = { ...ks, selected };
   const mobile = showSettings && locked ? "detail" : ks.mobile;
 
+  // A notification click opens its PR in a view that holds it. A digest opens Needs you.
+  useClaims(claimEvents, s !== undefined, !!s?.notifications, (id) => {
+    const pr = id === null ? undefined : all.find((p) => p.id === id);
+    const v = pr ? ((Object.keys(VIEWS) as View[]).find((x) => VIEWS[x](pr)) ?? "following") : "needs";
+    setView(v);
+    setRepo(null);
+    setQuery("");
+    if (pr) go({ selected: pr.id, settings: locked, focus: "detail", mobile: "detail" }, "focus-detail");
+    else go({ settings: locked, focus: "list", mobile: "list" }, "focus-list");
+  });
+
   useEffect(() => {
     document.title = unread > 0 ? `(${unread}) Review Loop` : "Review Loop";
   }, [unread]);
@@ -83,7 +109,19 @@ function Shell({ stale }: { stale: boolean }) {
     } else if (effect === "focus-detail") detailRef.current?.focus({ preventScroll: true });
     else if (effect === "scroll-down" || effect === "scroll-up") {
       detailRef.current?.querySelector("[data-scroll]")?.scrollBy({ top: effect === "scroll-down" ? 80 : -80 });
-    }
+    } else if (effect === "next-new") {
+      const marks = [...(detailRef.current?.querySelectorAll<HTMLElement>("[data-new]") ?? [])];
+      const at = document.activeElement;
+      const next = marks.find(
+        (el) => at instanceof Node && at !== el && !!(at.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING),
+      );
+      if (next) jumpTo(next);
+      else {
+        detailRef.current?.focus({ preventScroll: true });
+        toast.add({ title: "No unread message left." });
+      }
+    } else if (effect === "tab-1") document.getElementById("tab-activity")?.focus();
+    else if (effect === "tab-2" || effect === "tab-3") toast.add({ title: `${effect === "tab-2" ? "Review" : "Run log"} arrives in M2.` });
   });
 
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -186,7 +224,7 @@ function Shell({ stale }: { stale: boolean }) {
           <>
             <BackBar onBack={() => go({ mobile: "list", focus: "list" }, "focus-list")} />
             <div data-scroll className="flex-1 overflow-auto overscroll-contain">
-              <PrDetail pr={current} />
+              <PrDetail key={current.id} pr={current} me={s?.user ?? null} />
             </div>
           </>
         ) : (

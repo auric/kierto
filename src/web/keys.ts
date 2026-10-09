@@ -23,7 +23,17 @@ export type KeyContext = {
   settingsLocked: boolean;
 };
 
-export type Effect = "focus-filter" | "focus-list" | "focus-detail" | "scroll-down" | "scroll-up" | null;
+export type Effect =
+  | "focus-filter"
+  | "focus-list"
+  | "focus-detail"
+  | "scroll-down"
+  | "scroll-up"
+  | "next-new"
+  | "tab-1"
+  | "tab-2"
+  | "tab-3"
+  | null;
 
 export type KeyResult = { state: KeyState; effect: Effect; handled: boolean };
 
@@ -66,6 +76,15 @@ export function reduceKey(s: KeyState, key: string, ctx: KeyContext): KeyResult 
       return done({ ...s, focus: "detail", mobile: "detail", settings: ctx.settingsLocked && s.settings }, "focus-detail");
     case "ArrowLeft":
       return back(s, ctx);
+    case "n":
+    case "1":
+    case "2":
+    case "3": {
+      // Detail keys. They need a PR in the detail pane.
+      if (s.selected === null || !ctx.ids.includes(s.selected) || (s.settings && ctx.settingsLocked)) return ignore(s);
+      const state = { ...s, focus: "detail" as const, mobile: "detail" as const, settings: false };
+      return done(state, key === "n" ? "next-new" : `tab-${key}`);
+    }
     default:
       return ignore(s);
   }
@@ -77,5 +96,8 @@ export const HELP_KEYS: { keys: string[]; text: string }[] = [
   { keys: ["Enter", "→"], text: "Go into the detail pane" },
   { keys: ["Esc", "←"], text: "Back to the list" },
   { keys: ["/"], text: "Filter the list" },
+  { keys: ["n"], text: "Next new message in the detail pane" },
+  { keys: ["1"], text: "Activity tab" },
+  { keys: ["2", "3"], text: "Review and Run log tabs. They arrive in M2." },
   { keys: ["?"], text: "Show or hide this sheet" },
 ];

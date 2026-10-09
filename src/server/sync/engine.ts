@@ -1,5 +1,5 @@
 // Polling sync (plan G4): dashboard, PR states, comments, delete checks, events. One cycle at a time.
-import type { CheckpointReason } from "../../shared/dto";
+import type { CheckpointReason, SyncState, SyncStatus } from "../../shared/dto";
 import type { ForgeErrorInfo, IncompleteReason, PrRef, PullRequest } from "../../shared/types";
 import { ForgeError } from "../bitbucket/client";
 import type { ForgeProvider } from "../bitbucket/provider";
@@ -12,20 +12,6 @@ const DIGEST_GAP_MS = 120_000;
 const NETWORK = new Set(["network", "timeout"]);
 
 export type Timers = { set(fn: () => unknown, ms: number): unknown; clear(handle: unknown): void };
-
-// offline: no request reached the server. auth: 401, paused until the settings change. unconfigured: no settings or no token, paused.
-// error: a local failure; a CA file error pauses until the settings change.
-export type SyncState = "idle" | "ok" | "offline" | "auth" | "unconfigured" | "error";
-
-export type SyncStatus = {
-  running: boolean;
-  state: SyncState;
-  // Local clock in ms: the start of the last cycle that ended "ok".
-  lastCompleteAt: number | null;
-  // Local clock in ms. null while a cycle runs or polling is paused.
-  nextAt: number | null;
-  error: string | null;
-};
 
 type Params = Record<string, string | number | null>;
 type PrKey = { id: number; project: string; repo: string; pr_id: number };

@@ -1,4 +1,4 @@
-import type { PrRef } from "../../shared/types";
+import type { PrRef } from "./types";
 
 // Parses a project or personal PR web URL. The origin must equal the base origin, so the token never goes to another host.
 export function parsePrUrl(input: string, baseUrl: string): PrRef {
