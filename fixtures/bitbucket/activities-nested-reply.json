@@ -1,0 +1,125 @@
+{
+  "status": 200,
+  "body": {
+    "size": 2,
+    "limit": 50,
+    "isLastPage": true,
+    "values": [
+      {
+        "id": 10000001,
+        "createdDate": 1791571356990,
+        "user": {
+          "name": "jdoe",
+          "emailAddress": "jdoe@example.test",
+          "active": true,
+          "displayName": "Jane Doe",
+          "id": 10001,
+          "slug": "jdoe",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.test/users/jdoe"
+              }
+            ]
+          }
+        },
+        "action": "COMMENTED",
+        "commentAction": "ADDED",
+        "comment": {
+          "properties": {
+            "repositoryId": 10002
+          },
+          "id": 1000003,
+          "version": 1,
+          "text": "[review-loop gate0 probe, safe to ignore] general, edited",
+          "author": {
+            "name": "jdoe",
+            "emailAddress": "jdoe@example.test",
+            "active": true,
+            "displayName": "Jane Doe",
+            "id": 10001,
+            "slug": "jdoe",
+            "type": "NORMAL",
+            "links": {
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/users/jdoe"
+                }
+              ]
+            }
+          },
+          "createdDate": 1791571356986,
+          "updatedDate": 1791571357259,
+          "comments": [
+            {
+              "properties": {
+                "repositoryId": 10002
+              },
+              "id": 1000001,
+              "version": 0,
+              "text": "[review-loop gate0 probe, safe to ignore] reply",
+              "author": {
+                "name": "jdoe",
+                "emailAddress": "jdoe@example.test",
+                "active": true,
+                "displayName": "Jane Doe",
+                "id": 10001,
+                "slug": "jdoe",
+                "type": "NORMAL",
+                "links": {
+                  "self": [
+                    {
+                      "href": "https://bitbucket.example.test/users/jdoe"
+                    }
+                  ]
+                }
+              },
+              "createdDate": 1791571357532,
+              "updatedDate": 1791571357532,
+              "comments": [],
+              "threadResolved": false,
+              "severity": "NORMAL",
+              "state": "OPEN",
+              "permittedOperations": {
+                "editable": true,
+                "transitionable": true,
+                "deletable": true
+              }
+            }
+          ],
+          "threadResolved": false,
+          "severity": "NORMAL",
+          "state": "OPEN",
+          "permittedOperations": {
+            "editable": true,
+            "transitionable": true,
+            "deletable": true
+          }
+        }
+      },
+      {
+        "id": 10000002,
+        "createdDate": 1791569832748,
+        "user": {
+          "name": "jdoe",
+          "emailAddress": "jdoe@example.test",
+          "active": true,
+          "displayName": "Jane Doe",
+          "id": 10001,
+          "slug": "jdoe",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.test/users/jdoe"
+              }
+            ]
+          }
+        },
+        "action": "OPENED"
+      }
+    ],
+    "start": 0
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "status": 404,
+  "body": {
+    "errors": [
+      {
+        "message": "Comment 1,000,003 does not exist."
+      }
+    ]
+  }
+}

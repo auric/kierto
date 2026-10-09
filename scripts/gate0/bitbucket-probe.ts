@@ -144,9 +144,7 @@ if (prRes.status !== 200) {
   process.exit(1);
 }
 const PR = prRes.json;
-console.log(`PR title: ${PR.title}`);
-console.log(`PR author: ${PR.author?.user?.displayName ?? PR.author?.user?.name}`);
-console.log(`PR state: ${PR.state}; mode: ${WRITE ? "READ + WRITE" : "read only"}`);
+console.log(`PR id: ${PR.id}; state: ${PR.state}; mode: ${WRITE ? "READ + WRITE" : "read only"}`);
 console.log(`pull-request shape keys: ${Object.keys(PR).join(",")}`);
 
 console.log("\n[read]");

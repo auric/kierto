@@ -1,0 +1,9 @@
+{
+  "status": 200,
+  "body": {
+    "version": "9.4.26",
+    "buildNumber": "9004026",
+    "buildDate": "1790940344877",
+    "displayName": "Bitbucket"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "status": 200,
+  "body": {
+    "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a",
+    "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+    "properties": {
+      "changeScope": "ALL"
+    },
+    "values": [
+      {
+        "contentId": "aa2f0c304e24153d09e431250ddab528cbc610a6",
+        "fromContentId": "fc1452bf99e5af4f88bad053194ae145cfe4f814",
+        "path": {
+          "components": [
+            "sample1.md"
+          ],
+          "parent": "",
+          "name": "sample1.md",
+          "extension": "md",
+          "toString": "sample1.md"
+        },
+        "executable": false,
+        "percentUnchanged": -1,
+        "type": "MODIFY",
+        "nodeType": "FILE",
+        "srcExecutable": false,
+        "links": {
+          "self": [
+            null
+          ]
+        },
+        "properties": {
+          "gitChangeType": "MODIFY"
+        }
+      }
+    ],
+    "size": 1,
+    "isLastPage": true,
+    "start": 0,
+    "limit": 100,
+    "nextPageStart": null
+  }
+}

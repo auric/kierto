@@ -1,0 +1,32 @@
+{
+  "status": 200,
+  "body": {
+    "size": 1,
+    "limit": 50,
+    "isLastPage": true,
+    "values": [
+      {
+        "id": 10000002,
+        "createdDate": 1791569832748,
+        "user": {
+          "name": "jdoe",
+          "emailAddress": "jdoe@example.test",
+          "active": true,
+          "displayName": "Jane Doe",
+          "id": 10001,
+          "slug": "jdoe",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.test/users/jdoe"
+              }
+            ]
+          }
+        },
+        "action": "OPENED"
+      }
+    ],
+    "start": 0
+  }
+}

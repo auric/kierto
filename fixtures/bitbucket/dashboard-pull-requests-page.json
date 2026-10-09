@@ -1,0 +1,193 @@
+{
+  "status": 200,
+  "body": {
+    "size": 1,
+    "limit": 1,
+    "isLastPage": false,
+    "values": [
+      {
+        "id": 2,
+        "version": 0,
+        "title": "Sample pull request",
+        "state": "OPEN",
+        "open": true,
+        "closed": false,
+        "draft": false,
+        "createdDate": 1791569832730,
+        "updatedDate": 1791569832730,
+        "fromRef": {
+          "id": "refs/heads/topic/sample-1",
+          "displayId": "topic/sample-1",
+          "latestCommit": "ba939ffe19df61d874683e85bb168c1769985d23",
+          "type": "BRANCH",
+          "repository": {
+            "slug": "sample-repo-1",
+            "id": 10002,
+            "name": "sample-repo-1",
+            "hierarchyId": "de6650b3472043096d9e",
+            "scmId": "git",
+            "state": "AVAILABLE",
+            "statusMessage": "Available",
+            "forkable": true,
+            "project": {
+              "key": "~JDOE",
+              "id": 1004,
+              "name": "Jane Doe",
+              "type": "PERSONAL",
+              "owner": {
+                "name": "jdoe",
+                "emailAddress": "jdoe@example.test",
+                "active": true,
+                "displayName": "Jane Doe",
+                "id": 10001,
+                "slug": "jdoe",
+                "type": "NORMAL",
+                "links": {
+                  "self": [
+                    {
+                      "href": "https://bitbucket.example.test/users/jdoe"
+                    }
+                  ]
+                }
+              },
+              "links": {
+                "self": [
+                  {
+                    "href": "https://bitbucket.example.test/users/jdoe"
+                  }
+                ]
+              }
+            },
+            "public": false,
+            "partition": 23,
+            "archived": false,
+            "links": {
+              "clone": [
+                {
+                  "href": "https://bitbucket.example.test/scm/~jdoe/sample-repo-1.git",
+                  "name": "http"
+                },
+                {
+                  "href": "ssh://git@bitbucket.example.test:7999/~jdoe/sample-repo-1.git",
+                  "name": "ssh"
+                }
+              ],
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/users/jdoe/repos/sample-repo-1/browse"
+                }
+              ]
+            }
+          }
+        },
+        "toRef": {
+          "id": "refs/heads/topic/sample-2",
+          "displayId": "topic/sample-2",
+          "latestCommit": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a",
+          "type": "BRANCH",
+          "repository": {
+            "slug": "sample-repo-1",
+            "id": 10002,
+            "name": "sample-repo-1",
+            "hierarchyId": "de6650b3472043096d9e",
+            "scmId": "git",
+            "state": "AVAILABLE",
+            "statusMessage": "Available",
+            "forkable": true,
+            "project": {
+              "key": "~JDOE",
+              "id": 1004,
+              "name": "Jane Doe",
+              "type": "PERSONAL",
+              "owner": {
+                "name": "jdoe",
+                "emailAddress": "jdoe@example.test",
+                "active": true,
+                "displayName": "Jane Doe",
+                "id": 10001,
+                "slug": "jdoe",
+                "type": "NORMAL",
+                "links": {
+                  "self": [
+                    {
+                      "href": "https://bitbucket.example.test/users/jdoe"
+                    }
+                  ]
+                }
+              },
+              "links": {
+                "self": [
+                  {
+                    "href": "https://bitbucket.example.test/users/jdoe"
+                  }
+                ]
+              }
+            },
+            "public": false,
+            "partition": 23,
+            "archived": false,
+            "links": {
+              "clone": [
+                {
+                  "href": "https://bitbucket.example.test/scm/~jdoe/sample-repo-1.git",
+                  "name": "http"
+                },
+                {
+                  "href": "ssh://git@bitbucket.example.test:7999/~jdoe/sample-repo-1.git",
+                  "name": "ssh"
+                }
+              ],
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/users/jdoe/repos/sample-repo-1/browse"
+                }
+              ]
+            }
+          }
+        },
+        "locked": false,
+        "author": {
+          "user": {
+            "name": "jdoe",
+            "emailAddress": "jdoe@example.test",
+            "active": true,
+            "displayName": "Jane Doe",
+            "id": 10001,
+            "slug": "jdoe",
+            "type": "NORMAL",
+            "links": {
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/users/jdoe"
+                }
+              ]
+            }
+          },
+          "role": "AUTHOR",
+          "approved": false,
+          "status": "UNAPPROVED"
+        },
+        "reviewers": [],
+        "participants": [],
+        "properties": {
+          "mergeResult": {
+            "outcome": "CLEAN",
+            "current": true
+          },
+          "resolvedTaskCount": 0,
+          "commentCount": 0,
+          "openTaskCount": 0
+        },
+        "links": {
+          "self": [
+            {
+              "href": "https://bitbucket.example.test/users/jdoe/repos/sample-repo-1/pull-requests/2"
+            }
+          ]
+        }
+      }
+    ],
+    "start": 0,
+    "nextPageStart": 1
+  }
+}
