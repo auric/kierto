@@ -1,0 +1,1070 @@
+<title>Review Loop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: full-window app grid = sidebar | list pane | detail pane. Each pane scrolls itself. Rail at 760-1099px, one pane at a time below 760px. */
+:root {
+  --background: #eceff3;
+  --card: #f8f9fb;
+  --foreground: #17202b;
+  --muted: #e1e5eb;
+  --muted-foreground: #5a6573;
+  --border: #cfd5dd;
+  --accent: #2647c9;
+  --accent-foreground: #ffffff;
+  --accent-soft: #dfe5fa;
+  --ok: #2b7a45;
+  --sev-blocker: #b8282f;
+  --sev-major: #b8650c;
+  --sev-minor: #29788a;
+  --sev-nit: #7a808a;
+  --overlay: rgba(23, 32, 43, .45);
+  --sidebar: #e2e6ec;
+  --pane: #fbfcfd;
+  --pane-2: #f2f4f7;
+  --hover: #e7ebf0;
+  --code: #f1f3f6;
+  --mark: #fbecd2;
+  --font-ui: "Schibsted Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: #1a1f27; --card: #262d38; --foreground: #dbe1e9; --muted: #2a313c; --muted-foreground: #8e98a5;
+    --border: #343c48; --accent: #8aa2ff; --accent-foreground: #111726; --accent-soft: #2a3354; --ok: #63c483;
+    --sev-blocker: #f06b6f; --sev-major: #e89c48; --sev-minor: #5cb6c7; --sev-nit: #9aa0aa; --overlay: rgba(5, 8, 12, .6);
+    --sidebar: #14181e; --pane: #212731; --pane-2: #1a1f27; --hover: #2a313c; --code: #1a1f27; --mark: #3b3222;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --background: #1a1f27; --card: #262d38; --foreground: #dbe1e9; --muted: #2a313c; --muted-foreground: #8e98a5;
+  --border: #343c48; --accent: #8aa2ff; --accent-foreground: #111726; --accent-soft: #2a3354; --ok: #63c483;
+  --sev-blocker: #f06b6f; --sev-major: #e89c48; --sev-minor: #5cb6c7; --sev-nit: #9aa0aa; --overlay: rgba(5, 8, 12, .6);
+  --sidebar: #14181e; --pane: #212731; --pane-2: #1a1f27; --hover: #2a313c; --code: #1a1f27; --mark: #3b3222;
+  color-scheme: dark;
+}
+html { height: 100%; box-sizing: border-box; }
+*, *::before, *::after { box-sizing: inherit; }
+body { height: 100%; margin: 0; overflow: hidden; background: var(--background); color: var(--foreground); font: 13.5px/1.45 var(--font-ui); font-variant-numeric: tabular-nums; }
+.mono, code, pre, kbd { font-family: var(--font-mono); font-size: 12px; }
+a { color: var(--accent); }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+kbd { display: inline-block; min-width: 1.6em; padding: 0 .35em; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--card); color: var(--muted-foreground); font-size: 11px; line-height: 1.5; text-align: center; }
+.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.spacer { flex: 1; }
+.m-only { display: none; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* App grid */
+#app { height: 100%; display: grid; grid-template-columns: 224px minmax(320px, 368px) minmax(0, 1fr); }
+#app > * { min-height: 0; min-width: 0; }
+.pane-edge { box-shadow: inset 0 2px 0 var(--accent); }
+
+/* Sidebar */
+#side { background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 16px 16px 10px; font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
+.brand-mark { width: 14px; height: 14px; flex: none; border: 2px solid var(--accent); border-radius: 50%; border-right-color: transparent; transform: rotate(-45deg); }
+.nav { flex: 1; overflow: auto; padding: 6px 8px 12px; display: grid; align-content: start; gap: 14px; }
+.ngroup { display: grid; gap: 1px; }
+.ntitle { font-size: 11.5px; font-weight: 600; color: var(--muted-foreground); padding: 4px 8px; }
+.nav-item { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; text-align: left; min-width: 0; }
+.nav-item:hover { background: var(--hover); }
+.nav-item.on { background: var(--pane); box-shadow: 0 0 0 1px var(--border); font-weight: 600; }
+.nav-item .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-item .repo-name { font-size: 11.5px; }
+.cnt { margin-left: auto; font-size: 12px; color: var(--muted-foreground); font-weight: 500; }
+.nav-item.has-unread .cnt { color: var(--accent); font-weight: 700; }
+.abbr { display: none; font: 700 11px var(--font-mono); width: 22px; text-align: center; }
+.ntoggle .caret { margin-left: auto; transition: transform .15s; }
+.ntoggle[aria-expanded="false"] .caret { transform: rotate(-90deg); }
+.live { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.side-foot { border-top: 1px solid var(--border); padding: 10px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sync { flex: 1 1 100%; display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted-foreground); padding: 0 2px 4px; }
+.sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
+.icon-btn { display: inline-grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; flex: none; }
+.icon-btn:hover { background: var(--hover); color: var(--foreground); }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 11.5px; color: var(--muted-foreground); white-space: nowrap; }
+.side-foot .chip { margin-left: auto; }
+
+/* List pane */
+#listPane { background: var(--pane-2); border-right: 1px solid var(--border); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.lhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+.lhead h2 { margin: 0; font-size: 15px; letter-spacing: -.01em; }
+#viewCount { color: var(--muted-foreground); font-size: 13px; }
+.repo-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--pane); font: 11.5px var(--font-mono); cursor: pointer; color: var(--muted-foreground); }
+.repo-chip:hover { color: var(--foreground); }
+.repo-chip .ic { width: 12px; height: 12px; }
+.filter { flex: 1 1 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--pane); }
+.filter::placeholder { color: var(--muted-foreground); }
+#rows { overflow: auto; overscroll-behavior: contain; }
+.row { display: grid; gap: 3px; width: 100%; padding: 9px 16px 10px 12px; border: 0; border-bottom: 1px solid var(--border); background: transparent; text-align: left; cursor: pointer; }
+.row:hover { background: var(--hover); }
+.row.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.row.moved { animation: arrive 1.4s ease-out; }
+@keyframes arrive { from { background: var(--accent-soft); transform: translateY(8px); } }
+.r1 { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--muted-foreground); }
+.udot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.unread .udot { background: var(--accent); }
+.rkey { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.rtime { flex: none; font-size: 11.5px; }
+.r2, .r3 { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 15px; }
+.r3 { flex-wrap: wrap; gap: 4px; }
+.rtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.unread .rtitle { font-weight: 700; }
+.rsub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-foreground); font-size: 12.5px; }
+.badge { font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-weight: 600; white-space: nowrap; }
+.row.sel .badge { background: var(--pane); }
+.badge.commits { background: var(--muted); color: var(--foreground); }
+.empty { padding: 32px 16px; color: var(--muted-foreground); }
+.pane-hint { margin: 0; padding: 7px 16px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.av { width: 22px; height: 22px; border-radius: 50%; background: var(--muted); color: var(--muted-foreground); font-size: 9.5px; font-weight: 700; display: inline-grid; place-items: center; flex: none; }
+.rdot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted-foreground); }
+.rdot.running { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.rdot.done { background: var(--ok); }
+.rdot.failed { background: var(--sev-blocker); }
+
+/* Detail pane */
+#detail { background: var(--pane); display: flex; flex-direction: column; container-type: inline-size; }
+.dhead { padding: 16px 24px 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--border); }
+.dtop { display: flex; align-items: flex-start; gap: 12px; }
+.dhead h1 { margin: 0; flex: 1; min-width: 0; font-size: 19px; line-height: 1.3; letter-spacing: -.012em; text-wrap: balance; }
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--muted-foreground); font-size: 12.5px; }
+.meta .mono { font-size: 11.5px; overflow-wrap: anywhere; }
+.who { display: inline-flex; align-items: center; gap: 6px; }
+.stack { display: inline-flex; padding-left: 4px; }
+.stack .av { margin-left: -4px; box-shadow: 0 0 0 2px var(--pane), 0 0 0 3.5px var(--ring, var(--border)); }
+.ring-ok { --ring: var(--ok); }
+.ring-work { --ring: var(--sev-major); }
+.link-ic { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+.link-ic:hover { text-decoration: underline; }
+.link-ic .ic { width: 13px; height: 13px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--muted-foreground); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-foreground); font-weight: 600; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn[aria-pressed="true"] { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+.btn .ic { width: 14px; height: 14px; }
+.split { position: relative; display: inline-flex; flex: none; }
+.split > .btn.primary:first-child { border-radius: 6px 0 0 6px; }
+.split > .caret-btn { border-radius: 0 6px 6px 0; padding: 5px 6px; border-left-color: var(--pane); }
+.menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; width: 260px; display: grid; padding: 4px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 28px var(--overlay); }
+.menu button { display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; padding: 7px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; }
+.menu button:hover, .menu button:focus-visible { background: var(--hover); }
+.menu small { grid-column: 2; color: var(--muted-foreground); font-size: 11.5px; }
+.menu .ic { width: 14px; height: 14px; margin-top: 2px; color: var(--accent); }
+.tabs { display: flex; align-items: center; gap: 2px; padding: 0 24px; border-bottom: 1px solid var(--border); overflow-x: auto; flex: none; }
+.tab { display: inline-flex; align-items: center; gap: 6px; padding: 9px 10px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--muted-foreground); cursor: pointer; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--foreground); border-bottom-color: var(--accent); font-weight: 600; }
+.tcount { font-size: 11.5px; padding: 0 6px; border-radius: 999px; background: var(--muted); color: var(--foreground); font-weight: 600; }
+.ready-pill { font-size: 11px; padding: 0 7px; border-radius: 999px; background: var(--accent); color: var(--accent-foreground); font-weight: 600; }
+.dhint { margin-left: auto; padding-left: 16px; color: var(--muted-foreground); font-size: 11.5px; white-space: nowrap; }
+.dbody { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 18px 24px 24px; }
+.calm { max-width: 52ch; margin: 40px auto; display: grid; gap: 12px; justify-items: start; color: var(--muted-foreground); }
+.calm h2 { margin: 0; font-size: 16px; color: var(--foreground); }
+.calm p { margin: 0; }
+
+/* Timeline */
+.tl { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--border); max-width: 760px; }
+.ev { position: relative; padding: 0 0 16px 18px; }
+.ev::before { content: ""; position: absolute; left: -4px; top: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+.ev.new::before { background: var(--accent); }
+.ev.new > .ev-body { background: var(--accent-soft); border-color: transparent; }
+.ev.arrive > .ev-body { animation: flash 2.4s ease-out; }
+@keyframes flash { 0%, 30% { box-shadow: 0 0 0 3px var(--accent); } }
+.ev-head { color: var(--muted-foreground); font-size: 12.5px; }
+.ev-head b { color: var(--foreground); font-weight: 600; }
+.ev-body { margin-top: 5px; padding: 8px 11px; border-radius: 6px; background: var(--card); border: 1px solid var(--border); min-width: 0; overflow-wrap: anywhere; }
+.ev-body p { margin: 0; }
+.reply { padding: 4px 0 4px 10px; border-left: 2px solid var(--accent); }
+.reply + .reply { margin-top: 6px; }
+.reply.old { border-left-color: var(--border); color: var(--muted-foreground); }
+.divider { display: flex; align-items: center; gap: 8px; margin: 2px 0 16px 14px; color: var(--accent); font-size: 12px; font-weight: 600; }
+.divider::after { content: ""; flex: 1; height: 1px; background: var(--accent); }
+
+/* Run log */
+.runhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
+.status.done { color: var(--ok); }
+.status.failed { color: var(--sev-blocker); }
+.status.running { color: var(--accent); }
+.status.cancelled { color: var(--muted-foreground); }
+.log { margin: 0; padding: 0; list-style: none; font-family: var(--font-mono); font-size: 11.5px; border: 1px solid var(--border); border-radius: 6px; background: var(--code); }
+.log li { display: grid; grid-template-columns: 44px minmax(0, 1fr) 84px; gap: 8px; padding: 5px 10px; border-bottom: 1px solid var(--border); align-items: start; }
+.log li:last-child { border-bottom: 0; }
+.st { font-weight: 600; }
+.st.ok { color: var(--ok); }
+.st.error { color: var(--sev-blocker); }
+.st.run { color: var(--accent); }
+.st.run::after { content: "…"; animation: pulse 1s steps(2) infinite; }
+.st.cancel { color: var(--muted-foreground); }
+.call { min-width: 0; overflow-wrap: anywhere; }
+.call b { font-weight: 600; }
+.note { display: block; color: var(--muted-foreground); }
+.note.error { color: var(--sev-blocker); }
+.dur { display: grid; gap: 3px; text-align: right; color: var(--muted-foreground); }
+.dur i { display: block; height: 3px; border-radius: 2px; background: var(--muted); }
+.dur i span { display: block; height: 100%; border-radius: 2px; background: var(--accent); margin-left: auto; }
+li.err .dur i span { background: var(--sev-blocker); }
+.usage { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 10px; padding: 8px 10px; border-radius: 6px; background: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+
+/* Review tab */
+.summary { margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.summary summary { padding: 9px 12px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+.summary summary::-webkit-details-marker { display: none; }
+.summary summary::before { content: "▸"; color: var(--muted-foreground); transition: transform .15s; }
+.summary[open] summary::before { transform: rotate(90deg); }
+.summary .more { padding: 0 12px 12px 28px; display: grid; gap: 8px; max-width: 80ch; }
+.summary .more p, .summary .more ul { margin: 0; }
+.summary .more ul { padding-left: 18px; }
+.summary h3 { margin: 0; font-size: 12.5px; }
+.tri { display: grid; grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.ilist { position: sticky; top: 0; display: grid; gap: 1px; padding: 4px; margin: -4px; border-radius: 8px; }
+.ilist.pane-edge { box-shadow: inset 0 0 0 1px var(--accent); }
+.igroup { padding: 6px 8px 3px; font-size: 11.5px; font-weight: 600; color: var(--muted-foreground); }
+.irow { display: grid; grid-template-columns: 22px minmax(0, 1fr) 14px; gap: 1px 8px; align-items: center; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; }
+.irow:hover { background: var(--hover); }
+.irow.sel { background: var(--accent-soft); }
+.irow .if { font: 11px var(--font-mono); color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.irow .it { grid-column: 2 / 4; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.irow .ic { width: 14px; height: 14px; }
+.irow.st-discarded .it, .irow.st-discarded .if { text-decoration: line-through; color: var(--muted-foreground); }
+.st-accepted .sic, .st-edited .sic { color: var(--ok); }
+.st-posted .sic { color: var(--accent); }
+.st-discarded .sic { color: var(--muted-foreground); }
+.sv { grid-row: span 2; width: 22px; height: 22px; border-radius: 5px; display: grid; place-items: center; font: 700 11px var(--font-mono); color: var(--sev); border: 1.5px solid var(--sev); }
+.sv.s-blocker { background: var(--sev); color: var(--pane); }
+.s-blocker { --sev: var(--sev-blocker); }
+.s-major { --sev: var(--sev-major); }
+.s-minor { --sev: var(--sev-minor); }
+.s-nit { --sev: var(--sev-nit); }
+.s-question { --sev: var(--accent); }
+.idetail { display: grid; gap: 12px; min-width: 0; max-width: 820px; }
+.ihead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.sevtag { font-size: 12px; font-weight: 700; color: var(--sev); }
+.path { padding: 0; border: 0; background: none; color: var(--muted-foreground); font: 11.5px var(--font-mono); text-decoration: underline dotted; text-underline-offset: 3px; cursor: copy; overflow-wrap: anywhere; text-align: left; }
+.path:hover { color: var(--foreground); }
+.istate { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
+.istate.good { color: var(--ok); }
+.idetail h3 { margin: 0; font-size: 16px; line-height: 1.35; letter-spacing: -.01em; text-wrap: balance; }
+.discarded-note { color: var(--muted-foreground); text-decoration: line-through; }
+.code pre { margin: 0; padding: 8px 0; background: var(--code); border: 1px solid var(--border); border-radius: 6px; overflow-x: auto; line-height: 1.6; }
+.code code { display: inline-block; min-width: 100%; }
+.cl { display: block; padding-right: 14px; white-space: pre; }
+.cl.mark { background: var(--mark); box-shadow: inset 3px 0 0 var(--sev); }
+.ln { display: inline-block; width: 3.5ch; margin: 0 14px 0 10px; text-align: right; color: var(--muted-foreground); user-select: none; }
+.comment { padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); cursor: text; white-space: pre-wrap; }
+.comment:hover { border-color: var(--muted-foreground); }
+.comment.ro { cursor: default; }
+.comment.ro:hover { border-color: var(--border); }
+textarea, input[type="text"], input[type="url"], input[type="password"], select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--pane); }
+.idetail textarea { width: 100%; min-height: 120px; resize: vertical; line-height: 1.45; }
+.evidence { margin: 0; color: var(--muted-foreground); font-size: 12.5px; overflow-wrap: anywhere; }
+.evidence b { color: var(--foreground); font-weight: 600; }
+.iact { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hint { margin: 0; color: var(--muted-foreground); font-size: 12px; }
+@container (max-width: 640px) {
+  .tri { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .ilist { position: static; max-height: 230px; overflow: auto; border: 1px solid var(--border); margin: 0; }
+  .dhint { display: none; }
+}
+
+/* Post bar */
+.postbar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 24px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); background: var(--card); }
+.postbar .spacer { min-width: 8px; }
+
+/* Ready to post and settings */
+.rcards { display: grid; gap: 10px; max-width: 820px; }
+.rcard { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 4px 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.rcard .sv { grid-row: span 3; }
+.rcard p { margin: 0; }
+.settings { display: grid; gap: 16px; max-width: 560px; }
+.field { display: grid; gap: 4px; }
+.field label, legend { font-weight: 600; font-size: 12.5px; }
+.field small { color: var(--muted-foreground); font-size: 11.5px; }
+fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 10px; }
+.profile { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.profile textarea { min-height: 64px; resize: vertical; }
+
+/* Toast and sheet */
+.toast { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 40; max-width: min(380px, calc(100% - 32px)); padding: 10px 14px; border-radius: 8px; background: var(--foreground); color: var(--background); border: 0; text-align: left; cursor: pointer; box-shadow: 0 6px 24px var(--overlay); animation: up .25s ease-out; }
+.toast small { display: block; opacity: .7; }
+@keyframes up { from { transform: translateY(8px); opacity: 0; } }
+.overlay { position: fixed; inset: 0; z-index: 50; background: var(--overlay); display: grid; place-items: center; padding: 16px; }
+.sheet { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; width: min(440px, 100%); max-height: 100%; overflow: auto; }
+.sheet h2 { margin: 0 0 12px; font-size: 15px; }
+.sheet dl { display: grid; grid-template-columns: auto 1fr; gap: 7px 16px; margin: 0; }
+.sheet dd { margin: 0; }
+.sheet .grp { grid-column: 1 / -1; margin: 6px 0 0; font-size: 12px; color: var(--muted-foreground); }
+
+/* Rail: 760-1099px */
+@media (min-width: 760px) and (max-width: 1099px) {
+  #app { grid-template-columns: 60px minmax(300px, 340px) minmax(0, 1fr); }
+  #side .lbl, #side .cnt, #side .caret, .sync-text, .side-foot .chip { display: none; }
+  .brand { justify-content: center; padding: 16px 0 10px; }
+  .nav { padding: 6px 8px; gap: 8px; }
+  .ntitle { height: 1px; padding: 0; margin: 4px 6px; background: var(--border); overflow: hidden; color: transparent; }
+  .nav-item { justify-content: center; padding: 8px 0; }
+  .nav-item.has-count::after { content: ""; position: absolute; top: 4px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--sidebar); }
+  .nav-item .live { position: absolute; bottom: 4px; right: 6px; }
+  .abbr { display: inline-block; }
+  .side-foot { flex-direction: column; padding: 10px 0; }
+  .sync { flex: none; justify-content: center; padding: 0 0 4px; }
+}
+/* One pane at a time: below 760px */
+@media (max-width: 759px) {
+  #app { grid-template-columns: minmax(0, 1fr); }
+  #side, #listPane, #detail { display: none; }
+  #app[data-m="side"] #side { display: flex; }
+  #app[data-m="list"] #listPane { display: grid; }
+  #app[data-m="detail"] #detail { display: flex; }
+  #side { border-right: 0; }
+  .m-only { display: inline-grid; }
+  .pane-hint, .dhint { display: none; }
+  .dhead, .dbody { padding-inline: 16px; }
+  .tabs { padding-inline: 12px; }
+  .postbar { padding-inline: 16px; }
+  .dtop { flex-wrap: wrap; }
+  .log li { grid-template-columns: 36px minmax(0, 1fr) 56px; }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-needs" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
+  <symbol id="i-reviewing" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-mine" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-4"/><path d="M13 3.5 10.5 6 13 8.5"/></symbol>
+  <symbol id="i-runs" viewBox="0 0 24 24"><path d="m4 17 6-5-6-5"/><path d="M12 19h8"/></symbol>
+  <symbol id="i-post" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+</svg>
+
+<div id="app" data-m="list">
+  <nav id="side" aria-label="Views">
+    <div class="brand" title="Review Loop. All pull requests and people here are sample data."><span class="brand-mark" aria-hidden="true"></span><span class="lbl">Review Loop</span></div>
+    <div class="nav" id="nav"></div>
+    <div class="side-foot">
+      <div class="sync" title="Polling Bitbucket uses no tokens"><span class="sync-dot" aria-hidden="true"></span><span class="sync-text" id="syncText"></span></div>
+      <button class="icon-btn" id="themeBtn" type="button"></button>
+      <button class="icon-btn" id="settingsBtn" type="button" title="Settings" aria-label="Settings"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></button>
+      <span class="chip" title="All pull requests and people here are fictional">Sample data</span>
+    </div>
+  </nav>
+  <section id="listPane" aria-labelledby="viewName">
+    <header class="lhead">
+      <button class="icon-btn m-only" id="menuBtn" type="button" aria-label="Open views" title="Views"><svg class="ic" aria-hidden="true"><use href="#i-menu"/></svg></button>
+      <h2 id="viewName"></h2><span id="viewCount"></span>
+      <span class="spacer"></span>
+      <button class="repo-chip" id="repoChip" type="button" title="Clear repository filter" hidden></button>
+      <input class="filter" id="filter" type="search" placeholder="Filter by title, repo, author" aria-label="Filter the list" title="Filter (/)" autocomplete="off">
+    </header>
+    <div id="rows"></div>
+    <p class="pane-hint" id="listHint">j k move · Enter open · / filter · ? all keys</p>
+  </section>
+  <section id="detail" tabindex="-1" aria-label="Details"></section>
+</div>
+<div id="toastHost" aria-live="polite"></div>
+<div class="overlay" id="help" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <h2 id="helpTitle">Keyboard shortcuts</h2>
+    <dl>
+      <dt class="grp">Move</dt>
+      <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next / previous in the focused pane</dd>
+      <dt><kbd>Enter</kbd> <kbd>→</kbd></dt><dd>Go into the detail pane</dd>
+      <dt><kbd>Esc</kbd> <kbd>←</kbd></dt><dd>Back to the list</dd>
+      <dt><kbd>/</kbd></dt><dd>Filter the list</dd>
+      <dt class="grp">Pull request</dt>
+      <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Activity, Review, Run log</dd>
+      <dt><kbd>r</kbd></dt><dd>Start a review</dd>
+      <dt class="grp">Review items (items list focused)</dt>
+      <dt><kbd>a</kbd></dt><dd>Accept</dd>
+      <dt><kbd>d</kbd></dt><dd>Discard</dd>
+      <dt><kbd>e</kbd></dt><dd>Edit the comment</dd>
+      <dt><kbd>p</kbd></dt><dd>Post accepted items</dd>
+      <dt><kbd>?</kbd></dt><dd>Show or hide this sheet</dd>
+    </dl>
+    <p style="margin:14px 0 0"><button class="btn" id="helpClose" type="button">Close</button></p>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ic = n => `<svg class="ic" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+const initials = n => n === 'You' ? 'ME' : n.split(' ').map(w => w[0]).join('');
+const ago = m => m < 1 ? 'now' : m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h' : Math.floor(m / 1440) + 'd';
+const key = p => p.proj + '/' + p.repo;
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const isMobile = () => matchMedia('(max-width: 759px)').matches;
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } }
+};
+
+/* Sample data */
+const prs = [
+  { id: 977, proj: 'ENGINE', repo: 'netcode', title: 'Delta-compress snapshot headers', author: 'Yuki Sato', role: 'Reviewer', state: 'Not reviewed', from: 'feature/snapshot-delta', to: 'develop', mins: 12, unread: 3 },
+  { id: 2215, proj: 'ENGINE', repo: 'core', title: 'Replace custom spinlock with std::mutex in JobQueue', author: 'You', role: 'Author', state: 'Needs work', from: 'feature/jobqueue-mutex', to: 'develop', mins: 34, unread: 2, reply: true },
+  { id: 1340, proj: 'TOOLS', repo: 'asset-pipeline', title: 'Cook textures in parallel on the job graph', author: 'Tomás Rey', role: 'Reviewer', state: 'Not reviewed', from: 'feature/parallel-cook', to: 'develop', mins: 58 },
+  { id: 4182, proj: 'ENGINE', repo: 'render', title: 'Take cache mutex inside ResourceCache::evict', author: 'Lena Petrova', role: 'Reviewer', state: 'Needs work', from: 'feature/evict-locking', to: 'develop', mins: 95, commits: 2 },
+  { id: 388, proj: 'TOOLS', repo: 'build-farm', title: 'Cache precompiled headers per toolchain hash', author: 'Dan Okafor', role: 'Reviewer', state: 'Not reviewed', from: 'feature/pch-cache', to: 'main', mins: 180 },
+  { id: 612, proj: 'ENGINE', repo: 'audio', title: 'Stream Opus banks from pak files', author: 'Tomás Rey', role: 'Reviewer', state: 'Needs work', from: 'feature/opus-stream', to: 'develop', mins: 420, commits: 1 },
+  { id: 4190, proj: 'ENGINE', repo: 'render', title: 'Fix TAA ghosting on thin geometry', author: 'Mira Kovač', role: 'Reviewer', state: 'Approved', from: 'bugfix/taa-thin', to: 'develop', mins: 1500 },
+  { id: 4171, proj: 'ENGINE', repo: 'render', title: 'Size the bindless descriptor heap from config', author: 'You', role: 'Author', state: 'Approved', from: 'feature/bindless-heap', to: 'develop', mins: 2900 }
+];
+const prById = id => prs.find(p => p.id === +id);
+let readIds;
+try { readIds = new Set(JSON.parse(store.get('rl-read') || '[]')); } catch (e) { readIds = new Set(); }
+prs.forEach(p => { if (readIds.has(p.id)) { p.unread = 0; p.reply = false; } });
+const REPOS = [['ENGINE/render', 'R'], ['ENGINE/netcode', 'N'], ['ENGINE/core', 'C'], ['ENGINE/audio', 'A'], ['TOOLS/asset-pipeline', 'AP'], ['TOOLS/build-farm', 'BF']];
+const VIEWS = {
+  needs: { label: 'Needs you', icon: 'needs', f: p => (p.role === 'Reviewer' && p.state !== 'Approved') || p.unread > 0 || p.reply },
+  reviewing: { label: 'Reviewing', icon: 'reviewing', f: p => p.role === 'Reviewer' },
+  mine: { label: 'My PRs', icon: 'mine', f: p => p.role === 'Author' },
+  runs: { label: 'Review runs', icon: 'runs' },
+  post: { label: 'Ready to post', icon: 'post' }
+};
+const PR_VIEWS = ['needs', 'reviewing', 'mine'];
+
+const REVIEWERS = [['Mira Kovač', 'Approved'], ['You', 'Needs work'], ['Dan Okafor', 'Not reviewed']];
+const TL_OLD = [
+  { who: 'Lena Petrova', what: 'opened the pull request', when: '3d', body: 'Render thread now evicts directly. <span class="mono">evict()</span> takes <span class="mono">cacheMutex_</span> itself, so callers no longer lock.' },
+  { who: 'You', what: 'set Needs work', when: '2d' },
+  { who: 'Mira Kovač', what: 'approved', when: '1d' }
+];
+const TL_NEW = [
+  { who: 'Lena Petrova', what: 'pushed 2 commits', when: '2h', body: '<span class="mono">9f3c2ab</span> Take cacheMutex_ inside evict<br><span class="mono">1e77d04</span> Move shadow pass before GBuffer' },
+  { who: 'Dan Okafor', what: 'commented', when: '40m', body: 'The <span class="mono">compiled_</span> flag in FrameGraph.cpp:77 looks racy to me.' },
+  { who: 'Lena Petrova', what: 'replied in your thread on <span class="mono">src/render/ResourceCache.cpp:142</span>', when: '25m', thread: true }
+];
+
+const STEPS = [
+  ['Bash', 'git diff develop...9f3c2ab --stat', 'ok', 0.3, '6 files changed, +214 −97'],
+  ['Read', 'src/render/ResourceCache.cpp', 'ok', 0.1],
+  ['Read', 'src/render/FrameGraph.cpp', 'ok', 0.1],
+  ['Grep', '"ResourceCache::evict"', 'ok', 0.4, '4 matches in 3 files'],
+  ['Read', 'src/stream/StreamingThread.cpp', 'ok', 0.1],
+  ['Read', 'src/stream/Prefetcher.cpp', 'ok', 0.1],
+  ['Glob', 'docs/render/**', 'ok', 0.0, '3 files'],
+  ['Read', 'docs/render/frame-graph.md', 'ok', 0.1],
+  ['deepwiki.ask_question', 'microsoft/STL "Does std::mutex::lock detect recursive locking?"', 'error', 30.0, 'Timed out after 30 s. Retrying once.'],
+  ['deepwiki.ask_question', 'microsoft/STL "Does std::mutex::lock detect recursive locking?"', 'ok', 6.4, 'Answered. Recursive lock is undefined behavior.'],
+  ['microsoft_docs_search', '"std::memory_order"', 'ok', 1.2, '5 results'],
+  ['Grep', '"compiled_"', 'ok', 0.2, '3 matches in 1 file'],
+  ['Read', 'src/render/PassFactory.h', 'ok', 0.1]
+];
+
+/* code: [first line number, marked line number, lines] */
+const ITEMS = [
+  { kind: 'finding', sev: 'blocker', path: 'src/render/ResourceCache.cpp:142', title: 'evict() now deadlocks callers that already hold cacheMutex_',
+    code: [140, 142, ['void ResourceCache::evict(std::size_t bytes)', '{', '    std::lock_guard lock(cacheMutex_);   // added in 9f3c2ab', '    while (used_ + bytes > budget_)', '        dropLru();', '}']],
+    text: 'StreamingThread::tick holds cacheMutex_ when it calls evict(). std::mutex is not recursive, so the second lock is undefined behavior and hangs in practice. Remove the lock from the callers, or keep the old contract and add an evictLocked() for the render thread.',
+    evidence: '2 callers outside the diff hold the lock: src/stream/StreamingThread.cpp:211, src/stream/Prefetcher.cpp:88. DeepWiki, microsoft/STL: recursive lock of std::mutex is undefined behavior.' },
+  { kind: 'finding', sev: 'major', path: 'src/render/FrameGraph.cpp:77', title: 'compiled_ is published with memory_order_relaxed',
+    code: [75, 77, ['passes_ = std::move(sorted);', '// workers poll compiled_ before execute(passes_)', 'compiled_.store(true, std::memory_order_relaxed);']],
+    text: 'Relaxed order gives no happens-before edge. A worker can see compiled_ == true and still read a stale passes_. Use memory_order_release on the store and memory_order_acquire on the load.',
+    evidence: 'Microsoft Learn, memory_order enum: <a href="https://learn.microsoft.com/en-us/cpp/standard-library/atomic-enums" target="_blank" rel="noopener">learn.microsoft.com/en-us/cpp/standard-library/atomic-enums</a>' },
+  { kind: 'finding', sev: 'major', path: 'src/render/ResourceCache.cpp:144', title: 'evict() loops forever when the LRU list is empty',
+    code: [143, 144, ['    while (used_ + bytes > budget_)', '        dropLru();']],
+    text: 'If bytes is larger than budget_ and nothing is left to drop, dropLru() returns without a change and the loop never ends. Stop when the list is empty and return the shortfall to the caller.',
+    evidence: 'dropLru() returns early on an empty list: src/render/ResourceCache.cpp:188 (outside the diff).' },
+  { kind: 'finding', sev: 'minor', path: 'docs/render/frame-graph.md:34', title: 'Pass order in the docs is out of date',
+    code: [33, 34, ['1. GBuffer', '2. Shadow      <- reads GBuffer depth', '3. Lighting']],
+    text: 'Commit 1e77d04 moves the shadow pass before GBuffer. The document still lists the old order and says that Shadow reads GBuffer depth. Update the list and the dependency note.',
+    evidence: 'Project doc docs/render/frame-graph.md:30-41, read during the run.' },
+  { kind: 'finding', sev: 'nit', path: 'src/render/PassFactory.h:12', title: 'Factory with one product',
+    code: [10, 12, ['class PassFactory {', 'public:', '    static std::unique_ptr<IPass> create(PassKind kind);', '};', 'enum class PassKind { Shadow };   // one value']],
+    text: 'The factory makes one type and has one call site. Construct ShadowPass directly. Add the factory when a second pass kind exists.',
+    evidence: 'Grep "PassKind::": 1 enumerator, 1 call site (src/render/FrameGraph.cpp:52).' },
+  { kind: 'question', title: 'Does the new locking replace the caller contract?',
+    text: 'ResourceCache.h:40 says that callers must hold cacheMutex_ before evict(). Does the new lock replace that contract for all callers, or only for the render thread?' },
+  { kind: 'question', title: 'Should the pass reorder ship in this PR?',
+    text: 'Commit 1e77d04 changes barrier placement, and the description does not mention it. Is it part of this change, or can it go into a separate pull request?' }
+];
+const READY_1340 = [
+  { kind: 'finding', sev: 'major', path: 'src/cook/TextureCooker.cpp:211', title: 'Shared mip cache is written from several cook jobs', status: 'accepted',
+    text: 'cookMip() inserts into mipCache_ from each job without a lock. Two jobs that cook the same texture write the same key at once. Guard the insert, or give each job its own cache and merge after the graph finishes.' },
+  { kind: 'finding', sev: 'minor', path: 'src/cook/CookGraph.cpp:58', title: 'Job count ignores the --jobs flag', status: 'edited',
+    text: 'CookGraph uses hardware_concurrency() and ignores --jobs. Build agents set --jobs 4 to share the machine. Read the flag first and fall back to hardware_concurrency().' }
+];
+const LOG_1340 = [
+  ['Bash', 'git diff develop...b81e0c4 --stat', 'ok', 0.3, '4 files changed, +162 −41'],
+  ['Read', 'src/cook/TextureCooker.cpp', 'ok', 0.1],
+  ['Read', 'src/cook/CookGraph.cpp', 'ok', 0.1],
+  ['Grep', '"mipCache_"', 'ok', 0.3, '7 matches in 4 files'],
+  ['Read', 'docs/cook/jobs.md', 'ok', 0.1],
+  ['microsoft_docs_search', '"std::thread::hardware_concurrency"', 'ok', 1.1, '3 results']
+];
+const PROFILES = [
+  ['General', 'Correctness, concurrency, effects outside the diff', 'Review the change for correctness, concurrency, and effects on code outside the diff. Cite a source for every library claim.'],
+  ['Over-engineering', 'What to delete or simplify', 'Find code to delete: abstractions with one implementation, reinvented standard library, unused flexibility.'],
+  ['Security', 'Trust boundaries, secrets, unsafe memory', 'Check input validation at trust boundaries, secrets in code, unsafe memory access, and injection paths.']
+];
+const RUNS_PAST = [
+  { id: 'run-1340', pr: 1340, status: 'done', profile: 'General', when: '18h', log: LOG_1340.map(s => [s, s[2]]), result: '3 findings', usage: ['38.4k tokens', '1m 41s', 'reviewed commit b81e0c4'] },
+  { id: 'run-977', pr: 977, status: 'failed', profile: 'Security', when: '1d', log: [[['Bash', 'git diff develop...4c0d9e1 --stat', 'ok', 0.3, '3 files changed, +88 −20'], 'ok'], [['Read', 'src/net/SnapshotWriter.cpp', 'ok', 0.1], 'ok']], error: 'Usage limit reached. Try again at 14:00.' },
+  { id: 'run-612', pr: 612, status: 'cancelled', profile: 'Over-engineering', when: '2d', log: [[['Bash', 'git diff develop...e5a1f70 --stat', 'ok', 0.4, '9 files changed, +410 −133'], 'ok'], [['Read', 'src/audio/PakStream.cpp', 'ok', 0.1], 'ok'], [['Grep', '"OpusBank::"', 'cancel', 0], 'cancel']] }
+];
+
+/* State */
+let view = 'needs', repo = null, q = '', mode = 'item', tab = 'activity', focusPane = 'list';
+const sel = { needs: '4182', reviewing: '4182', mine: null, runs: null, post: null };
+let profile = 'General', menuOpen = false, confirmFor = null, editing = false, draft = '', cur = 0, pill = false;
+let liveReply = false, flashReply = false, movedId = null;
+let review = { id: 'run-live', pr: 4182, status: 'idle', log: [], timers: [] }, items = [];
+let repoOpen = store.get('rl-repos') !== 'closed';
+
+const isAccepted = x => x.status === 'accepted' || x.status === 'edited';
+const itemsFor = pr => +pr === 4182 ? items : +pr === 1340 ? READY_1340 : [];
+const pending = pr => itemsFor(pr).filter(isAccepted);
+const runsAll = () => (review.status !== 'idle' ? [review] : []).concat(RUNS_PAST);
+const runFor = pr => runsAll().find(r => r.pr === pr);
+const readyPrs = () => [4182, 1340].filter(pr => pending(pr).length);
+const unreadOf = p => (p.unread || 0) + (p.reply ? 1 : 0);
+
+function rows() {
+  const match = p => (!repo || key(p) === repo) && (!q || `${key(p)} #${p.id} ${p.title} ${p.author}`.toLowerCase().includes(q));
+  if (view === 'runs') return runsAll().filter(r => match(prById(r.pr))).map(r => ({ rid: r.id, run: r, p: prById(r.pr) }));
+  if (view === 'post') return readyPrs().map(prById).filter(match).map(p => ({ rid: 'g' + p.id, p }));
+  return prs.filter(VIEWS[view].f).filter(match)
+    .sort((a, b) => (unreadOf(b) ? 1 : 0) - (unreadOf(a) ? 1 : 0) || a.mins - b.mins)
+    .map(p => ({ rid: String(p.id), p }));
+}
+const curRow = () => rows().find(r => r.rid === sel[view]);
+const curPr = () => { const r = curRow(); return mode === 'item' && r && PR_VIEWS.includes(view) ? r.p : null; };
+
+function markRead(p) {
+  p.newAtOpen = !!unreadOf(p) && p.id !== 4182;
+  p.unread = 0; p.reply = false; readIds.add(p.id);
+  store.set('rl-read', JSON.stringify([...readIds]));
+}
+function select(rid) {
+  if (sel[view] !== rid || mode !== 'item') { tab = 'activity'; menuOpen = false; confirmFor = null; editing = false; }
+  sel[view] = rid; mode = 'item';
+  const r = curRow();
+  if (r && PR_VIEWS.includes(view)) markRead(r.p);
+}
+function ensureSel() {
+  const rs = rows();
+  if (!rs.some(r => r.rid === sel[view])) { sel[view] = null; if (rs.length) select(rs[0].rid); }
+}
+
+/* Render */
+function render() {
+  const active = document.activeElement, keepId = active && active !== document.body ? active.id : '';
+  const ta = $('#edit-text'); if (ta) draft = ta.value;
+  const db = $('#dbody'), dkey = detailKey(), st = db && db.dataset.key === dkey ? db.scrollTop : 0;
+  ensureSel();
+  renderNav(); renderList(); renderDetail();
+  const nb = $('#dbody');
+  if (nb) {
+    if (tab === 'log' && review.status === 'running' && curPr() && curPr().id === 4182 || view === 'runs' && sel.runs === 'run-live' && review.status === 'running') nb.scrollTop = nb.scrollHeight;
+    else if (nb.dataset.key === dkey) nb.scrollTop = st;
+  }
+  const back = keepId && document.getElementById(keepId);
+  if (back && back !== document.activeElement) back.focus({ preventScroll: true });
+  else if (!back && (!document.activeElement || document.activeElement === document.body)) restoreFocus();
+  paintFocus();
+}
+function detailKey() { return mode + view + sel[view] + tab; }
+
+function navItem(v, n, extra = '') {
+  const V = VIEWS[v], on = mode === 'item' && view === v;
+  return `<button type="button" class="nav-item${on ? ' on' : ''}${n ? ' has-count' : ''}" id="nav-${v}" data-view="${v}" title="${V.label}${n ? ': ' + n : ''}"${on ? ' aria-current="page"' : ''}>
+    ${ic(V.icon)}<span class="lbl">${V.label}</span>${extra}<span class="cnt">${n || ''}</span></button>`;
+}
+function renderNav() {
+  const running = review.status === 'running';
+  $('#nav').innerHTML = `
+    <div class="ngroup"><div class="ntitle">Inbox</div>${PR_VIEWS.map(v => navItem(v, prs.filter(VIEWS[v].f).length)).join('')}</div>
+    <div class="ngroup">${navItem('runs', runsAll().length, running ? '<span class="live" title="A review is running"></span>' : '')}${navItem('post', readyPrs().reduce((n, pr) => n + pending(pr).length, 0))}</div>
+    <div class="ngroup">
+      <button type="button" class="nav-item ntoggle" id="repoToggle" aria-expanded="${repoOpen}" title="Repositories">${ic('folder')}<span class="lbl">Repositories</span><svg class="ic caret" aria-hidden="true"><use href="#i-caret"/></svg></button>
+      <div id="repoList" class="ngroup"${repoOpen ? '' : ' hidden'}>${REPOS.map(([r, ab], i) => {
+        const u = prs.filter(p => key(p) === r).reduce((n, p) => n + unreadOf(p), 0);
+        return `<button type="button" class="nav-item${repo === r ? ' on' : ''}${u ? ' has-count has-unread' : ''}" id="repo-${i}" data-repo="${r}" title="Show only ${r}${u ? ': ' + u + ' unread' : ''}" aria-pressed="${repo === r}">
+          <span class="abbr">${ab}</span><span class="lbl mono repo-name">${r}</span><span class="cnt">${u || ''}</span></button>`;
+      }).join('')}</div>
+    </div>`;
+}
+
+function renderList() {
+  const rs = rows();
+  $('#viewName').textContent = VIEWS[view].label;
+  $('#viewCount').textContent = rs.length;
+  const chip = $('#repoChip');
+  chip.hidden = !repo;
+  if (repo) chip.innerHTML = `${repo}${ic('x')}`;
+  const showSel = mode === 'item';
+  $('#rows').innerHTML = rs.length ? rs.map(r => rowHtml(r, showSel && r.rid === sel[view])).join('')
+    : `<p class="empty">${view === 'post' ? 'Nothing to post. Accepted items from your reviews appear here.' : view === 'runs' ? 'No review runs yet.' : q || repo ? 'No pull requests match this filter.' : 'Nothing needs you. New pull requests appear here after the next check.'}</p>`;
+  movedId = null;
+}
+function rowHtml(r, on) {
+  const p = r.p, cls = `row${on ? ' sel' : ''}`;
+  const head = `<span class="mono rkey">${key(p)} #${p.id}</span>`;
+  if (r.run) {
+    const x = r.run, sub = x.status === 'running' ? `Running · ${x.log.length} of ${STEPS.length} steps` : x.status === 'done' ? x.result : x.status === 'failed' ? x.error : 'Cancelled';
+    return `<button type="button" class="${cls}" id="row-${r.rid}" data-rid="${r.rid}">
+      <span class="r1"><span class="rdot ${x.status}" title="${x.status}"></span>${head}<span class="rtime">${x.when}</span></span>
+      <span class="r2"><span class="rsub">${x.profile} review · ${esc(sub)}</span></span></button>`;
+  }
+  if (view === 'post') {
+    return `<button type="button" class="${cls}" id="row-${r.rid}" data-rid="${r.rid}">
+      <span class="r1"><span class="udot"></span>${head}</span>
+      <span class="r2"><span class="rtitle">${esc(p.title)}</span></span>
+      <span class="r3"><span class="badge">${pending(p.id).length} accepted</span></span></button>`;
+  }
+  const badges = (p.unread ? `<span class="badge">${p.unread} new</span>` : '') + (p.reply ? '<span class="badge">reply to you</span>' : '')
+    + (p.commits ? `<span class="badge commits">+${plural(p.commits, 'commit')} since your review</span>` : '');
+  return `<button type="button" class="${cls}${unreadOf(p) ? ' unread' : ''}${p.id === movedId ? ' moved' : ''}" id="row-${r.rid}" data-rid="${r.rid}">
+    <span class="r1"><span class="udot" title="${unreadOf(p) ? 'Unread' : ''}"></span>${head}<span class="rtime">${ago(p.mins)}</span></span>
+    <span class="r2"><span class="rtitle">${esc(p.title)}</span><span class="av" title="${esc(p.author)}, author">${initials(p.author)}</span></span>
+    ${badges ? `<span class="r3">${badges}</span>` : ''}</button>`;
+}
+
+function renderDetail() {
+  const d = $('#detail');
+  if (mode === 'settings') { if (!$('#settingsForm')) d.innerHTML = settingsHtml(); return; }
+  const r = curRow();
+  if (!r) { d.innerHTML = `${backBtnHead('')}<div class="dbody"><div class="calm"><p>Select an item in the list.</p></div></div>`; return; }
+  d.innerHTML = view === 'runs' ? runDetail(r.run) : view === 'post' ? readyDetail(r.p) : prDetail(r.p);
+  const b = $('#dbody'); if (b) b.dataset.key = detailKey();
+}
+const backBtn = `<button class="icon-btn m-only" id="backBtn" type="button" data-act="back" aria-label="Back to the list" title="Back (Esc)">${ic('back')}</button>`;
+function backBtnHead(t) { return `<header class="dhead"><div class="dtop">${backBtn}${t}</div></header>`; }
+
+/* PR detail */
+function prDetail(p) {
+  const full = p.id === 4182, run = runFor(p.id);
+  const reviewers = full ? REVIEWERS : [[p.author === 'You' ? 'Mira Kovač' : 'You', p.role === 'Reviewer' ? p.state : 'Not reviewed']];
+  const ring = s => s === 'Approved' ? 'ring-ok' : s === 'Needs work' ? 'ring-work' : '';
+  const running = review.status === 'running' && full;
+  const reviewTabExtra = (full && review.status === 'done' ? `<span class="tcount">${items.length}</span>` : '') + (full && pill ? '<span class="ready-pill">results ready</span>' : '');
+  const hint = tab === 'review' && full && review.status === 'done' ? 'Enter items · j k move · a accept · d discard · e edit' : '1 2 3 tabs · r review · ? all keys';
+  return `<header class="dhead">
+      <div class="dtop">${backBtn}<h1>${esc(p.title)}</h1>
+        <div class="split">
+          <button class="btn primary" id="reviewBtn" type="button" data-act="review" title="Review with the ${profile} profile (r)"${running ? ' disabled' : ''}>${running ? 'Reviewing…' : 'Review'}</button>
+          <button class="btn primary caret-btn" id="reviewCaret" type="button" data-act="menu" aria-haspopup="menu" aria-expanded="${menuOpen}" aria-label="Choose a review profile" title="Choose a review profile"${running ? ' disabled' : ''}>${ic('caret')}</button>
+          ${menuOpen ? `<div class="menu" role="menu" id="profileMenu">${PROFILES.map(([n, d], i) => `<button type="button" role="menuitem" id="prof-${i}" data-act="profile" data-p="${n}">${n === profile ? ic('check') : '<span></span>'}<span>${n} review</span><small>${d}</small></button>`).join('')}</div>` : ''}
+        </div>
+      </div>
+      <div class="meta"><span class="mono">${key(p)} #${p.id}</span><span class="mono">${p.from} → ${p.to}</span>
+        <a class="link-ic" href="#" title="Open the diff in Bitbucket">Bitbucket${ic('ext')}</a></div>
+      <div class="meta"><span class="who"><span class="av">${initials(p.author)}</span>${esc(p.author)}, author</span>
+        <span class="who">Reviewers <span class="stack">${reviewers.map(([n, s]) => `<span class="av ${ring(s)}" title="${n}: ${s.toLowerCase()}">${initials(n)}</span>`).join('')}</span></span></div>
+    </header>
+    <div class="tabs" role="tablist" aria-label="Pull request">
+      ${[['activity', 'Activity', ''], ['review', 'Review', reviewTabExtra], ['log', 'Run log', run ? `<span class="rdot ${run.status}" title="${run.status}"></span>` : '']]
+        .map(([t, l, x], i) => `<button type="button" role="tab" class="tab" id="tab-${t}" data-tab="${t}" aria-selected="${tab === t}" title="${l} (${i + 1})">${l}${x}</button>`).join('')}
+      <span class="dhint">${hint}</span>
+    </div>
+    <div class="dbody" id="dbody" role="tabpanel" aria-labelledby="tab-${tab}">${tab === 'activity' ? activityHtml(p) : tab === 'review' ? reviewHtml(p) : run ? runHtml(run) : `<div class="calm"><h2>No runs yet</h2><p>Each review run shows its tool calls here, live.</p></div>`}</div>
+    ${postbarHtml(p.id)}`;
+}
+
+function ev(e, isNew, extra = '') {
+  const thread = e.thread ? `<div class="ev-body"><div class="reply old"><b>You</b>, 2d: Does evict() still assume that the caller holds cacheMutex_?</div>
+    <div class="reply"><b>Lena Petrova</b>, 25m: Yes, it locks internally now. Callers no longer need to hold it.</div></div>` : '';
+  return `<li class="ev${isNew ? ' new' : ''}${extra}"><div class="ev-head"><b>${e.who}</b> ${e.what} · ${e.when}</div>${e.body ? `<div class="ev-body"><p>${e.body}</p></div>` : ''}${thread}</li>`;
+}
+function activityHtml(p) {
+  if (p.id === 4182) {
+    const live = liveReply ? ev({ who: 'Lena Petrova', what: 'replied to your comment on <span class="mono">src/render/ResourceCache.cpp:142</span>', when: 'now', body: 'Second look: StreamingThread::tick still holds the lock when it calls evict(). I will check that path before merge.' }, true, flashReply ? ' arrive' : '') : '';
+    flashReply = false;
+    return `<ol class="tl">${TL_OLD.map(e => ev(e)).join('')}<li class="divider">New since you last looked</li>${TL_NEW.map(e => ev(e, true)).join('')}${live}</ol>`;
+  }
+  return `<ol class="tl">${ev({ who: p.author, what: 'opened the pull request', when: ago(p.mins + 600) })}${p.newAtOpen
+    ? '<li class="divider">New since you last looked</li>' + ev({ who: 'Mira Kovač', what: 'commented', when: ago(p.mins), body: 'Left two notes on the tests.' }, true) : ''}</ol>`;
+}
+
+/* Review tab */
+function reviewHtml(p) {
+  if (p.id !== 4182) return `<div class="calm"><h2>No sample review here</h2><p>This prototype has review results only for one pull request.</p><a href="#" data-act="goto" data-pr="4182" class="mono">ENGINE/render #4182</a></div>`;
+  if (review.status === 'idle' || review.status === 'cancelled') return `<div class="calm"><h2>${review.status === 'cancelled' ? 'You cancelled the review' : 'No review yet'}</h2>
+    <p>Claude reads the diff, the full repository, and the project docs, then lists findings and questions. Nothing goes to Bitbucket until you accept it.</p>
+    <button class="btn primary" type="button" id="reviewBtn2" data-act="review" title="Start a review (r)">Review with the ${profile} profile</button></div>`;
+  if (review.status === 'running') return `<div class="calm"><h2>Review is running</h2><p>Results appear here when the run ends. <a href="#" data-tab="log">Follow the run log</a>.</p></div>`;
+  const rowsOf = kind => items.map((x, i) => [x, i]).filter(([x]) => x.kind === kind).map(([x, i]) => irowHtml(x, i)).join('');
+  return `<details class="summary" id="summary"><summary><span><b>Deadlock risk.</b> The new lock in evict() hangs two callers that already hold it. 1 blocker, 2 major, 1 minor, 1 nit.</span></summary>
+      <div class="more"><p>The PR moves locking into ResourceCache::evict so the render thread can evict without a caller lock. It also moves the shadow pass before GBuffer to drop one barrier. The new lock deadlocks two existing callers that already hold cacheMutex_.</p>
+      <h3>Risk areas</h3><ul><li>Lock order between ResourceCache and the streaming thread</li><li>Publication of the compiled frame graph to worker threads</li><li>Pass order change without a doc or test update</li></ul></div></details>
+    <div class="tri">
+      <div class="ilist${focusPane === 'items' ? ' pane-edge' : ''}" id="ilist" role="listbox" aria-label="Review items">
+        <div class="igroup">Questions</div>${rowsOf('question')}<div class="igroup">Findings</div>${rowsOf('finding')}
+      </div>
+      ${itemDetail(items[cur])}
+    </div>`;
+}
+const SEV = { blocker: 'B', major: 'M', minor: 'm', nit: 'n', question: '?' };
+const STATUS = { accepted: ['check', 'Accepted'], edited: ['pencil', 'Edited and accepted'], discarded: ['x', 'Discarded'], posted: ['post', 'Posted'] };
+const sevOf = x => x.kind === 'question' ? 'question' : x.sev;
+function irowHtml(x, i) {
+  const s = sevOf(x), stat = STATUS[x.status];
+  const where = x.path ? x.path.split('/').pop() : 'General comment';
+  return `<button type="button" role="option" class="irow st-${x.status}${i === cur ? ' sel' : ''}" id="it-${i}" data-i="${i}" aria-selected="${i === cur}">
+    <span class="sv s-${s}" title="${s}">${SEV[s]}</span><span class="if">${esc(where)}</span>
+    <span class="sic" title="${stat ? stat[1] : 'Not triaged'}">${stat ? ic(stat[0]) : ''}</span><span class="it">${esc(x.title)}</span></button>`;
+}
+function codeHtml(c) {
+  const [start, mark, lines] = c;
+  return `<div class="code"><pre><code>${lines.map((l, k) => `<span class="cl${start + k === mark ? ' mark' : ''}"><span class="ln">${start + k}</span>${esc(l)}</span>`).join('')}</code></pre></div>`;
+}
+function itemDetail(x) {
+  const s = sevOf(x), stat = STATUS[x.status];
+  const body = editing
+    ? `<label class="hint" for="edit-text">Comment text</label><textarea id="edit-text">${esc(draft)}</textarea>
+       <div class="iact"><button class="btn primary" type="button" id="editSave" data-act="save">Save</button><button class="btn" type="button" id="editCancel" data-act="cancel-edit">Cancel</button><span class="hint">Esc cancels</span></div>`
+    : x.status === 'discarded' || x.status === 'posted'
+      ? `<div class="comment ro${x.status === 'discarded' ? ' discarded-note' : ''}">${esc(x.body)}</div>`
+      : `<div class="comment" id="commentText" role="button" tabindex="0" data-act="edit" title="Click to edit (e)">${esc(x.body)}</div>`;
+  const actions = editing ? '' : x.status === 'posted'
+    ? `<span class="istate good">Posted</span><a class="link-ic" href="#">View in Bitbucket${ic('ext')}</a>`
+    : x.status === 'discarded'
+      ? `<button class="btn" type="button" id="actRestore" data-act="restore">Restore</button><span class="hint">Discarded items are never posted.</span>`
+      : `<button class="btn" type="button" id="actAccept" data-act="accept" aria-pressed="${isAccepted(x)}" title="Accept (a)">${ic('check')}${isAccepted(x) ? 'Accepted' : 'Accept'}</button>
+         <button class="btn" type="button" id="actDiscard" data-act="discard" title="Discard (d)">${ic('x')}Discard</button>`;
+  return `<article class="idetail s-${s}" aria-label="Selected item">
+    <div class="ihead"><span class="sevtag">${s === 'question' ? 'Question for the author' : s[0].toUpperCase() + s.slice(1)}</span>
+      ${x.path ? `<button class="path" type="button" id="copyPath" data-act="copy" title="Copy path">${esc(x.path)}</button>` : '<span class="hint">Goes into one general comment</span>'}
+      ${stat ? `<span class="istate${x.status === 'discarded' ? '' : ' good'}">${stat[1]}</span>` : ''}</div>
+    <h3>${esc(x.title)}</h3>
+    ${x.code ? codeHtml(x.code) : ''}
+    ${body}
+    ${x.evidence ? `<p class="evidence"><b>Evidence.</b> ${x.evidence}</p>` : ''}
+    <div class="iact">${actions}</div>
+  </article>`;
+}
+
+/* Run log */
+function logLine(s, state) {
+  const [tool, target, , sec, note] = s, w = Math.min(100, Math.log10(1 + sec * 10) / Math.log10(301) * 100);
+  const label = { run: '', ok: 'ok', error: 'error', cancel: 'stop' }[state];
+  return `<li class="${state === 'error' ? 'err' : ''}"><span class="st ${state}">${label}</span>
+    <span class="call"><b>${tool}</b> ${esc(target)}${note && state !== 'run' ? `<span class="note ${state}">${esc(note)}</span>` : ''}</span>
+    <span class="dur">${state === 'run' || state === 'cancel' ? '' : sec.toFixed(1) + 's<i><span style="width:' + w.toFixed(0) + '%"></span></i>'}</span></li>`;
+}
+function runHtml(x) {
+  const label = { running: 'Running', done: 'Done', failed: 'Failed', cancelled: 'Cancelled' }[x.status];
+  const last = x.status === 'done' ? `<li><span class="st ok">ok</span><span class="call"><b>Result</b> output matches the findings schema<span class="note">${x.result}</span></span><span class="dur"></span></li>`
+    : x.status === 'failed' ? `<li class="err"><span class="st error">error</span><span class="call"><b>Claude</b> review stopped<span class="note error">${esc(x.error)}</span></span><span class="dur"></span></li>`
+    : x.status === 'cancelled' ? '<li><span class="st cancel">stop</span><span class="call"><b>Cancelled</b> by you<span class="note">No tokens are used after a cancel.</span></span><span class="dur"></span></li>' : '';
+  return `<div class="runhead"><span class="status ${x.status}"><span class="rdot ${x.status}"></span>${label}</span><span class="hint">${x.profile} review</span>
+      <span class="spacer"></span>${x.status === 'running' ? '<button class="btn" type="button" id="cancelBtn" data-act="cancel">Cancel</button>' : ''}</div>
+    <ol class="log" aria-live="polite">${x.log.map(([s, st]) => logLine(s, st)).join('')}${last}</ol>
+    ${x.status === 'done' ? `<div class="usage">${x.usage.concat(x.profile + ' profile').map(u => `<span>${u}</span>`).join('')}</div>` : ''}`;
+}
+function runDetail(x) {
+  const p = prById(x.pr);
+  return `<header class="dhead"><div class="dtop">${backBtn}<h1>${x.profile} review of ${esc(p.title)}</h1></div>
+      <div class="meta"><span class="mono">${key(p)} #${p.id}</span><span>Started ${x.when === 'now' ? 'just now' : x.when + ' ago'}</span>
+      <a href="#" data-act="goto" data-pr="${p.id}">Open the pull request</a></div></header>
+    <div class="dbody" id="dbody">${runHtml(x)}</div>`;
+}
+
+/* Ready to post */
+function readyDetail(p) {
+  const list = itemsFor(p.id).filter(x => isAccepted(x) || x.status === 'posted');
+  return `<header class="dhead"><div class="dtop">${backBtn}<h1>${esc(p.title)}</h1></div>
+      <div class="meta"><span class="mono">${key(p)} #${p.id}</span><a href="#" data-act="goto" data-pr="${p.id}">Open the pull request</a></div></header>
+    <div class="dbody" id="dbody"><div class="rcards">${list.map(x => {
+      const s = sevOf(x);
+      return `<div class="rcard s-${s}"><span class="sv s-${s}" title="${s}">${SEV[s]}</span>
+        <div class="ihead"><b>${esc(x.title)}</b>${x.status === 'posted' ? '<span class="istate good">Posted</span>' : x.status === 'edited' ? '<span class="istate">Edited</span>' : ''}</div>
+        <span class="mono" style="color:var(--muted-foreground)">${esc(x.path || 'General comment')}</span><p>${esc(x.body || x.text)}</p></div>`;
+    }).join('')}</div></div>
+    ${postbarHtml(p.id)}`;
+}
+
+function postbarHtml(pr) {
+  const list = pending(pr); if (!list.length) return '';
+  const p = prById(pr), f = list.filter(x => x.kind === 'finding').length, qn = list.filter(x => x.kind === 'question').length;
+  if (confirmFor === pr) return `<div class="postbar" id="postbar" role="alertdialog" aria-label="Confirm post">
+    <span>Post ${plural(f, 'inline comment')}${qn ? ' and 1 general comment' : ''} to <span class="mono">${key(p)} #${p.id}</span>?</span><span class="spacer"></span>
+    <button class="btn primary" type="button" id="postYes" data-act="post-yes">Post</button><button class="btn" type="button" id="postNo" data-act="post-no">Cancel</button></div>`;
+  return `<div class="postbar" id="postbar"><span>${f} accepted · ${plural(qn, 'question')}</span><span class="spacer"></span>
+    <button class="btn primary" type="button" id="postBtn" data-act="post" title="Post to Bitbucket (p)">${ic('post')}Post to Bitbucket</button></div>`;
+}
+function post(pr) {
+  const list = pending(pr), n = list.filter(x => x.kind === 'finding').length + (list.some(x => x.kind === 'question') ? 1 : 0);
+  list.forEach(x => { x.status = 'posted'; });
+  confirmFor = null; render();
+  toast(`Posted ${plural(n, 'comment')}`);
+}
+
+/* Settings */
+function settingsHtml() {
+  return `<header class="dhead"><div class="dtop">${backBtn}<h1>Settings</h1></div></header>
+    <div class="dbody" id="dbody"><form class="settings" id="settingsForm">
+      <div class="field"><label for="set-url">Bitbucket URL</label><input type="url" id="set-url" value="https://bitbucket.example.test"></div>
+      <div class="field"><label for="set-token">Access token</label><input type="password" id="set-token" value="sample-token-not-real" autocomplete="off"><small>Stored on this machine only.</small></div>
+      <div class="field"><label for="set-poll">Poll interval</label><select id="set-poll"><option>1 minute</option><option selected>2 minutes</option><option>5 minutes</option><option>15 minutes</option></select><small>Polling uses no tokens.</small></div>
+      <fieldset><legend>Review profiles</legend>${PROFILES.map(([n, , pr], i) => `<div class="profile">
+        <div class="field"><label for="prof-name-${i}">Name</label><input type="text" id="prof-name-${i}" value="${n}"></div>
+        <div class="field"><label for="prof-prompt-${i}">Prompt</label><textarea id="prof-prompt-${i}">${pr}</textarea></div></div>`).join('')}</fieldset>
+      <div class="field"><label for="set-cli">Claude CLI path</label><input type="text" id="set-cli" class="mono" value="claude"></div>
+      <div><button class="btn primary" type="submit" id="saveSettings">Save</button></div>
+    </form></div>`;
+}
+
+/* Review run */
+function startReview(pf) {
+  const p = curPr(); if (!p) return;
+  if (pf) profile = pf;
+  menuOpen = false;
+  if (p.id !== 4182) { tab = 'review'; render(); return; }
+  if (review.status === 'running') { tab = 'log'; render(); return; }
+  review = { id: 'run-live', pr: 4182, status: 'running', profile, when: 'now', log: [], timers: [], result: '5 findings, 2 questions', usage: ['41.2k tokens', '2m 08s', 'reviewed commit 9f3c2ab'] };
+  items = [...ITEMS.filter(x => x.kind === 'question'), ...ITEMS.filter(x => x.kind === 'finding')].map(x => ({ ...x, status: 'new', body: x.text }));
+  cur = 0; editing = false; confirmFor = null; pill = false; tab = 'log';
+  let t = 300;
+  STEPS.forEach((s, i) => {
+    review.timers.push(setTimeout(() => { review.log.push([s, 'run']); render(); }, t));
+    t += s[2] === 'error' ? 1800 : 350 + (i % 3) * 200;
+    review.timers.push(setTimeout(() => { review.log[i][1] = s[2]; render(); }, t));
+    t += 120;
+  });
+  review.timers.push(setTimeout(finishReview, t + 500));
+  render();
+}
+function finishReview() {
+  review.status = 'done'; pill = true;
+  const p = curPr();
+  if (p && p.id === 4182 && tab === 'log') { tab = 'review'; pill = false; }
+  render();
+  toast('Review done: 5 findings, 2 questions<small>Click to open the results</small>', () => goto(4182, 'review'));
+}
+function cancelReview() {
+  if (review.status !== 'running') return;
+  review.timers.forEach(clearTimeout);
+  review.log.forEach(l => { if (l[1] === 'run') l[1] = 'cancel'; });
+  review.status = 'cancelled'; render();
+}
+
+/* Item actions */
+function act(a) {
+  const x = items[cur]; if (!x || x.status === 'posted') return;
+  if (a === 'accept' && x.status !== 'discarded') {
+    if (isAccepted(x)) x.status = 'new'; else { x.status = x.body !== x.text ? 'edited' : 'accepted'; advance(); }
+  }
+  if (a === 'discard' && x.status !== 'discarded') { x.status = 'discarded'; advance(); }
+  if (a === 'restore') x.status = 'new';
+  if (a === 'edit' && x.status !== 'discarded') { editing = true; draft = x.body; }
+  if (a === 'save') { x.body = $('#edit-text').value; x.status = 'edited'; editing = false; }
+  if (a === 'cancel-edit') editing = false;
+  render();
+  if (editing) { const ta = $('#edit-text'); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  else if (a === 'save' || a === 'cancel-edit') focusItems();
+}
+function advance() {
+  for (let k = 1; k <= items.length; k++) { const j = (cur + k) % items.length; if (items[j].status === 'new') { cur = j; return; } }
+}
+function setCur(i) { cur = Math.max(0, Math.min(items.length - 1, i)); editing = false; render(); focusItems(); }
+function focusItems() { const r = $('#it-' + cur); if (r) { r.focus({ preventScroll: true }); r.scrollIntoView({ block: 'nearest' }); } }
+function hasItems() { const p = curPr(); return p && p.id === 4182 && tab === 'review' && review.status === 'done'; }
+
+/* Navigation */
+function setView(v) {
+  view = v; mode = 'item'; menuOpen = false; confirmFor = null; editing = false;
+  if (isMobile()) $('#app').dataset.m = 'list';
+  sel[v] = rows().some(r => r.rid === sel[v]) ? sel[v] : null;
+  if (sel[v]) select(sel[v]);
+  focusPane = 'list'; render(); focusList();
+}
+function setTab(t) { tab = t; menuOpen = false; if (t !== 'log') pill = pill && t !== 'review'; render(); }
+function goto(pr, t) {
+  const p = prById(pr);
+  view = PR_VIEWS.find(v => VIEWS[v].f(p)) || 'reviewing'; repo = null; q = ''; $('#filter').value = '';
+  select(String(pr)); if (t) setTab(t);
+  if (t === 'review') pill = false;
+  if (isMobile()) $('#app').dataset.m = 'detail';
+  focusPane = 'detail'; render(); $('#detail').focus({ preventScroll: true });
+}
+function openSettings() {
+  mode = 'settings'; menuOpen = false; render();
+  if (isMobile()) $('#app').dataset.m = 'detail';
+  $('#set-url').focus();
+}
+function moveList(d) {
+  const rs = rows(); if (!rs.length) return;
+  const i = rs.findIndex(r => r.rid === sel[view]);
+  select(rs[Math.max(0, Math.min(rs.length - 1, i < 0 ? 0 : i + d))].rid);
+  render(); focusList();
+}
+function focusList() { focusPane = 'list'; const r = $('.row.sel') || $('#rows'); r.focus({ preventScroll: true }); if (r.scrollIntoView) r.scrollIntoView({ block: 'nearest' }); paintFocus(); }
+function enterDetail() {
+  if (isMobile()) $('#app').dataset.m = 'detail';
+  if (hasItems()) { focusPane = 'items'; render(); focusItems(); }
+  else { focusPane = 'detail'; paintFocus(); $('#detail').focus({ preventScroll: true }); }
+}
+function goBack() {
+  if (focusPane === 'items' || focusPane === 'detail' || isMobile() && $('#app').dataset.m === 'detail') {
+    if (isMobile()) $('#app').dataset.m = 'list';
+    if (mode === 'settings') { mode = 'item'; render(); }
+    focusList();
+  }
+}
+function restoreFocus() {
+  if (focusPane === 'items' && $('#it-' + cur)) focusItems();
+  else if (focusPane === 'list') { const r = $('.row.sel'); if (r) r.focus({ preventScroll: true }); }
+  else $('#detail').focus({ preventScroll: true });
+}
+function paintFocus() {
+  $('#listPane').classList.toggle('pane-edge', focusPane === 'list');
+  $('#detail').classList.toggle('pane-edge', focusPane === 'detail' || focusPane === 'items');
+  const il = $('#ilist'); if (il) il.classList.toggle('pane-edge', focusPane === 'items');
+}
+document.addEventListener('focusin', e => {
+  const t = e.target;
+  if (t.closest('#ilist')) focusPane = 'items';
+  else if (t.closest('#detail')) focusPane = focusPane === 'items' && t.closest('.idetail') ? 'items' : 'detail';
+  else if (t.closest('#listPane')) focusPane = 'list';
+  paintFocus();
+});
+
+/* Events */
+$('#nav').addEventListener('click', e => {
+  const v = e.target.closest('[data-view]'), r = e.target.closest('[data-repo]');
+  if (v) setView(v.dataset.view);
+  else if (r) { repo = repo === r.dataset.repo ? null : r.dataset.repo; mode = 'item'; if (isMobile()) $('#app').dataset.m = 'list'; render(); focusList(); }
+  else if (e.target.closest('#repoToggle')) { repoOpen = !repoOpen; store.set('rl-repos', repoOpen ? 'open' : 'closed'); render(); }
+});
+$('#repoChip').onclick = () => { repo = null; render(); focusList(); };
+$('#menuBtn').onclick = () => { $('#app').dataset.m = 'side'; $('#nav-' + view).focus(); };
+$('#settingsBtn').onclick = openSettings;
+$('#filter').addEventListener('input', e => { q = e.target.value.trim().toLowerCase(); render(); });
+$('#rows').addEventListener('click', e => {
+  const r = e.target.closest('[data-rid]'); if (!r) return;
+  select(r.dataset.rid); focusPane = 'list'; render();
+  if (isMobile()) { $('#app').dataset.m = 'detail'; $('#detail').focus({ preventScroll: true }); } else focusList();
+});
+$('#detail').addEventListener('click', e => {
+  const t = e.target.closest('[data-tab]');
+  if (t) { e.preventDefault(); setTab(t.dataset.tab); return; }
+  const row = e.target.closest('.irow');
+  if (row) { focusPane = 'items'; setCur(+row.dataset.i); return; }
+  const b = e.target.closest('[data-act]'); if (!b) { if (menuOpen && !e.target.closest('.menu')) { menuOpen = false; render(); } return; }
+  const a = b.dataset.act, pr = curRow() && curRow().p.id;
+  if (b.tagName === 'A') e.preventDefault();
+  if (a === 'review') startReview();
+  else if (a === 'menu') { menuOpen = !menuOpen; render(); if (menuOpen) $('#prof-0').focus(); }
+  else if (a === 'profile') startReview(b.dataset.p);
+  else if (a === 'cancel') cancelReview();
+  else if (a === 'goto') goto(+b.dataset.pr);
+  else if (a === 'back') goBack();
+  else if (a === 'post') { confirmFor = pr; render(); $('#postYes').focus(); }
+  else if (a === 'post-yes') post(pr);
+  else if (a === 'post-no') { confirmFor = null; render(); }
+  else if (a === 'copy') copyPath(b);
+  else { focusPane = 'items'; act(a); }
+});
+$('#detail').addEventListener('keydown', e => {
+  if (e.target.id === 'commentText' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); act('edit'); }
+});
+$('#detail').addEventListener('submit', e => { e.preventDefault(); toast('Settings saved'); });
+function copyPath(b) {
+  const text = b.textContent;
+  const fallback = () => { const r = document.createRange(); r.selectNodeContents(b); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast('Path selected. Press Ctrl+C to copy.'); };
+  try { navigator.clipboard.writeText(text).then(() => toast(`Copied <span class="mono">${esc(text)}</span>`), fallback); } catch (err) { fallback(); }
+}
+
+/* Keyboard */
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target, typing = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
+  const help = $('#help');
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if (!help.hidden) toggleHelp(false);
+    else if (menuOpen) { menuOpen = false; render(); $('#reviewCaret').focus(); }
+    else if (editing) act('cancel-edit');
+    else if (typing) { t.blur(); if (t.id === 'filter') focusList(); }
+    else if (confirmFor) { confirmFor = null; render(); }
+    else if ($('#app').dataset.m === 'side') { $('#app').dataset.m = 'list'; focusList(); }
+    else goBack();
+    return;
+  }
+  if (typing) return;
+  if (e.key === '?') { toggleHelp(help.hidden); return; }
+  if (!help.hidden) return;
+  const k = e.key, onBtn = t.tagName === 'BUTTON' && !t.classList.contains('row') && !t.classList.contains('irow');
+  if (k === '/') { e.preventDefault(); if (isMobile()) $('#app').dataset.m = 'list'; $('#filter').focus(); return; }
+  if (k === 'j' || k === 'k') {
+    const d = k === 'j' ? 1 : -1;
+    if (focusPane === 'items' && hasItems()) setCur(cur + d);
+    else if (focusPane === 'detail') { const b = $('#dbody'); if (b) b.scrollBy({ top: d * 80 }); }
+    else moveList(d);
+    return;
+  }
+  if ((k === 'Enter' && !onBtn || k === 'ArrowRight') && focusPane === 'list' && mode === 'item' && curRow()) { e.preventDefault(); enterDetail(); return; }
+  if (k === 'ArrowLeft') { goBack(); return; }
+  const p = curPr();
+  if (p && { 1: 'activity', 2: 'review', 3: 'log' }[k]) { setTab({ 1: 'activity', 2: 'review', 3: 'log' }[k]); if (focusPane === 'items' && !hasItems()) { focusPane = 'detail'; paintFocus(); } return; }
+  if (k === 'r' && p) { startReview(); return; }
+  if (k === 'p' && $('#postBtn')) { $('#postBtn').click(); return; }
+  if (focusPane === 'items' && hasItems() && { a: 1, d: 1, e: 1 }[k]) {
+    e.preventDefault();
+    const x = items[cur];
+    act(k === 'a' ? 'accept' : k === 'd' ? 'discard' : 'edit');
+    if (k !== 'e' && x) focusItems();
+  }
+});
+
+/* Help, toast, theme */
+function toggleHelp(show) { $('#help').hidden = !show; if (show) $('#helpClose').focus(); else restoreFocus(); }
+$('#helpClose').onclick = () => toggleHelp(false);
+$('#help').addEventListener('click', e => { if (e.target.id === 'help') toggleHelp(false); });
+function toast(html, onClick) {
+  const t = document.createElement('button');
+  t.type = 'button'; t.className = 'toast'; t.innerHTML = html;
+  t.onclick = () => { t.remove(); if (onClick) onClick(); };
+  $('#toastHost').replaceChildren(t);
+  setTimeout(() => t.remove(), 7000);
+}
+const root = document.documentElement;
+const isDark = () => root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+function syncThemeBtn() {
+  const b = $('#themeBtn'), label = isDark() ? 'Use light theme' : 'Use dark theme';
+  b.innerHTML = ic(isDark() ? 'sun' : 'moon'); b.title = label; b.setAttribute('aria-label', label);
+}
+const savedTheme = store.get('rl-theme');
+if (savedTheme === 'dark' || savedTheme === 'light') root.dataset.theme = savedTheme;
+$('#themeBtn').onclick = () => { root.dataset.theme = isDark() ? 'light' : 'dark'; store.set('rl-theme', root.dataset.theme); syncThemeBtn(); };
+syncThemeBtn();
+
+/* Sync status: polling costs no tokens. */
+let syncedAgo = 40;
+function tickSync() {
+  syncedAgo = syncedAgo >= 120 ? 0 : syncedAgo + 1;
+  const txt = `Synced ${syncedAgo < 60 ? syncedAgo + 's' : Math.floor(syncedAgo / 60) + 'm'} ago · no tokens used`;
+  $('#syncText').textContent = txt; $('.sync').title = txt;
+}
+syncedAgo--; tickSync(); setInterval(tickSync, 1000);
+
+/* Simulated poll result: a reply arrives about 8 s after load. */
+setTimeout(() => {
+  const p = prById(4182);
+  p.unread = 1; p.reply = true; p.mins = 0; movedId = 4182; liveReply = true; readIds.delete(4182);
+  const open = curPr() && curPr().id === 4182 && tab === 'activity';
+  flashReply = open;
+  render();
+  if (open) { const last = $('.ev.arrive'); if (last) last.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
+  toast('Lena Petrova replied to your comment on <span class="mono">ENGINE/render #4182</span><small>Click to open</small>', () => goto(4182, 'activity'));
+}, 8000);
+
+if (isMobile()) $('#app').dataset.m = 'list';
+render();
+</script>
