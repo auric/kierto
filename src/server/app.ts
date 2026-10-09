@@ -3,11 +3,14 @@ import { csrf } from "hono/csrf";
 import { secureHeaders } from "hono/secure-headers";
 import { allowedOrigins, type GuardOptions, guard } from "./guard";
 import type { Live } from "./live";
+import { createSettings, type Settings } from "./settings";
 
 export const TOKEN_PLACEHOLDER = "__RL_SESSION__";
 
 export type AppOptions = GuardOptions & {
   live: Live;
+  // Absent: a default instance from REVIEW_LOOP_DATA_DIR and REVIEW_LOOP_SECRETS.
+  settings?: Settings;
   // The built index.html. Absent in dev, where Vite serves the page.
   indexHtml?: string;
   // Middleware for the built assets. Absent in dev and in tests.
@@ -30,7 +33,8 @@ export function createApp(opts: AppOptions) {
       }),
     )
     .use(csrf({ origin: allowedOrigins(opts) }))
-    .get("/api/live", (c) => opts.live.handler(c));
+    .get("/api/live", (c) => opts.live.handler(c))
+    .route("/api/settings", (opts.settings ?? createSettings()).routes);
 
   if (opts.assets) app.use("/assets/*", opts.assets);
   if (page !== undefined) {
