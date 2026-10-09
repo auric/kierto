@@ -4,6 +4,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { allowedOrigins, type GuardOptions, guard } from "./guard";
 import type { Live } from "./live";
 import { createSettings, type Settings } from "./settings";
+import { createSyncEngine, type SyncEngine } from "./sync/engine";
 
 export const TOKEN_PLACEHOLDER = "__RL_SESSION__";
 
@@ -11,6 +12,8 @@ export type AppOptions = GuardOptions & {
   live: Live;
   // Absent: a default instance from REVIEW_LOOP_DATA_DIR and REVIEW_LOOP_SECRETS.
   settings?: Settings;
+  // Absent: an engine that is not started. POST /api/sync then runs one cycle.
+  sync?: SyncEngine;
   // The built index.html. Absent in dev, where Vite serves the page.
   indexHtml?: string;
   // Middleware for the built assets. Absent in dev and in tests.
@@ -19,6 +22,8 @@ export type AppOptions = GuardOptions & {
 
 export function createApp(opts: AppOptions) {
   const page = opts.indexHtml?.replaceAll(TOKEN_PLACEHOLDER, opts.token);
+  const settings = opts.settings ?? createSettings();
+  const sync = opts.sync ?? createSyncEngine({ settings, live: opts.live });
 
   const app = new Hono()
     .use(guard(opts))
@@ -34,7 +39,11 @@ export function createApp(opts: AppOptions) {
     )
     .use(csrf({ origin: allowedOrigins(opts) }))
     .get("/api/live", (c) => opts.live.handler(c))
-    .route("/api/settings", (opts.settings ?? createSettings()).routes);
+    .route("/api/settings", settings.routes)
+    .post("/api/sync", (c) => {
+      void sync.syncNow();
+      return c.json(sync.status(), 202);
+    });
 
   if (opts.assets) app.use("/assets/*", opts.assets);
   if (page !== undefined) {

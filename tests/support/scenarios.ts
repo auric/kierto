@@ -73,3 +73,28 @@ export function byUser(list: Activity[], id: number, user: unknown): Activity[] 
   findComment(out, id).author = clone(user);
   return out;
 }
+
+// A new reply under comment `parentId`. Bitbucket nests a reply in the parent's comments[] and gives it no activity (I2).
+export function addReply(list: Activity[], parentId: number, id: number, user: unknown): Activity[] {
+  const out = clone(list);
+  const parent = findComment(out, parentId);
+  const { anchor: _, ...rest } = clone(parent);
+  parent.comments = [...(parent.comments ?? []), { ...rest, id, version: 0, text: `Reply ${id}`, author: clone(user), comments: [] }];
+  return out;
+}
+
+// One last page that holds every value.
+export const onePage = <T>(values: T[]): Page<T> => ({ size: values.length, limit: 50, start: 0, isLastPage: true, values });
+
+export type RawPr = { id: number; version: number; state: string; fromRef: { latestCommit: string }; [k: string]: unknown };
+
+// The recorded single PR: PR 2, authored by the token owner.
+export const ownPr = (): RawPr => clone(fixture<RawPr>("pull-request.json").body);
+
+// The recorded reviewer-dashboard PR: PROJ1/sample-repo-2 PR 1001, authored by the second user, with the token owner as reviewer.
+export const REVIEW_PR_PATH = "/rest/api/1.0/projects/PROJ1/repos/sample-repo-2/pull-requests/1001";
+export function reviewPr(): RawPr {
+  const pr = fixture<Page<RawPr>>("dashboard-reviewer-page.json").body.values[0];
+  if (!pr) throw new Error("dashboard-reviewer-page.json has no PR");
+  return clone(pr);
+}

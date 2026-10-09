@@ -27,6 +27,6 @@ Regenerate: run the probe (`bun scripts/gate0/bitbucket-probe.ts --pr <PR> --wri
 
 ## Synthetic scenarios
 
-`tests/support/scenarios.ts` derives synthetic states from these files at test time: page splits, both last-page forms, a missing cursor, duplicates, reordering, a version-0 state before the recorded edit, and comments by a second user. The server did not send these states. The second user comes from `dashboard-reviewer-page.json`, because every recorded comment is by the token owner.
+`tests/support/scenarios.ts` derives synthetic states from these files at test time: page splits, both last-page forms, a missing cursor, duplicates, reordering, a version-0 state before the recorded edit, comments by a second user, new nested replies, a higher comment version, a merged PR, and a new source head. The server did not send these states. The second user comes from `dashboard-reviewer-page.json`, because every recorded comment is by the token owner.
 
 `fixtures/tls/` holds a test-only CA (`ca.pem`) and a server certificate for `127.0.0.1` (`server.pem`, `server.key`). The fake server uses them for the https test. The CA key was deleted after signing.
