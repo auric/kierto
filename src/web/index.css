@@ -7,6 +7,14 @@
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace;
+  --color-pane: var(--pane);
+  --color-pane-2: var(--pane-2);
+  --color-hover: var(--hover);
+  --color-mark: var(--mark);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-overlay: var(--overlay);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,82 +56,201 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* prototype/index.html:7-50. Prototype --accent is --primary, --accent-soft is --accent. */
+  --background: #eceff3;
+  --foreground: #17202b;
+  --card: #f8f9fb;
+  --card-foreground: #17202b;
+  --popover: #f8f9fb;
+  --popover-foreground: #17202b;
+  --primary: #2647c9;
+  --primary-foreground: #ffffff;
+  --secondary: #e1e5eb;
+  --secondary-foreground: #17202b;
+  --muted: #e1e5eb;
+  --muted-foreground: #5a6573;
+  --accent: #dfe5fa;
+  --accent-foreground: #2647c9;
+  --destructive: #b8282f;
+  --border: #cfd5dd;
+  --input: #cfd5dd;
+  --ring: #2647c9;
+  --chart-1: #2647c9;
+  --chart-2: #2b7a45;
+  --chart-3: #b8650c;
+  --chart-4: #29788a;
+  --chart-5: #7a808a;
+  --radius: 0.375rem;
+  --sidebar: #e2e6ec;
+  --sidebar-foreground: #17202b;
+  --sidebar-primary: #2647c9;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e7ebf0;
+  --sidebar-accent-foreground: #17202b;
+  --sidebar-border: #cfd5dd;
+  --sidebar-ring: #2647c9;
+  --pane: #fbfcfd;
+  --pane-2: #f2f4f7;
+  --hover: #e7ebf0;
+  --mark: #fbecd2;
+  --ok: #2b7a45;
+  --warn: #b8650c;
+  --overlay: rgba(23, 32, 43, 0.45);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #1a1f27;
+  --foreground: #dbe1e9;
+  --card: #262d38;
+  --card-foreground: #dbe1e9;
+  --popover: #262d38;
+  --popover-foreground: #dbe1e9;
+  --primary: #8aa2ff;
+  --primary-foreground: #111726;
+  --secondary: #2a313c;
+  --secondary-foreground: #dbe1e9;
+  --muted: #2a313c;
+  --muted-foreground: #8e98a5;
+  --accent: #2a3354;
+  --accent-foreground: #8aa2ff;
+  --destructive: #f06b6f;
+  --border: #343c48;
+  --input: #343c48;
+  --ring: #8aa2ff;
+  --chart-1: #8aa2ff;
+  --chart-2: #63c483;
+  --chart-3: #e89c48;
+  --chart-4: #5cb6c7;
+  --chart-5: #9aa0aa;
+  --sidebar: #14181e;
+  --sidebar-foreground: #dbe1e9;
+  --sidebar-primary: #8aa2ff;
+  --sidebar-primary-foreground: #111726;
+  --sidebar-accent: #2a313c;
+  --sidebar-accent-foreground: #dbe1e9;
+  --sidebar-border: #343c48;
+  --sidebar-ring: #8aa2ff;
+  --pane: #212731;
+  --pane-2: #1a1f27;
+  --hover: #2a313c;
+  --mark: #3b3222;
+  --ok: #63c483;
+  --warn: #e89c48;
+  --overlay: rgba(5, 8, 12, 0.6);
+  color-scheme: dark;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
+  html,
+  body,
+  #root {
+    height: 100%;
   }
   html {
     @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    overflow: hidden;
+    font-size: 13.5px;
+    line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over component animations. */
+    animation: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over component animations. */
+    transition: none !important;
+  }
+}
+
+/* App grid (prototype/index.html:6): sidebar | list | detail. A rail from 760 to 1099 px. One pane below 760 px.
+   Unlayered, so these display rules win over the Tailwind utilities on the same elements. */
+.rl-app {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 224px minmax(320px, 368px) minmax(0, 1fr);
+}
+.rl-app > * {
+  min-height: 0;
+  min-width: 0;
+}
+.rl-abbr,
+.rl-m-only {
+  display: none;
+}
+.pane-edge {
+  box-shadow: inset 0 2px 0 var(--primary);
+}
+@media (min-width: 760px) and (max-width: 1099px) {
+  .rl-app {
+    grid-template-columns: 60px minmax(300px, 340px) minmax(0, 1fr);
+  }
+  .rl-side .rl-lbl {
+    display: none;
+  }
+  .rl-side .rl-abbr {
+    display: inline-block;
+  }
+  .rl-side .rl-center {
+    justify-content: center;
+  }
+  .rl-side .rl-stack {
+    flex-direction: column;
+    padding-inline: 0;
+  }
+  .rl-side .rl-stack > * {
+    flex-basis: auto;
+    margin: 0;
+  }
+  .rl-side .rl-check {
+    width: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+  .rl-side .rl-has-count::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--primary);
+    box-shadow: 0 0 0 2px var(--sidebar);
+  }
+}
+@media (max-width: 759px) {
+  .rl-app {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rl-app > .rl-pane {
+    display: none;
+  }
+  .rl-app[data-m="side"] > .rl-side,
+  .rl-app[data-m="detail"] > .rl-detail {
+    display: flex;
+  }
+  .rl-app[data-m="list"] > .rl-list {
+    display: grid;
+  }
+  .rl-m-only {
+    display: inline-flex;
+  }
+  .rl-wide-only {
+    display: none;
   }
 }
