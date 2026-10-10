@@ -2,8 +2,10 @@
 <style>
 /* Review Loop prototype v3. Fictional data. System fonts only. */
 /* Hue rule: --turn marks only "your turn", --err marks only errors, --pen marks links and focus. All else is grey. No stripes, fills, or gradients mark state. */
+/* Avatars carry one muted hue per person. The hue names a person, never a state. The 8 hues avoid the turn and error hues. */
 :root {
   color-scheme: light;
+  --av-bl: .92; --av-bc: .035; --av-fl: .42; --av-fc: .075;
   --frame: #e8ebee;
   --list: #f3f5f7;
   --paper: #fcfcfd;
@@ -37,6 +39,7 @@
     --frame: #121519; --list: #171a1f; --paper: #1c2027; --sunken: #15181d; --hover: #22272f; --sel: #2b313b;
     --ink: #e4e8ed; --ink-2: #a9b2be; --ink-3: #8c96a3; --rule: #2c323b; --rule-strong: #46505c;
     --pen: #93a8ff; --turn: #ffa364; --err: #ff8b7e; --add: #15291b; --del: #34191b; --hit: #2f3640; --overlay: rgba(0, 0, 0, .6);
+    --av-bl: .36; --av-bc: .04; --av-fl: .88; --av-fc: .05;
   }
 }
 :root[data-theme="dark"] {
@@ -44,6 +47,7 @@
   --frame: #121519; --list: #171a1f; --paper: #1c2027; --sunken: #15181d; --hover: #22272f; --sel: #2b313b;
   --ink: #e4e8ed; --ink-2: #a9b2be; --ink-3: #8c96a3; --rule: #2c323b; --rule-strong: #46505c;
   --pen: #93a8ff; --turn: #ffa364; --err: #ff8b7e; --add: #15291b; --del: #34191b; --hit: #2f3640; --overlay: rgba(0, 0, 0, .6);
+  --av-bl: .36; --av-bc: .04; --av-fl: .88; --av-fc: .05;
 }
 :root[data-density="compact"] { --fs: 13px; --fs-s: 12px; --fs-xs: 11.25px; --fs-title: 18px; --row-y: 6px; }
 
@@ -224,8 +228,13 @@ details.sec[open] { padding-bottom: 12px; }
 .th-body[hidden] { display: none; }
 @container detail (max-width: 559px) { .th-latest { display: none; } }
 
-.code { margin: 0 0 14px; border-radius: 6px; background: var(--sunken); overflow: hidden; }
+/* An inline thread opens its code excerpt after the commented line. The rest of the excerpt follows the discussion. */
+.code { border-radius: 6px; background: var(--sunken); overflow: hidden; }
+.code.head { border-radius: 6px 6px 0 0; }
+.code.tail { border-radius: 0 0 6px 6px; }
 .code pre { margin: 0; padding: 6px 0; overflow-x: auto; font-size: 12.25px; line-height: 1.6; }
+.code.head pre { padding-bottom: 0; }
+.code.tail pre { padding-top: 0; }
 .cl { display: grid; grid-template-columns: 4.2ch 2ch max-content; padding-right: 12px; }
 .cl .no { text-align: right; color: var(--ink-3); user-select: none; }
 .cl .sg { text-align: center; color: var(--ink-3); user-select: none; }
@@ -235,11 +244,54 @@ details.sec[open] { padding-bottom: 12px; }
 .cl.hit .no { color: var(--ink); font-weight: 600; }
 .code-note { margin: 0; padding: 6px 10px 0; font-size: var(--fs-xs); color: var(--ink-3); }
 
-.msgs { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
-.msg { scroll-margin-top: 12px; border-radius: 4px; }
-.msg-h { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; font-size: var(--fs-s); color: var(--ink-3); }
+/* Reply tree: whitespace and one thin neutral line. The line drops from the commented line, then from each avatar to its replies. */
+.disc { --av: 20px; --step: 28px; --pt: 14px; --ln: var(--rule-strong); padding: 4px 0 2px; }
+.disc.anchored { padding: 14px 0 16px 10px; }
+.tree, .tree ol { list-style: none; margin: 0; padding: 0; }
+.tree ol { padding-left: var(--step); }
+.tree li { position: relative; }
+.tree ol > li { padding-top: var(--pt); }
+.disc.anchored > .tree > li::before { content: ""; position: absolute; left: calc(var(--av) / 2 - .5px); top: -14px; height: 14px; border-left: 1px solid var(--ln); }
+.tree ol > li::before, .th-foot::before { content: ""; position: absolute; top: 0; left: calc(var(--av) / 2 - var(--step) - .5px); width: calc(var(--step) - var(--av) / 2 - 2px); height: calc(var(--pt) + var(--av) / 2); border: 0 solid var(--ln); border-width: 0 0 1px 1px; border-bottom-left-radius: 7px; }
+.tree ol > li:not(:last-child)::after, .tree .foot > ol > li:last-child::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(var(--av) / 2 - var(--step) - .5px); border-left: 1px solid var(--ln); }
+.tree .kids > .msg::after { content: ""; position: absolute; top: calc(var(--av) + 2px); bottom: 0; left: calc(var(--av) / 2 - .5px); border-left: 1px solid var(--ln); }
+.th-foot { position: relative; margin: 0 0 0 var(--step); padding-top: var(--pt); font-size: var(--fs-s); }
+.th-foot .turn { height: var(--av); }
+/* Narrow pane: a smaller indent step, so 4 levels fit at 400 px. */
+@container detail (max-width: 559px) {
+  .disc { --av: 18px; --step: 20px; --pt: 12px; }
+  .disc.anchored { padding-left: 8px; }
+}
+
+.av { display: inline-grid; place-items: center; flex: none; width: var(--av, 20px); height: var(--av, 20px); border-radius: 50%; font-size: calc(var(--av, 20px) * .44); font-weight: 650; line-height: 1; letter-spacing: .02em; background: oklch(var(--av-bl) var(--av-bc) var(--h)); color: oklch(var(--av-fl) var(--av-fc) var(--h)); user-select: none; }
+.av[data-h="0"] { --h: 110; } .av[data-h="1"] { --h: 145; } .av[data-h="2"] { --h: 180; } .av[data-h="3"] { --h: 215; }
+.av[data-h="4"] { --h: 245; } .av[data-h="5"] { --h: 275; } .av[data-h="6"] { --h: 305; } .av[data-h="7"] { --h: 340; }
+.av.me { background: var(--paper); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--rule-strong); }
+
+.msg { position: relative; scroll-margin-top: 12px; border-radius: 4px; }
+.msg.flash { animation: flash 900ms ease-out 1; }
+.msg-h { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-height: var(--av); font-size: var(--fs-s); color: var(--ink-3); }
 .msg-h b { color: var(--ink); font-weight: 600; }
-.msg-b { max-width: 72ch; overflow-wrap: anywhere; }
+.msg-b, .xq { margin-left: calc(var(--av) + 8px); }
+.msg-b { max-width: 72ch; overflow-wrap: anywhere; margin-top: 1px; }
+/* Cross-reply quote: one muted line that names the message this one answers. */
+.xq { display: flex; align-items: center; gap: 4px; max-width: calc(100% - var(--av) - 8px); margin-top: 1px; font-size: var(--fs-xs); color: var(--ink-3); border-radius: 4px; }
+.xq svg.i { width: 13px; height: 13px; }
+.xq-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xq:hover { color: var(--ink-2); }
+.xq:hover .xq-t { text-decoration: underline; }
+/* Fold row: the chevron takes the avatar slot, so the tree line ends on it. */
+.fold-b { position: relative; display: flex; align-items: center; gap: 6px; min-height: var(--av); max-width: 100%; font-size: var(--fs-s); color: var(--ink-2); border-radius: 4px; }
+.fold-b > .chev { margin: 0 calc((var(--av) - var(--icon)) / 2); color: var(--ink-3); }
+.fold-b:hover { color: var(--ink); }
+.fold-b:hover .fold-t { text-decoration: underline; }
+.fold-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opened > .fold-b { margin-bottom: 10px; }
+.opened > .fold-b::after { content: ""; position: absolute; top: var(--av); height: 10px; left: calc(var(--av) / 2 - .5px); border-left: 1px solid var(--ln); }
+.stack { display: inline-flex; flex: none; }
+.stack .av { --av: 18px; box-shadow: 0 0 0 2px var(--paper); }
+.stack .av.me { box-shadow: inset 0 0 0 1px var(--rule-strong), 0 0 0 2px var(--paper); }
+.stack .av + .av { margin-left: -4px; }
 .msg-b p { margin: 0 0 6px; }
 .msg-b p:last-child { margin: 0; }
 
@@ -357,8 +409,9 @@ const PEOPLE = {
 };
 
 // ---------- Fictional data ----------
+// Messages of a thread are in time order. re is the index of the message this one answers (Bitbucket nests it in comment.comments).
 let mid = 1;
-const m = (who, ago, text, o = {}) => ({ id: mid++, who, ago, text, new: !!o.new, edited: !!o.edited, task: o.task || null, to: o.to || null });
+const m = (who, ago, text, o = {}) => ({ id: mid++, who, ago, text, new: !!o.new, edited: !!o.edited, task: o.task || null, re: o.re ?? null });
 const L = (n, k, s) => [n, k, s];
 
 const PRS = [
@@ -386,17 +439,19 @@ const PRS = [
         code: [L(139, "ctx", "bool ResourceCache::evict(Handle h) {"), L(140, "add", "    std::lock_guard<std::mutex> guard(cacheMutex_);"), L(141, "ctx", "    auto it = entries_.find(h);"), L(142, "add", "    if (it == entries_.end()) return false;"), L(143, "add", "    return evictLocked(it);"), L(144, "ctx", "}")],
         msgs: [
           m("me", 4320, "Does `evictLocked()` expect the caller to hold `cacheMutex_`? The header still says it takes the lock itself."),
-          m("lena", 2880, "It did before. In this PR the caller holds the lock. I updated the header comment.", { to: "me" }),
-          m("me", 2870, "OK. But `flushPending()` still calls `evictLocked()`. Does it hold the lock there?", { to: "lena" }),
-          m("lena", 2860, "Yes, `flushPending()` takes the lock first, see line 210.", { to: "me" }),
-          m("dan", 25, "Line 210 locks `pendingMutex_`, not `cacheMutex_`. So that path still calls `evictLocked()` without the cache lock. Jordan, you asked first, so I leave it with you.", { new: true, to: "me" }),
+          m("lena", 2880, "It did before. The caller holds the lock now. I updated the header comment.", { re: 0 }),
+          m("me", 2870, "`flushPending()` still calls `evictLocked()`. Does it hold the lock there?", { re: 1 }),
+          m("dan", 25, "Line 210 locks `pendingMutex_`, not `cacheMutex_`. So `flushPending()` calls `evictLocked()` without the cache lock.", { new: true, re: 2 }),
         ] },
-      { id: 2, path: "src/render/ResourceCache.cpp", line: 198,
+      // Multi-line anchor (from). No fixture has a range anchor yet. Confirm the anchor field for the range start before the app uses it.
+      { id: 2, path: "src/render/ResourceCache.cpp", from: 197, line: 198,
         code: [L(196, "ctx", "void ResourceCache::trim(size_t budget) {"), L(197, "add", "    std::lock_guard<std::mutex> guard(cacheMutex_);"), L(198, "add", "    while (bytes_ > budget) evictLocked(lru_.back());"), L(199, "ctx", "}")],
         msgs: [
           m("mira", 1440, "This loop holds `cacheMutex_` while each entry's destructor runs. A destructor that calls back into the cache deadlocks."),
-          m("me", 1262, "Agreed. Lena, can you move the entries out first and destroy them after the guard ends?", { to: "mira" }),
-          m("lena", 12, "Done in a3f9e21. Entries move to a local vector and are destroyed after the guard ends.", { new: true, to: "me" }),
+          m("me", 1262, "Agreed. Lena, can you move the entries out first and destroy them after the guard ends?", { re: 0 }),
+          m("dan", 1250, "It already happens: the texture destructor calls `cache.release()`. I hit this hang in the streaming test.", { re: 0 }),
+          m("lena", 12, "Done in a3f9e21. Entries move to a local vector and are destroyed after the guard ends.", { new: true, re: 1 }),
+          m("lena", 10, "`TrimWithReentrantDestructor` now covers the texture case.", { new: true, re: 2 }),
         ] },
       { id: 3, path: "src/render/ResourceCache.h", line: 57,
         code: [L(55, "ctx", "    /// Removes the entry. Returns false for an unknown handle."), L(56, "add", "    /// Takes cacheMutex_. Do not call while you hold it."), L(57, "add", "    bool evict(Handle h);")],
@@ -405,19 +460,24 @@ const PRS = [
         code: [L(30, "ctx", "private:"), L(31, "add", "    bool evictLocked(EntryIt it);")],
         msgs: [
           m("dan", 4300, "Name nit: `evictLocked` reads like evict-and-lock. Maybe `evictWhileLocked`?"),
-          m("lena", 4200, "I kept the name. The style guide uses `fooLocked` for functions whose caller holds the lock.", { to: "dan" }),
+          m("lena", 4200, "I kept the name. The style guide uses `fooLocked` for functions whose caller holds the lock.", { re: 0 }),
         ] },
       { id: 5, path: "src/render/EvictionPolicy.cpp", line: 44,
         code: [L(42, "add", "    // Ties go to the entry that was inserted first."), L(43, "add", "    if (a.lastUse == b.lastUse)"), L(44, "add", "        return a.seq < b.seq;")],
         msgs: [
           m("me", 2900, "Please add a test for the tie case: two entries with the same `lastUse`.", { task: "open" }),
-          m("lena", 64, "Added `EvictsOldestOnTie` in ResourceCacheTest.cpp (7c0d4b8). Can you resolve the task?", { new: true, to: "me" }),
+          m("lena", 64, "Added `EvictsOldestOnTie` in ResourceCacheTest.cpp (7c0d4b8). Can you resolve the task?", { new: true, re: 0 }),
         ] },
+      // A read linear thread deeper than 4 levels: the middle folds, and replies below level 4 show a quote.
       { id: 6, path: "src/render/EvictionPolicy.cpp", line: 12,
         code: [L(11, "add", "enum Policy {"), L(12, "add", "    Lru,"), L(13, "add", "    Lfu,")],
         msgs: [
           m("mira", 2800, "Nit: make this an `enum class`, so `Lru` does not leak into the render namespace."),
-          m("lena", 2700, "Changed.", { to: "mira" }),
+          m("lena", 2700, "Changed. But the config loader compares `Policy` with ints.", { re: 0 }),
+          m("mira", 2690, "Then give the loader a `fromString()`. An int compare caused the last config bug.", { re: 1 }),
+          m("lena", 2680, "The old binary configs store ints, so strings do not work there.", { re: 2 }),
+          m("mira", 2670, "OK. Keep the ints at the loader edge and convert once with a checked cast.", { re: 3 }),
+          m("lena", 2600, "Done. `toPolicy()` rejects unknown values and logs the key.", { re: 4 }),
         ] },
       { id: 7, path: "src/render/EvictionPolicy.cpp", line: 88,
         code: [L(87, "add", "struct Budget {"), L(88, "add", "    int maxBytes = -1;  // -1: no limit"), L(89, "add", "};")],
@@ -426,24 +486,28 @@ const PRS = [
         code: [L(72, "ctx", "    cache.evictAsync(h);"), L(73, "add", "    std::this_thread::sleep_for(50ms);"), L(74, "ctx", "    EXPECT_FALSE(cache.contains(k));")],
         msgs: [
           m("mira", 2850, "A fixed sleep will flake on the build farm. Wait on the eviction instead."),
-          m("lena", 1380, "Replaced it with a latch.", { to: "mira" }),
+          m("lena", 1380, "Replaced it with a latch.", { re: 0 }),
         ] },
       { id: 9, path: "src/render/ResourceCache.cpp", line: 61, outdated: true, resolved: true,
         code: [L(60, "ctx", "    auto h = lookup(key);"), L(61, "add", "    if (!h.valid()) return {};"), L(62, "add", "    pin(h);")],
         msgs: [
           m("me", 4310, "This early return skips `unpin()` on the error path, so the pin leaks."),
-          m("lena", 4100, "Fixed in 51e0a3c.", { to: "me" }),
+          m("lena", 4100, "Fixed in 51e0a3c.", { re: 0 }),
         ] },
+      // Two people answer the root. The read side branch of 3 messages folds to one line.
       { id: 10, path: null,
         msgs: [
           m("lena", 4250, "Numbers from the city scene: evict p99 drops from 2.1 ms to 0.4 ms. The lock now covers less work."),
-          m("dan", 2600, "Can you attach the capture?", { to: "lena" }),
-          m("lena", 8, "The capture is on the perf share. I added the path to the description.", { new: true, to: "dan" }),
+          m("dan", 2600, "Can you attach the capture?", { re: 0 }),
+          m("me", 2590, "Were the plugins on? They evict a lot while the city streams.", { re: 0 }),
+          m("lena", 2580, "No. I reran with the plugins on: p99 is 0.6 ms.", { re: 2 }),
+          m("me", 2570, "Good. That is well under the 1 ms budget.", { re: 3 }),
+          m("lena", 8, "The capture is on the perf share. I added the path to the description.", { new: true, re: 1 }),
         ] },
       { id: 11, path: null,
         msgs: [
           m("dan", 1450, "Mira, does the header change break the plugin SDK ABI?"),
-          m("mira", 1320, "No. The SDK does not include ResourceCache.h.", { to: "dan" }),
+          m("mira", 1320, "No. The SDK does not include ResourceCache.h.", { re: 0 }),
         ] },
     ],
   },
@@ -459,12 +523,12 @@ const PRS = [
         code: [L(39, "del", "    SpinLock::Guard g(lock_);"), L(40, "add", "    std::lock_guard<std::mutex> g(mutex_);")],
         msgs: [
           m("me", 1200, "Does the audio thread still take this lock? `std::mutex` can block it under priority inversion."),
-          m("dan", 34, "Audio uses its own lock-free queue since #2190. This change removes the last user.", { new: true, to: "me" }),
+          m("dan", 34, "Audio uses its own lock-free queue since #2190. This change removes the last user.", { new: true, re: 0 }),
         ] },
       { id: 22, path: null,
         msgs: [
           m("yuki", 300, "Bench on the 16-core box: no change in frame time."),
-          m("dan", 130, "Thanks, I added it to the description.", { new: true, to: "yuki" }),
+          m("dan", 130, "Thanks, I added it to the description.", { new: true, re: 0 }),
         ] },
     ],
   },
@@ -494,7 +558,7 @@ const PRS = [
         code: [L(87, "add", "    const Header& base = acks_.lastAcked();"), L(88, "add", "    writeDelta(out, base, header);")],
         msgs: [
           m("tomas", 180, "The delta base can be a snapshot that the client already dropped.", { new: true }),
-          m("priya", 120, "The ack window keeps the base alive. See `AckWindow::pin`.", { new: true, to: "tomas" }),
+          m("priya", 120, "The ack window keeps the base alive. See `AckWindow::pin`.", { new: true, re: 0 }),
         ] },
       { id: 42, path: null, msgs: [m("yuki", 50, "Can we keep the old format behind a flag for one release?", { new: true })] },
     ],
@@ -529,7 +593,7 @@ const PRS = [
     threads: [
       { id: 61, path: "src/audio/PakStream.cpp", line: 77, resolved: true,
         code: [L(77, "add", "    stream.seek(byteOffset);")],
-        msgs: [m("me", 2100, "Seeking by byte offset lands inside an Opus page. Seek by granule position."), m("yuki", 95, "Fixed in b7c2a90.", { to: "me" })] },
+        msgs: [m("me", 2100, "Seeking by byte offset lands inside an Opus page. Seek by granule position."), m("yuki", 95, "Fixed in b7c2a90.", { re: 0 })] },
     ],
   },
   {
@@ -542,7 +606,7 @@ const PRS = [
     threads: [
       { id: 71, path: "uploader/upload.py", line: 52,
         code: [L(52, "add", "        time.sleep(2 ** attempt)")],
-        msgs: [m("dan", 1000, "I kept the sleep in the worker thread. Is that OK for the CLI?"), m("me", 280, "Not for the CLI. It blocks Ctrl+C. Please use the retry helper from `uploader/net.py`.", { to: "dan" })] },
+        msgs: [m("dan", 1000, "I kept the sleep in the worker thread. Is that OK for the CLI?"), m("me", 280, "Not for the CLI. It blocks Ctrl+C. Please use the retry helper from `uploader/net.py`.", { re: 0 })] },
     ],
   },
   {
@@ -555,7 +619,7 @@ const PRS = [
     threads: [
       { id: 81, path: "src/render/Tonemap.hlsl", line: 30,
         code: [L(30, "add", "    color = LinearToSrgb(Aces(color));")],
-        msgs: [m("me", 1600, "Does the UI pass expect linear input now?"), m("mira", 70, "Yes. I opened a follow-up for the UI pass: ENGINE/render #4190.", { new: true, to: "me" })] },
+        msgs: [m("me", 1600, "Does the UI pass expect linear input now?"), m("mira", 70, "Yes. I opened a follow-up for the UI pass: ENGINE/render #4190.", { new: true, re: 0 })] },
     ],
   },
   {
@@ -570,6 +634,28 @@ const PRS = [
 ];
 
 // ---------- Derived state ----------
+// Folds of an open thread. Keys are messages. A fold never hides a new message.
+function foldPlan(t) {
+  const plan = new Map();
+  const s = t.spine;
+  const len = s.length;
+  // Long main line: the root and the newest replies stay. Read replies between them fold if that hides 2 or more.
+  const regionNew = (i) => s[i].new || s[i].kids.some((k) => k !== s[i + 1] && k.hasNew);
+  let firstNew = -1;
+  for (let i = 1; i < len && firstNew < 0; i++) if (regionNew(i)) firstNew = i;
+  const keep = Math.min(firstNew < 0 ? 2 : Math.max(2, len - firstNew), len - 1);
+  if (len - keep > 1) {
+    const cont = s[len - keep];
+    const n = s[1].size - cont.size;
+    if (n > 1) plan.set(s[1], { kind: "spine", n, cont });
+  }
+  // Side branch: a read branch of more than 2 messages folds to one line.
+  const on = new Set(s);
+  const walk = (x) => { for (const k of x.kids) { if (!on.has(k) && !k.hasNew && k.size > 2) plan.set(k, { kind: "branch" }); else walk(k); } };
+  walk(t.root);
+  return plan;
+}
+
 // Turn rule: a thread is mine when I wrote a message in it, or when I authored the PR.
 // It is my turn when it is mine, not resolved, and the newest message is by someone else.
 const BY_ID = new Map(PRS.map((p) => [p.id, p]));
@@ -586,6 +672,16 @@ for (const p of PRS) {
     const lastOther = [...t.msgs].reverse().find((x) => x.who !== "me");
     t.waitOn = t.turn === "wait" ? (lastOther ? lastOther.who : p.author !== "me" ? p.author : null) : null;
     t.task = t.msgs.find((x) => x.task)?.task || null;
+    // Reply tree. A parent always comes before its replies in time order.
+    for (const x of t.msgs) { x.kids = []; x.parent = x.re === null ? null : t.msgs[x.re]; x.parent?.kids.push(x); }
+    for (const x of [...t.msgs].reverse()) { x.size = 1 + x.kids.reduce((n, k) => n + k.size, 0); x.hasNew = x.new || x.kids.some((k) => k.hasNew); }
+    t.root = t.msgs[0];
+    const dfs = (x) => [x, ...x.kids.flatMap(dfs)];
+    t.order = dfs(t.root);
+    // The main line runs from the root to the newest message.
+    t.spine = [];
+    for (let x = last; x; x = x.parent) t.spine.unshift(x);
+    t.fold = foldPlan(t);
   }
   p.unread = p.threads.reduce((n, t) => n + t.unread, 0);
   p.yourTurn = p.threads.filter((t) => t.turn === "your");
@@ -621,7 +717,7 @@ const TURN_LABEL = { your: "Your turn", wait: "Waiting on others", other: "Other
 
 const S = {
   view: "needs", repo: null, query: "", sel: 4182, focus: "list", page: "conv", doneOpen: false,
-  needMe: false, open: new Map(), unfold: new Set(), showResolved: false, cur: null, descOpen: false, openSec: new Set(),
+  needMe: false, open: new Map(), unfold: new Set(), branches: new Set(), showResolved: false, cur: null, descOpen: false, openSec: new Set(),
   following: new Set(PRS.map((p) => p.id)),
 };
 
@@ -647,7 +743,20 @@ const base = (p) => p.slice(p.lastIndexOf("/") + 1);
 const dir = (p) => p.slice(0, p.lastIndexOf("/") + 1);
 const key = (p) => `${p.project}/${p.repo} #${p.id}`;
 const snippet = (s, n = 110) => { const t = plain(s).replace(/\s+/g, " "); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
-const where = (t) => (t.path ? `${base(t.path)}:${t.line}` : "General comment");
+const lines = (t) => (t.from ? `${t.from}–${t.line}` : `${t.line}`);
+const where = (t) => (t.path ? `${base(t.path)}:${lines(t)}` : "General comment");
+const agoLong = (min) => (min < 1 ? "just now" : min < 60 ? `${plural(min, "minute")} ago` : min < 1440 ? `${plural(Math.round(min / 60), "hour")} ago` : `${plural(Math.round(min / 1440), "day")} ago`);
+const short = (w) => (w === "me" ? "You" : first(w));
+// Others first, then "you": "Lena and you", "Dan, Lena, and you".
+const names = (ws) => {
+  const ns = [...ws.filter((w) => w !== "me").map(first), ...(ws.includes("me") ? ["you"] : [])];
+  const s = ns.length < 3 ? ns.join(" and ") : `${ns.slice(0, -1).join(", ")}, and ${ns.at(-1)}`;
+  return s[0].toUpperCase() + s.slice(1);
+};
+// Avatar hue: FNV-1a of the person key (the Bitbucket user slug in the app) into 8 fixed slots. "You" stays neutral.
+const hueOf = (k) => { let h = 0x811c9dc5; for (const c of k) h = Math.imul(h ^ c.codePointAt(0), 0x01000193); return (h >>> 0) % 8; };
+const initials = (w) => { const ws = PEOPLE[w].split(" "); return ws[0][0] + (ws.length > 1 ? ws.at(-1)[0] : ""); };
+const avatar = (w) => `<span class="av${w === "me" ? " me" : ""}"${w === "me" ? "" : ` data-h="${hueOf(w)}"`} aria-hidden="true">${esc(initials(w))}</span>`;
 const shown = () => PRS.filter((p) => S.following.has(p.id) || p.state === "OPEN");
 
 // Paths copied from lucide-react 1.48.0 (ISC). The app imports the same icons from lucide-react.
@@ -674,6 +783,7 @@ const ICON = {
   alert: '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
   ok: '<circle cx="12" cy="12" r="10"/><path d="m16 9-5.5 5.5L8 12"/>',
   reply: '<path d="M20 18v-2a4 4 0 0 0-4-4H4"/><path d="m9 17-5-5 5-5"/>',
+  corner: '<path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>',
   hourglass: '<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><path d="M16 3.128a4 4 0 0 1 0 7.744"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/>',
   user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
@@ -899,37 +1009,90 @@ function thread(p, t) {
   return `<article class="th${S.cur === t.id ? " is-cur" : ""}" id="t-${t.id}" data-thread="${t.id}" tabindex="-1" aria-label="${esc(`${turnText(t)}. ${where(t)}.${t.unread ? ` ${t.unread} new.` : ""}`)}">
     <div class="th-row">
       <button type="button" class="th-head" data-act="toggle" data-thread="${t.id}" aria-expanded="${open}" aria-controls="tb-${t.id}">
-        <span class="th-where${t.path ? "" : " general"}">${t.path ? `${esc(base(t.path))}<span class="ln">:${t.line}</span>` : "General comment"}</span>${summary}<time title="${esc(full(t.ago))}">${ago(t.ago)}</time>${icon("chev", "chev")}
+        <span class="th-where${t.path ? "" : " general"}">${t.path ? `${esc(base(t.path))}<span class="ln">:${lines(t)}</span>` : "General comment"}</span>${summary}<time title="${esc(full(t.ago))}">${ago(t.ago)}</time>${icon("chev", "chev")}
       </button>
       ${open ? `<a href="#" class="icon-btn" data-act="bb" aria-label="Open this thread in Bitbucket" title="Open in Bitbucket">${icon("ext")}</a>` : '<span class="th-gap"></span>'}
     </div>
-    <div class="th-body" id="tb-${t.id}" ${open ? "" : "hidden"}>
-      ${t.code ? codeBlock(t) : ""}
-      <ol class="msgs">${messages(t)}</ol>
-    </div>
+    <div class="th-body" id="tb-${t.id}" ${open ? "" : "hidden"}>${open ? threadBody(t) : ""}</div>
   </article>`;
 }
 
-function codeBlock(t) {
-  return `<div class="code" role="group" aria-label="${esc(`Code at ${t.path} line ${t.line}${t.outdated ? ", as it was when the comment was written" : ""}`)}">
-    ${t.outdated ? '<p class="code-note">Code as it was when the comment was written. The file changed after that.</p>' : ""}
-    <pre>${t.code.map(([n, k, s]) => `<span class="cl ${k}${n === t.line ? " hit" : ""}"><span class="no">${n}</span><span class="sg">${k === "add" ? "+" : k === "del" ? "−" : " "}</span><span class="tx">${esc(s)}${n === t.line ? '<span class="sr"> (commented line)</span>' : ""}</span></span>`).join("")}</pre>
-  </div>`;
+// An inline thread splits its excerpt after the last commented line. The discussion sits in the gap.
+function threadBody(t) {
+  const disc = (cls) => `<div class="disc${cls}">${tree(t)}</div>`;
+  if (!t.code) return disc("");
+  const cut = t.code.findIndex(([n]) => n === t.line) + 1;
+  const after = t.code.slice(cut);
+  const span = t.from ? `lines ${t.from} to ${t.line}` : `line ${t.line}`;
+  return `<div class="code${after.length ? " head" : ""}" role="group" aria-label="${esc(`Code at ${t.path} ${span}${t.outdated ? ", as it was when the comment was written" : ""}`)}">
+      ${t.outdated ? '<p class="code-note">Code as it was when the comment was written. The file changed after that.</p>' : ""}
+      <pre>${codeLines(t, t.code.slice(0, cut))}</pre>
+    </div>${disc(" anchored")}${after.length ? `<div class="code tail" role="group" aria-label="${esc(`Code after line ${t.line}`)}"><pre>${codeLines(t, after)}</pre></div>` : ""}`;
 }
 
-function messages(t) {
-  const ms = t.msgs;
-  const msg = (x, i) => `<li class="msg" id="m-${x.id}" tabindex="-1">
-    <div class="msg-h"><b>${esc(name(x.who))}</b>${i > 0 && x.to && x.to !== ms[i - 1].who ? `<span>to ${esc(first(x.to))}</span>` : ""}<time title="${esc(full(x.ago))}">${ago(x.ago)}</time>${x.edited ? "<span>edited</span>" : ""}${x.task ? taskMark(x.task) : ""}${x.new ? newMark("new") : ""}</div>
-    <div class="msg-b">${paras(x.text)}</div></li>`;
-  // Long threads: the root and the newest two stay. Read replies between them fold.
-  if (ms.length > 3 && !S.unfold.has(t.id)) {
-    const firstNew = ms.findIndex((x) => x.new);
-    const keep = Math.min(firstNew < 0 ? 2 : Math.max(2, ms.length - firstNew), ms.length - 1);
-    const hidden = ms.length - 1 - keep;
-    if (hidden > 0) return `${msg(ms[0], 0)}<li class="msg"><button type="button" class="linkish" data-act="unfold" data-thread="${t.id}">Show ${plural(hidden, "earlier reply", "earlier replies")}</button></li>${ms.slice(ms.length - keep).map((x, j) => msg(x, ms.length - keep + j)).join("")}`;
+const codeLines = (t, ls) => ls.map(([n, k, s]) => {
+  const hit = n >= (t.from ?? t.line) && n <= t.line;
+  return `<span class="cl ${k}${hit ? " hit" : ""}"><span class="no">${n}</span><span class="sg">${k === "add" ? "+" : k === "del" ? "−" : " "}</span><span class="tx">${esc(s)}${hit ? '<span class="sr"> (commented line)</span>' : ""}</span></span>`;
+}).join("");
+
+// Reply tree as nested lists. Levels stop at CAP. Deeper replies stay at CAP and quote the message they answer.
+const CAP = 4;
+function tree(t) {
+  const st = { prev: null };
+  const foot = t.turn === "your" ? `<p class="th-foot">${turnMark(t)}</p>` : "";
+  return `<ol class="tree">${items(t, t.root, 1, false, st, "", foot)}</ol>`;
+}
+
+// st.prev is the message rendered just above. A reply to any other message shows a quote.
+function items(t, x, lv, flat, st, head = "", foot = "") {
+  const quote = !!x.parent && (flat || x.parent.id !== st.prev);
+  st.prev = x.id;
+  const deep = lv >= CAP;
+  const kids = x.kids.map((k) => child(t, k, deep ? CAP : lv + 1, deep, st)).join("");
+  const cls = `node${head ? " opened" : ""}${(!deep && kids) || foot ? " kids" : ""}${foot ? " foot" : ""}`;
+  const own = `${head}${msg(t, x, quote)}`;
+  return deep ? `<li class="${cls}">${own}${foot}</li>${kids}` : `<li class="${cls}">${own}${kids ? `<ol>${kids}</ol>` : ""}${foot}</li>`;
+}
+
+function child(t, x, lv, flat, st) {
+  const f = t.fold.get(x);
+  if (!f) return items(t, x, lv, flat, st);
+  const open = f.kind === "spine" ? S.unfold.has(t.id) : S.branches.has(x.id);
+  const btn = foldBtn(t, x, f, open);
+  if (open) return items(t, x, lv, flat, st, btn);
+  st.prev = null;
+  if (f.kind === "branch") return `<li class="fold">${btn}</li>`;
+  // The kept replies of the main line continue below the fold row.
+  const deep = lv >= CAP;
+  const rest = items(t, f.cont, deep ? CAP : lv + 1, deep, st);
+  return deep ? `<li class="fold">${btn}</li>${rest}` : `<li class="fold kids">${btn}<ol>${rest}</ol></li>`;
+}
+
+function foldBtn(t, x, f, open) {
+  const attrs = `type="button" class="fold-b" data-act="fold" data-kind="${f.kind}" data-thread="${t.id}" data-msg="${x.id}" aria-expanded="${open}"`;
+  if (f.kind === "spine") return `<button ${attrs}>${icon("chev", "chev")}<span class="fold-t">${open ? "Hide" : "Show"} ${plural(f.n, "earlier reply", "earlier replies")}</span></button>`;
+  const ms = [x, ...x.kids.flatMap(function sub(k) { return [k, ...k.kids.flatMap(sub)]; })];
+  const ws = [...new Set(ms.map((y) => y.who))].sort((a, b) => (a === "me") - (b === "me"));
+  const newest = Math.min(...ms.map((y) => y.ago));
+  return `<button ${attrs}>${icon("chev", "chev")}<span class="stack">${ws.slice(0, 3).map(avatar).join("")}</span><span class="fold-t">${esc(names(ws))}, ${plural(ms.length, "reply", "replies")} · <time title="${esc(full(newest))}">${ago(newest)}</time></span></button>`;
+}
+
+function msg(t, x, quote) {
+  const p = x.parent;
+  const label = `${x.who === "me" ? "You" : PEOPLE[x.who]}${p ? `, reply to ${first(p.who)}` : ""}, ${agoLong(x.ago)}${x.new ? ", new" : ""}`;
+  const q = quote ? `<button type="button" class="xq" data-act="quote" data-thread="${t.id}" data-msg="${p.id}" title="Go to the message this answers">${icon("corner")}<span class="xq-t"><span class="sr">Replies to </span>${esc(short(p.who))}: ${esc(snippet(p.text, 64))}</span></button>` : "";
+  return `<article class="msg" id="m-${x.id}" tabindex="-1" aria-label="${esc(label)}">
+      <div class="msg-h">${avatar(x.who)}<b>${esc(name(x.who))}</b><time title="${esc(full(x.ago))}">${ago(x.ago)}</time>${x.edited ? "<span>edited</span>" : ""}${x.task ? taskMark(x.task) : ""}${x.new ? newMark("new") : ""}</div>
+      ${q}<div class="msg-b">${paras(x.text)}</div></article>`;
+}
+
+// Opens each fold that hides message x.
+function reveal(t, x) {
+  for (let a = x; a; a = a.parent) {
+    const f = t.fold.get(a);
+    if (f?.kind === "branch") S.branches.add(a.id);
+    if (f?.kind === "spine") { let kept = false; for (let y = x; y; y = y.parent) if (y === f.cont) kept = true; if (!kept) S.unfold.add(t.id); }
   }
-  return ms.map(msg).join("");
 }
 
 // Files and Commits start closed. S.openSec keeps them open across renders.
@@ -973,7 +1136,7 @@ function renderAll() { renderSide(); renderList(); renderDetail(); }
 function select(id, { focusDetail = false, toCause = false } = {}) {
   const changed = S.sel !== id;
   S.sel = id;
-  if (changed) { S.page = "conv"; S.cur = null; S.needMe = false; S.unfold.clear(); S.showResolved = false; S.descOpen = false; S.openSec.clear(); const db = $("#dbody"); if (db) db.scrollTop = 0; }
+  if (changed) { S.page = "conv"; S.cur = null; S.needMe = false; S.unfold.clear(); S.branches.clear(); S.showResolved = false; S.descOpen = false; S.openSec.clear(); const db = $("#dbody"); if (db) db.scrollTop = 0; }
   renderList();
   renderDetail();
   if (changed && !toCause) $("#dbody").scrollTop = 0;
@@ -1011,15 +1174,16 @@ function jumpThread(tid, { msgId } = {}) {
   if (!passes(t)) S.needMe = false;
   if (t.turn === "resolved") S.showResolved = true;
   S.open.set(tid, true);
-  if (msgId) S.unfold.add(tid);
+  const x = msgId && t.msgs.find((y) => y.id === msgId);
+  if (x) reveal(t, x);
   S.cur = tid;
   S.focus = "detail";
   renderDetail();
   const el = $(`#t-${tid}`);
   const target = (msgId && $(`#m-${msgId}`)) || el;
   target.scrollIntoView({ block: "start", behavior: "instant" });
-  el.classList.add("flash");
-  setTimeout(() => el.classList.remove("flash"), 950);
+  target.classList.add("flash");
+  setTimeout(() => target.classList.remove("flash"), 950);
   target.focus({ preventScroll: true });
 }
 
@@ -1043,7 +1207,7 @@ function setCur(id) {
 // n also reaches new messages in the folded Resolved group. jumpThread unfolds it.
 function nextNew(d) {
   const msgs = [];
-  for (const t of ordered(cur())) for (const x of t.msgs) if (x.new) msgs.push([t.id, x.id]);
+  for (const t of ordered(cur())) for (const x of t.order) if (x.new) msgs.push([t.id, x.id]);
   if (!msgs.length) { toast("No new message is left in this view."); return; }
   const at = document.activeElement?.closest?.(".msg")?.id;
   const i = msgs.findIndex(([, id]) => `m-${id}` === at);
@@ -1086,7 +1250,17 @@ document.addEventListener("click", (e) => {
     case "side": $("#app").dataset.mobile = "side"; break;
     case "back": S.focus = "list"; $("#app").dataset.mobile = "list"; $(`.row[data-pr="${S.sel}"]`)?.focus(); break;
     case "toggle": toggleThread(Number(el.dataset.thread)); break;
-    case "unfold": S.unfold.add(Number(el.dataset.thread)); renderDetail(); break;
+    case "fold": {
+      const tid = Number(el.dataset.thread);
+      const id = Number(el.dataset.msg);
+      const [set, k] = el.dataset.kind === "spine" ? [S.unfold, tid] : [S.branches, id];
+      if (set.has(k)) set.delete(k); else set.add(k);
+      S.cur = tid;
+      renderDetail();
+      $(`.fold-b[data-msg="${id}"]`)?.focus({ preventScroll: true });
+      break;
+    }
+    case "quote": jumpThread(Number(el.dataset.thread), { msgId: Number(el.dataset.msg) }); break;
     case "next-new": nextNew(1); break;
     case "next-your": nextYour(); break;
     case "need-me": S.needMe = el.checked; renderDetail(); $("#need-me").focus(); break;
