@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { CommentDto, PrDetail as Detail, PrRow } from "../../shared/dto";
+import { isMe } from "../../shared/me";
 import { ApiError, useArchive, useFollow, usePr } from "../shell/data";
 import { ago, initials, prKey } from "../shell/model";
 import { Calm, CheckBanner } from "../states";
@@ -155,7 +156,7 @@ function Header({ pr, me, onLeave }: { pr: PrRow; me: string | null; onLeave: ()
               <span key={r.slug} className="inline-flex items-center gap-1.5">
                 <Avatar name={r.name} ring={RING[r.status]} />
                 <span>
-                  {r.slug === me ? "You" : r.name}, {(STATUS_TEXT[r.status] ?? r.status).toLowerCase()}
+                  {isMe(r, me) ? "You" : r.name}, {(STATUS_TEXT[r.status] ?? r.status).toLowerCase()}
                 </span>
               </span>
             ))}

@@ -513,7 +513,13 @@ describe("reviewers", () => {
     const h = await setup();
     await h.cycle();
     expect(reviewers(h)).toEqual([
-      { slug: "jdoe", name: "Jane Doe", status: "UNAPPROVED", lastReviewedCommit: "c5bf8bfcb823b4949bc9bfe280c5ffc3ffd0a151" },
+      {
+        slug: "jdoe",
+        name: "Jane Doe",
+        login: "jdoe",
+        status: "UNAPPROVED",
+        lastReviewedCommit: "c5bf8bfcb823b4949bc9bfe280c5ffc3ffd0a151",
+      },
     ]);
   });
 
@@ -767,6 +773,46 @@ describe("scheduling", () => {
     expect(logs.filter((l) => l.startsWith("Sync error"))).toEqual([]);
     expect(h.engine.status().state).toBe("ok");
     expect(h.dashboardCheckpoint()).toMatchObject({ incomplete_reason: null });
+  });
+
+  // Runs a cycle, holds the first request to `held`, and changes the settings to another origin meanwhile.
+  async function switchDuring(h: Awaited<ReturnType<typeof setup>>, held: string) {
+    let first = true;
+    fake.routes[key("GET", held)] = (): Reply => {
+      if (!first) return { status: 503 };
+      first = false;
+      return { hang: true };
+    };
+    const other = startFakeBitbucket({ routes: { [key("GET", DASHBOARD_PATH)]: page([]) } });
+    const from = fake.requests.length;
+    try {
+      const running = h.engine.syncNow();
+      await until(() => !first);
+      expect((await put(h.settings, { baseUrl: other.url, token: FAKE_TOKEN })).status).toBe(200);
+      fake.release();
+      await running;
+    } finally {
+      other.stop();
+    }
+    return fake.requests.slice(from);
+  }
+
+  test("a settings change during a comment fetch sends no request for the next PR to the old origin", async () => {
+    world.reviewer = [reviewPr()];
+    const h = await setup();
+    await h.cycle();
+    const sent = await switchDuring(h, REVIEW_ACTIVITIES);
+    expect(sent.filter((r) => !r.startsWith(`GET ${DASHBOARD_PATH}`))).toEqual([`GET ${REVIEW_ACTIVITIES}?limit=50&start=0`]);
+  });
+
+  test("a settings change during the off-dashboard step sends no further PR request to the old origin", async () => {
+    world.reviewer = [reviewPr()];
+    const h = await setup();
+    await h.cycle();
+    world.reviewer = [];
+    world.author = [];
+    const sent = await switchDuring(h, REVIEW_PR_PATH);
+    expect(sent.filter((r) => !r.startsWith(`GET ${DASHBOARD_PATH}`))).toEqual([`GET ${REVIEW_PR_PATH}`]);
   });
 
   test("POST /api/sync starts a cycle and returns the status", async () => {

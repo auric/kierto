@@ -8,6 +8,7 @@ const CLAIMED_TTL_MS = 30 * 86_400_000;
 const UNREAD = "c.pr = p.id AND p.followed = 1 AND c.tombstoned_at IS NULL AND (c.ack_version IS NULL OR c.ack_version < c.version)";
 
 const SQL = {
+  // lower() folds ASCII only, as foldCase in src/shared/me.ts does.
   rows: `SELECT p.id, p.project, p.repo, p.pr_id, p.title, p.author_slug, p.author_name, p.my_role, p.state, p.my_status, p.last_reviewed_commit,
       p.source_head, p.source_branch, p.target_branch, p.web_url, p.on_dashboard, p.followed, p.reviewers_json,
       (SELECT COUNT(*) FROM comment c WHERE ${UNREAD}) AS unread,
@@ -17,7 +18,7 @@ const SQL = {
       k.scope IS NOT NULL AS has_checkpoint, k.last_complete_at, k.incomplete_reason, k.last_error
     FROM pull_request p LEFT JOIN sync_checkpoint k ON k.scope = 'pr:' || p.id
     WHERE p.archived_at IS NULL AND (p.followed = 1 OR p.on_dashboard = 1) AND ($id IS NULL OR p.id = $id)`,
-  comments: `SELECT comment_id, version, parent_id, root_id, author_slug, author_name, text, anchor_json, thread_resolved, created_at, updated_at,
+  comments: `SELECT comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json, thread_resolved, created_at, updated_at,
       ack_version, tombstoned_at FROM comment WHERE pr = $pr ORDER BY created_at, comment_id`,
   // A2: the ack never rises above the stored version, and never falls.
   read: `UPDATE comment SET ack_version = MIN(version, $version)
@@ -99,7 +100,10 @@ const toRow = (r: RawRow): PrRow => ({
   sourceBranch: r.source_branch,
   targetBranch: r.target_branch,
   webUrl: r.web_url,
-  reviewers: r.reviewers_json === null ? [] : (JSON.parse(r.reviewers_json) as Omit<Reviewer, "login">[]),
+  reviewers:
+    r.reviewers_json === null
+      ? []
+      : (JSON.parse(r.reviewers_json) as (Omit<Reviewer, "login"> & { login?: string })[]).map((x) => ({ ...x, login: x.login ?? null })),
   onDashboard: r.on_dashboard === 1,
   followed: r.followed === 1,
   unread: r.unread,
@@ -125,6 +129,7 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
     root_id: number;
     author_slug: string;
     author_name: string | null;
+    author_login: string | null;
     text: string;
     anchor_json: string | null;
     thread_resolved: number;
@@ -142,6 +147,7 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
       rootId: c.root_id,
       authorSlug: c.author_slug,
       authorName: c.author_name,
+      authorLogin: c.author_login,
       text: deleted ? null : c.text,
       anchor: c.anchor_json === null ? null : JSON.parse(c.anchor_json),
       threadResolved: c.thread_resolved === 1,

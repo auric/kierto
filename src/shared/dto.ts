@@ -64,8 +64,8 @@ export type PrRow = {
   targetBranch: string | null;
   webUrl: string | null;
   // Empty until the first sync cycle that writes the PR.
-  // reviewers_json stores no username.
-  reviewers: Omit<Reviewer, "login">[];
+  // login: null for reviewers stored before the username was kept.
+  reviewers: (Omit<Reviewer, "login"> & { login: string | null })[];
   onDashboard: boolean;
   followed: boolean;
   // 0 for an unfollowed PR.
@@ -84,6 +84,8 @@ export type CommentDto = {
   rootId: number;
   authorSlug: string;
   authorName: string | null;
+  // null for comments stored before the username was kept.
+  authorLogin: string | null;
   text: string | null;
   anchor: unknown;
   threadResolved: boolean;

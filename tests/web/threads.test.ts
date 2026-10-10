@@ -9,6 +9,7 @@ const c = (id: number, o: Partial<CommentDto> = {}): CommentDto => ({
   rootId: id,
   authorSlug: "other",
   authorName: "Other",
+  authorLogin: null,
   text: `text ${id}`,
   anchor: null,
   threadResolved: false,
@@ -95,5 +96,11 @@ describe("highlights and helpers", () => {
       c(5),
     ];
     expect(openThreads(list, "me").map((x) => x.id)).toEqual([1]);
+  });
+
+  test("my open threads match the username or the slug, ignoring case", () => {
+    const list = [c(1, { authorSlug: "jdoe", authorLogin: "J.Doe" }), c(2, { authorSlug: "jdoe" }), c(3)];
+    expect(openThreads(list, "j.doe").map((x) => x.id)).toEqual([1]);
+    expect(openThreads(list, "JDoe").map((x) => x.id)).toEqual([1, 2]);
   });
 });

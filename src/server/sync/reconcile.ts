@@ -1,4 +1,5 @@
 // Pure sync rules (plan G4). No I/O, so tests run without a server or a database.
+import { isMe } from "../../shared/me";
 import type { Comment, PullRequest, Role } from "../../shared/types";
 
 export const INTERVAL_MS = 60_000;
@@ -6,12 +7,6 @@ const MAX_BACKOFF_MS = 15 * 60_000;
 
 export type EventKind = "comment_new" | "commits_pushed" | "reviewer_added";
 export type NewEvent = { kind: EventKind; ref: string };
-
-// me: the X-AUSERNAME value. Bitbucket matches usernames without case.
-export const isMe = (u: { slug: string; login?: string | null }, me: string) => {
-  const m = me.toLowerCase();
-  return u.slug.toLowerCase() === m || u.login?.toLowerCase() === m;
-};
 
 export function roleOf(pr: PullRequest, me: string): Role | null {
   if (isMe(pr.author, me)) return "AUTHOR";

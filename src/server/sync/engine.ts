@@ -1,12 +1,13 @@
 // Polling sync (plan G4): dashboard, PR states, comments, delete checks, events. One cycle at a time.
 import type { CheckpointReason, SyncState, SyncStatus } from "../../shared/dto";
+import { isMe } from "../../shared/me";
 import type { ForgeErrorInfo, IncompleteReason, PrRef, PullRequest } from "../../shared/types";
 import { ForgeError } from "../bitbucket/client";
 import type { ForgeProvider } from "../bitbucket/provider";
 import type { Live } from "../live";
 import { log } from "../log";
 import type { Settings } from "../settings";
-import { isMe, type NewEvent, nextDelay, parseRetryAfter, prEvents, reconcile, roleOf, type StoredComment } from "./reconcile";
+import { type NewEvent, nextDelay, parseRetryAfter, prEvents, reconcile, roleOf, type StoredComment } from "./reconcile";
 
 const DIGEST_GAP_MS = 120_000;
 const NETWORK = new Set(["network", "timeout"]);
@@ -166,7 +167,13 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
         updated_date: pr.updatedDate,
         on_dashboard: onDashboard ? 1 : 0,
         reviewers_json: JSON.stringify(
-          pr.reviewers.map((r) => ({ slug: r.slug, name: r.name, status: r.status, lastReviewedCommit: r.lastReviewedCommit })),
+          pr.reviewers.map((r) => ({
+            slug: r.slug,
+            name: r.name,
+            login: r.login,
+            status: r.status,
+            lastReviewedCommit: r.lastReviewedCommit,
+          })),
         ),
       }) as { id: number };
       const before = row && {
@@ -223,6 +230,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
     const skip = new Set<number>();
     if (dashboardDone) {
       for (const row of tx(() => db.query(SQL.away).all({}) as PrKey[])) {
+        if (gen !== generation) throw new Cancelled();
         try {
           const pr = await forge.getPullRequest(refOf(row));
           reached = true;
@@ -243,6 +251,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
     const syncPr = async (row: PrKey) => {
       const scope = `pr:${row.id}`;
       const ref = refOf(row);
+      if (gen !== generation) throw new Cancelled();
       const r = await forge.listComments(ref);
       if (!r.complete) {
         const message = failed(r.reason, r.error);

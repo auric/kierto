@@ -203,10 +203,14 @@ describe("reviewers", () => {
     const h = await setup();
     const fresh = h.pr();
     const synced = h.pr();
-    const list = [{ slug: "kito", name: "Kenji Ito", status: "APPROVED" }];
+    const kenji = { slug: "kito", name: "Kenji Ito", status: "APPROVED" };
+    const list = [kenji];
     h.db.query("UPDATE pull_request SET reviewers_json = $j WHERE id = $id").run({ j: JSON.stringify(list), id: synced });
     expect((await h.row(fresh))?.reviewers).toEqual([]);
-    expect((await h.row(synced))?.reviewers).toEqual(list);
+    expect((await h.row(synced))?.reviewers).toEqual([{ ...kenji, login: null }]);
+    const withLogin = [{ ...kenji, login: "KIto" }];
+    h.db.query("UPDATE pull_request SET reviewers_json = $j WHERE id = $id").run({ j: JSON.stringify(withLogin), id: synced });
+    expect((await h.row(synced))?.reviewers).toEqual(withLogin);
   });
 });
 
@@ -404,6 +408,7 @@ describe("GET /api/prs and /api/prs/:id", () => {
     h.comment(p, 1, { ack_version: 0 });
     h.comment(p, 2, { version: 1, ack_version: 0 });
     h.comment(p, 3, { tombstoned_at: 1 });
+    h.db.query("UPDATE comment SET author_login = 'Other' WHERE comment_id = 1").run();
     h.db
       .query(
         "INSERT INTO sync_checkpoint (scope, last_complete_at, incomplete_reason, last_error, updated_at) VALUES ($s, 7, 'gap', 'x', 8)",
@@ -417,6 +422,7 @@ describe("GET /api/prs and /api/prs/:id", () => {
       [2, true, false, "Comment 2"],
       [3, false, true, null],
     ]);
+    expect(body.comments.map((c) => c.authorLogin)).toEqual(["Other", null, null]);
     expect((await h.call("/api/prs/999")).status).toBe(404);
   });
 

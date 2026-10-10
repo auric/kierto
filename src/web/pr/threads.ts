@@ -1,5 +1,6 @@
 // Pure thread rules for the Activity tab. No DOM access, so bun test runs them directly.
 import type { CommentDto } from "../../shared/dto";
+import { isMe } from "../../shared/me";
 
 export type Msg = CommentDto & { replies: Msg[] };
 
@@ -63,4 +64,7 @@ export function buildThreads(comments: CommentDto[], highlight: ReadonlySet<numb
 
 // My root comments on threads that are not resolved.
 export const openThreads = (comments: CommentDto[], me: string | null) =>
-  comments.filter((c) => c.id === c.rootId && c.parentId === null && !c.deleted && !c.threadResolved && c.authorSlug === me);
+  comments.filter(
+    (c) =>
+      c.id === c.rootId && c.parentId === null && !c.deleted && !c.threadResolved && isMe({ slug: c.authorSlug, login: c.authorLogin }, me),
+  );
