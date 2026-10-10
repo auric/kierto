@@ -1,7 +1,8 @@
 <title>Review Loop</title>
 <style>
 /* Review Loop prototype v3. Fictional data. System fonts only. */
-/* Hue rule: --turn marks only "your turn", --err marks only errors, --pen marks links and focus. All else is grey. No stripes, fills, or gradients mark state. */
+/* Hue rule: --turn marks only "your turn", --err marks only errors and Blocker findings, --pen marks links and focus. All else is grey. No stripes, fills, or gradients mark state. */
+/* The primary action is an ink fill, not a hue. */
 /* Avatars carry one muted hue per person. The hue names a person, never a state. The 8 hues avoid the turn and error hues. */
 :root {
   color-scheme: light;
@@ -24,6 +25,7 @@
   --del: #f9e4e4;
   --hit: #dde2e8;
   --overlay: rgba(22, 26, 33, .42);
+  --shade: rgba(22, 26, 33, .14);
   --font-ui: system-ui, "Segoe UI", Roboto, sans-serif;
   --font-code: ui-monospace, "Cascadia Mono", Consolas, monospace;
   --fs: 14px;
@@ -38,7 +40,7 @@
     color-scheme: dark;
     --frame: #121519; --list: #171a1f; --paper: #1c2027; --sunken: #15181d; --hover: #22272f; --sel: #2b313b;
     --ink: #e4e8ed; --ink-2: #a9b2be; --ink-3: #8c96a3; --rule: #2c323b; --rule-strong: #46505c;
-    --pen: #93a8ff; --turn: #ffa364; --err: #ff8b7e; --add: #15291b; --del: #34191b; --hit: #2f3640; --overlay: rgba(0, 0, 0, .6);
+    --pen: #93a8ff; --turn: #ffa364; --err: #ff8b7e; --add: #15291b; --del: #34191b; --hit: #2f3640; --overlay: rgba(0, 0, 0, .6); --shade: rgba(0, 0, 0, .5);
     --av-bl: .36; --av-bc: .04; --av-fl: .88; --av-fc: .05;
   }
 }
@@ -46,7 +48,7 @@
   color-scheme: dark;
   --frame: #121519; --list: #171a1f; --paper: #1c2027; --sunken: #15181d; --hover: #22272f; --sel: #2b313b;
   --ink: #e4e8ed; --ink-2: #a9b2be; --ink-3: #8c96a3; --rule: #2c323b; --rule-strong: #46505c;
-  --pen: #93a8ff; --turn: #ffa364; --err: #ff8b7e; --add: #15291b; --del: #34191b; --hit: #2f3640; --overlay: rgba(0, 0, 0, .6);
+  --pen: #93a8ff; --turn: #ffa364; --err: #ff8b7e; --add: #15291b; --del: #34191b; --hit: #2f3640; --overlay: rgba(0, 0, 0, .6); --shade: rgba(0, 0, 0, .5);
   --av-bl: .36; --av-bc: .04; --av-fl: .88; --av-fc: .05;
 }
 :root[data-density="compact"] { --fs: 13px; --fs-s: 12px; --fs-xs: 11.25px; --fs-title: 18px; --row-y: 6px; }
@@ -55,7 +57,7 @@
 body { margin: 0; overflow: hidden; background: var(--frame); color: var(--ink); font: var(--fs)/1.5 var(--font-ui); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
 /* Each pane scrolls itself. Absolute children (.sr) must stay inside their scroller, or scrollIntoView scrolls the page. */
 .side-scroll, .list-scroll, .dbody { position: relative; }
-button, input { font: inherit; color: inherit; }
+button, input, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; background: none; border: 0; padding: 0; text-align: inherit; }
 a { color: var(--pen); }
 code, pre { font-family: var(--font-code); font-size: .9em; }
@@ -115,6 +117,11 @@ summary::-webkit-details-marker { display: none; }
 .icon-btn { width: 30px; height: 30px; display: inline-grid; place-items: center; flex: none; border-radius: 6px; color: var(--ink-2); }
 .icon-btn:hover { background: var(--hover); color: var(--ink); }
 .icon-btn[aria-pressed="true"] svg.i { fill: currentColor; }
+.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.btn.primary:hover { background: var(--ink-2); border-color: var(--ink-2); }
+.btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.spin { animation: spin 1.1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* List pane */
 .list { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--list); border-right: 1px solid var(--rule); }
@@ -152,7 +159,7 @@ summary::-webkit-details-marker { display: none; }
 .empty { padding: 32px 16px; color: var(--ink-2); }
 
 /* Detail pane */
-.detail { container: detail / inline-size; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--paper); }
+.detail { container: detail / inline-size; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--paper); }
 .dh { display: grid; gap: 6px; padding: 12px 24px 14px; border-bottom: 1px solid var(--rule); }
 .dh-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: var(--fs-xs); color: var(--ink-3); }
 .dh-meta .key { font-family: var(--font-code); }
@@ -165,6 +172,24 @@ summary::-webkit-details-marker { display: none; }
 .dh-sum button { border-radius: 4px; }
 .dh-sum button:hover { text-decoration: underline; }
 .dh-sum .since { margin-left: .3em; font-weight: 400; color: var(--ink-2); }
+.dh-title { display: flex; align-items: flex-start; gap: 8px 16px; }
+.dh-title h1 { flex: 1; min-width: 0; }
+/* Review: one button with the last profile, and a menu of the profiles from the settings. */
+.split { position: relative; display: inline-flex; flex: none; gap: 1px; margin-top: 1px; }
+.split > .btn:first-child { border-radius: 6px 0 0 6px; padding: 0 14px; }
+.split > .btn.more-b { border-radius: 0 6px 6px 0; padding: 0 6px; }
+.menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 6; width: 290px; max-width: calc(100vw - 32px); padding: 4px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); box-shadow: 0 8px 24px var(--shade); }
+.menu[hidden] { display: none; }
+.menu button { display: grid; gap: 1px; width: 100%; padding: 6px 10px; border-radius: 5px; }
+.menu button:hover, .menu button:focus-visible { background: var(--hover); outline-offset: -2px; }
+.mi-t { display: flex; align-items: center; gap: 6px; font-size: var(--fs-s); font-weight: 600; }
+.mi-t svg.i { margin-left: auto; color: var(--ink-3); }
+.mi-d { font-size: var(--fs-xs); color: var(--ink-3); }
+/* Run line: one line under the title for the newest review run. */
+.rl { display: inline-flex; align-items: center; gap: 6px; }
+.dh-sum.run .err { white-space: normal; align-items: flex-start; }
+.dh-sum.run .err svg { margin-top: 2px; }
+.dh-sum.run code { font-size: .95em; color: var(--ink); }
 .back { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px 0 4px; margin-left: -6px; border-radius: 6px; color: var(--ink-2); font-size: var(--fs-s); font-weight: 500; }
 
 /* One column: Overview, Threads, then Files and Commits folded. */
@@ -202,12 +227,37 @@ details.sec[open] { padding-bottom: 12px; }
 .banner p { margin: 0; }
 .banner svg, .banner b { color: var(--err); }
 .banner svg { margin-top: 2px; }
+/* The runner's summary: one line when closed. Risk areas, coverage, and questions when open. */
+.ai-sum { max-width: 72ch; margin: 0 0 14px; }
+.ai-sum > summary { margin-left: -6px; padding: 5px 6px; border-radius: 4px; }
+.ai-sum > summary:hover { background: var(--hover); }
+.ai-h { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--fs-s); }
+.ai-h b { flex: none; font-weight: 600; }
+.ai-line { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.ai-sum[open] .ai-line { white-space: normal; }
+.ai-h .n, .ai-h .chev { flex: none; color: var(--ink-3); }
+.ai-body { padding: 2px 0 6px 28px; font-size: var(--fs-s); }
+.ai-body h3 { margin: 12px 0 4px; font-size: var(--fs-s); font-weight: 600; }
+.ai-body ul { margin: 0; padding-left: 18px; }
+.cov { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; }
+.cov dt { color: var(--ink-3); }
+.cov dd { margin: 0; }
+.q { padding: 10px 6px; border-bottom: 1px solid var(--rule); border-radius: 4px; }
+.q:first-child { border-top: 1px solid var(--rule); }
+.q.is-cur { background: var(--sel); }
+.q-t { margin: 0; font-size: var(--fs); font-weight: 500; }
+.q-why { margin: 2px 0 0; color: var(--ink-2); }
+.q .acts, .q .edit { margin-left: 0; }
+.q.gone { display: flex; align-items: center; gap: 12px; color: var(--ink-3); }
+.q.gone .q-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-s); font-weight: 400; }
 
 /* Threads: a list of one-line rows, read top to bottom. */
 .filter-note { font-size: var(--fs-s); color: var(--ink-3); margin: 12px 0 0; }
 .tgrp { margin-top: 20px; }
-.tgrp > h3 { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0 6px 6px; border-bottom: 1px solid var(--rule); font-size: var(--fs-s); font-weight: 700; }
+.tgrp > h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; padding: 0 6px 6px; border-bottom: 1px solid var(--rule); font-size: var(--fs-s); font-weight: 700; }
 .tgrp > h3 .n { color: var(--ink-3); font-weight: 500; }
+.tgrp > h3 .aside { margin-left: auto; font-size: var(--fs-xs); font-weight: 400; color: var(--ink-3); }
+.tgrp > h3 > svg.i { color: var(--ink-2); }
 .more { margin: 0 6px; color: var(--pen); font-size: var(--fs-s); font-weight: 500; border-radius: 4px; }
 .more:hover { text-decoration: underline; }
 
@@ -226,7 +276,11 @@ details.sec[open] { padding-bottom: 12px; }
 .th-head time { flex: none; margin-left: auto; white-space: nowrap; }
 .th-body { padding: 2px 6px 16px; }
 .th-body[hidden] { display: none; }
-@container detail (max-width: 559px) { .th-latest { display: none; } }
+@container detail (max-width: 559px) {
+  .th-latest { display: none; }
+  /* The check icon keeps the state. The word stays for screen readers. */
+  .th-head .ok-st .w { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
 
 /* An inline thread opens its code excerpt after the commented line. The rest of the excerpt follows the discussion. */
 .code { border-radius: 6px; background: var(--sunken); overflow: hidden; }
@@ -294,6 +348,27 @@ details.sec[open] { padding-bottom: 12px; }
 .stack .av + .av { margin-left: -4px; }
 .msg-b p { margin: 0 0 6px; }
 .msg-b p:last-child { margin: 0; }
+.th-foot .turn[data-turn="wait"] { font-weight: 500; }
+
+/* Drafts from the runner: the same anchored excerpt as a thread, one message, then the triage actions. */
+.av.ai { background: var(--sel); color: var(--ink-2); }
+.sev { flex: none; color: var(--ink-2); font-weight: 600; white-space: nowrap; }
+.draft .th-head > .chev { margin-left: auto; }
+.ok-st { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--ink-2); font-weight: 500; white-space: nowrap; }
+.ev { max-width: 72ch; margin: 8px 0 0 calc(var(--av) + 8px); font-size: var(--fs-xs); color: var(--ink-3); overflow-wrap: anywhere; }
+.ev code { padding: 0 3px; border-radius: 3px; background: var(--sunken); }
+.ev .linkish { font-size: var(--fs-xs); }
+.acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0 calc(var(--av) + 8px); }
+.acts .hint { font-size: var(--fs-xs); color: var(--ink-3); }
+.edit { margin: 4px 0 0 calc(var(--av) + 8px); max-width: 72ch; }
+.edit textarea { display: block; width: 100%; min-height: 9em; padding: 8px 10px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); line-height: 1.5; resize: vertical; }
+.edit textarea:focus-visible { outline: 2px solid var(--pen); outline-offset: 0; }
+.edit .acts { margin-left: 0; }
+.th.gone .th-row { gap: 8px; }
+.gone-h { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; margin: 0; padding: 8px 6px; font-size: var(--fs-s); color: var(--ink-3); }
+.gone-h .th-where, .gone-h .th-latest { color: var(--ink-3); }
+.th.gone.is-cur .gone-h { background: var(--sel); border-radius: 4px; }
+.gone .linkish { flex: none; margin-right: 4px; }
 
 /* Files and commits */
 .files { list-style: none; margin: 0 0 10px; padding: 0; }
@@ -308,10 +383,46 @@ details.sec[open] { padding-bottom: 12px; }
 .commits .by { font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
 .commits li.mark { padding: 14px 0 6px; font-size: var(--fs-xs); color: var(--ink-3); border-bottom: 1px solid var(--rule); }
 
-/* M2 and M3 pages */
-.later { max-width: 64ch; padding-top: 22px; }
-.later h2 { margin: 0 0 6px; font-size: 16px; }
-.later p { margin: 0 0 10px; color: var(--ink-2); }
+/* Post bar: shown only while something is accepted. The confirm lists each comment with its destination and exact text. */
+.postbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 24px; border-top: 1px solid var(--rule-strong); background: var(--paper); font-size: var(--fs-s); }
+.postbar .grow { flex: 1; }
+/* A flex column, not a grid: only a flex item shrinks to fit a max-height. */
+.postbar.confirm { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 8px; max-height: 62vh; padding-top: 14px; }
+.postbar.confirm > * { flex: none; }
+.postbar.confirm > .pc-list { flex: 0 1 auto; min-height: 0; }
+.postbar h2 { margin: 0; font-size: 15px; }
+.pc-n { margin: 0; color: var(--ink-2); }
+.pc-list { list-style: none; margin: 0; padding: 0; overflow: auto; border-top: 1px solid var(--rule); }
+.pc-list li { display: grid; grid-template-columns: 24ch minmax(0, 1fr); gap: 2px 16px; padding: 8px 0; border-bottom: 1px solid var(--rule); }
+.pc-d { font-size: var(--fs-xs); color: var(--ink-3); overflow-wrap: anywhere; }
+.pc-d code { color: var(--ink); }
+.pc-b { max-width: 72ch; }
+.pc-b p, .pc-b ul { margin: 0 0 4px; }
+.pc-b ul { padding-left: 18px; }
+.pc-b code { padding: 0 3px; border-radius: 3px; background: var(--sunken); }
+.pc-w { grid-column: 2; margin: 0; font-size: var(--fs-xs); color: var(--ink-2); }
+.postbar .acts { margin: 0; }
+@container detail (max-width: 559px) {
+  .pc-list li { grid-template-columns: minmax(0, 1fr); }
+  .pc-w { grid-column: 1; }
+}
+
+/* Run log: a side sheet over the detail pane, out of the reading path. Plain lines: status, tool, target, duration. */
+.sheet { position: fixed; top: 0; right: 0; bottom: 0; z-index: 8; width: min(520px, 100vw); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--paper); border-left: 1px solid var(--rule-strong); box-shadow: -12px 0 32px var(--shade); }
+.sheet[hidden] { display: none; }
+.sh-h { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--rule); }
+.sh-h h2 { margin: 0; font-size: 15px; }
+.sh-meta { grid-column: 1 / -1; margin: 0; font-size: var(--fs-xs); color: var(--ink-3); }
+.log { list-style: none; margin: 0; padding: 8px 16px; overflow: auto; font: 12px/1.55 var(--font-code); }
+.ll { display: grid; grid-template-columns: 5ch 8ch minmax(0, 1fr) 6ch; gap: 0 10px; padding: 3px 0; }
+.ll.prep + .ll:not(.prep) { margin-top: 6px; padding-top: 9px; border-top: 1px solid var(--rule); }
+.ls, .ld, .lnote { color: var(--ink-3); }
+.ld { text-align: right; }
+.lg { color: var(--ink-2); overflow-wrap: anywhere; }
+.lnote { display: block; }
+.ll.error .lnote, .ll.error .ls { color: var(--err); }
+.sh-f { padding: 10px 16px 14px; border-top: 1px solid var(--rule); font-size: var(--fs-s); color: var(--ink-2); }
+.sh-f .err { white-space: normal; }
 
 /* Help and toast */
 dialog { border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; background: var(--paper); color: var(--ink); max-width: min(560px, calc(100vw - 32px)); width: 100%; }
@@ -359,6 +470,8 @@ dialog h3 { margin: 14px 0 6px; font-size: var(--fs-s); color: var(--ink-3); fon
   .dh { padding: 8px 16px 12px; }
   .dh-meta .branch { order: 3; flex-basis: 100%; }
   .dbody { padding: 0 16px 56px; }
+  .postbar { padding: 10px 16px; }
+  .ll { grid-template-columns: 5ch 8ch minmax(0, 1fr) 5ch; gap: 0 8px; }
   .list-foot { display: none; }
   .commits li.c { grid-template-columns: 8ch minmax(0, 1fr); }
   .commits .by { grid-column: 2; }
@@ -373,6 +486,7 @@ dialog h3 { margin: 14px 0 6px; font-size: var(--fs-s); color: var(--ink-3); fon
   <section class="list" id="list" aria-labelledby="view-name"></section>
   <main class="detail" id="detail" aria-label="Pull request"></main>
 </div>
+<aside class="sheet" id="sheet" role="dialog" aria-modal="false" aria-labelledby="sheet-title" hidden></aside>
 
 <dialog id="help" aria-labelledby="help-title">
   <h2 id="help-title">Keyboard shortcuts</h2>
@@ -389,10 +503,15 @@ dialog h3 { margin: 14px 0 6px; font-size: var(--fs-s); color: var(--ink-3); fon
     <dt><kbd>y</kbd></dt><dd>Next thread where it is your turn</dd>
     <dt><kbd>o</kbd></dt><dd>Open or close the current thread</dd>
     <dt><kbd>g</kbd> then <kbd>f</kbd><kbd>c</kbd></dt><dd>Open and go to Files or Commits</dd>
-    <dt><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></dt><dd>Conversation, Review, Run log</dd>
-    <dt><kbd>r</kbd></dt><dd>Start a review <span data-soon="M2"></span></dd>
-    <dt><kbd>a</kbd><kbd>d</kbd><kbd>e</kbd><kbd>p</kbd></dt><dd>Accept, discard, edit, post review items <span data-soon="M3"></span></dd>
+    <dt><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></dt><dd>Go to the overview, go to the drafts, open the run log</dd>
     <dt><kbd>?</kbd></dt><dd>Show or hide this list</dd>
+  </dl>
+  <h3 id="help-ai">AI review</h3>
+  <dl class="keys">
+    <dt><kbd>r</kbd></dt><dd>Start a review with the last profile</dd>
+    <dt><kbd>a</kbd><kbd>e</kbd><kbd>d</kbd></dt><dd>Accept, edit, or discard the current draft or question. <kbd>a</kbd> again undoes an accept, <kbd>d</kbd> again restores.</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Cancel an edit, the post confirm, the profile menu, or the run log</dd>
+    <dt><kbd>p</kbd></dt><dd id="help-post">Post the accepted items, after a confirm</dd>
   </dl>
   <div class="dlg-foot"><button class="btn" id="help-close" type="button">Close</button></div>
 </dialog>
@@ -408,10 +527,32 @@ const PEOPLE = {
   priya: "Priya Raman", tomas: "Tomás Ferreira", yuki: "Yuki Sato",
 };
 
+// ---------- Modular boundaries ----------
+// The UI builds every code-host, review-agent, and context label from these objects. Never write the names in markup.
+const FORGE = { name: "Bitbucket" };
+const RUNNER = {
+  name: "Claude Code", short: "Claude", initials: "AI",
+  // The app runs these steps before the agent starts. The run log shows them first.
+  prep: (commit) => [["sign-in", "Subscription login (claude.ai)", "ok", 0.4], ["snapshot", `Sanitized copy of ${commit}`, "ok", 0.9], ["start", "claude -p, read-only tools", "ok", 0.2]],
+  // Tool keys in the runner's events, and the names that the run log shows.
+  tools: { read: "Read", grep: "Grep", glob: "Glob", deepwiki: "DeepWiki", learn: "MS Learn" },
+};
+// Context sources (an issue tracker, other repositories). None is set up in this sample.
+const CONTEXT = [];
+// Review profiles come from the settings. Explain asks only for the summary and the questions.
+const PROFILES = [
+  { id: "general", name: "General", note: "Correctness, concurrency, effects outside the diff" },
+  { id: "over", name: "Over-engineering", note: "What to delete or simplify" },
+  { id: "security", name: "Security", note: "Trust boundaries, secrets, unsafe memory" },
+  { id: "explain", name: "Explain", note: "Summary and questions only, at lower cost", explain: true },
+];
+const prof = (id) => PROFILES.find((x) => x.id === id) || PROFILES[0];
+
 // ---------- Fictional data ----------
 // Messages of a thread are in time order. re is the index of the message this one answers (Bitbucket nests it in comment.comments).
 let mid = 1;
-const m = (who, ago, text, o = {}) => ({ id: mid++, who, ago, text, new: !!o.new, edited: !!o.edited, task: o.task || null, re: o.re ?? null });
+// ai: the message was posted from a review run. Review Loop keeps this fact locally. The forge does not know it.
+const m = (who, ago, text, o = {}) => ({ id: mid++, who, ago, text, new: !!o.new, edited: !!o.edited, task: o.task || null, re: o.re ?? null, ai: !!o.ai });
 const L = (n, k, s) => [n, k, s];
 
 const PRS = [
@@ -575,7 +716,7 @@ const PRS = [
   {
     id: 2209, project: "ENGINE", repo: "core", title: "Pool job allocations per worker",
     author: "tomas", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "perf/job-pools", target: "develop", lastVisit: null,
-    incomplete: "Bitbucket did not answer for activities page 3. The previous state stays. The next check continues from page 3.",
+    incomplete: `${FORGE.name} did not answer for activities page 3. The previous state stays. The next check continues from page 3.`,
     reviewers: [["me", "UNAPPROVED"], ["dan", "UNAPPROVED"]],
     description: "Each worker allocates jobs from its own pool.",
     files: [["MODIFY", "src/core/JobQueue.cpp"], ["ADD", "src/core/JobPool.h"]],
@@ -593,7 +734,7 @@ const PRS = [
     threads: [
       { id: 61, path: "src/audio/PakStream.cpp", line: 77, resolved: true,
         code: [L(77, "add", "    stream.seek(byteOffset);")],
-        msgs: [m("me", 2100, "Seeking by byte offset lands inside an Opus page. Seek by granule position."), m("yuki", 95, "Fixed in b7c2a90.", { re: 0 })] },
+        msgs: [m("me", 2100, "Seeking by byte offset lands inside an Opus page. Seek by granule position.", { ai: true }), m("yuki", 95, "Fixed in b7c2a90.", { re: 0 })] },
     ],
   },
   {
@@ -633,6 +774,160 @@ const PRS = [
   },
 ];
 
+// ---------- Review results (fictional) ----------
+// Runner events: [tool key, target, status, seconds, note]. Tool keys map to RUNNER.tools.
+// Finding: severity, category, anchor, excerpt, text, evidence status, confidence, evidence. Question: text, why it matters.
+let iid = 900;
+const F = (o) => ({ id: iid++, kind: "finding", status: "new", dup: null, ...o });
+const Q = (text, why) => ({ id: iid++, kind: "question", status: "new", text, why });
+const SEV = { blocker: "Blocker", major: "Major", minor: "Minor", nit: "Nit" };
+const EVS = { code: "Shown in code", reproduced: "Reproduced", unverified: "Unverified" };
+const readOnly = ["Not checked", "Tests did not run, because the review has read-only tools."];
+
+// Each result is a function, so a second run gets fresh items.
+const RESULTS = {
+  4182: () => ({
+    at: "a3f9e21", tokens: 41, secs: 128,
+    steps: [
+      ["read", "context/diff.patch", "ok", 0.1, "6 files, +214 −97"],
+      ["read", "src/render/ResourceCache.cpp", "ok", 0.1],
+      ["read", "src/render/ResourceCache.h", "ok", 0.1],
+      ["grep", "evict(", "ok", 0.4, "9 matches in 5 files"],
+      ["read", "src/stream/StreamingThread.cpp", "ok", 0.1],
+      ["read", "src/stream/Prefetcher.cpp", "ok", 0.1],
+      ["read", "docs/render/caching.md", "ok", 0.1],
+      ["deepwiki", "microsoft/STL: is std::mutex recursive?", "error", 30.0, "Timed out after 30 s. One retry follows."],
+      ["deepwiki", "microsoft/STL: is std::mutex recursive?", "ok", 6.4, "Answered: a recursive lock is undefined behavior."],
+      ["grep", "bytes_", "ok", 0.2, "7 matches in 3 files"],
+      ["read", "src/ui/StreamingHud.cpp", "ok", 0.1],
+      ["read", "src/render/EvictionPolicy.cpp", "ok", 0.1],
+    ],
+    line: "Deadlock risk in `evict()`. Two callers outside the diff still hold `cacheMutex_` when they call it.",
+    risks: ["Lock order between `ResourceCache` and the streaming thread.", "Reads of cache state outside `cacheMutex_`.", "Callers, docs, and plugins that still follow the old locking contract."],
+    coverage: [
+      ["Read", "All 6 changed files, and 3 files outside the diff: `StreamingThread.cpp`, `Prefetcher.cpp`, `StreamingHud.cpp`."],
+      ["Tools", "DeepWiki timed out once. The retry answered."],
+      ["Not checked", "Tests did not run, because the review has read-only tools. Plugin repositories were not available."],
+    ],
+    items: [
+      F({ sev: "blocker", cat: "Concurrency", path: "src/render/ResourceCache.cpp", line: 140,
+        code: [L(139, "ctx", "bool ResourceCache::evict(Handle h) {"), L(140, "add", "    std::lock_guard<std::mutex> guard(cacheMutex_);"), L(141, "ctx", "    auto it = entries_.find(h);"), L(142, "add", "    if (it == entries_.end()) return false;")],
+        text: "`evict()` now deadlocks callers that already hold `cacheMutex_`. `StreamingThread::tick()` and `Prefetcher::drain()` lock it before they call `evict()`. `std::mutex` is not recursive, so the second lock is undefined behavior and hangs in practice. Remove the lock from both callers, or keep an internal path for callers that hold the lock.",
+        evs: "code", conf: "high", ev: "Callers outside the diff: `src/stream/StreamingThread.cpp:211`, `src/stream/Prefetcher.cpp:88`. [DeepWiki, microsoft/STL](https://deepwiki.com/microsoft/STL): a recursive lock of `std::mutex` is undefined behavior.",
+        reply: ["lena", "Good catch. Both callers still lock. I will remove the two locks and add a test that calls `evict()` from the streaming thread."] }),
+      F({ sev: "major", cat: "Concurrency", path: "src/render/ResourceCache.cpp", line: 212,
+        code: [L(211, "ctx", "size_t ResourceCache::bytes() const {"), L(212, "add", "    return bytes_;"), L(213, "ctx", "}")],
+        text: "`bytes()` reads `bytes_` without `cacheMutex_`, while `trim()` and `evict()` write it under the lock. The streaming HUD calls `bytes()` every frame from the UI thread, so this is a data race. Make `bytes_` a `std::atomic<size_t>`, or take the lock in `bytes()`.",
+        evs: "code", conf: "high", ev: "Caller outside the diff: `src/ui/StreamingHud.cpp:57` calls `bytes()` once per frame." }),
+      F({ sev: "minor", cat: "Configuration", path: "src/render/EvictionPolicy.cpp", line: 88, dup: 7,
+        code: [L(87, "add", "struct Budget {"), L(88, "add", "    int maxBytes = -1;  // -1: no limit"), L(89, "add", "};")],
+        text: "`trim()` converts `maxBytes` to `size_t`. So every negative value means no limit, not only -1, and a typo in the config turns eviction off. Reject negative values other than -1 when the config loads.",
+        evs: "code", conf: "high", ev: "`trim(static_cast<size_t>(budget.maxBytes))` in `ResourceCache.cpp:96`." }),
+      F({ sev: "minor", cat: "Documentation", path: "docs/render/caching.md", line: 22,
+        code: [L(20, "ctx", "## Locking"), L(21, "ctx", ""), L(22, "ctx", "Callers must hold `cacheMutex_` before they call `evict()`."), L(23, "ctx", "`evict()` never takes the lock itself.")],
+        text: "The locking section still tells callers to hold `cacheMutex_` before `evict()`. With this change, that advice deadlocks. Rewrite the section for the new contract.",
+        evs: "code", conf: "high", ev: "Project documentation, read during the run. Plugin authors read this page." }),
+      F({ sev: "nit", cat: "Readability", path: "src/render/EvictionPolicy.cpp", line: 42,
+        code: [L(42, "add", "    // Ties go to the entry that was inserted first."), L(43, "add", "    if (a.lastUse == b.lastUse)"), L(44, "add", "        return a.seq < b.seq;")],
+        text: "The comment says that ties \"go to\" the older entry. Say that the older entry is evicted first, so the reader knows which one leaves.",
+        evs: "code", conf: "medium", ev: "`EvictsOldestOnTie` (7c0d4b8) shows that the older entry leaves first." }),
+      Q("Do plugins outside this repository call `evictLocked()`?", "It is private now, so such a plugin fails to build. The review could not read the plugin repositories."),
+      Q("Can the `EvictionPolicy` split go into its own pull request?", "It moves code with no change in behavior. Apart from the locking change, each part is easier to review and to revert."),
+    ],
+  }),
+  977: () => ({
+    at: "f1a7b65", tokens: 33, secs: 101,
+    steps: [["read", "context/diff.patch", "ok", 0.1, "4 files, +131 −22"], ["read", "src/net/Snapshot.cpp", "ok", 0.1], ["read", "src/net/AckWindow.cpp", "ok", 0.1], ["read", "src/net/HeaderDelta.cpp", "ok", 0.1], ["grep", "pin(", "ok", 0.3, "4 matches in 2 files"], ["read", "src/net/Handshake.cpp", "ok", 0.1]],
+    line: "Headers shrink as described. The delta base can go away when two snapshots leave before an ack.",
+    risks: ["Lifetime of the pinned delta base.", "Old and new clients on one server."],
+    coverage: [["Read", "All 4 changed files, and `src/net/Handshake.cpp` outside the diff."], ["Tools", "No tool failed."], readOnly],
+    items: [
+      F({ sev: "major", cat: "Correctness", path: "src/net/AckWindow.cpp", line: 41,
+        code: [L(39, "add", "void AckWindow::pin(Seq s) {"), L(40, "add", "    std::lock_guard<std::mutex> g(m_);"), L(41, "add", "    pinned_ = s;"), L(42, "add", "}")],
+        text: "`pin()` keeps one base only. When two snapshots leave before the first ack, the second `pin()` drops the first base. A client that acks the first snapshot then gets a delta against a header that the server no longer has. Keep one pinned base per unacknowledged sequence.",
+        evs: "code", conf: "high", ev: "`Snapshot::write()` calls `pin()` once per packet: `src/net/Snapshot.cpp:86`." }),
+      F({ sev: "minor", cat: "Correctness", path: "src/net/HeaderDelta.cpp", line: 31,
+        code: [L(30, "add", "    // Fits in 16 bits while the ack window is open."), L(31, "add", "    const uint16_t d = uint16_t(cur.seq - base.seq);")],
+        text: "The delta wraps after 65,535 packets without an ack. At 60 packets per second that is 18 minutes, for example a client in a long loading screen. Send a full header when the gap does not fit.",
+        evs: "code", conf: "medium", ev: "No test covers a gap larger than the ack window." }),
+      Q("Can a client with the old header format join a server with the new one?", "Yuki asked to keep the old format for one release. The handshake sends no format version, so a mixed pair misreads every header."),
+    ],
+  }),
+  2215: () => ({
+    at: "5d2e9b7", tokens: 22, secs: 74,
+    steps: [["read", "context/diff.patch", "ok", 0.1, "3 files, +18 −64"], ["read", "src/core/JobQueue.cpp", "ok", 0.1], ["read", "src/core/JobQueue.h", "ok", 0.1], ["grep", "SpinLock", "ok", 0.2, "0 matches"], ["read", "src/audio/AudioQueue.cpp", "ok", 0.1]],
+    line: "The swap is safe for the audio thread, which no longer uses this queue. One ordering detail costs a wake-up per push.",
+    risks: ["Lock hold time in `push()` with many producers."],
+    coverage: [["Read", "All 3 changed files, and `src/audio/AudioQueue.cpp` outside the diff."], ["Not checked", "No benchmark ran, because the review has read-only tools."]],
+    items: [
+      F({ sev: "minor", cat: "Performance", path: "src/core/JobQueue.cpp", line: 40,
+        code: [L(39, "del", "    SpinLock::Guard g(lock_);"), L(40, "add", "    std::lock_guard<std::mutex> g(mutex_);"), L(41, "ctx", "    jobs_.push_back(std::move(job));"), L(42, "ctx", "    cv_.notify_one();")],
+        text: "`push()` calls `cv_.notify_one()` while it still holds `mutex_`. The woken worker then blocks on the mutex at once. Release the lock before you notify.",
+        evs: "code", conf: "medium", ev: "With the spin lock, waiters did not sleep, so the order did not matter before." }),
+      F({ sev: "nit", cat: "Naming", path: "src/core/JobQueue.h", line: 18,
+        code: [L(17, "ctx", "private:"), L(18, "add", "    std::mutex mutex_;")],
+        text: "`mutex_` names the type, not what it guards. `queueMutex_` matches `cacheMutex_` in render.",
+        evs: "code", conf: "high", ev: "Other mutex names: `src/render/ResourceCache.h:88`." }),
+    ],
+  }),
+  612: () => ({
+    at: "b7c2a90", tokens: 12, secs: 46,
+    steps: [["read", "context/diff.patch", "ok", 0.1, "1 file, +14 −3"], ["read", "src/audio/PakStream.cpp", "ok", 0.1], ["grep", "seekToGranule", "ok", 0.2, "3 matches in 2 files"], ["read", "src/audio/OpusBank.cpp", "ok", 0.1]],
+    line: "The granule seek fixes the earlier finding. Playback after a seek starts without pre-roll.",
+    risks: ["Audio quality right after a seek."],
+    coverage: [["Read", "The changed file `PakStream.cpp`, and `OpusBank.cpp` outside the diff."], ["Not checked", `RFC 7845 was not fetched. The pre-roll finding comes from ${RUNNER.short}'s own knowledge.`]],
+    items: [
+      F({ sev: "minor", cat: "Correctness", path: "src/audio/PakStream.cpp", line: 79,
+        code: [L(77, "del", "    stream.seek(byteOffset);"), L(78, "add", "    const Page& page = index_.pageFor(granule);"), L(79, "add", "    stream.seek(page.offset);"), L(80, "add", "    decoder_.reset();")],
+        text: "`seekToGranule()` starts to decode at the page that holds the target granule. Opus needs pre-roll before the target, so the first 80 ms after a seek play with artifacts. Seek to the page that holds `granule - 3840`, and drop the decoded samples before the target.",
+        evs: "unverified", conf: "medium", ev: "RFC 7845, section 4.6. The run did not fetch the RFC." }),
+    ],
+  }),
+};
+// Pull requests with no prepared result get a plain run over their changed files.
+const plainResult = (p) => ({
+  at: headOf(p), tokens: 14, secs: 52,
+  steps: [["read", "context/diff.patch", "ok", 0.1, plural(p.files.length, "file")], ...p.files.map(([, f]) => ["read", f, "ok", 0.1])],
+  line: `No findings in ${plural(p.files.length, "changed file")}.`,
+  risks: [], coverage: [["Read", `All ${plural(p.files.length, "changed file")}.`], readOnly], items: [],
+});
+const headOf = (p) => p.commits.reduce((a, c) => (c[3] < a[3] ? c : a))[0];
+function resultFor(p, pr) {
+  const r = (RESULTS[p.id] || plainResult)(p);
+  if (pr.explain) Object.assign(r, { items: r.items.filter((i) => i.kind === "question"), steps: r.steps.slice(0, 4), tokens: Math.round(r.tokens / 4), secs: Math.round(r.secs / 3) });
+  return r;
+}
+
+// One run per pull request: the newest. Job states: running, done, failed, limit (usage limit), cancelled.
+const logEv = (a, prep = false) => ({ tool: a[0], target: a[1], st: a[2], secs: a[3], note: a[4] || "", prep });
+const RUNS = new Map();
+function pastRun(pr, profile, status, agoMin, o = {}) {
+  const p = PRS.find((x) => x.id === pr);
+  const r = o.r || resultFor(p, prof(profile));
+  const steps = o.upTo === undefined ? r.steps : r.steps.slice(0, o.upTo);
+  const log = [...RUNNER.prep(r.at).map((a) => logEv(a, true)), ...steps.map((a) => logEv(a))];
+  if (status === "cancelled") log.at(-1).st = "stop";
+  RUNS.set(pr, { pr, profile, status, ago: agoMin, at: r.at, base: null, log, error: o.error || null, r: status === "done" ? r : null });
+  return r;
+}
+// Past runs. The init at the end of the script creates them, after the helpers exist.
+function pastRuns() {
+  pastRun(977, "general", "done", 40);
+  const r2215 = pastRun(2215, "general", "done", 180);
+  r2215.items[0].status = "accepted";
+  r2215.items[1].status = "discarded";
+  pastRun(612, "general", "done", 2110, { r: {
+    at: "6d1e0f3", tokens: 18, secs: 66,
+    steps: [["read", "context/diff.patch", "ok", 0.1, "2 files, +240 −31"], ["read", "src/audio/PakStream.cpp", "ok", 0.1], ["read", "src/audio/OpusBank.cpp", "ok", 0.1], ["read", "src/audio/OpusDecoder.cpp", "ok", 0.1]],
+    line: "Banks stream from the pak as described. Seeks land inside Opus pages.",
+    risks: ["Seek accuracy in long banks."], coverage: [["Read", "Both changed files, and `OpusDecoder.cpp` outside the diff."], readOnly],
+    items: [F({ sev: "major", cat: "Correctness", path: "src/audio/PakStream.cpp", line: 77, code: [L(77, "add", "    stream.seek(byteOffset);")], text: "Seeking by byte offset lands inside an Opus page. Seek by granule position.", evs: "code", conf: "high", ev: "", status: "posted" })],
+  } });
+  pastRun(388, "security", "limit", 120, { upTo: 2, error: "It resets at 16:00. Review Loop does not retry by itself." });
+  pastRun(95, "over", "cancelled", 300, { upTo: 2 });
+  pastRun(1340, "general", "failed", 1000, { error: "The output did not match the review schema, and one repair attempt failed too. The raw output is kept. Nothing from this run can be posted." });
+}
+
 // ---------- Derived state ----------
 // Folds of an open thread. Keys are messages. A fold never hides a new message.
 function foldPlan(t) {
@@ -659,7 +954,8 @@ function foldPlan(t) {
 // Turn rule: a thread is mine when I wrote a message in it, or when I authored the PR.
 // It is my turn when it is mine, not resolved, and the newest message is by someone else.
 const BY_ID = new Map(PRS.map((p) => [p.id, p]));
-for (const p of PRS) {
+// Runs again after each change: a run ends, a triage, a post, a reply.
+function derive(p) {
   for (const t of p.threads) {
     const people = [...new Set(t.msgs.map((x) => x.who))];
     const last = t.msgs[t.msgs.length - 1];
@@ -689,9 +985,13 @@ for (const p of PRS) {
   p.lastActivity = Math.min(...p.threads.map((t) => t.ago), ...p.commits.map((c) => c[3]));
   const unreadThreads = p.threads.filter((t) => t.unread).sort((a, b) => a.ago - b.ago);
   p.cause = p.yourTurn.filter((t) => t.unread).sort((a, b) => a.ago - b.ago)[0] || p.yourTurn[0] || unreadThreads[0] || null;
+  // Drafts never count as unread and never change the turn. Untriaged drafts are their own reason.
+  p.triage = aiItems(p).filter((i) => i.status === "new");
+  p.accepted = aiItems(p).filter((i) => i.status === "accepted");
   p.group =
     p.state !== "OPEN" ? "closed"
     : p.yourTurn.length ? "your"
+    : p.triage.length ? "triage"
     : p.role === "REVIEWER" && p.my === "UNAPPROVED" && !p.reviewedAt ? "review"
     : p.newCommits.length && p.reviewedAt ? "commits"
     : p.unread ? "comments"
@@ -701,31 +1001,41 @@ for (const p of PRS) {
 
 // Three inbox groups. Each lists its reasons in display order. The why-line names the reason.
 const GROUPS = [
-  ["needs", "Needs you", ["your", "review", "commits", "comments"]],
+  ["needs", "Needs you", ["your", "triage", "review", "commits", "comments"]],
   ["waiting", "Waiting on others", ["waiting"]],
   ["done", "Done", ["quiet", "closed"]],
 ];
 const REASONS = GROUPS.flatMap((g) => g[2]);
 const VIEWS = {
-  needs: { label: "Needs you", icon: "bell", test: (p) => p.unread > 0 || p.yourTurn.length > 0 || (p.state === "OPEN" && p.role === "REVIEWER" && p.my !== "APPROVED") },
+  needs: { label: "Needs you", icon: "bell", test: (p) => p.unread > 0 || p.yourTurn.length > 0 || p.triage.length > 0 || (p.state === "OPEN" && p.role === "REVIEWER" && p.my !== "APPROVED") },
   reviewing: { label: "Reviewing", icon: "eye", test: (p) => p.state === "OPEN" && p.role === "REVIEWER" },
   mine: { label: "My PRs", icon: "pr", test: (p) => p.state === "OPEN" && p.role === "AUTHOR" },
   following: { label: "Following", icon: "star", test: () => true },
 };
+// AI views list one flat row per pull request, with no inbox groups.
+const AIVIEWS = {
+  runs: { label: "Review runs", icon: "run", test: (p) => RUNS.has(p.id) },
+  post: { label: "Ready to post", icon: "send", test: (p) => p.accepted.length > 0 },
+};
+const VIEW = (k) => VIEWS[k] || AIVIEWS[k];
+const aiItems = (p) => RUNS.get(p.id)?.r?.items || [];
+const activeRun = () => [...RUNS.values()].find((r) => r.status === "running");
 const TURN_ORDER = ["your", "wait", "other", "resolved"];
 const TURN_LABEL = { your: "Your turn", wait: "Waiting on others", other: "Other discussions", resolved: "Resolved" };
 
 const S = {
-  view: "needs", repo: null, query: "", sel: 4182, focus: "list", page: "conv", doneOpen: false,
+  view: "needs", repo: null, query: "", sel: 4182, focus: "list", doneOpen: false,
   needMe: false, open: new Map(), unfold: new Set(), branches: new Set(), showResolved: false, cur: null, descOpen: false, openSec: new Set(),
   following: new Set(PRS.map((p) => p.id)),
+  // AI review: last profile, profile menu, run log of which PR, post confirm, the item in edit and its unsaved text.
+  profile: "general", menu: false, log: null, confirm: false, posting: false, editing: null, editText: null,
 };
 
 // ---------- Helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const inline = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+const inline = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\[([^\]]+)\]\((https:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 const paras = (s) => s.split(/\n\n/).map((b) => (/^- /m.test(b) ? `<ul>${b.split("\n").map((l) => `<li>${inline(l.replace(/^- /, ""))}</li>`).join("")}</ul>` : `<p>${inline(b)}</p>`)).join("");
 const plain = (s) => s.replace(/`/g, "");
 const name = (w) => (w === "me" ? "You" : PEOPLE[w]);
@@ -758,6 +1068,14 @@ const hueOf = (k) => { let h = 0x811c9dc5; for (const c of k) h = Math.imul(h ^ 
 const initials = (w) => { const ws = PEOPLE[w].split(" "); return ws[0][0] + (ws.length > 1 ? ws.at(-1)[0] : ""); };
 const avatar = (w) => `<span class="av${w === "me" ? " me" : ""}"${w === "me" ? "" : ` data-h="${hueOf(w)}"`} aria-hidden="true">${esc(initials(w))}</span>`;
 const shown = () => PRS.filter((p) => S.following.has(p.id) || p.state === "OPEN");
+const aiAvatar = () => `<span class="av ai" aria-hidden="true">${esc(RUNNER.initials)}</span>`;
+const dur = (s) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`);
+const countText = (its) => {
+  const f = its.filter((i) => i.kind === "finding").length;
+  const q = its.length - f;
+  return [f ? plural(f, "finding") : q ? "" : "No findings", q ? plural(q, "question") : ""].filter(Boolean).join(", ");
+};
+const toolCalls = (run) => run.log.filter((e) => !e.prep && e.st !== "run").length;
 
 // Paths copied from lucide-react 1.48.0 (ISC). The app imports the same icons from lucide-react.
 const ICON = {
@@ -796,13 +1114,19 @@ const ICON = {
   fminus: '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M9 15h6"/>',
   fmove: '<path d="M4 11V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h7"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="m10 18 3-3-3-3"/>',
   archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
-  soon: '<path d="M10.1 2.182a10 10 0 0 1 3.8 0"/><path d="M13.9 21.818a10 10 0 0 1-3.8 0"/><path d="M17.609 3.721a10 10 0 0 1 2.69 2.7"/><path d="M2.182 13.9a10 10 0 0 1 0-3.8"/><path d="M20.279 17.609a10 10 0 0 1-2.7 2.69"/><path d="M21.818 10.1a10 10 0 0 1 0 3.8"/><path d="M3.721 6.391a10 10 0 0 1 2.7-2.69"/><path d="M6.391 20.279a10 10 0 0 1-2.69-2.7"/>',
   dot: '<circle cx="12" cy="12" r="6"/>',
+  loader: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
+  bot: '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>',
+  scroll: '<path d="M15 12h-5"/><path d="M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  stop: '<circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
 };
 const icon = (n, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
 // A meaningful icon without visible words. The tooltip and the accessible name carry the same words.
 const ic = (n, label, text = "") => `<span class="ic" role="img" aria-label="${esc(label)}" title="${esc(label)}">${icon(n)}${text}</span>`;
-const soon = (ms) => ic("soon", `Arrives in ${ms}`);
 // The words "Your turn" and "new" stay visible. All other turn states are an icon with a tooltip.
 const TURN_ICON = { your: "reply", wait: "hourglass", other: "users", resolved: "ok" };
 const turnText = (t) => (t.turn === "your" ? "Your turn" : t.turn === "wait" ? (t.waitOn ? `Waiting on ${first(t.waitOn)}` : "Waiting on reviewers") : t.turn === "other" ? `Between ${t.people.map(first).join(" and ")}` : "Resolved");
@@ -824,7 +1148,13 @@ function toast(msg) {
 // ---------- Sidebar ----------
 function renderSide() {
   const all = shown();
-  const counts = Object.fromEntries(Object.entries(VIEWS).map(([k, v]) => [k, all.filter(v.test).length]));
+  const counts = Object.fromEntries(Object.entries({ ...VIEWS, ...AIVIEWS }).map(([k, v]) => [k, all.filter(v.test).length]));
+  const running = activeRun();
+  const navBtn = ([k, v]) => {
+    const busy = k === "runs" && running;
+    const title = `${v.label}: ${counts[k]}${busy ? ", 1 running" : ""}`;
+    return `<button type="button" class="nav-i" data-act="view" data-view="${k}" ${S.view === k && !S.repo ? 'aria-current="page"' : ""} title="${title}" aria-label="${title}">${busy ? icon("loader", "spin") : icon(v.icon)}<span class="lbl">${v.label}</span><span class="n">${counts[k] || ""}</span></button>`;
+  };
   const projects = {};
   for (const p of all) (projects[p.project] ||= {})[p.repo] = ((projects[p.project] || {})[p.repo] || 0) + p.unread;
   const theme = document.documentElement.dataset.theme || "system";
@@ -834,12 +1164,11 @@ function renderSide() {
     <div class="side-scroll">
       <div class="nav">
         <h2>Inbox</h2>
-        ${Object.entries(VIEWS).map(([k, v]) => `<button type="button" class="nav-i" data-act="view" data-view="${k}" ${S.view === k && !S.repo ? 'aria-current="page"' : ""} title="${v.label}: ${counts[k]}">${icon(v.icon)}<span class="lbl">${v.label}</span><span class="n">${counts[k] || ""}</span></button>`).join("")}
+        ${Object.entries(VIEWS).map(navBtn).join("")}
       </div>
       <div class="nav">
         <h2>AI review</h2>
-        <button type="button" class="nav-i" aria-disabled="true" aria-label="Review runs, arrives in M2" data-act="soon" data-msg="Review runs arrive in M2." title="Review runs arrive in M2">${icon("run")}<span class="lbl">Review runs</span>${soon("M2")}</button>
-        <button type="button" class="nav-i" aria-disabled="true" aria-label="Ready to post, arrives in M3" data-act="soon" data-msg="Ready to post arrives in M3." title="Ready to post arrives in M3">${icon("send")}<span class="lbl">Ready to post</span>${soon("M3")}</button>
+        ${Object.entries(AIVIEWS).map(navBtn).join("")}
       </div>
       <div class="proj">
         <h2>Repositories</h2>
@@ -861,10 +1190,17 @@ function renderSide() {
 // ---------- List ----------
 function listRows() {
   const q = S.query.trim().toLowerCase();
-  return shown().filter((p) => (S.repo ? `${p.project}/${p.repo}` === S.repo : VIEWS[S.view].test(p)) && (!q || `${key(p)} ${p.title} ${PEOPLE[p.author]}`.toLowerCase().includes(q)));
+  return shown().filter((p) => (S.repo ? `${p.project}/${p.repo}` === S.repo : VIEW(S.view).test(p)) && (!q || `${key(p)} ${p.title} ${PEOPLE[p.author]}`.toLowerCase().includes(q)));
 }
 const byReason = (a, b) => REASONS.indexOf(a.group) - REASONS.indexOf(b.group) || (b.unread > 0) - (a.unread > 0) || a.lastActivity - b.lastActivity;
-const grouped = () => { const rows = listRows(); return GROUPS.map(([g, label, rs]) => [g, label, rows.filter((p) => rs.includes(p.group)).sort(byReason)]); };
+const runAgo = (p) => (RUNS.get(p.id).status === "running" ? -1 : RUNS.get(p.id).ago);
+const aiMode = () => (AIVIEWS[S.view] && !S.repo ? S.view : null);
+const grouped = () => {
+  const rows = listRows();
+  if (aiMode() === "runs") return [["ai", null, rows.sort((a, b) => runAgo(a) - runAgo(b))]];
+  if (aiMode()) return [["ai", null, rows.sort(byReason)]];
+  return GROUPS.map(([g, label, rs]) => [g, label, rows.filter((p) => rs.includes(p.group)).sort(byReason)]);
+};
 // j and k skip the rows of the folded Done group.
 const orderedRows = () => grouped().flatMap(([g, , rs]) => (g === "done" && !S.doneOpen ? [] : rs));
 
@@ -876,6 +1212,10 @@ function why(p) {
       const n = p.yourTurn.length;
       const onMine = p.author === "me" && c && c.msgs[0].who !== "me";
       return `${turnMark({ turn: "your" }).replace("Your turn", n > 1 ? `Your turn in ${n} threads` : onMine ? "Comment on your PR" : "Your turn")}${quote(c.last)}`;
+    }
+    case "triage": {
+      const f = p.triage.filter((i) => i.kind === "finding").length;
+      return `<span class="quote"><b>${esc(RUNNER.short)} ${f ? `found ${plural(f, "issue")}` : `has ${plural(p.triage.length, "question")}`}.</b> Triage the drafts.</span>`;
     }
     case "review":
       return `<span class="quote"><b>${esc(PEOPLE[p.author])}</b> asked for your review.</span>`;
@@ -894,26 +1234,46 @@ function why(p) {
   }
 }
 
-const row = (p) => `<li><button type="button" class="row" data-act="row" data-pr="${p.id}" ${p.id === S.sel ? 'aria-current="true"' : ""}>
-  <span class="row-top"><span class="key">${esc(key(p))}</span>${p.author === "me" ? ic("user", "Your pull request") : ""}${p.incomplete ? `<span class="err">${icon("alert")}Last check incomplete</span>` : ""}<time title="${esc(full(p.lastActivity))}">${ago(p.lastActivity)}</time></span>
+// The why-line of the AI views names the run or the accepted items, not the inbox reason.
+function whyRun(p) {
+  const run = RUNS.get(p.id);
+  const pn = esc(prof(run.profile).name);
+  switch (run.status) {
+    case "running": return `<span class="quote">${pn}: reviewing now.</span>`;
+    case "done": return `<span class="quote"><b>${pn}: ${countText(run.r.items)}.</b> ${p.triage.length ? `${p.triage.length} left to triage.` : p.accepted.length ? `${p.accepted.length} ready to post.` : "All triaged."}</span>`;
+    case "failed": return `<span class="err">${icon("alert")}Failed</span><span class="quote">${pn}: the output was not readable.</span>`;
+    case "limit": return `<span class="err">${icon("alert")}Usage limit</span><span class="quote">${pn}: ${esc(run.error)}</span>`;
+    default: return `<span class="quote">${pn}: you cancelled it after ${plural(toolCalls(run), "tool call")}.</span>`;
+  }
+}
+const whyPost = (p) => `<span class="quote"><b>Accepted:</b> ${countText(p.accepted)}</span>`;
+
+const row = (p) => {
+  const mode = aiMode();
+  const t = mode === "runs" ? Math.max(0, RUNS.get(p.id).ago) : p.lastActivity;
+  return `<li><button type="button" class="row" data-act="row" data-pr="${p.id}" ${p.id === S.sel ? 'aria-current="true"' : ""}>
+  <span class="row-top"><span class="key">${esc(key(p))}</span>${p.author === "me" ? ic("user", "Your pull request") : ""}${p.incomplete ? `<span class="err">${icon("alert")}Last check incomplete</span>` : ""}<time title="${esc(full(t))}">${ago(t)}</time></span>
   <span class="row-title">${esc(p.title)}</span>
-  <span class="row-why">${why(p)}${p.unread ? newMark(`${p.unread} new`) : ""}</span>
+  <span class="row-why">${mode === "runs" ? whyRun(p) : mode === "post" ? whyPost(p) : `${why(p)}${p.unread ? newMark(`${p.unread} new`) : ""}`}</span>
 </button></li>`;
+};
 
 function renderList() {
   const groups = grouped();
   const count = groups.reduce((n, g) => n + g[2].length, 0);
-  const title = S.repo ? S.repo : VIEWS[S.view].label;
+  const title = S.repo ? S.repo : VIEW(S.view).label;
   let body = "";
   for (const [g, label, rs] of groups) {
     if (!rs.length) continue;
+    if (!label) { body += `<ul>${rs.map(row).join("")}</ul>`; continue; }
     const head = `<h2 id="g-${g}">${label}<span class="n">${rs.length}</span>${g === "done" ? icon("chev", "chev") : ""}</h2>`;
     const items = `<ul>${rs.map(row).join("")}</ul>`;
     body += g === "done"
       ? `<details class="lgrp" data-fold="done" ${S.doneOpen ? "open" : ""}><summary>${head}</summary>${items}</details>`
       : `<section class="lgrp" aria-labelledby="g-${g}">${head}${items}</section>`;
   }
-  if (!body) body = `<p class="empty">${S.query ? "No pull requests match this filter." : "Nothing needs you. New replies and review requests show here."}</p>`;
+  const empty = { runs: "No review has run yet. Open a pull request and press r to start one.", post: `Nothing is ready to post. Accept drafts from ${RUNNER.short} to post them to ${FORGE.name}.` };
+  if (!body) body = `<p class="empty">${S.query ? "No pull requests match this filter." : esc(empty[aiMode()] || "Nothing needs you. New replies and review requests show here.")}</p>`;
   $("#list").innerHTML = `
     <header class="list-h">
       <div class="list-title"><button type="button" class="icon-btn m-only" data-act="side" aria-label="Open views">${icon("menu")}</button><h1 id="view-name">${esc(title)}</h1><span class="n">${count}</span></div>
@@ -925,7 +1285,9 @@ function renderList() {
 
 // ---------- Detail ----------
 const cur = () => BY_ID.get(S.sel);
-const isOpen = (t) => (S.open.has(t.id) ? S.open.get(t.id) : t.unread > 0 || t.turn === "your");
+// Threads open when they need you. Drafts open while untriaged. Items carry a kind, threads do not.
+const isOpen = (t) => (S.open.has(t.id) ? S.open.get(t.id) : t.kind ? t.status === "new" : t.unread > 0 || t.turn === "your");
+const findT = (id) => cur().threads.find((x) => x.id === id) || aiItems(cur()).find((x) => x.id === id);
 // "Need me": your turn, or a new message.
 const passes = (t) => !S.needMe || t.turn === "your" || t.unread > 0;
 // Fixed thread order: your turn, waiting, others, resolved. Newest first in each group.
@@ -952,24 +1314,83 @@ function renderDetail() {
         <span class="key">${esc(key(p))}</span>
         <span class="branch"><code>${esc(p.branch)}</code> into <code>${esc(p.target)}</code></span>
         <span class="dh-actions">
-          <a href="#" class="icon-btn" data-act="bb" aria-label="Open in Bitbucket" title="Open in Bitbucket">${icon("ext")}</a>
+          <a href="#" class="icon-btn" data-act="bb" aria-label="Open in ${FORGE.name}" title="Open in ${FORGE.name}">${icon("ext")}</a>
           <button type="button" class="icon-btn" data-act="follow" aria-label="Follow" aria-pressed="${followed}" title="${followed ? "Following. Select to stop." : "Follow"}">${icon("star")}</button>
           <button type="button" class="icon-btn" data-act="archive" aria-label="Archive" title="Archive">${icon("archive")}</button>
         </span>
       </div>
-      <h1>${esc(p.title)}</h1>
+      <div class="dh-title"><h1>${esc(p.title)}</h1>${reviewBtn()}</div>
       ${sum ? `<p class="dh-sum">${sum}</p>` : ""}
       ${fresh ? `<p class="dh-sum">${fresh}</p>` : ""}
+      <p class="dh-sum run" id="runline" ${RUNS.has(p.id) ? "" : "hidden"}>${runLine(p)}</p>
     </header>
-    <div class="dbody" id="dbody" tabindex="-1">${S.page === "conv" ? `${overview(p)}${threadsSec(p)}${filesSec(p)}${commitsSec(p)}` : later(S.page)}</div>`;
+    <div class="dbody" id="dbody" tabindex="-1">${overview(p)}${threadsSec(p)}${filesSec(p)}${commitsSec(p)}</div>
+    ${postBar(p)}`;
   $("#dbody").scrollTop = scrollTop;
 }
+
+function reviewBtn() {
+  const busy = activeRun();
+  const pf = prof(S.profile);
+  const title = busy ? `${RUNNER.short} is reviewing ${key(BY_ID.get(busy.pr))}. One review runs at a time.` : `Review with ${RUNNER.name}, ${pf.name} profile. Key: r`;
+  return `<div class="split">
+      <button type="button" class="btn primary" data-act="review" aria-disabled="${!!busy}" title="${esc(title)}">Review</button>
+      <button type="button" class="btn primary more-b" data-act="profiles" aria-haspopup="menu" aria-expanded="${S.menu}" aria-controls="profiles" aria-label="Choose a review profile" title="Choose a review profile">${icon("down")}</button>
+      <div class="menu" id="profiles" role="menu" aria-label="Review profiles" ${S.menu ? "" : "hidden"}>${PROFILES.map((x) => `<button type="button" role="menuitem" data-act="review" data-profile="${x.id}"><span class="mi-t">${esc(x.name)}${x.id === S.profile ? `${icon("check")}<span class="sr">, last used</span>` : ""}</span><span class="mi-d">${esc(x.note)}</span></button>`).join("")}</div>
+    </div>`;
+}
+
+// One line for the newest run. Failed, usage-limit, and cancelled runs are one line of text each, not a banner.
+function runLine(p) {
+  const run = RUNS.get(p.id);
+  if (!run) return "";
+  const log = `<button type="button" class="linkish" data-act="log" title="Key: 3">${icon("scroll")}View log</button>`;
+  const calls = plural(toolCalls(run), "tool call");
+  switch (run.status) {
+    case "running":
+      return `<span class="rl">${icon("loader", "spin")}Reviewing…</span><span id="rl-calls">${calls}</span><span id="rl-time">${dur(elapsed(run))}</span>${log}<button type="button" class="linkish" data-act="cancel">Cancel</button>`;
+    case "done": {
+      const pf = prof(run.profile);
+      const at = p.commits.find((x) => x[0] === run.at);
+      const since = at ? p.commits.filter((c) => c[3] < at[3]).length : 0;
+      return `<span class="rl">${icon("bot")}${esc(RUNNER.short)} ${pf.explain ? "explained" : "reviewed"} <code>${run.at}</code>${run.base ? ` (changes since <code>${run.base}</code>)` : ""}</span>${run.ago ? `<time title="${esc(full(run.ago))}">${agoLong(run.ago)}</time>` : ""}<span>${countText(run.r.items)}</span><span>${run.r.tokens}k tokens</span>${since ? `<span>${plural(since, "commit")} since</span><button type="button" class="linkish" data-act="review-changes">Review changes</button>` : ""}${log}`;
+    }
+    case "failed": return `<span class="err">${icon("alert")}<span>Review failed. ${esc(run.error)}</span></span>${log}`;
+    case "limit": return `<span class="err">${icon("alert")}<span>${esc(RUNNER.name)} usage limit reached. ${esc(run.error)}</span></span>${log}`;
+    default: return `<span class="rl">${icon("stop")}You cancelled the review after ${calls}.</span>${log}`;
+  }
+}
+
+// Shown only while something is accepted. The confirm lists the destination and the exact text of each comment.
+function postBar(p) {
+  const acc = p.accepted;
+  if (!acc.length) return "";
+  if (!S.confirm) return `<div class="postbar" id="postbar"><span>Accepted: ${countText(acc)}</span><span class="grow"></span><button type="button" class="btn primary" data-act="post" title="Key: p">${icon("send")}Post to ${FORGE.name}</button></div>`;
+  const run = RUNS.get(p.id);
+  const fs = acc.filter((i) => i.kind === "finding");
+  const qs = acc.filter((i) => i.kind === "question");
+  const dup = (it) => { const t = it.dup && p.threads.find((x) => x.id === it.dup); return t ? `<p class="pc-w">${esc(first(t.msgs[0].who))} raised a similar point on this line.</p>` : ""; };
+  const list = [
+    ...fs.map((it) => `<li><span class="pc-d"><code>${esc(base(it.path))}:${it.line}</code><br>Inline comment</span><div class="pc-b">${paras(it.text)}</div>${dup(it)}</li>`),
+    ...(qs.length ? [`<li><span class="pc-d">General comment</span><div class="pc-b">${paras(generalText(qs))}</div></li>`] : []),
+  ].join("");
+  return `<section class="postbar confirm" id="postbar" role="dialog" aria-labelledby="pc-t" aria-describedby="pc-n">
+      <h2 id="pc-t">Post ${destText(fs, qs)} to ${esc(key(p))}?</h2>
+      <p class="pc-n" id="pc-n">Checked just now: the source branch is still at <code>${run.at}</code>. Inline comments attach to that commit.</p>
+      <ol class="pc-list" aria-label="Comments to post">${list}</ol>
+      <div class="acts">${S.posting ? `<span class="rl">${icon("loader", "spin")}Posting…</span>` : `<button type="button" class="btn primary" data-act="post-yes">${icon("send")}Post</button><button type="button" class="btn" data-act="post-no">Cancel</button><span class="hint">Esc cancels</span>`}</div>
+    </section>`;
+}
+const destText = (fs, qs) => [fs.length ? plural(fs.length, "inline comment") : "", qs.length ? "1 general comment" : ""].filter(Boolean).join(" and ");
+// Accepted questions post as one general comment.
+const generalText = (qs) => (qs.length === 1 ? `${qs[0].text} ${qs[0].why}` : `Questions:\n\n${qs.map((q) => `- ${q.text} ${q.why}`).join("\n")}`);
 
 function overview(p) {
   const blocks = p.description.split(/\n\n/);
   const long = blocks.length > 1;
   return `<section class="sec" id="s-overview" aria-labelledby="h-overview">
     <h2 id="h-overview">Overview<span class="aside">Opened by ${p.author === "me" ? "you" : esc(PEOPLE[p.author])}</span></h2>
+    ${aiSummary(p)}
     <div class="prose" id="desc">${paras(long && !S.descOpen ? blocks[0] : p.description)}</div>
     ${long ? `<button type="button" class="linkish" data-act="desc" aria-expanded="${S.descOpen}" aria-controls="desc">${S.descOpen ? "Show less" : "Show more"}</button>` : ""}
     ${p.incomplete ? `<div class="banner" role="note">${icon("alert")}<p><b>Last check incomplete.</b> ${esc(p.incomplete)}</p></div>` : ""}
@@ -980,9 +1401,81 @@ function overview(p) {
   </section>`;
 }
 
+// The runner's summary: one line when closed. Coverage names what was read, what failed, and what was not checked.
+function aiSummary(p) {
+  const run = RUNS.get(p.id);
+  if (run?.status !== "done") return "";
+  const r = run.r;
+  const qs = r.items.filter((i) => i.kind === "question");
+  const cov = CONTEXT.length ? r.coverage : [...r.coverage, ["Context", "No context source is set up."]];
+  const open = qs.filter((q) => q.status !== "posted");
+  return `<details class="ai-sum" id="ai-sum" data-fold="ai" ${S.openSec.has("ai") ? "open" : ""}>
+      <summary><span class="ai-h">${aiAvatar()}<b>${esc(RUNNER.short)}'s summary</b><span class="ai-line">${inline(r.line)}</span>${open.length ? `<span class="n">${plural(open.length, "question")}</span>` : ""}${icon("chev", "chev")}</span></summary>
+      <div class="ai-body">
+        ${r.risks.length ? `<h3>Risk areas</h3><ul>${r.risks.map((x) => `<li>${inline(x)}</li>`).join("")}</ul>` : ""}
+        <h3>Coverage</h3><dl class="cov">${cov.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${inline(v)}</dd>`).join("")}</dl>
+        ${open.length ? `<h3>Questions for ${p.author === "me" ? "the author" : esc(first(p.author))}</h3><div class="qs">${open.map(question).join("")}</div>` : ""}
+      </div>
+    </details>`;
+}
+
+function question(q) {
+  const cls = `th q${q.status === "discarded" ? " gone" : ""}${S.cur === q.id ? " is-cur" : ""}`;
+  const head = `class="${cls}" id="t-${q.id}" data-thread="${q.id}" tabindex="-1"`;
+  if (q.status === "discarded") return `<article ${head} aria-label="Discarded question"><p class="q-t">Discarded: ${esc(plain(q.text))}</p><button type="button" class="linkish" data-act="restore" data-item="${q.id}" title="Key: d">${icon("undo")}Restore</button></article>`;
+  if (S.editing === q.id) return `<article ${head} aria-label="Edit the question">${editor(q)}</article>`;
+  return `<article ${head} aria-label="${esc(`Question from ${RUNNER.short}${q.status === "accepted" ? ", accepted" : ""}`)}"><p class="q-t">${inline(q.text)}</p><p class="q-why">${inline(q.why)}</p>${acts(q, true)}</article>`;
+}
+
+// Triage actions. Accept and discard name the key in the tooltip.
+const acts = (it, showState) => (it.status === "accepted"
+  ? `<div class="acts">${showState ? `<span class="ok-st">${icon("check")}Accepted</span>` : ""}<button type="button" class="btn" data-act="edit" data-item="${it.id}" title="Key: e">${icon("pencil")}Edit</button><button type="button" class="btn" data-act="unaccept" data-item="${it.id}" title="Key: a">${icon("undo")}Undo accept</button></div>`
+  : `<div class="acts"><button type="button" class="btn" data-act="accept" data-item="${it.id}" title="Key: a">${icon("check")}Accept</button><button type="button" class="btn" data-act="edit" data-item="${it.id}" title="Key: e">${icon("pencil")}Edit</button><button type="button" class="btn" data-act="discard" data-item="${it.id}" title="Key: d">${icon("x")}Discard</button></div>`);
+
+const editor = (it) => `<div class="edit"><label class="sr" for="edit-ta">Edit the ${it.kind}</label><textarea id="edit-ta" data-item="${it.id}" rows="6" spellcheck="true">${esc(S.editText ?? it.text)}</textarea>
+    <div class="acts"><button type="button" class="btn primary" data-act="save" data-item="${it.id}">${icon("check")}Save and accept</button><button type="button" class="btn" data-act="cancel-edit" data-item="${it.id}">Cancel</button><span class="hint">Esc cancels</span></div></div>`;
+
+const sevMark = (s) => (s === "blocker" ? `<span class="sev err">${icon("alert")}${SEV[s]}</span>` : `<span class="sev">${SEV[s]}</span>`);
+
+// A draft uses the thread row and the anchored excerpt. A discarded draft folds to one muted line.
+function draft(p, it) {
+  const where = `${base(it.path)}:${it.line}`;
+  const head = `id="t-${it.id}" data-thread="${it.id}" tabindex="-1"`;
+  if (it.status === "discarded") return `<article class="th draft gone${S.cur === it.id ? " is-cur" : ""}" ${head} aria-label="${esc(`Discarded draft. ${where}.`)}">
+      <div class="th-row"><p class="gone-h"><span class="th-where">${esc(where)}</span><span class="th-latest">Discarded: ${esc(snippet(it.text, 140))}</span></p><button type="button" class="linkish" data-act="restore" data-item="${it.id}" title="Key: d">${icon("undo")}Restore</button></div>
+    </article>`;
+  const open = isOpen(it) || S.editing === it.id;
+  const state = it.status === "accepted" ? `<span class="ok-st" title="Accepted">${icon("check")}<span class="w">Accepted</span></span>` : "";
+  const summary = open ? state : `${sevMark(it.sev)}<span class="th-latest">${esc(snippet(it.text, 160))}</span>${state}`;
+  return `<article class="th draft${S.cur === it.id ? " is-cur" : ""}" ${head} aria-label="${esc(`Draft from ${RUNNER.short}. ${SEV[it.sev]}. ${where}.${it.status === "accepted" ? " Accepted." : ""}`)}">
+    <div class="th-row">
+      <button type="button" class="th-head" data-act="toggle" data-thread="${it.id}" aria-expanded="${open}" aria-controls="tb-${it.id}"><span class="th-where">${esc(base(it.path))}<span class="ln">:${it.line}</span></span>${summary}${icon("chev", "chev")}</button>
+      <span class="th-gap"></span>
+    </div>
+    <div class="th-body" id="tb-${it.id}" ${open ? "" : "hidden"}>${open ? draftBody(p, it) : ""}</div>
+  </article>`;
+}
+
+function draftBody(p, it) {
+  const cut = it.code.findIndex(([n]) => n === it.line) + 1;
+  const after = it.code.slice(cut);
+  const dupT = it.dup && p.threads.find((x) => x.id === it.dup);
+  const body = S.editing === it.id ? editor(it) : `<div class="msg-b">${paras(it.text)}</div>
+      <p class="ev">${EVS[it.evs]}, ${it.conf} confidence. ${inline(it.ev)}</p>
+      ${dupT ? `<p class="ev">${esc(first(dupT.msgs[0].who))} raised a similar point on this line. <button type="button" class="linkish" data-act="goto" data-thread="${dupT.id}">Go to the thread</button></p>` : ""}
+      ${acts(it, false)}`;
+  return `<div class="code${after.length ? " head" : ""}" role="group" aria-label="${esc(`Code at ${it.path} line ${it.line}`)}"><pre>${codeLines(it, it.code.slice(0, cut))}</pre></div>
+    <div class="disc anchored"><ol class="tree"><li class="node"><article class="msg" aria-label="${esc(`${RUNNER.short}, ${SEV[it.sev]}, ${it.cat}`)}">
+      <div class="msg-h">${aiAvatar()}<b>${esc(RUNNER.short)}</b>${sevMark(it.sev)}<span>${esc(it.cat)}</span>${it.edited ? "<span>edited by you</span>" : ""}</div>
+      ${body}</article></li></ol></div>
+    ${after.length ? `<div class="code tail" role="group" aria-label="${esc(`Code after line ${it.line}`)}"><pre>${codeLines(it, after)}</pre></div>` : ""}`;
+}
+
 function threadsSec(p) {
   const all = p.threads;
   const vis = ordered(p);
+  const ds = aiItems(p).filter((i) => i.kind === "finding" && i.status !== "posted");
+  const drafts = ds.length ? `<div class="tgrp" id="g-drafts"><h3>${icon("bot")}Drafts from ${esc(RUNNER.short)}<span class="n">${ds.length}</span><span class="aside">Only you see drafts until you post them.</span></h3>${ds.map((it) => draft(p, it)).join("")}</div>` : "";
   let groups = "";
   for (const k of TURN_ORDER) {
     const ts = vis.filter((t) => t.turn === k);
@@ -994,7 +1487,7 @@ function threadsSec(p) {
   return `<section class="sec" id="s-threads" aria-labelledby="h-threads">
     <div class="sec-h"><h2 id="h-threads">Threads<span class="n">${S.needMe ? `${vis.length} of ${all.length}` : all.length}</span></h2>
     ${all.length ? `<label class="tog"><input type="checkbox" id="need-me" data-act="need-me" ${S.needMe ? "checked" : ""}>Only threads that need me</label>` : ""}</div>
-    ${groups || `<p class="filter-note">${all.length ? "No thread needs you." : "No comments yet."}</p>`}
+    ${drafts}${groups || `<p class="filter-note">${all.length ? "No thread needs you." : "No comments yet."}</p>`}
   </section>`;
 }
 
@@ -1011,7 +1504,7 @@ function thread(p, t) {
       <button type="button" class="th-head" data-act="toggle" data-thread="${t.id}" aria-expanded="${open}" aria-controls="tb-${t.id}">
         <span class="th-where${t.path ? "" : " general"}">${t.path ? `${esc(base(t.path))}<span class="ln">:${lines(t)}</span>` : "General comment"}</span>${summary}<time title="${esc(full(t.ago))}">${ago(t.ago)}</time>${icon("chev", "chev")}
       </button>
-      ${open ? `<a href="#" class="icon-btn" data-act="bb" aria-label="Open this thread in Bitbucket" title="Open in Bitbucket">${icon("ext")}</a>` : '<span class="th-gap"></span>'}
+      ${open ? `<a href="#" class="icon-btn" data-act="bb" aria-label="Open this thread in ${FORGE.name}" title="Open in ${FORGE.name}">${icon("ext")}</a>` : '<span class="th-gap"></span>'}
     </div>
     <div class="th-body" id="tb-${t.id}" ${open ? "" : "hidden"}>${open ? threadBody(t) : ""}</div>
   </article>`;
@@ -1039,7 +1532,8 @@ const codeLines = (t, ls) => ls.map(([n, k, s]) => {
 const CAP = 4;
 function tree(t) {
   const st = { prev: null };
-  const foot = t.turn === "your" ? `<p class="th-foot">${turnMark(t)}</p>` : "";
+  // The foot names the turn in words: the turn hue for "Your turn", grey for "Waiting on".
+  const foot = t.turn === "your" ? `<p class="th-foot">${turnMark(t)}</p>` : t.turn === "wait" ? `<p class="th-foot"><span class="turn" data-turn="wait">${icon("hourglass")}${esc(turnText(t))}</span></p>` : "";
   return `<ol class="tree">${items(t, t.root, 1, false, st, "", foot)}</ol>`;
 }
 
@@ -1082,7 +1576,7 @@ function msg(t, x, quote) {
   const label = `${x.who === "me" ? "You" : PEOPLE[x.who]}${p ? `, reply to ${first(p.who)}` : ""}, ${agoLong(x.ago)}${x.new ? ", new" : ""}`;
   const q = quote ? `<button type="button" class="xq" data-act="quote" data-thread="${t.id}" data-msg="${p.id}" title="Go to the message this answers">${icon("corner")}<span class="xq-t"><span class="sr">Replies to </span>${esc(short(p.who))}: ${esc(snippet(p.text, 64))}</span></button>` : "";
   return `<article class="msg" id="m-${x.id}" tabindex="-1" aria-label="${esc(label)}">
-      <div class="msg-h">${avatar(x.who)}<b>${esc(name(x.who))}</b><time title="${esc(full(x.ago))}">${ago(x.ago)}</time>${x.edited ? "<span>edited</span>" : ""}${x.task ? taskMark(x.task) : ""}${x.new ? newMark("new") : ""}</div>
+      <div class="msg-h">${avatar(x.who)}<b>${esc(name(x.who))}</b><time title="${esc(full(x.ago))}">${ago(x.ago)}</time>${x.edited ? "<span>edited</span>" : ""}${x.ai ? `<span>Posted from a ${esc(RUNNER.short)} review</span>` : ""}${x.task ? taskMark(x.task) : ""}${x.new ? newMark("new") : ""}</div>
       ${q}<div class="msg-b">${paras(x.text)}</div></article>`;
 }
 
@@ -1105,7 +1599,7 @@ function filesSec(p) {
       const go = `Go to ${n === 1 ? "the thread" : `the first of ${n} threads`} on this file`;
       return `<li>${ic(...CT[ct])}<span class="p"><span class="dir">${esc(dir(path))}</span>${esc(base(path))}</span>${n ? `<button type="button" class="linkish" data-act="file" data-path="${esc(path)}" aria-label="${go}" title="${go}">${icon("msg")}${n}</button>` : "<span></span>"}</li>`;
     }).join("")}</ul>
-    <a href="#" class="linkish" data-act="bb">${icon("ext")}Open the diff in Bitbucket</a>`);
+    <a href="#" class="linkish" data-act="bb">${icon("ext")}Open the diff in ${FORGE.name}</a>`);
 }
 
 function commitsSec(p) {
@@ -1122,12 +1616,261 @@ function commitsSec(p) {
   return fold("commits", `Commits<span class="n">${p.commits.length}${fresh}</span>`, `<ul class="commits">${rows.join("")}</ul>`);
 }
 
-function later(page) {
-  if (page === "review") return `<section class="later" aria-labelledby="h-later"><h2 id="h-later">Review arrives in M2</h2>
-    <p>Start a Claude Code review of this pull request here. The result lists the reviewed commits, a summary, risk areas, questions for the author, findings, and a coverage report.</p>
-    <p>You accept, edit, or discard each item. Accepted items go to Ready to post (M3). Press 1 to go back to the conversation.</p></section>`;
-  return `<section class="later" aria-labelledby="h-later"><h2 id="h-later">Run log arrives in M2</h2>
-    <p>Each tool call of a running review shows here: its target, its result, and each error. Finished, failed, and cancelled runs keep their log. Press 1 to go back to the conversation.</p></section>`;
+// ---------- Run log sheet ----------
+// The log shows the runner's events generically: status, tool, target, duration. Only the names come from RUNNER.
+const ST = { ok: "ok", error: "error", run: "…", stop: "stop" };
+const logLine = (e) => `<li class="ll ${e.st}${e.prep ? " prep" : ""}"><span class="ls">${ST[e.st]}</span><span class="lt">${esc(RUNNER.tools[e.tool] ?? e.tool)}</span><span class="lg">${esc(e.target)}${e.note && e.st !== "run" ? `<span class="lnote">${esc(e.note)}</span>` : ""}</span><span class="ld">${e.st === "run" || e.st === "stop" ? "" : `${e.secs.toFixed(1)} s`}</span></li>`;
+function logFoot(run) {
+  switch (run.status) {
+    case "running": return `<span class="rl">${icon("loader", "spin")}Running. ${plural(toolCalls(run), "tool call")} so far.</span>`;
+    case "done": return `Result: ${countText(run.r.items)}. ${run.r.tokens}k tokens, ${dur(run.r.secs)}.`;
+    case "failed": return `<span class="err">${icon("alert")}Failed. ${esc(run.error)}</span>`;
+    case "limit": return `<span class="err">${icon("alert")}Stopped: ${esc(RUNNER.name)} usage limit reached. ${esc(run.error)}</span>`;
+    default: return "You cancelled the run. Nothing from it can be posted.";
+  }
+}
+function renderSheet() {
+  const el = $("#sheet");
+  const run = S.log && RUNS.get(S.log);
+  if (!run) { el.hidden = true; el.innerHTML = ""; return; }
+  const p = BY_ID.get(run.pr);
+  el.hidden = false;
+  el.innerHTML = `<header class="sh-h"><h2 id="sheet-title">${esc(RUNNER.name)} run log</h2><button type="button" class="icon-btn" data-act="log-close" aria-label="Close the run log" title="Close. Key: Esc">${icon("x")}</button>
+      <p class="sh-meta">${esc(key(p))}, ${esc(prof(run.profile).name)} profile, commit <code>${run.at}</code>${run.ago ? `, ${agoLong(run.ago)}` : ""}</p></header>
+    <ol class="log" id="log" role="log" aria-label="Tool calls">${run.log.map(logLine).join("")}</ol>
+    <footer class="sh-f" id="log-foot">${logFoot(run)}</footer>`;
+  $("#log").scrollTop = $("#log").scrollHeight;
+}
+// Live updates touch only the list and the footer, so focus in the sheet stays.
+function paintSheet(run) {
+  if (S.log !== run.pr) return;
+  const ol = $("#log");
+  const end = ol.scrollTop + ol.clientHeight >= ol.scrollHeight - 8;
+  ol.innerHTML = run.log.map(logLine).join("");
+  $("#log-foot").innerHTML = logFoot(run);
+  if (end) ol.scrollTop = ol.scrollHeight;
+}
+function openLog() {
+  const p = cur();
+  if (!RUNS.has(p.id)) { toast(`No review has run on this pull request yet. Press r to start one.`); return; }
+  S.log = p.id;
+  renderSheet();
+  $('#sheet [data-act="log-close"]').focus();
+}
+function closeLog() {
+  S.log = null;
+  renderSheet();
+  $('#runline [data-act="log"]')?.focus();
+}
+
+// ---------- Review runs (simulated) ----------
+// The simulation runs 12 times faster than the times it shows. A real run takes minutes.
+const SCALE = 12;
+const STEP_MS = 600;
+let runTimer = 0;
+const elapsed = (run) => Math.round(((Date.now() - run.t0) / 1000) * SCALE);
+
+function startReview(profileId, { changes = false } = {}) {
+  const p = cur();
+  const busy = activeRun();
+  if (busy) { toast(`One review runs at a time. ${RUNNER.short} is reviewing ${key(BY_ID.get(busy.pr))}.`); return; }
+  if (p.accepted.length) { toast(`Post or undo the ${plural(p.accepted.length, "accepted item")} first. A new review replaces the drafts.`); return; }
+  const old = RUNS.get(p.id);
+  const pf = prof(profileId);
+  S.profile = pf.id;
+  S.menu = false;
+  S.editing = null;
+  const r = resultFor(p, pf);
+  const run = { pr: p.id, profile: pf.id, status: "running", ago: 0, at: r.at, base: changes && old ? old.at : null, log: [], error: null, r: null, t0: Date.now(),
+    todo: [...RUNNER.prep(r.at).map((a) => logEv(a, true)), ...r.steps.map((a) => logEv(a))], result: r };
+  RUNS.set(p.id, run);
+  derive(p);
+  renderSide();
+  renderList();
+  renderDetail();
+  if (S.log) { S.log = p.id; renderSheet(); }
+  $('#runline [data-act="log"]').focus();
+  runTimer = setTimeout(() => step(run), 300);
+}
+
+// Each event shows as running first, then gets its final status.
+function step(run) {
+  if (run.status !== "running") return;
+  const last = run.log.at(-1);
+  if (last?.st === "run") { last.st = last.final; paintRun(run); }
+  const next = run.todo.shift();
+  if (!next) { runTimer = setTimeout(() => finish(run), 900); return; }
+  next.final = next.st;
+  next.st = "run";
+  run.log.push(next);
+  paintRun(run);
+  runTimer = setTimeout(() => step(run), next.final === "error" ? 2000 : STEP_MS);
+}
+
+function paintRun(run) {
+  paintSheet(run);
+  if (S.sel !== run.pr) return;
+  const calls = $("#rl-calls");
+  if (calls) calls.textContent = plural(toolCalls(run), "tool call");
+  const time = $("#rl-time");
+  if (time) time.textContent = dur(elapsed(run));
+}
+
+function finish(run) {
+  run.status = "done";
+  run.r = run.result;
+  run.r.secs = Math.max(run.r.secs, elapsed(run));
+  delete run.todo;
+  const p = BY_ID.get(run.pr);
+  derive(p);
+  refresh(run.pr);
+  paintSheet(run);
+  if (S.sel !== run.pr) toast(`${RUNNER.short} finished ${key(p)}: ${countText(run.r.items)}.`);
+}
+
+function cancelReview() {
+  const run = activeRun();
+  if (!run) return;
+  clearTimeout(runTimer);
+  const last = run.log.at(-1);
+  if (last?.st === "run") last.st = "stop";
+  run.status = "cancelled";
+  delete run.todo;
+  derive(BY_ID.get(run.pr));
+  refresh(run.pr);
+  paintSheet(run);
+  $('#runline [data-act="log"]')?.focus();
+}
+
+// Background changes keep the scroll position and the focus.
+function refresh(pr) {
+  const a = document.activeElement;
+  const d = a?.dataset || {};
+  const sel = a?.id ? `#${a.id}` : d.act ? `[data-act="${d.act}"]${d.thread ? `[data-thread="${d.thread}"]` : ""}${d.item ? `[data-item="${d.item}"]` : ""}${d.pr ? `[data-pr="${d.pr}"]` : ""}` : null;
+  const sel2 = a?.id === "edit-ta" ? [a.selectionStart, a.selectionEnd] : null;
+  renderSide();
+  renderList();
+  if (pr === undefined || S.sel === pr) renderDetail();
+  const el = sel && $(sel);
+  if (el && el !== a) { el.focus({ preventScroll: true }); if (sel2) el.setSelectionRange(...sel2); }
+}
+
+// ---------- Triage ----------
+function setItem(it, status) {
+  const p = cur();
+  it.status = status;
+  S.editing = null;
+  S.editText = null;
+  derive(p);
+  // Accept and discard close the item and move to the next untriaged one of the same kind.
+  let next = it;
+  if (status === "accepted" || status === "discarded") {
+    S.open.set(it.id, false);
+    const same = aiItems(p).filter((i) => i.kind === it.kind && i.status !== "posted");
+    next = same.slice(same.indexOf(it) + 1).find((i) => i.status === "new") || same.find((i) => i.status === "new") || it;
+  } else S.open.set(it.id, true);
+  S.cur = next.id;
+  if (S.confirm && !p.accepted.length) S.confirm = false;
+  renderSide();
+  renderList();
+  renderDetail();
+  const el = $(`#t-${next.id}`);
+  el?.scrollIntoView({ block: "nearest", behavior: "instant" });
+  el?.focus({ preventScroll: true });
+}
+
+function editItem(it) {
+  S.editing = it.id;
+  S.editText = it.text;
+  S.open.set(it.id, true);
+  S.cur = it.id;
+  if (it.kind === "question") S.openSec.add("ai");
+  renderDetail();
+  const ta = $("#edit-ta");
+  ta.scrollIntoView({ block: "nearest", behavior: "instant" });
+  ta.focus({ preventScroll: true });
+}
+
+// Saving binds the approval to the new text. An edit always removes an earlier approval.
+function saveEdit() {
+  const it = findT(S.editing);
+  const v = $("#edit-ta").value.trim();
+  if (!v) { toast(`The text is empty. Discard the ${it.kind} instead.`); return; }
+  if (v !== it.text) { it.text = v; it.edited = true; }
+  setItem(it, "accepted");
+}
+
+function cancelEdit() {
+  const id = S.editing;
+  S.editing = null;
+  S.editText = null;
+  renderDetail();
+  $(`#t-${id}`)?.focus({ preventScroll: true });
+}
+
+function triageKey(k) {
+  const it = aiItems(cur()).find((x) => x.id === S.cur && x.status !== "posted");
+  if (!it) { toast(`Move to a draft or a question first. Key 2 goes to the drafts from ${RUNNER.short}.`); return; }
+  if (k === "a") setItem(it, it.status === "accepted" ? "new" : "accepted");
+  else if (k === "d") setItem(it, it.status === "discarded" ? "new" : "discarded");
+  else if (it.status !== "discarded") editItem(it);
+}
+
+// ---------- Post ----------
+function openConfirm() {
+  const p = cur();
+  if (!p.accepted.length) { toast("Nothing is accepted yet. Accept drafts or questions first."); return; }
+  S.confirm = true;
+  renderDetail();
+  $('[data-act="post-yes"]').focus();
+}
+
+function closeConfirm() {
+  S.confirm = false;
+  renderDetail();
+  $('[data-act="post"]')?.focus();
+}
+
+// The app posts, never the runner. Each accepted finding becomes your inline thread. Accepted questions become one general comment.
+let tid = 100;
+function post() {
+  const p = cur();
+  S.posting = true;
+  renderDetail();
+  setTimeout(() => {
+    const fs = p.accepted.filter((i) => i.kind === "finding");
+    const qs = p.accepted.filter((i) => i.kind === "question");
+    const made = [];
+    for (const it of fs) {
+      const t = { id: tid++, path: it.path, line: it.line, code: it.code, msgs: [m("me", 0, it.text, { ai: true })] };
+      p.threads.push(t);
+      made.push(t);
+      it.status = "posted";
+      if (it.reply) setTimeout(() => reply(p, t, ...it.reply), 6000);
+    }
+    if (qs.length) {
+      const t = { id: tid++, path: null, msgs: [m("me", 0, generalText(qs), { ai: true })] };
+      p.threads.push(t);
+      made.push(t);
+      for (const q of qs) q.status = "posted";
+    }
+    for (const t of made) S.open.set(t.id, true);
+    S.confirm = false;
+    S.posting = false;
+    derive(p);
+    renderSide();
+    renderList();
+    jumpThread(made[0].id);
+    toast(`Posted ${destText(fs, qs)} to ${key(p)}.`);
+  }, 900);
+}
+
+// A simulated reply on a posted comment. It comes back into the thread like any other reply.
+function reply(p, t, who, text) {
+  t.msgs.push(m(who, 0, text, { new: true, re: 0 }));
+  derive(p);
+  refresh(p.id);
+  toast(`${first(who)} replied to your comment on ${where(t)}.`);
 }
 
 // ---------- Navigation ----------
@@ -1136,7 +1879,12 @@ function renderAll() { renderSide(); renderList(); renderDetail(); }
 function select(id, { focusDetail = false, toCause = false } = {}) {
   const changed = S.sel !== id;
   S.sel = id;
-  if (changed) { S.page = "conv"; S.cur = null; S.needMe = false; S.unfold.clear(); S.branches.clear(); S.showResolved = false; S.descOpen = false; S.openSec.clear(); const db = $("#dbody"); if (db) db.scrollTop = 0; }
+  if (changed) {
+    S.cur = null; S.needMe = false; S.unfold.clear(); S.branches.clear(); S.showResolved = false; S.descOpen = false; S.openSec.clear();
+    S.menu = false; S.confirm = false; S.editing = null; S.editText = null;
+    if (S.log) { S.log = null; renderSheet(); }
+    const db = $("#dbody"); if (db) db.scrollTop = 0;
+  }
   renderList();
   renderDetail();
   if (changed && !toCause) $("#dbody").scrollTop = 0;
@@ -1144,7 +1892,11 @@ function select(id, { focusDetail = false, toCause = false } = {}) {
     S.focus = "detail";
     $("#app").dataset.mobile = "detail";
     const p = cur();
-    if (toCause && p.cause) jumpThread(p.cause.id, { msgId: p.cause.msgs.find((x) => x.new)?.id });
+    // From the inbox, a row opens at its reason: the first untriaged item, or the thread that needs you.
+    const mode = aiMode();
+    if (toCause && mode === "post") $('[data-act="post"]')?.focus();
+    else if (toCause && !mode && p.group === "triage") jumpThread(p.triage[0].id);
+    else if (toCause && !mode && p.cause) jumpThread(p.cause.id, { msgId: p.cause.msgs.find((x) => x.new)?.id });
     else $("#dbody").focus({ preventScroll: true });
   }
 }
@@ -1158,7 +1910,6 @@ function keepSelection() {
 }
 
 function openSection(id) {
-  if (S.page !== "conv") { S.page = "conv"; renderDetail(); }
   const el = $(`#s-${id}`);
   S.openSec.add(id);
   el.open = true;
@@ -1167,15 +1918,16 @@ function openSection(id) {
 }
 
 function jumpThread(tid, { msgId } = {}) {
-  const p = cur();
-  const t = p.threads.find((x) => x.id === tid);
+  const t = findT(tid);
   if (!t) return;
-  if (S.page !== "conv") S.page = "conv";
-  if (!passes(t)) S.needMe = false;
-  if (t.turn === "resolved") S.showResolved = true;
+  if (t.kind) { if (t.kind === "question") S.openSec.add("ai"); }
+  else {
+    if (!passes(t)) S.needMe = false;
+    if (t.turn === "resolved") S.showResolved = true;
+    const x = msgId && t.msgs.find((y) => y.id === msgId);
+    if (x) reveal(t, x);
+  }
   S.open.set(tid, true);
-  const x = msgId && t.msgs.find((y) => y.id === msgId);
-  if (x) reveal(t, x);
   S.cur = tid;
   S.focus = "detail";
   renderDetail();
@@ -1187,7 +1939,7 @@ function jumpThread(tid, { msgId } = {}) {
   target.focus({ preventScroll: true });
 }
 
-function visibleThreads() { return $$(".th").map((el) => Number(el.dataset.thread)); }
+function visibleThreads() { return $$(".th").filter((el) => el.getClientRects().length).map((el) => Number(el.dataset.thread)); }
 
 function stepThread(d) {
   const ids = visibleThreads();
@@ -1222,25 +1974,47 @@ function nextYour() {
   jumpThread(ids[(i + 1) % ids.length]);
 }
 
+// Questions and discarded drafts have no head to toggle.
 function toggleThread(id) {
-  const t = cur().threads.find((x) => x.id === id);
+  const t = findT(id);
+  if (!t || (t.kind && (t.kind === "question" || t.status === "discarded"))) return;
   S.open.set(id, !isOpen(t));
   S.cur = id;
   renderDetail();
   $(`#t-${id} .th-head`).focus({ preventScroll: true });
 }
 
-function pages(page) {
-  S.page = page;
-  renderDetail();
-  if (page !== "conv") $("#dbody").scrollTop = 0;
+// 1, 2, 3: the overview, the drafts (or the summary when only questions are left), the run log.
+function goOverview() {
+  $("#app").dataset.mobile = "detail";
+  $("#dbody").scrollTop = 0;
+  $("#dbody").focus({ preventScroll: true });
+}
+function goDrafts() {
+  const p = cur();
+  const it = p.triage[0] || aiItems(p).find((i) => i.status !== "posted");
+  if (!it) { toast(`No drafts. Press r to start a review with ${RUNNER.name}.`); return; }
+  $("#app").dataset.mobile = "detail";
+  jumpThread(it.id);
+}
+
+function setMenu(open, refocus = false) {
+  S.menu = open;
+  const menu = $("#profiles");
+  if (!menu) return;
+  menu.hidden = !open;
+  $('[data-act="profiles"]').setAttribute("aria-expanded", open);
+  if (open) $(`#profiles [data-profile="${S.profile}"]`).focus();
+  else if (refocus) $('[data-act="profiles"]').focus();
 }
 
 // ---------- Events ----------
 document.addEventListener("click", (e) => {
+  if (S.menu && !e.target.closest(".split")) setMenu(false);
   const el = e.target.closest("[data-act]");
   if (!el) return;
   const act = el.dataset.act;
+  const item = () => findT(Number(el.dataset.item));
   if (el.tagName === "A") e.preventDefault();
   switch (act) {
     case "view": S.view = el.dataset.view; S.repo = null; $("#app").dataset.mobile = "list"; keepSelection(); break;
@@ -1267,8 +2041,23 @@ document.addEventListener("click", (e) => {
     case "show-resolved": S.showResolved = true; renderDetail(); break;
     case "file": { const t = cur().threads.find((x) => x.path === el.dataset.path); if (t) jumpThread(t.id); break; }
     case "desc": S.descOpen = !S.descOpen; renderDetail(); break;
-    case "soon": toast(el.dataset.msg); break;
-    case "bb": toast("Opens this place in Bitbucket in a new tab."); break;
+    case "bb": toast(`Opens this place in ${FORGE.name} in a new tab.`); break;
+    case "review": startReview(el.dataset.profile || S.profile); break;
+    case "review-changes": startReview(RUNS.get(S.sel).profile, { changes: true }); break;
+    case "profiles": setMenu(!S.menu); break;
+    case "cancel": cancelReview(); break;
+    case "log": openLog(); break;
+    case "log-close": closeLog(); break;
+    case "accept": setItem(item(), "accepted"); break;
+    case "unaccept": case "restore": setItem(item(), "new"); break;
+    case "discard": setItem(item(), "discarded"); break;
+    case "edit": editItem(item()); break;
+    case "save": saveEdit(); break;
+    case "cancel-edit": cancelEdit(); break;
+    case "goto": jumpThread(Number(el.dataset.thread)); break;
+    case "post": openConfirm(); break;
+    case "post-yes": post(); break;
+    case "post-no": closeConfirm(); break;
     case "follow": { const id = S.sel; S.following.has(id) ? S.following.delete(id) : S.following.add(id); toast(S.following.has(id) ? "Following. Review Loop checks it for new comments." : "Not followed. Review Loop stops checking it for new comments."); renderDetail(); break; }
     case "archive": toast(`Archived ${key(cur())}. Paste its URL into the filter to follow it again.`); break;
     case "check": toast("Checked just now. Nothing new."); break;
@@ -1294,6 +2083,7 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("input", (e) => {
+  if (e.target.id === "edit-ta") { S.editText = e.target.value; return; }
   if (e.target.id !== "q") return;
   S.query = e.target.value;
   const pos = e.target.selectionStart;
@@ -1322,6 +2112,11 @@ document.addEventListener("keydown", (e) => {
   const typing = e.target.matches?.("input:not([type=checkbox]), textarea, [contenteditable]");
   if (e.key === "Escape") {
     if (help.open) return;
+    // Esc closes the innermost layer first: the menu, an edit, the post confirm, the run log.
+    if (S.menu) { e.preventDefault(); setMenu(false, true); return; }
+    if (e.target.id === "edit-ta") { e.preventDefault(); cancelEdit(); return; }
+    if (S.confirm && !S.posting) { e.preventDefault(); closeConfirm(); return; }
+    if (S.log) { e.preventDefault(); closeLog(); return; }
     if (typing) { e.target.blur(); S.focus = "list"; return; }
     if (S.focus === "detail" || $("#app").dataset.mobile !== "list") { e.preventDefault(); S.focus = "list"; $("#app").dataset.mobile = "list"; $(`.row[data-pr="${S.sel}"]`)?.focus(); }
     return;
@@ -1329,6 +2124,13 @@ document.addEventListener("keydown", (e) => {
   if (typing) return;
   if (e.key === "?") { e.preventDefault(); help.open ? help.close() : help.showModal(); return; }
   if (help.open) return;
+  if (S.menu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    const its = $$("#profiles [role=menuitem]");
+    const i = its.indexOf(document.activeElement);
+    its[(i + (e.key === "ArrowDown" ? 1 : its.length - 1)) % its.length].focus();
+    return;
+  }
   if (gChord) {
     clearTimeout(gChord);
     gChord = 0;
@@ -1361,10 +2163,12 @@ document.addEventListener("keydown", (e) => {
     case "n": e.preventDefault(); S.focus = "detail"; $("#app").dataset.mobile = "detail"; nextNew(1); return;
     case "N": e.preventDefault(); S.focus = "detail"; $("#app").dataset.mobile = "detail"; nextNew(-1); return;
     case "y": e.preventDefault(); S.focus = "detail"; $("#app").dataset.mobile = "detail"; nextYour(); return;
-    case "1": pages("conv"); return;
-    case "2": pages("review"); return;
-    case "3": pages("log"); return;
-    case "r": toast("Review arrives in M2."); return;
+    case "1": e.preventDefault(); goOverview(); return;
+    case "2": e.preventDefault(); goDrafts(); return;
+    case "3": e.preventDefault(); openLog(); return;
+    case "r": e.preventDefault(); startReview(S.profile); return;
+    case "a": case "e": case "d": e.preventDefault(); triageKey(e.key); return;
+    case "p": e.preventDefault(); openConfirm(); return;
   }
 });
 $("#help-close").addEventListener("click", () => $("#help").close());
@@ -1374,6 +2178,8 @@ try {
   if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
   if (localStorage.getItem("rl-v3-density") === "compact") document.documentElement.dataset.density = "compact";
 } catch {}
-for (const el of $$("#help [data-soon]")) el.outerHTML = soon(el.dataset.soon);
+$("#help-post").textContent = `Post the accepted items to ${FORGE.name}, after a confirm`;
+pastRuns();
+PRS.forEach(derive);
 renderAll();
 </script>
