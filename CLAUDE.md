@@ -54,12 +54,16 @@ Load the skill before you start the task. Read its SKILL.md for details.
 | Server routes, middleware (`csrf`, validator), SSE streaming, typed client. | `hono` | Keep BRIEF 3.6 server safety rules. |
 | Browser acceptance tests. | none | Use TypeScript `@playwright/test` with files named `*.e2e.ts`, run by Node. Point tests only at fixture data. See Testing notes. |
 | Ad-hoc browser checks and screenshots of the running app. | `webapp-testing` | Its helper scripts need Python. Point it only at fixture data. |
+| Add or change motion: transitions, enter and exit, feedback. | `animate` | Prefer CSS, then the Web Animations API. Add no motion library for simple effects. Respect `prefers-reduced-motion`. |
+| Review a diff that adds or changes animation code. | `review-animations` | Invoke it explicitly. It does not load by itself. |
+| Find the right name for a motion effect. | `animation-vocabulary` | A glossary only. |
+| Look for places where the UI lacks feedback motion. | `find-animation-opportunities` | Read-only. It proposes values and changes no code. |
 | Visual direction for new screens. | `frontend-design:frontend-design` (plugin) | Stay consistent with `prototype/index.html`. |
 | Maintain this file. | `claude-md-management:claude-md-improver` | Keep it compact and current. |
 
 Add or update a project skill:
 - Read the skill's SKILL.md at its source before you install it.
-- Run `npx -y skills@1.7.2 add <owner/repo> -s <skill> -a claude-code --copy -y` at project scope.
+- Run `npx -y skills@latest add <owner/repo> -s <skill> -a claude-code --copy -y` at project scope. Record the resolved CLI version in the commit message.
 - Use `--copy`, because symlinks are unreliable on Windows.
 - The skills CLI needs Node 22.20 or later.
 - Commit `skills-lock.json` together with the skill files.
