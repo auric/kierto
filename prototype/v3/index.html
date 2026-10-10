@@ -185,6 +185,17 @@ summary::-webkit-details-marker { display: none; }
 .mi-t { display: flex; align-items: center; gap: 6px; font-size: var(--fs-s); font-weight: 600; }
 .mi-t svg.i { margin-left: auto; color: var(--ink-3); }
 .mi-d { font-size: var(--fs-xs); color: var(--ink-3); }
+/* Note for the runner: your own input, so it goes into the prompt as an instruction. Pull request text goes in as data only. */
+.note { display: grid; gap: 4px; padding: 6px 8px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--rule); }
+.note label { font-size: var(--fs-s); font-weight: 600; }
+.note textarea { display: block; width: 100%; min-height: 4.6em; padding: 6px 8px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); font-size: var(--fs-s); line-height: 1.45; resize: vertical; }
+.note textarea:focus-visible { outline: 2px solid var(--pen); outline-offset: 0; }
+.note-h { margin: 0; font-size: var(--fs-xs); color: var(--ink-3); }
+/* The note shows with your person icon and as plain text, never as Markdown. */
+.you-note { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: var(--fs-s); color: var(--ink-2); }
+.you-note > svg.i { color: var(--ink-3); }
+.you-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.you-t b { font-weight: 600; }
 /* Run line: one line under the title for the newest review run. */
 .rl { display: inline-flex; align-items: center; gap: 6px; }
 .dh-sum.run .err { white-space: normal; align-items: flex-start; }
@@ -242,6 +253,12 @@ details.sec[open] { padding-bottom: 12px; }
 .cov { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; }
 .cov dt { color: var(--ink-3); }
 .cov dd { margin: 0; }
+.cov .you-c { display: flex; gap: 6px; white-space: pre-line; overflow-wrap: anywhere; }
+.cov .you-c svg.i { margin-top: 2px; color: var(--ink-3); }
+.drop > summary { display: inline-flex; margin-top: 2px; color: var(--pen); font-weight: 500; border-radius: 4px; }
+.drop > summary:hover { text-decoration: underline; }
+.drop-b { margin: 6px 0 2px; padding-left: 10px; border-left: 1px solid var(--rule-strong); }
+.drop-b .ev { margin: 6px 0 0; }
 .q { padding: 10px 6px; border-bottom: 1px solid var(--rule); border-radius: 4px; }
 .q:first-child { border-top: 1px solid var(--rule); }
 .q.is-cur { background: var(--sel); }
@@ -360,6 +377,17 @@ details.sec[open] { padding-bottom: 12px; }
 .ev .linkish { font-size: var(--fs-xs); }
 .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0 calc(var(--av) + 8px); }
 .acts .hint { font-size: var(--fs-xs); color: var(--ink-3); }
+/* Source agent and the Move action: small grey text, not buttons in the triage row. */
+.from, .mv-b { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-3); font-size: var(--fs-xs); border-radius: 4px; }
+.from:hover, .mv-b:hover { color: var(--ink); text-decoration: underline; }
+.mv-b { margin-left: 4px; }
+.mv-b svg.i, .mv > svg.i { width: 13px; height: 13px; }
+.mv > svg.i { color: var(--ink-3); }
+.mv label { font-size: var(--fs-s); color: var(--ink-2); }
+.mv input { width: 8ch; height: 28px; padding: 0 6px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); font: var(--fs-s) var(--font-code); }
+.mv input[aria-invalid="true"] { border-color: var(--err); }
+.mv-err { display: flex; align-items: center; gap: 5px; margin: 6px 0 0 calc(var(--av) + 8px); font-size: var(--fs-xs); color: var(--err); }
+.mv-err[hidden] { display: none; }
 .edit { margin: 4px 0 0 calc(var(--av) + 8px); max-width: 72ch; }
 .edit textarea { display: block; width: 100%; min-height: 9em; padding: 8px 10px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); line-height: 1.5; resize: vertical; }
 .edit textarea:focus-visible { outline: 2px solid var(--pen); outline-offset: 0; }
@@ -413,11 +441,28 @@ details.sec[open] { padding-bottom: 12px; }
 .sh-h { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--rule); }
 .sh-h h2 { margin: 0; font-size: 15px; }
 .sh-meta { grid-column: 1 / -1; margin: 0; font-size: var(--fs-xs); color: var(--ink-3); }
-.log { list-style: none; margin: 0; padding: 8px 16px; overflow: auto; font: 12px/1.55 var(--font-code); }
-.ll { display: grid; grid-template-columns: 5ch 8ch minmax(0, 1fr) 6ch; gap: 0 10px; padding: 3px 0; }
-.ll.prep + .ll:not(.prep) { margin-top: 6px; padding-top: 9px; border-top: 1px solid var(--rule); }
+.sh-h .you-note { grid-column: 1 / -1; font-size: var(--fs-xs); }
+/* Subagent calls nest as a tree with the thin neutral line of the reply tree. The fold chevron hangs in a gutter left of the status column. */
+.log { --g: 16px; --step: 20px; --mid: 12px; --ln: var(--rule-strong); list-style: none; margin: 0; padding: 8px 16px 8px calc(16px - var(--g)); overflow: auto; font: 12px/1.55 var(--font-code); }
+.log ol { list-style: none; margin: 0; padding: 0 0 0 var(--step); }
+.log li { position: relative; }
+.log > .prep + li:not(.prep) { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--rule); }
+.ll { position: relative; display: grid; grid-template-columns: 5ch 8ch minmax(0, 1fr) 6ch; gap: 0 10px; width: 100%; padding: 3px 0 3px var(--g); border-radius: 4px; }
+.ll > .chev { position: absolute; left: 1px; top: calc(var(--mid) - 7px); width: 14px; height: 14px; color: var(--ink-3); }
+button.ll:hover { background: var(--hover); }
+.ll.flash { animation: flash 900ms ease-out 1; }
+.ls svg.i { width: 13px; height: 13px; vertical-align: -2px; }
+.lg b { color: var(--ink); font-weight: 600; }
+/* An elbow into each child row ends at the status word, or at the chevron of a child agent. */
+.log ol > li::before { content: ""; position: absolute; top: 0; left: calc(var(--g) / 2 - var(--step) - .5px); width: calc(var(--step) + var(--g) / 2 - 4px); height: var(--mid); border: 0 solid var(--ln); border-width: 0 0 1px 1px; border-bottom-left-radius: 7px; }
+.log ol > li.ag::before { width: calc(var(--step) - var(--g) / 2 - 1px); }
+.log ol > li:not(:last-child)::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(var(--g) / 2 - var(--step) - .5px); border-left: 1px solid var(--ln); }
+.ag.kids > .ll::after { content: ""; position: absolute; top: calc(var(--mid) + 8px); bottom: 0; left: calc(var(--g) / 2 - .5px); border-left: 1px solid var(--ln); }
+/* Below the indent cap, rows keep the indent of the cap level and drop the line. */
+.log ol.cap { padding-left: 0; }
+.log ol.cap > li::before, .log ol.cap > li::after, .ag.kids:has(> ol.cap) > .ll::after { display: none; }
 .ls, .ld, .lnote { color: var(--ink-3); }
-.ld { text-align: right; }
+.ld { text-align: right; white-space: nowrap; }
 .lg { color: var(--ink-2); overflow-wrap: anywhere; }
 .lnote { display: block; }
 .ll.error .lnote, .ll.error .ls { color: var(--err); }
@@ -471,7 +516,8 @@ dialog h3 { margin: 14px 0 6px; font-size: var(--fs-s); color: var(--ink-3); fon
   .dh-meta .branch { order: 3; flex-basis: 100%; }
   .dbody { padding: 0 16px 56px; }
   .postbar { padding: 10px 16px; }
-  .ll { grid-template-columns: 5ch 8ch minmax(0, 1fr) 5ch; gap: 0 8px; }
+  .log { --step: 14px; padding-right: 12px; }
+  .ll { gap: 0 6px; }
   .list-foot { display: none; }
   .commits li.c { grid-template-columns: 8ch minmax(0, 1fr); }
   .commits .by { grid-column: 2; }
@@ -508,7 +554,8 @@ dialog h3 { margin: 14px 0 6px; font-size: var(--fs-s); color: var(--ink-3); fon
   </dl>
   <h3 id="help-ai">AI review</h3>
   <dl class="keys">
-    <dt><kbd>r</kbd></dt><dd>Start a review with the last profile</dd>
+    <dt><kbd>r</kbd></dt><dd>Start a review with the last profile and your saved note</dd>
+    <dt><kbd>Shift</kbd><kbd>R</kbd></dt><dd>Write a note for the review, or choose a profile</dd>
     <dt><kbd>a</kbd><kbd>e</kbd><kbd>d</kbd></dt><dd>Accept, edit, or discard the current draft or question. <kbd>a</kbd> again undoes an accept, <kbd>d</kbd> again restores.</dd>
     <dt><kbd>Esc</kbd></dt><dd>Cancel an edit, the post confirm, the profile menu, or the run log</dd>
     <dt><kbd>p</kbd></dt><dd id="help-post">Post the accepted items, after a confirm</dd>
@@ -529,13 +576,17 @@ const PEOPLE = {
 
 // ---------- Modular boundaries ----------
 // The UI builds every code-host, review-agent, and context label from these objects. Never write the names in markup.
-const FORGE = { name: "Bitbucket" };
+const FORGE = {
+  name: "Bitbucket",
+  // Fictional host. The browse path, ?at= and #line follow the Bitbucket Server web UI. Verify the format before the app uses it.
+  fileUrl: (p, path, at, line) => `https://bitbucket.example.test/projects/${p.project}/repos/${p.repo}/browse/${path}?at=${at}#${line}`,
+};
 const RUNNER = {
   name: "Claude Code", short: "Claude", initials: "AI",
   // The app runs these steps before the agent starts. The run log shows them first.
   prep: (commit) => [["sign-in", "Subscription login (claude.ai)", "ok", 0.4], ["snapshot", `Sanitized copy of ${commit}`, "ok", 0.9], ["start", "claude -p, read-only tools", "ok", 0.2]],
-  // Tool keys in the runner's events, and the names that the run log shows.
-  tools: { read: "Read", grep: "Grep", glob: "Glob", deepwiki: "DeepWiki", learn: "MS Learn" },
+  // Tool keys in the runner's events, and the names that the run log shows. agent: the call that starts a subagent.
+  tools: { read: "Read", grep: "Grep", glob: "Glob", deepwiki: "DeepWiki", learn: "MS Learn", agent: "Agent" },
 };
 // Context sources (an issue tracker, other repositories). None is set up in this sample.
 const CONTEXT = [];
@@ -776,9 +827,14 @@ const PRS = [
 
 // ---------- Review results (fictional) ----------
 // Runner events: [tool key, target, status, seconds, note]. Tool keys map to RUNNER.tools.
-// Finding: severity, category, anchor, excerpt, text, evidence status, confidence, evidence. Question: text, why it matters.
+// A(): one Agent call with its subagent name and description (the Agent tool input), its result line, and its own events.
+// An array of A() calls runs in parallel, as parallel tool calls in one message do.
+// Finding: severity, category, line, excerpt, text, evidence status, confidence, evidence.
+// by: the subagent that produced it. anchor: how the app resolved the line against the snapshot. No anchor means exact.
+// Question: text, why it matters. dropped: findings whose quoted code is not in the snapshot. They never become drafts.
 let iid = 900;
 const F = (o) => ({ id: iid++, kind: "finding", status: "new", dup: null, ...o });
+const A = (name, desc, result, steps) => ({ name, desc, result, steps });
 const Q = (text, why) => ({ id: iid++, kind: "question", status: "new", text, why });
 const SEV = { blocker: "Blocker", major: "Major", minor: "Minor", nit: "Nit" };
 const EVS = { code: "Shown in code", reproduced: "Reproduced", unverified: "Unverified" };
@@ -787,20 +843,32 @@ const readOnly = ["Not checked", "Tests did not run, because the review has read
 // Each result is a function, so a second run gets fresh items.
 const RESULTS = {
   4182: () => ({
-    at: "a3f9e21", tokens: 41, secs: 128,
+    at: "a3f9e21", tokens: 41, secs: 152,
     steps: [
       ["read", "context/diff.patch", "ok", 0.1, "6 files, +214 −97"],
-      ["read", "src/render/ResourceCache.cpp", "ok", 0.1],
-      ["read", "src/render/ResourceCache.h", "ok", 0.1],
-      ["grep", "evict(", "ok", 0.4, "9 matches in 5 files"],
-      ["read", "src/stream/StreamingThread.cpp", "ok", 0.1],
-      ["read", "src/stream/Prefetcher.cpp", "ok", 0.1],
-      ["read", "docs/render/caching.md", "ok", 0.1],
-      ["deepwiki", "microsoft/STL: is std::mutex recursive?", "error", 30.0, "Timed out after 30 s. One retry follows."],
-      ["deepwiki", "microsoft/STL: is std::mutex recursive?", "ok", 6.4, "Answered: a recursive lock is undefined behavior."],
-      ["grep", "bytes_", "ok", 0.2, "7 matches in 3 files"],
-      ["read", "src/ui/StreamingHud.cpp", "ok", 0.1],
-      ["read", "src/render/EvictionPolicy.cpp", "ok", 0.1],
+      [
+        A("correctness", "Check eviction logic", "2 findings", [
+          ["read", "src/render/ResourceCache.cpp", "ok", 0.1],
+          ["read", "src/render/EvictionPolicy.cpp", "ok", 0.1],
+          ["grep", "maxBytes", "ok", 0.3, "4 matches in 3 files"],
+        ]),
+        A("concurrency", "Check locking and races", "3 findings", [
+          ["read", "src/render/ResourceCache.h", "ok", 0.1],
+          ["deepwiki", "microsoft/STL: is std::mutex recursive?", "error", 30.0, "Timed out after 30 s. One retry follows."],
+          ["deepwiki", "microsoft/STL: is std::mutex recursive?", "ok", 6.4, "Answered: a recursive lock is undefined behavior."],
+          A("callers-scan", "Find callers of evict()", "2 callers hold cacheMutex_", [
+            ["grep", "evict(", "ok", 0.4, "9 matches in 5 files"],
+            ["read", "src/stream/StreamingThread.cpp", "ok", 0.1],
+            ["read", "src/stream/Prefetcher.cpp", "ok", 0.1],
+          ]),
+          ["grep", "bytes_", "ok", 0.2, "7 matches in 3 files"],
+          ["read", "src/ui/StreamingHud.cpp", "ok", 0.1],
+        ]),
+        A("docs-check", "Check docs and comments", "2 findings", [
+          ["read", "docs/render/caching.md", "ok", 0.1],
+          ["grep", "cacheMutex_", "ok", 0.2, "6 matches in 4 files"],
+        ]),
+      ],
     ],
     line: "Deadlock risk in `evict()`. Two callers outside the diff still hold `cacheMutex_` when they call it.",
     risks: ["Lock order between `ResourceCache` and the streaming thread.", "Reads of cache state outside `cacheMutex_`.", "Callers, docs, and plugins that still follow the old locking contract."],
@@ -810,29 +878,38 @@ const RESULTS = {
       ["Not checked", "Tests did not run, because the review has read-only tools. Plugin repositories were not available."],
     ],
     items: [
-      F({ sev: "blocker", cat: "Concurrency", path: "src/render/ResourceCache.cpp", line: 140,
+      F({ sev: "blocker", cat: "Concurrency", by: "concurrency", path: "src/render/ResourceCache.cpp", line: 140, anchor: { st: "moved", was: 138 },
         code: [L(139, "ctx", "bool ResourceCache::evict(Handle h) {"), L(140, "add", "    std::lock_guard<std::mutex> guard(cacheMutex_);"), L(141, "ctx", "    auto it = entries_.find(h);"), L(142, "add", "    if (it == entries_.end()) return false;")],
         text: "`evict()` now deadlocks callers that already hold `cacheMutex_`. `StreamingThread::tick()` and `Prefetcher::drain()` lock it before they call `evict()`. `std::mutex` is not recursive, so the second lock is undefined behavior and hangs in practice. Remove the lock from both callers, or keep an internal path for callers that hold the lock.",
         evs: "code", conf: "high", ev: "Callers outside the diff: `src/stream/StreamingThread.cpp:211`, `src/stream/Prefetcher.cpp:88`. [DeepWiki, microsoft/STL](https://deepwiki.com/microsoft/STL): a recursive lock of `std::mutex` is undefined behavior.",
         reply: ["lena", "Good catch. Both callers still lock. I will remove the two locks and add a test that calls `evict()` from the streaming thread."] }),
-      F({ sev: "major", cat: "Concurrency", path: "src/render/ResourceCache.cpp", line: 212,
+      F({ sev: "major", cat: "Concurrency", by: "concurrency", path: "src/render/ResourceCache.cpp", line: 212,
         code: [L(211, "ctx", "size_t ResourceCache::bytes() const {"), L(212, "add", "    return bytes_;"), L(213, "ctx", "}")],
         text: "`bytes()` reads `bytes_` without `cacheMutex_`, while `trim()` and `evict()` write it under the lock. The streaming HUD calls `bytes()` every frame from the UI thread, so this is a data race. Make `bytes_` a `std::atomic<size_t>`, or take the lock in `bytes()`.",
         evs: "code", conf: "high", ev: "Caller outside the diff: `src/ui/StreamingHud.cpp:57` calls `bytes()` once per frame." }),
-      F({ sev: "minor", cat: "Configuration", path: "src/render/EvictionPolicy.cpp", line: 88, dup: 7,
+      // The file is not in the diff. The excerpt comes from the snapshot, so the finding posts as a general comment.
+      F({ sev: "major", cat: "Concurrency", by: "concurrency", path: "src/stream/StreamingThread.cpp", line: 211, anchor: { st: "outside" },
+        code: [L(209, "ctx", "void StreamingThread::tick() {"), L(210, "ctx", "    std::lock_guard<std::mutex> guard(cache_.mutex());"), L(211, "ctx", "    cache_.evict(next_);"), L(212, "ctx", "}")],
+        text: "`tick()` locks `cacheMutex_` through `cache_.mutex()` and then calls `evict()`, which now locks it again. The streaming thread hangs on its first eviction. Remove this guard.",
+        evs: "code", conf: "high", ev: "`Prefetcher::drain()` does the same at `src/stream/Prefetcher.cpp:88`." }),
+      F({ sev: "minor", cat: "Configuration", by: "correctness", path: "src/render/EvictionPolicy.cpp", line: 88, dup: 7,
         code: [L(87, "add", "struct Budget {"), L(88, "add", "    int maxBytes = -1;  // -1: no limit"), L(89, "add", "};")],
         text: "`trim()` converts `maxBytes` to `size_t`. So every negative value means no limit, not only -1, and a typo in the config turns eviction off. Reject negative values other than -1 when the config loads.",
         evs: "code", conf: "high", ev: "`trim(static_cast<size_t>(budget.maxBytes))` in `ResourceCache.cpp:96`." }),
-      F({ sev: "minor", cat: "Documentation", path: "docs/render/caching.md", line: 22,
+      F({ sev: "minor", cat: "Documentation", by: "docs-check", path: "docs/render/caching.md", line: 22,
         code: [L(20, "ctx", "## Locking"), L(21, "ctx", ""), L(22, "ctx", "Callers must hold `cacheMutex_` before they call `evict()`."), L(23, "ctx", "`evict()` never takes the lock itself.")],
         text: "The locking section still tells callers to hold `cacheMutex_` before `evict()`. With this change, that advice deadlocks. Rewrite the section for the new contract.",
         evs: "code", conf: "high", ev: "Project documentation, read during the run. Plugin authors read this page." }),
-      F({ sev: "nit", cat: "Readability", path: "src/render/EvictionPolicy.cpp", line: 42,
+      F({ sev: "nit", cat: "Readability", by: "docs-check", path: "src/render/EvictionPolicy.cpp", line: 42,
         code: [L(42, "add", "    // Ties go to the entry that was inserted first."), L(43, "add", "    if (a.lastUse == b.lastUse)"), L(44, "add", "        return a.seq < b.seq;")],
         text: "The comment says that ties \"go to\" the older entry. Say that the older entry is evicted first, so the reader knows which one leaves.",
         evs: "code", conf: "medium", ev: "`EvictsOldestOnTie` (7c0d4b8) shows that the older entry leaves first." }),
       Q("Do plugins outside this repository call `evictLocked()`?", "It is private now, so such a plugin fails to build. The review could not read the plugin repositories."),
       Q("Can the `EvictionPolicy` split go into its own pull request?", "It moves code with no change in behavior. Apart from the locking change, each part is easier to review and to revert."),
+    ],
+    dropped: [
+      { by: "correctness", path: "src/render/ResourceCache.cpp", line: 310, quote: "if (budget.strict) flushAll();",
+        text: "`trim()` calls `flushAll()` only for a strict budget, so pinned entries never leave a soft budget. Call `flushAll()` in both branches." },
     ],
   }),
   977: () => ({
@@ -894,20 +971,48 @@ const plainResult = (p) => ({
 const headOf = (p) => p.commits.reduce((a, c) => (c[3] < a[3] ? c : a))[0];
 function resultFor(p, pr) {
   const r = (RESULTS[p.id] || plainResult)(p);
-  if (pr.explain) Object.assign(r, { items: r.items.filter((i) => i.kind === "question"), steps: r.steps.slice(0, 4), tokens: Math.round(r.tokens / 4), secs: Math.round(r.secs / 3) });
+  // Explain runs no subagents in this sample.
+  if (pr.explain) Object.assign(r, { items: r.items.filter((i) => i.kind === "question"), dropped: [], steps: r.steps.filter((s) => typeof s[0] === "string").slice(0, 4), tokens: Math.round(r.tokens / 4), secs: Math.round(r.secs / 3) });
   return r;
 }
 
 // One run per pull request: the newest. Job states: running, done, failed, limit (usage limit), cancelled.
+// Log event: id (tool_use id), parent (parent_tool_use_id: the Agent call that started it, null for the main agent),
+// t (start, seconds after the run starts), tool, target, st (ok, error, run, stop), secs, note, prep (an app step).
+// An Agent event also has agent (the subagent name). Its target is the call's description, and its note is the result line.
 const logEv = (a, prep = false) => ({ tool: a[0], target: a[1], st: a[2], secs: a[3], note: a[4] || "", prep });
+// Sample timing only: the app stamps each event when the stream delivers it. Calls in one agent run in turn, with think time between them.
+const THINK = 8;
+function flatten(steps, parent, t, out) {
+  for (const s of steps) {
+    const group = Array.isArray(s) && typeof s[0] !== "string" ? s : [s];
+    const start = t + THINK;
+    t = Math.max(...group.map((g) => {
+      const e = { ...logEv(g.steps ? ["agent", g.desc, "ok", 0, g.result] : g), id: `toolu_${out.length + 1}`, parent, t: start };
+      out.push(e);
+      if (!g.steps) return start + e.secs;
+      e.agent = g.name;
+      e.secs = flatten(g.steps, e.id, start, out) + THINK - start;
+      return start + e.secs;
+    }));
+  }
+  return t;
+}
+// The events in stream order: the app steps first, then the runner's events by start time.
+function events(at, steps) {
+  let t = 0;
+  const prep = RUNNER.prep(at).map((a) => { const e = { ...logEv(a, true), id: `prep_${a[0]}`, parent: null, t }; t += e.secs; return e; });
+  const out = [];
+  flatten(steps, null, t, out);
+  return [...prep, ...out.sort((a, b) => a.t - b.t)];
+}
 const RUNS = new Map();
 function pastRun(pr, profile, status, agoMin, o = {}) {
   const p = PRS.find((x) => x.id === pr);
   const r = o.r || resultFor(p, prof(profile));
-  const steps = o.upTo === undefined ? r.steps : r.steps.slice(0, o.upTo);
-  const log = [...RUNNER.prep(r.at).map((a) => logEv(a, true)), ...steps.map((a) => logEv(a))];
+  const log = events(r.at, o.upTo === undefined ? r.steps : r.steps.slice(0, o.upTo));
   if (status === "cancelled") log.at(-1).st = "stop";
-  RUNS.set(pr, { pr, profile, status, ago: agoMin, at: r.at, base: null, log, error: o.error || null, r: status === "done" ? r : null });
+  RUNS.set(pr, { pr, profile, status, ago: agoMin, at: r.at, base: null, note: null, log, error: o.error || null, r: status === "done" ? r : null });
   return r;
 }
 // Past runs. The init at the end of the script creates them, after the helpers exist.
@@ -1029,6 +1134,8 @@ const S = {
   following: new Set(PRS.map((p) => p.id)),
   // AI review: last profile, profile menu, run log of which PR, post confirm, the item in edit and its unsaved text.
   profile: "general", menu: false, log: null, confirm: false, posting: false, editing: null, editText: null,
+  // Notes for the runner by PR, agent rows that you folded or unfolded in the log, the draft whose line you change.
+  notes: new Map(), agents: new Map(), moving: null,
 };
 
 // ---------- Helpers ----------
@@ -1075,7 +1182,13 @@ const countText = (its) => {
   const q = its.length - f;
   return [f ? plural(f, "finding") : q ? "" : "No findings", q ? plural(q, "question") : ""].filter(Boolean).join(", ");
 };
-const toolCalls = (run) => run.log.filter((e) => !e.prep && e.st !== "run").length;
+// Tool calls count the finished calls of all agents. Agent calls count as agents, not as tool calls.
+const toolCalls = (run) => run.log.filter((e) => !e.prep && e.tool !== "agent" && e.st !== "run").length;
+const agentCount = (run) => run.log.filter((e) => e.tool === "agent").length;
+const durLong = (s) => { const r = Math.round(s); const m = Math.floor(r / 60); return [m ? plural(m, "minute") : "", r % 60 || !m ? plural(r % 60, "second") : ""].filter(Boolean).join(" "); };
+// The note shows as plain text with your person icon: it is your own input.
+const noteLine = (note) => `<p class="you-note" title="${esc(note)}">${icon("user")}<span class="you-t"><b>Your note:</b> ${esc(note)}</span></p>`;
+const outside = (it) => it.anchor?.st === "outside";
 
 // Paths copied from lucide-react 1.48.0 (ISC). The app imports the same icons from lucide-react.
 const ICON = {
@@ -1323,20 +1436,31 @@ function renderDetail() {
       ${sum ? `<p class="dh-sum">${sum}</p>` : ""}
       ${fresh ? `<p class="dh-sum">${fresh}</p>` : ""}
       <p class="dh-sum run" id="runline" ${RUNS.has(p.id) ? "" : "hidden"}>${runLine(p)}</p>
+      ${RUNS.get(p.id)?.note ? noteLine(RUNS.get(p.id).note) : ""}
     </header>
     <div class="dbody" id="dbody" tabindex="-1">${overview(p)}${threadsSec(p)}${filesSec(p)}${commitsSec(p)}</div>
     ${postBar(p)}`;
   $("#dbody").scrollTop = scrollTop;
 }
 
+const savedNote = (id) => (S.notes.get(id) || "").trim();
+function reviewTitle() {
+  const busy = activeRun();
+  const note = savedNote(S.sel);
+  return busy ? `${RUNNER.short} is reviewing ${key(BY_ID.get(busy.pr))}. One review runs at a time.` : `Review with ${RUNNER.name}, ${prof(S.profile).name} profile${note ? `, and your note: ${snippet(note, 80)}` : ""}. Key: r`;
+}
+
+// The popup holds the note and the profiles. The note stays per pull request until you change it.
 function reviewBtn() {
   const busy = activeRun();
-  const pf = prof(S.profile);
-  const title = busy ? `${RUNNER.short} is reviewing ${key(BY_ID.get(busy.pr))}. One review runs at a time.` : `Review with ${RUNNER.name}, ${pf.name} profile. Key: r`;
   return `<div class="split">
-      <button type="button" class="btn primary" data-act="review" aria-disabled="${!!busy}" title="${esc(title)}">Review</button>
-      <button type="button" class="btn primary more-b" data-act="profiles" aria-haspopup="menu" aria-expanded="${S.menu}" aria-controls="profiles" aria-label="Choose a review profile" title="Choose a review profile">${icon("down")}</button>
-      <div class="menu" id="profiles" role="menu" aria-label="Review profiles" ${S.menu ? "" : "hidden"}>${PROFILES.map((x) => `<button type="button" role="menuitem" data-act="review" data-profile="${x.id}"><span class="mi-t">${esc(x.name)}${x.id === S.profile ? `${icon("check")}<span class="sr">, last used</span>` : ""}</span><span class="mi-d">${esc(x.note)}</span></button>`).join("")}</div>
+      <button type="button" class="btn primary" data-act="review" aria-disabled="${!!busy}" title="${esc(reviewTitle())}">Review</button>
+      <button type="button" class="btn primary more-b" data-act="profiles" aria-haspopup="dialog" aria-expanded="${S.menu}" aria-controls="profiles" aria-label="Review options: note and profile" title="Write a note or choose a profile. Key: Shift+R">${icon("down")}</button>
+      <div class="menu" id="profiles" role="dialog" aria-label="Review options" ${S.menu ? "" : "hidden"}>
+        <div class="note"><label for="note-ta">Note for ${esc(RUNNER.short)}</label><textarea id="note-ta" rows="3" spellcheck="true" aria-describedby="note-h" placeholder="Focus on the locking change. The EvictionPolicy split is a pure move.">${esc(S.notes.get(S.sel) || "")}</textarea>
+          <p class="note-h" id="note-h">Optional. ${esc(RUNNER.short)} reads it as your instruction. It reads the pull request text as data only.</p></div>
+        <div role="menu" aria-label="Review profiles">${PROFILES.map((x) => `<button type="button" role="menuitem" data-act="review" data-profile="${x.id}"><span class="mi-t">${esc(x.name)}${x.id === S.profile ? `${icon("check")}<span class="sr">, last used</span>` : ""}</span><span class="mi-d">${esc(x.note)}</span></button>`).join("")}</div>
+      </div>
     </div>`;
 }
 
@@ -1347,8 +1471,10 @@ function runLine(p) {
   const log = `<button type="button" class="linkish" data-act="log" title="Key: 3">${icon("scroll")}View log</button>`;
   const calls = plural(toolCalls(run), "tool call");
   switch (run.status) {
-    case "running":
-      return `<span class="rl">${icon("loader", "spin")}Reviewing…</span><span id="rl-calls">${calls}</span><span id="rl-time">${dur(elapsed(run))}</span>${log}<button type="button" class="linkish" data-act="cancel">Cancel</button>`;
+    case "running": {
+      const n = agentCount(run);
+      return `<span class="rl">${icon("loader", "spin")}Reviewing…</span><span id="rl-agents" ${n ? "" : "hidden"}>${plural(n, "agent")}</span><span id="rl-calls">${calls}</span><span id="rl-time">${dur(elapsed(run))}</span>${log}<button type="button" class="linkish" data-act="cancel">Cancel</button>`;
+    }
     case "done": {
       const pf = prof(run.profile);
       const at = p.commits.find((x) => x[0] === run.at);
@@ -1362,28 +1488,33 @@ function runLine(p) {
 }
 
 // Shown only while something is accepted. The confirm lists the destination and the exact text of each comment.
+// Accepted items by destination: inline findings, and the one general comment for findings outside the diff and for questions.
+const dests = (acc) => ({ fs: acc.filter((i) => i.kind === "finding" && !outside(i)), gs: acc.filter(outside), qs: acc.filter((i) => i.kind === "question") });
+
 function postBar(p) {
   const acc = p.accepted;
   if (!acc.length) return "";
   if (!S.confirm) return `<div class="postbar" id="postbar"><span>Accepted: ${countText(acc)}</span><span class="grow"></span><button type="button" class="btn primary" data-act="post" title="Key: p">${icon("send")}Post to ${FORGE.name}</button></div>`;
   const run = RUNS.get(p.id);
-  const fs = acc.filter((i) => i.kind === "finding");
-  const qs = acc.filter((i) => i.kind === "question");
+  const { fs, gs, qs } = dests(acc);
   const dup = (it) => { const t = it.dup && p.threads.find((x) => x.id === it.dup); return t ? `<p class="pc-w">${esc(first(t.msgs[0].who))} raised a similar point on this line.</p>` : ""; };
   const list = [
     ...fs.map((it) => `<li><span class="pc-d"><code>${esc(base(it.path))}:${it.line}</code><br>Inline comment</span><div class="pc-b">${paras(it.text)}</div>${dup(it)}</li>`),
-    ...(qs.length ? [`<li><span class="pc-d">General comment</span><div class="pc-b">${paras(generalText(qs))}</div></li>`] : []),
+    ...(gs.length || qs.length ? [`<li><span class="pc-d">General comment</span><div class="pc-b">${paras(generalText(p, run.at, gs, qs))}</div></li>`] : []),
   ].join("");
   return `<section class="postbar confirm" id="postbar" role="dialog" aria-labelledby="pc-t" aria-describedby="pc-n">
-      <h2 id="pc-t">Post ${destText(fs, qs)} to ${esc(key(p))}?</h2>
+      <h2 id="pc-t">Post ${destText(fs, gs, qs)} to ${esc(key(p))}?</h2>
       <p class="pc-n" id="pc-n">Checked just now: the source branch is still at <code>${run.at}</code>. Inline comments attach to that commit.</p>
       <ol class="pc-list" aria-label="Comments to post">${list}</ol>
       <div class="acts">${S.posting ? `<span class="rl">${icon("loader", "spin")}Posting…</span>` : `<button type="button" class="btn primary" data-act="post-yes">${icon("send")}Post</button><button type="button" class="btn" data-act="post-no">Cancel</button><span class="hint">Esc cancels</span>`}</div>
     </section>`;
 }
-const destText = (fs, qs) => [fs.length ? plural(fs.length, "inline comment") : "", qs.length ? "1 general comment" : ""].filter(Boolean).join(" and ");
-// Accepted questions post as one general comment.
-const generalText = (qs) => (qs.length === 1 ? `${qs[0].text} ${qs[0].why}` : `Questions:\n\n${qs.map((q) => `- ${q.text} ${q.why}`).join("\n")}`);
+const destText = (fs, gs, qs) => [fs.length ? plural(fs.length, "inline comment") : "", gs.length || qs.length ? "1 general comment" : ""].filter(Boolean).join(" and ");
+// One general comment: each finding outside the diff with a link to its line at the reviewed commit, then the questions.
+const generalText = (p, at, gs, qs) => [
+  ...gs.map((f) => `[${f.path}:${f.line}](${FORGE.fileUrl(p, f.path, at, f.line)}): ${f.text}`),
+  ...(qs.length === 1 ? [`${qs[0].text} ${qs[0].why}`] : qs.length ? [`Questions:\n\n${qs.map((q) => `- ${q.text} ${q.why}`).join("\n")}`] : []),
+].join("\n\n");
 
 function overview(p) {
   const blocks = p.description.split(/\n\n/);
@@ -1409,11 +1540,15 @@ function aiSummary(p) {
   const qs = r.items.filter((i) => i.kind === "question");
   const cov = CONTEXT.length ? r.coverage : [...r.coverage, ["Context", "No context source is set up."]];
   const open = qs.filter((q) => q.status !== "posted");
+  const drop = r.dropped || [];
+  // A dropped finding quoted code that the snapshot does not have. It is not a draft. Its text stays readable here.
+  const dropped = drop.length ? `<dt>Dropped</dt><dd>${drop.length === 1 ? "1 finding dropped: its code reference did" : `${drop.length} findings dropped: their code references did`} not match the snapshot.
+      <details class="drop" data-fold="dropped" ${S.openSec.has("dropped") ? "open" : ""}><summary>Show ${drop.length === 1 ? "it" : "them"}</summary>${drop.map((d) => `<div class="drop-b"><p class="ev">From ${esc(d.by)}. It quoted <code>${esc(d.quote)}</code> at <code>${esc(base(d.path))}:${d.line}</code>. The snapshot of that file does not have this code.</p><div class="msg-b">${paras(d.text)}</div></div>`).join("")}</details></dd>` : "";
   return `<details class="ai-sum" id="ai-sum" data-fold="ai" ${S.openSec.has("ai") ? "open" : ""}>
       <summary><span class="ai-h">${aiAvatar()}<b>${esc(RUNNER.short)}'s summary</b><span class="ai-line">${inline(r.line)}</span>${open.length ? `<span class="n">${plural(open.length, "question")}</span>` : ""}${icon("chev", "chev")}</span></summary>
       <div class="ai-body">
         ${r.risks.length ? `<h3>Risk areas</h3><ul>${r.risks.map((x) => `<li>${inline(x)}</li>`).join("")}</ul>` : ""}
-        <h3>Coverage</h3><dl class="cov">${cov.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${inline(v)}</dd>`).join("")}</dl>
+        <h3>Coverage</h3><dl class="cov">${run.note ? `<dt>Your note</dt><dd class="you-c">${icon("user")}<span>${esc(run.note)}</span></dd>` : ""}${cov.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${inline(v)}</dd>`).join("")}${dropped}</dl>
         ${open.length ? `<h3>Questions for ${p.author === "me" ? "the author" : esc(first(p.author))}</h3><div class="qs">${open.map(question).join("")}</div>` : ""}
       </div>
     </details>`;
@@ -1427,10 +1562,28 @@ function question(q) {
   return `<article ${head} aria-label="${esc(`Question from ${RUNNER.short}${q.status === "accepted" ? ", accepted" : ""}`)}"><p class="q-t">${inline(q.text)}</p><p class="q-why">${inline(q.why)}</p>${acts(q, true)}</article>`;
 }
 
-// Triage actions. Accept and discard name the key in the tooltip.
+// Triage actions. Accept and discard name the key in the tooltip. A draft also gets Move, to change its line before you post.
+const moveBtn = (it) => (it.kind === "finding" ? `<button type="button" class="mv-b" data-act="move" data-item="${it.id}" aria-label="Move to another line. Now line ${it.line}." title="Move to another line">${icon("pencil")}Move</button>` : "");
 const acts = (it, showState) => (it.status === "accepted"
-  ? `<div class="acts">${showState ? `<span class="ok-st">${icon("check")}Accepted</span>` : ""}<button type="button" class="btn" data-act="edit" data-item="${it.id}" title="Key: e">${icon("pencil")}Edit</button><button type="button" class="btn" data-act="unaccept" data-item="${it.id}" title="Key: a">${icon("undo")}Undo accept</button></div>`
-  : `<div class="acts"><button type="button" class="btn" data-act="accept" data-item="${it.id}" title="Key: a">${icon("check")}Accept</button><button type="button" class="btn" data-act="edit" data-item="${it.id}" title="Key: e">${icon("pencil")}Edit</button><button type="button" class="btn" data-act="discard" data-item="${it.id}" title="Key: d">${icon("x")}Discard</button></div>`);
+  ? `<div class="acts">${showState ? `<span class="ok-st">${icon("check")}Accepted</span>` : ""}<button type="button" class="btn" data-act="edit" data-item="${it.id}" title="Key: e">${icon("pencil")}Edit</button><button type="button" class="btn" data-act="unaccept" data-item="${it.id}" title="Key: a">${icon("undo")}Undo accept</button>${moveBtn(it)}</div>`
+  : `<div class="acts"><button type="button" class="btn" data-act="accept" data-item="${it.id}" title="Key: a">${icon("check")}Accept</button><button type="button" class="btn" data-act="edit" data-item="${it.id}" title="Key: e">${icon("pencil")}Edit</button><button type="button" class="btn" data-act="discard" data-item="${it.id}" title="Key: d">${icon("x")}Discard</button>${moveBtn(it)}</div>`);
+
+// Lines that a draft can move to: the lines of its excerpt in the new version of the file.
+const lineChoices = (it) => it.code.filter(([, k]) => k !== "del").map(([n]) => n);
+function mover(it) {
+  const ok = lineChoices(it);
+  return `<div class="acts mv">${icon("pencil")}<label for="mv-in">Line</label><input id="mv-in" type="number" inputmode="numeric" data-item="${it.id}" min="${ok[0]}" max="${ok.at(-1)}" value="${it.line}" aria-describedby="mv-h"><button type="button" class="btn" data-act="move-go" data-item="${it.id}">Move</button><button type="button" class="btn" data-act="move-cancel" data-item="${it.id}">Cancel</button><span class="hint" id="mv-h">Lines ${ok[0]} to ${ok.at(-1)} of the excerpt. Esc cancels.</span></div>
+    <p class="mv-err" id="mv-err" role="alert" hidden></p>`;
+}
+
+// How the app resolved the line against the snapshot. An exact match shows nothing.
+function anchorNote(it) {
+  const a = it.anchor;
+  if (outside(it)) return `Outside the diff. Posts as a general comment with a link to ${base(it.path)}:${it.line}.`;
+  if (a?.st === "moved") return `Moved from line ${a.was}: the quoted code is on line ${it.line}.`;
+  if (a?.st === "user") return `You moved it from line ${a.was}.`;
+  return "";
+}
 
 const editor = (it) => `<div class="edit"><label class="sr" for="edit-ta">Edit the ${it.kind}</label><textarea id="edit-ta" data-item="${it.id}" rows="6" spellcheck="true">${esc(S.editText ?? it.text)}</textarea>
     <div class="acts"><button type="button" class="btn primary" data-act="save" data-item="${it.id}">${icon("check")}Save and accept</button><button type="button" class="btn" data-act="cancel-edit" data-item="${it.id}">Cancel</button><span class="hint">Esc cancels</span></div></div>`;
@@ -1460,13 +1613,16 @@ function draftBody(p, it) {
   const cut = it.code.findIndex(([n]) => n === it.line) + 1;
   const after = it.code.slice(cut);
   const dupT = it.dup && p.threads.find((x) => x.id === it.dup);
+  const an = anchorNote(it);
   const body = S.editing === it.id ? editor(it) : `<div class="msg-b">${paras(it.text)}</div>
       <p class="ev">${EVS[it.evs]}, ${it.conf} confidence. ${inline(it.ev)}</p>
+      ${an ? `<p class="ev">${esc(an)}</p>` : ""}
       ${dupT ? `<p class="ev">${esc(first(dupT.msgs[0].who))} raised a similar point on this line. <button type="button" class="linkish" data-act="goto" data-thread="${dupT.id}">Go to the thread</button></p>` : ""}
-      ${acts(it, false)}`;
-  return `<div class="code${after.length ? " head" : ""}" role="group" aria-label="${esc(`Code at ${it.path} line ${it.line}`)}"><pre>${codeLines(it, it.code.slice(0, cut))}</pre></div>
-    <div class="disc anchored"><ol class="tree"><li class="node"><article class="msg" aria-label="${esc(`${RUNNER.short}, ${SEV[it.sev]}, ${it.cat}`)}">
-      <div class="msg-h">${aiAvatar()}<b>${esc(RUNNER.short)}</b>${sevMark(it.sev)}<span>${esc(it.cat)}</span>${it.edited ? "<span>edited by you</span>" : ""}</div>
+      ${S.moving === it.id ? mover(it) : acts(it, false)}`;
+  const from = it.by ? `<button type="button" class="from" data-act="from" data-agent="${esc(it.by)}" title="Open the run log at this agent">from ${esc(it.by)}</button>` : "";
+  return `<div class="code${after.length ? " head" : ""}" role="group" aria-label="${esc(`Code at ${it.path} line ${it.line}${outside(it) ? ", from the snapshot, outside the diff" : ""}`)}"><pre>${codeLines(it, it.code.slice(0, cut))}</pre></div>
+    <div class="disc anchored"><ol class="tree"><li class="node"><article class="msg" aria-label="${esc(`${RUNNER.short}, ${SEV[it.sev]}, ${it.cat}${it.by ? `, from ${it.by}` : ""}`)}">
+      <div class="msg-h">${aiAvatar()}<b>${esc(RUNNER.short)}</b>${sevMark(it.sev)}<span>${esc(it.cat)}</span>${from}${it.edited ? "<span>edited by you</span>" : ""}</div>
       ${body}</article></li></ol></div>
     ${after.length ? `<div class="code tail" role="group" aria-label="${esc(`Code after line ${it.line}`)}"><pre>${codeLines(it, after)}</pre></div>` : ""}`;
 }
@@ -1619,7 +1775,31 @@ function commitsSec(p) {
 // ---------- Run log sheet ----------
 // The log shows the runner's events generically: status, tool, target, duration. Only the names come from RUNNER.
 const ST = { ok: "ok", error: "error", run: "…", stop: "stop" };
-const logLine = (e) => `<li class="ll ${e.st}${e.prep ? " prep" : ""}"><span class="ls">${ST[e.st]}</span><span class="lt">${esc(RUNNER.tools[e.tool] ?? e.tool)}</span><span class="lg">${esc(e.target)}${e.note && e.st !== "run" ? `<span class="lnote">${esc(e.note)}</span>` : ""}</span><span class="ld">${e.st === "run" || e.st === "stop" ? "" : `${e.secs.toFixed(1)} s`}</span></li>`;
+// A path breaks after a slash, not inside a name.
+const pathText = (s) => esc(s).replace(/\//g, "/<wbr>");
+const logLine = (e) => `<div class="ll ${e.st}"><span class="ls">${ST[e.st]}</span><span class="lt">${esc(RUNNER.tools[e.tool] ?? e.tool)}</span><span class="lg">${pathText(e.target)}${e.note && e.st !== "run" ? `<span class="lnote">${esc(e.note)}</span>` : ""}</span><span class="ld">${e.st === "run" || e.st === "stop" ? "" : `${e.secs.toFixed(1)} s`}</span></div>`;
+
+// The tree comes from parent alone, as parent_tool_use_id gives it. A subagent is one fold row: a finished one folds, others stay open.
+const LOG_CAP = 3;
+const AG_WORD = { run: "running", ok: "done", error: "failed", stop: "stopped" };
+const agentOpen = (e) => (S.agents.has(e.id) ? S.agents.get(e.id) : e.st !== "ok");
+function logTree(run) {
+  const kids = Map.groupBy(run.log, (e) => e.parent);
+  const list = (id, d) => (kids.get(id) || []).map((e) => {
+    if (e.tool !== "agent") return `<li${e.prep ? ' class="prep"' : ""}>${logLine(e)}</li>`;
+    const own = kids.get(e.id) || [];
+    const n = own.filter((c) => c.tool !== "agent" && c.st !== "run").length;
+    const open = agentOpen(e);
+    const ended = e.st === "ok" || e.st === "error";
+    const calls = `${plural(n, "tool call")}${e.st === "run" ? " so far" : ""}`;
+    const result = ended ? e.note : "";
+    const label = [`${e.agent} subagent`, AG_WORD[e.st], calls, ended ? durLong(e.secs) : "", result].filter(Boolean).join(", ");
+    return `<li class="ag${open && own.length ? " kids" : ""}">
+      <button type="button" class="ll ${e.st}" data-act="agent" data-agent="${e.id}" aria-expanded="${open}" aria-controls="ag-${e.id}" aria-label="${esc(label)}">${icon("chev", "chev")}<span class="ls">${e.st === "run" ? icon("loader", "spin") : ST[e.st]}</span><span class="lt">${esc(RUNNER.tools.agent)}</span><span class="lg"><b>${esc(e.agent)}</b> ${esc(e.target)}<span class="lnote">${esc([calls, result].filter(Boolean).join(", "))}</span></span><span class="ld">${ended ? (e.secs < 60 ? `${e.secs.toFixed(1)} s` : dur(Math.round(e.secs))) : ""}</span></button>
+      <ol id="ag-${e.id}"${d >= LOG_CAP ? ' class="cap"' : ""}${open ? "" : " hidden"}>${list(e.id, d + 1)}</ol></li>`;
+  }).join("");
+  return list(null, 0);
+}
 function logFoot(run) {
   switch (run.status) {
     case "running": return `<span class="rl">${icon("loader", "spin")}Running. ${plural(toolCalls(run), "tool call")} so far.</span>`;
@@ -1636,37 +1816,52 @@ function renderSheet() {
   const p = BY_ID.get(run.pr);
   el.hidden = false;
   el.innerHTML = `<header class="sh-h"><h2 id="sheet-title">${esc(RUNNER.name)} run log</h2><button type="button" class="icon-btn" data-act="log-close" aria-label="Close the run log" title="Close. Key: Esc">${icon("x")}</button>
-      <p class="sh-meta">${esc(key(p))}, ${esc(prof(run.profile).name)} profile, commit <code>${run.at}</code>${run.ago ? `, ${agoLong(run.ago)}` : ""}</p></header>
-    <ol class="log" id="log" role="log" aria-label="Tool calls">${run.log.map(logLine).join("")}</ol>
-    <footer class="sh-f" id="log-foot">${logFoot(run)}</footer>`;
+      <p class="sh-meta">${esc(key(p))}, ${esc(prof(run.profile).name)} profile, commit <code>${run.at}</code>${run.ago ? `, ${agoLong(run.ago)}` : ""}</p>${run.note ? noteLine(run.note) : ""}</header>
+    <ol class="log" id="log" aria-label="Tool calls">${logTree(run)}</ol>
+    <footer class="sh-f" id="log-foot" aria-live="polite">${logFoot(run)}</footer>`;
   $("#log").scrollTop = $("#log").scrollHeight;
 }
-// Live updates touch only the list and the footer, so focus in the sheet stays.
-function paintSheet(run) {
+// Live updates touch only the list and the footer. Focus on an agent row stays.
+function paintSheet(run, follow = true) {
   if (S.log !== run.pr) return;
   const ol = $("#log");
-  const end = ol.scrollTop + ol.clientHeight >= ol.scrollHeight - 8;
-  ol.innerHTML = run.log.map(logLine).join("");
+  const end = follow && ol.scrollTop + ol.clientHeight >= ol.scrollHeight - 8;
+  const f = document.activeElement?.closest?.("#log") && document.activeElement.dataset.agent;
+  ol.innerHTML = logTree(run);
   $("#log-foot").innerHTML = logFoot(run);
+  if (f) $(`#log [data-agent="${f}"]`)?.focus({ preventScroll: true });
   if (end) ol.scrollTop = ol.scrollHeight;
 }
-function openLog() {
+// agent: open the log at the first subagent with this name, and unfold it and the agents above it.
+let logOpener = null;
+function openLog(agent) {
   const p = cur();
-  if (!RUNS.has(p.id)) { toast(`No review has run on this pull request yet. Press r to start one.`); return; }
+  const run = RUNS.get(p.id);
+  if (!run) { toast(`No review has run on this pull request yet. Press r to start one.`); return; }
+  logOpener = agent ? document.activeElement : null;
   S.log = p.id;
+  const a = agent && run.log.find((e) => e.agent === agent);
+  for (let x = a; x; x = run.log.find((e) => e.id === x.parent)) S.agents.set(x.id, true);
   renderSheet();
-  $('#sheet [data-act="log-close"]').focus();
+  const row = a && $(`#log [data-agent="${a.id}"]`);
+  if (!row) { $('#sheet [data-act="log-close"]').focus(); return; }
+  row.scrollIntoView({ block: "start", behavior: "instant" });
+  row.classList.add("flash");
+  setTimeout(() => row.classList.remove("flash"), 950);
+  row.focus({ preventScroll: true });
 }
 function closeLog() {
   S.log = null;
   renderSheet();
-  $('#runline [data-act="log"]')?.focus();
+  (logOpener?.isConnected ? logOpener : $('#runline [data-act="log"]'))?.focus();
 }
 
 // ---------- Review runs (simulated) ----------
 // The simulation runs 12 times faster than the times it shows. A real run takes minutes.
 const SCALE = 12;
-const STEP_MS = 600;
+const TICK_MS = 150;
+// Fast calls show as running for at least this many seconds, so you see them arrive.
+const RUN_MIN = 3;
 let runTimer = 0;
 const elapsed = (run) => Math.round(((Date.now() - run.t0) / 1000) * SCALE);
 
@@ -1680,9 +1875,11 @@ function startReview(profileId, { changes = false } = {}) {
   S.profile = pf.id;
   S.menu = false;
   S.editing = null;
+  S.moving = null;
+  S.agents.clear();
   const r = resultFor(p, pf);
-  const run = { pr: p.id, profile: pf.id, status: "running", ago: 0, at: r.at, base: changes && old ? old.at : null, log: [], error: null, r: null, t0: Date.now(),
-    todo: [...RUNNER.prep(r.at).map((a) => logEv(a, true)), ...r.steps.map((a) => logEv(a))], result: r };
+  const run = { pr: p.id, profile: pf.id, status: "running", ago: 0, at: r.at, base: changes && old ? old.at : null, note: savedNote(p.id) || null, log: [], error: null, r: null, t0: Date.now(),
+    todo: events(r.at, r.steps), result: r };
   RUNS.set(p.id, run);
   derive(p);
   renderSide();
@@ -1690,26 +1887,32 @@ function startReview(profileId, { changes = false } = {}) {
   renderDetail();
   if (S.log) { S.log = p.id; renderSheet(); }
   $('#runline [data-act="log"]').focus();
-  runTimer = setTimeout(() => step(run), 300);
+  tick(run);
 }
 
-// Each event shows as running first, then gets its final status.
-function step(run) {
+// Each event arrives at its start time and shows as running until it ends. Subagents run side by side.
+function tick(run) {
   if (run.status !== "running") return;
-  const last = run.log.at(-1);
-  if (last?.st === "run") { last.st = last.final; paintRun(run); }
-  const next = run.todo.shift();
-  if (!next) { runTimer = setTimeout(() => finish(run), 900); return; }
-  next.final = next.st;
-  next.st = "run";
-  run.log.push(next);
-  paintRun(run);
-  runTimer = setTimeout(() => step(run), next.final === "error" ? 2000 : STEP_MS);
+  const now = elapsed(run);
+  let changed = false;
+  while (run.todo.length && run.todo[0].t <= now) {
+    const e = run.todo.shift();
+    e.final = e.st;
+    e.st = "run";
+    run.log.push(e);
+    changed = true;
+  }
+  for (const e of run.log) if (e.st === "run" && e.t + Math.max(e.secs, RUN_MIN) <= now) { e.st = e.final; changed = true; }
+  paintRun(run, changed);
+  if (run.todo.length || run.log.some((e) => e.st === "run")) runTimer = setTimeout(() => tick(run), TICK_MS);
+  else runTimer = setTimeout(() => finish(run), 600);
 }
 
-function paintRun(run) {
-  paintSheet(run);
+function paintRun(run, changed) {
+  if (changed) paintSheet(run);
   if (S.sel !== run.pr) return;
+  const agents = $("#rl-agents");
+  if (agents) { const n = agentCount(run); agents.hidden = !n; agents.textContent = plural(n, "agent"); }
   const calls = $("#rl-calls");
   if (calls) calls.textContent = plural(toolCalls(run), "tool call");
   const time = $("#rl-time");
@@ -1732,8 +1935,7 @@ function cancelReview() {
   const run = activeRun();
   if (!run) return;
   clearTimeout(runTimer);
-  const last = run.log.at(-1);
-  if (last?.st === "run") last.st = "stop";
+  for (const e of run.log) if (e.st === "run") e.st = "stop";
   run.status = "cancelled";
   delete run.todo;
   derive(BY_ID.get(run.pr));
@@ -1747,7 +1949,7 @@ function refresh(pr) {
   const a = document.activeElement;
   const d = a?.dataset || {};
   const sel = a?.id ? `#${a.id}` : d.act ? `[data-act="${d.act}"]${d.thread ? `[data-thread="${d.thread}"]` : ""}${d.item ? `[data-item="${d.item}"]` : ""}${d.pr ? `[data-pr="${d.pr}"]` : ""}` : null;
-  const sel2 = a?.id === "edit-ta" ? [a.selectionStart, a.selectionEnd] : null;
+  const sel2 = a?.tagName === "TEXTAREA" ? [a.selectionStart, a.selectionEnd] : null;
   renderSide();
   renderList();
   if (pr === undefined || S.sel === pr) renderDetail();
@@ -1761,6 +1963,7 @@ function setItem(it, status) {
   it.status = status;
   S.editing = null;
   S.editText = null;
+  S.moving = null;
   derive(p);
   // Accept and discard close the item and move to the next untriaged one of the same kind.
   let next = it;
@@ -1808,6 +2011,44 @@ function cancelEdit() {
   $(`#t-${id}`)?.focus({ preventScroll: true });
 }
 
+// Move changes the line of a draft before you post. The new line must be in the excerpt, so the comment quotes the code you see.
+function startMove(it) {
+  S.moving = it.id;
+  S.editing = null;
+  S.cur = it.id;
+  renderDetail();
+  const inp = $("#mv-in");
+  inp.focus({ preventScroll: true });
+  inp.select();
+}
+function doMove() {
+  const inp = $("#mv-in");
+  const it = findT(Number(inp.dataset.item));
+  const n = Number(inp.value);
+  const ok = lineChoices(it);
+  if (!ok.includes(n)) {
+    const err = $("#mv-err");
+    err.innerHTML = `${icon("alert")}${esc(`Line ${inp.value || "?"} is not in the excerpt. Choose a line from ${ok[0]} to ${ok.at(-1)}.`)}`;
+    err.hidden = false;
+    inp.setAttribute("aria-invalid", "true");
+    inp.setAttribute("aria-describedby", "mv-err mv-h");
+    inp.focus();
+    return;
+  }
+  if (n !== it.line && !outside(it)) {
+    const was = it.anchor?.st === "user" ? it.anchor.was : it.line;
+    it.anchor = was === n ? null : { st: "user", was };
+  }
+  it.line = n;
+  cancelMove();
+}
+function cancelMove() {
+  const id = S.moving;
+  S.moving = null;
+  renderDetail();
+  $(`#t-${id} [data-act="move"]`)?.focus({ preventScroll: true });
+}
+
 function triageKey(k) {
   const it = aiItems(cur()).find((x) => x.id === S.cur && x.status !== "posted");
   if (!it) { toast(`Move to a draft or a question first. Key 2 goes to the drafts from ${RUNNER.short}.`); return; }
@@ -1838,8 +2079,8 @@ function post() {
   S.posting = true;
   renderDetail();
   setTimeout(() => {
-    const fs = p.accepted.filter((i) => i.kind === "finding");
-    const qs = p.accepted.filter((i) => i.kind === "question");
+    const { fs, gs, qs } = dests(p.accepted);
+    const at = RUNS.get(p.id).at;
     const made = [];
     for (const it of fs) {
       const t = { id: tid++, path: it.path, line: it.line, code: it.code, msgs: [m("me", 0, it.text, { ai: true })] };
@@ -1848,11 +2089,11 @@ function post() {
       it.status = "posted";
       if (it.reply) setTimeout(() => reply(p, t, ...it.reply), 6000);
     }
-    if (qs.length) {
-      const t = { id: tid++, path: null, msgs: [m("me", 0, generalText(qs), { ai: true })] };
+    if (gs.length || qs.length) {
+      const t = { id: tid++, path: null, msgs: [m("me", 0, generalText(p, at, gs, qs), { ai: true })] };
       p.threads.push(t);
       made.push(t);
-      for (const q of qs) q.status = "posted";
+      for (const x of [...gs, ...qs]) x.status = "posted";
     }
     for (const t of made) S.open.set(t.id, true);
     S.confirm = false;
@@ -1861,7 +2102,7 @@ function post() {
     renderSide();
     renderList();
     jumpThread(made[0].id);
-    toast(`Posted ${destText(fs, qs)} to ${key(p)}.`);
+    toast(`Posted ${destText(fs, gs, qs)} to ${key(p)}.`);
   }, 900);
 }
 
@@ -1881,7 +2122,7 @@ function select(id, { focusDetail = false, toCause = false } = {}) {
   S.sel = id;
   if (changed) {
     S.cur = null; S.needMe = false; S.unfold.clear(); S.branches.clear(); S.showResolved = false; S.descOpen = false; S.openSec.clear();
-    S.menu = false; S.confirm = false; S.editing = null; S.editText = null;
+    S.menu = false; S.confirm = false; S.editing = null; S.editText = null; S.moving = null; S.agents.clear();
     if (S.log) { S.log = null; renderSheet(); }
     const db = $("#dbody"); if (db) db.scrollTop = 0;
   }
@@ -1998,13 +2239,14 @@ function goDrafts() {
   jumpThread(it.id);
 }
 
-function setMenu(open, refocus = false) {
+// toNote: Shift+R opens the popup with focus in the note.
+function setMenu(open, refocus = false, toNote = false) {
   S.menu = open;
   const menu = $("#profiles");
   if (!menu) return;
   menu.hidden = !open;
   $('[data-act="profiles"]').setAttribute("aria-expanded", open);
-  if (open) $(`#profiles [data-profile="${S.profile}"]`).focus();
+  if (open) (toNote ? $("#note-ta") : $(`#profiles [data-profile="${S.profile}"]`)).focus();
   else if (refocus) $('[data-act="profiles"]').focus();
 }
 
@@ -2048,6 +2290,18 @@ document.addEventListener("click", (e) => {
     case "cancel": cancelReview(); break;
     case "log": openLog(); break;
     case "log-close": closeLog(); break;
+    case "from": openLog(el.dataset.agent); break;
+    case "agent": {
+      const run = RUNS.get(S.log);
+      const ev = run.log.find((x) => x.id === el.dataset.agent);
+      S.agents.set(ev.id, !agentOpen(ev));
+      paintSheet(run, false);
+      $(`#log [data-agent="${ev.id}"]`)?.focus({ preventScroll: true });
+      break;
+    }
+    case "move": startMove(item()); break;
+    case "move-go": doMove(); break;
+    case "move-cancel": cancelMove(); break;
     case "accept": setItem(item(), "accepted"); break;
     case "unaccept": case "restore": setItem(item(), "new"); break;
     case "discard": setItem(item(), "discarded"); break;
@@ -2084,6 +2338,7 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("input", (e) => {
   if (e.target.id === "edit-ta") { S.editText = e.target.value; return; }
+  if (e.target.id === "note-ta") { S.notes.set(S.sel, e.target.value); $('[data-act="review"]').title = reviewTitle(); return; }
   if (e.target.id !== "q") return;
   S.query = e.target.value;
   const pos = e.target.selectionStart;
@@ -2115,12 +2370,14 @@ document.addEventListener("keydown", (e) => {
     // Esc closes the innermost layer first: the menu, an edit, the post confirm, the run log.
     if (S.menu) { e.preventDefault(); setMenu(false, true); return; }
     if (e.target.id === "edit-ta") { e.preventDefault(); cancelEdit(); return; }
+    if (e.target.id === "mv-in") { e.preventDefault(); cancelMove(); return; }
     if (S.confirm && !S.posting) { e.preventDefault(); closeConfirm(); return; }
     if (S.log) { e.preventDefault(); closeLog(); return; }
     if (typing) { e.target.blur(); S.focus = "list"; return; }
     if (S.focus === "detail" || $("#app").dataset.mobile !== "list") { e.preventDefault(); S.focus = "list"; $("#app").dataset.mobile = "list"; $(`.row[data-pr="${S.sel}"]`)?.focus(); }
     return;
   }
+  if (e.target.id === "mv-in" && e.key === "Enter") { e.preventDefault(); doMove(); return; }
   if (typing) return;
   if (e.key === "?") { e.preventDefault(); help.open ? help.close() : help.showModal(); return; }
   if (help.open) return;
@@ -2167,6 +2424,7 @@ document.addEventListener("keydown", (e) => {
     case "2": e.preventDefault(); goDrafts(); return;
     case "3": e.preventDefault(); openLog(); return;
     case "r": e.preventDefault(); startReview(S.profile); return;
+    case "R": e.preventDefault(); $("#app").dataset.mobile = "detail"; setMenu(true, false, true); return;
     case "a": case "e": case "d": e.preventDefault(); triageKey(e.key); return;
     case "p": e.preventDefault(); openConfirm(); return;
   }
