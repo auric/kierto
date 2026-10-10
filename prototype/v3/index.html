@@ -1,0 +1,1423 @@
+<title>Review Loop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500;600&family=Atkinson+Hyperlegible+Next:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
+<style>
+/* Review Loop prototype v3. Fictional data. The app self-hosts these two OFL fonts and falls back to the system stack. */
+:root {
+  color-scheme: light;
+  --frame: #e8ebee;
+  --list: #f3f5f7;
+  --paper: #fcfcfd;
+  --sunken: #eff1f4;
+  --hover: #e6e9ee;
+  --ink: #161a21;
+  --ink-2: #4b5563;
+  --ink-3: #636d7b;
+  --rule: #d6dbe1;
+  --rule-strong: #b6bec9;
+  --pen: #2a45b0;
+  --pen-ink: #ffffff;
+  --pen-soft: #e1e6f8;
+  --turn: #a3420a;
+  --turn-soft: #fbe6d4;
+  --wait: #475d7f;
+  --wait-soft: #e2e8f1;
+  --ok: #22704a;
+  --ok-soft: #d9ede0;
+  --mark: #fff0ae;
+  --mark-edge: #c99a12;
+  --add: #e1f2e5;
+  --del: #fae3e3;
+  --hit: #fff0ae;
+  --overlay: rgba(22, 26, 33, .42);
+  --font-ui: "Atkinson Hyperlegible Next", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-code: "Atkinson Hyperlegible Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --fs: 14px;
+  --fs-s: 12.75px;
+  --fs-xs: 11.75px;
+  --fs-title: 21px;
+  --row-y: 10px;
+  --gap: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --frame: #121519; --list: #171a1f; --paper: #1c2027; --sunken: #15181d; --hover: #232831;
+    --ink: #e4e8ed; --ink-2: #a9b2be; --ink-3: #8c96a3; --rule: #2c323b; --rule-strong: #46505c;
+    --pen: #93a8ff; --pen-ink: #0f1530; --pen-soft: #26315a;
+    --turn: #ffa364; --turn-soft: #3b2414; --wait: #a9bad3; --wait-soft: #232c39; --ok: #72cd96; --ok-soft: #173020;
+    --mark: #3d3514; --mark-edge: #c9a43a; --add: #15291b; --del: #34191b; --hit: #3d3514; --overlay: rgba(0, 0, 0, .6);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --frame: #121519; --list: #171a1f; --paper: #1c2027; --sunken: #15181d; --hover: #232831;
+  --ink: #e4e8ed; --ink-2: #a9b2be; --ink-3: #8c96a3; --rule: #2c323b; --rule-strong: #46505c;
+  --pen: #93a8ff; --pen-ink: #0f1530; --pen-soft: #26315a;
+  --turn: #ffa364; --turn-soft: #3b2414; --wait: #a9bad3; --wait-soft: #232c39; --ok: #72cd96; --ok-soft: #173020;
+  --mark: #3d3514; --mark-edge: #c9a43a; --add: #15291b; --del: #34191b; --hit: #3d3514; --overlay: rgba(0, 0, 0, .6);
+}
+:root[data-density="compact"] { --fs: 13px; --fs-s: 12px; --fs-xs: 11.25px; --fs-title: 18px; --row-y: 6px; --gap: 10px; }
+
+* { box-sizing: border-box; }
+body { margin: 0; overflow: hidden; background: var(--frame); color: var(--ink); font: var(--fs)/1.5 var(--font-ui); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+/* Each pane scrolls itself. Absolute children (.sr) must stay inside their scroller, or scrollIntoView scrolls the page. */
+.side-scroll, .list-scroll, .dbody { position: relative; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 0; padding: 0; text-align: inherit; }
+a { color: var(--pen); }
+code, pre, .mono { font-family: var(--font-code); font-size: .9em; }
+:focus-visible { outline: 2px solid var(--pen); outline-offset: 2px; border-radius: 4px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+svg.g { width: 10px; height: 10px; flex: none; }
+kbd { font-family: var(--font-code); font-size: 11px; padding: 1px 5px; border: 1px solid var(--rule-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--paper); color: var(--ink-2); }
+
+/* Turn colors. Every use also carries a glyph shape and a text label. */
+[data-turn="your"] { --tc: var(--turn); --ts: var(--turn-soft); }
+[data-turn="wait"] { --tc: var(--wait); --ts: var(--wait-soft); }
+[data-turn="other"] { --tc: var(--ink-3); --ts: var(--sunken); }
+[data-turn="resolved"] { --tc: var(--ok); --ts: var(--ok-soft); }
+.turn { display: inline-flex; align-items: center; gap: 5px; color: var(--tc); font-weight: 600; white-space: nowrap; }
+
+/* App frame: sidebar | list | detail. Rail sidebar at 760-1099 px, one pane at a time below 760 px. */
+.app { display: grid; grid-template-columns: 228px 368px minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; }
+.side, .list, .detail { min-width: 0; min-height: 0; }
+
+/* Sidebar */
+.side { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--frame); border-right: 1px solid var(--rule); }
+.brand { display: flex; align-items: center; gap: 9px; padding: 16px 16px 10px; font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
+.brand svg { width: 18px; height: 18px; color: var(--pen); }
+.side-scroll { overflow: auto; padding: 4px 8px 12px; display: grid; align-content: start; gap: 14px; }
+.side h2 { margin: 0; padding: 4px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); }
+.nav { display: grid; gap: 1px; }
+.nav-i { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 32px; padding: 5px 8px; border-radius: 6px; color: var(--ink-2); }
+.nav-i:hover { background: var(--hover); color: var(--ink); }
+.nav-i[aria-current="page"] { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: inset 0 0 0 1px var(--rule); }
+.nav-i .n { margin-left: auto; font-size: var(--fs-xs); color: var(--ink-3); font-weight: 500; }
+.nav-i[aria-disabled="true"] { color: var(--ink-3); }
+.soon { font-size: 10.5px; font-weight: 600; padding: 0 5px; border-radius: 3px; border: 1px dashed var(--rule-strong); color: var(--ink-3); line-height: 16px; white-space: nowrap; }
+.nav-i .soon { margin-left: auto; }
+.proj { display: grid; gap: 1px; }
+.proj-h { padding: 6px 8px 2px; font-size: var(--fs-xs); color: var(--ink-3); font-weight: 600; }
+.repo { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 8px 4px 18px; border-radius: 6px; color: var(--ink-2); font-size: var(--fs-s); }
+.repo:hover { background: var(--hover); }
+.repo[aria-pressed="true"] { background: var(--pen-soft); color: var(--ink); font-weight: 600; }
+.repo .n { margin-left: auto; font-size: var(--fs-xs); font-weight: 600; color: var(--pen); }
+.side-foot { border-top: 1px solid var(--rule); padding: 10px 12px 12px; display: grid; gap: 8px; font-size: var(--fs-xs); color: var(--ink-2); }
+.sync { display: flex; align-items: center; gap: 7px; }
+.sync svg { width: 13px; height: 13px; color: var(--ok); }
+.foot-btns { display: flex; align-items: center; gap: 2px; }
+.foot-btns .grow { flex: 1; }
+.foot-btns .btn { margin-right: 6px; }
+.checks .m-only { display: none; }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); font-size: var(--fs-s); font-weight: 500; white-space: nowrap; }
+.btn:hover { border-color: var(--rule-strong); }
+.btn.quiet { border-color: transparent; background: transparent; color: var(--ink-2); }
+.btn.quiet:hover { background: var(--hover); color: var(--ink); }
+.btn.primary { background: var(--pen); border-color: var(--pen); color: var(--pen-ink); }
+.btn[aria-disabled="true"] { opacity: .62; cursor: not-allowed; }
+.btn[aria-disabled="true"] .soon { color: inherit; border-color: currentColor; }
+.btn svg.i { width: 14px; height: 14px; }
+.icon-btn { width: 30px; height: 30px; display: inline-grid; place-items: center; border-radius: 6px; color: var(--ink-2); }
+.icon-btn:hover { background: var(--hover); color: var(--ink); }
+
+/* List pane */
+.list { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--list); border-right: 1px solid var(--rule); }
+.list-h { display: grid; gap: 10px; padding: 14px 16px 12px; border-bottom: 1px solid var(--rule); }
+.list-title { display: flex; align-items: baseline; gap: 8px; }
+.list-title h1 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+.list-title .n { color: var(--ink-3); font-size: var(--fs-s); }
+.list-title .m-only { align-self: center; margin-right: 2px; }
+.filter { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 7px; background: var(--paper); }
+.filter:focus-within { border-color: var(--pen); box-shadow: 0 0 0 1px var(--pen); }
+.filter input { flex: 1; min-width: 0; border: 0; background: none; outline: none; font-size: var(--fs-s); }
+.filter svg { width: 14px; height: 14px; color: var(--ink-3); }
+.chip-x { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 4px 0 8px; border-radius: 11px; background: var(--pen-soft); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
+.chip-x button { width: 16px; height: 16px; display: grid; place-items: center; border-radius: 50%; }
+.chip-x svg { width: 11px; height: 11px; }
+.list-scroll { overflow: auto; overscroll-behavior: contain; }
+.lgrp h2 { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 7px; margin: 0; padding: 9px 16px 6px; background: var(--list); font-size: var(--fs-xs); font-weight: 600; color: var(--ink-2); border-bottom: 1px solid var(--rule); }
+.lgrp h2 .n { color: var(--ink-3); font-weight: 500; }
+.lgrp ul { list-style: none; margin: 0; padding: 0; }
+.row { position: relative; display: grid; gap: 3px; width: 100%; padding: var(--row-y) 16px var(--row-y) 18px; border-bottom: 1px solid var(--rule); }
+.row:hover { background: var(--hover); }
+.row[aria-current="true"] { background: var(--paper); box-shadow: inset 3px 0 0 var(--pen); }
+.row.unread::before { content: ""; position: absolute; left: 7px; top: calc(var(--row-y) + 7px); width: 6px; height: 6px; border-radius: 50%; background: var(--pen); }
+.row-top { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--fs-xs); color: var(--ink-3); }
+.row-top .key { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-code); }
+.row-top time { margin-left: auto; white-space: nowrap; }
+.row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.row.unread .row-title { font-weight: 700; }
+.row-why { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: var(--fs-s); color: var(--ink-2); }
+.row-why .turn { flex: none; }
+.row-why .quote { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; font-size: var(--fs-xs); color: var(--ink-3); }
+.newc { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; background: var(--mark); color: var(--ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--mark-edge); }
+.warn-t { display: inline-flex; align-items: center; gap: 4px; color: var(--turn); }
+.warn-t svg { width: 13px; height: 13px; }
+.tiles { display: inline-flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+.row-meta .tiles { margin-left: auto; }
+:root[data-density="compact"] .row-meta .tiles { display: none; }
+.list-foot { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 8px 16px; border-top: 1px solid var(--rule); font-size: var(--fs-xs); color: var(--ink-3); }
+.list-foot span { display: inline-flex; gap: 4px; align-items: center; }
+.empty { padding: 32px 16px; color: var(--ink-2); }
+
+/* Detail pane */
+.detail { container: detail / inline-size; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--paper); }
+.dh { display: grid; gap: 8px; padding: 14px 24px 12px; border-bottom: 1px solid var(--rule); }
+.dh-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: var(--fs-s); color: var(--ink-2); }
+.dh-meta .key { font-family: var(--font-code); font-size: var(--fs-xs); color: var(--ink-3); }
+.dh-meta .branch { font-size: var(--fs-xs); color: var(--ink-3); overflow-wrap: anywhere; }
+.dh-meta .branch code { color: var(--ink-2); font-size: 1em; }
+.dh-meta a { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; font-weight: 500; }
+.dh-meta a:hover { text-decoration: underline; }
+.dh-meta a svg { width: 13px; height: 13px; }
+.dh-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.dh h1 { margin: 0; font-size: var(--fs-title); line-height: 1.25; font-weight: 700; letter-spacing: -.015em; text-wrap: balance; overflow-wrap: anywhere; }
+.ledger { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.ledger .tiles { gap: 4px; }
+.tile { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 3px; color: var(--tc); }
+.tile svg.g { width: 10px; height: 10px; }
+.tile:hover { background: var(--ts); }
+.tiles.mini .tile { width: 10px; height: 10px; }
+.tiles.mini svg.g { width: 8px; height: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--fs-s); }
+.legend button { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); border-radius: 4px; }
+.legend button:hover { color: var(--ink); text-decoration: underline; }
+.legend b { color: var(--tc); font-weight: 700; }
+.back { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px 0 4px; margin-left: -6px; border-radius: 6px; color: var(--ink-2); font-weight: 500; }
+
+.dbody { overflow: auto; overscroll-behavior: contain; }
+.dgrid { display: grid; grid-template-columns: minmax(0, 1fr); }
+.rail { position: sticky; top: 0; z-index: 2; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; padding: 6px 12px; background: var(--paper); border-bottom: 1px solid var(--rule); }
+.rail::-webkit-scrollbar { display: none; }
+.rail-i { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 30px; padding: 0 10px; border-radius: 6px; color: var(--ink-2); font-size: var(--fs-s); text-decoration: none; white-space: nowrap; }
+.rail-i:hover { background: var(--hover); color: var(--ink); }
+.rail-i[aria-current="true"] { color: var(--ink); font-weight: 600; background: var(--pen-soft); }
+.rail-i .n { color: var(--ink-3); font-size: var(--fs-xs); font-weight: 500; }
+.rail-i[aria-disabled="true"] { color: var(--ink-3); }
+.rail-sub, .rail-h, .rail-sep { display: none; }
+.dcontent { min-width: 0; padding: 4px 24px 64px; }
+.sec { padding-top: 22px; scroll-margin-top: 50px; }
+.sec > h2 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 10px; font-size: 15px; font-weight: 700; letter-spacing: -.005em; }
+.sec > h2 .n { font-size: var(--fs-s); font-weight: 500; color: var(--ink-3); }
+.sec > h2 .aside { margin-left: auto; font-size: var(--fs-xs); font-weight: 400; color: var(--ink-3); }
+.prose { max-width: 72ch; }
+.prose p { margin: 0 0 8px; }
+.prose ul { margin: 0 0 8px; padding-left: 20px; }
+.prose code, .msg-b code { padding: 0 3px; border-radius: 3px; background: var(--sunken); }
+
+@container detail (min-width: 760px) {
+  .dgrid { grid-template-columns: 184px minmax(0, 1fr); }
+  .rail { flex-direction: column; align-self: start; gap: 1px; overflow: visible; max-height: none; padding: 20px 8px 24px 16px; border-bottom: 0; background: transparent; }
+  .rail-i { height: 30px; padding: 0 8px; }
+  .rail-i .n { margin-left: auto; }
+  .rail-i .soon { margin-left: auto; }
+  .rail-sub { display: flex; height: 26px; padding-left: 20px; font-size: var(--fs-xs); }
+  .rail-h { display: block; padding: 4px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); }
+  .rail-sep { display: block; height: 1px; margin: 10px 8px; background: var(--rule); }
+  .dcontent { padding: 0 32px 72px 12px; }
+  .sec { scroll-margin-top: 0; }
+}
+
+/* Overview */
+.desc { position: relative; padding: 2px 0 2px 14px; border-left: 2px solid var(--rule); }
+.desc.clamp { max-height: 7.6em; overflow: hidden; }
+.desc.clamp::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2.2em; background: linear-gradient(transparent, var(--paper)); }
+.linkish { color: var(--pen); font-weight: 500; font-size: var(--fs-s); border-radius: 4px; }
+.linkish:hover { text-decoration: underline; }
+.checks { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 18px; margin: 14px 0 0; max-width: 72ch; }
+.checks dt { color: var(--ink-3); font-size: var(--fs-s); padding-top: 1px; }
+.checks dd { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.person { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.av { display: inline-grid; place-items: center; width: 22px; height: 22px; flex: none; border-radius: 50%; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--rule); font-size: 9.5px; font-weight: 700; color: var(--ink-2); letter-spacing: .02em; }
+.av.me { box-shadow: inset 0 0 0 1.5px var(--pen); color: var(--pen); }
+.st { font-size: var(--fs-s); }
+.st.ok { color: var(--ok); }
+.st.work { color: var(--turn); }
+.st.none { color: var(--ink-3); }
+.banner { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; padding: 10px 12px; border-radius: 6px; background: var(--turn-soft); max-width: 72ch; font-size: var(--fs-s); }
+.banner svg { color: var(--turn); margin-top: 2px; }
+
+/* Since your last visit */
+.since { list-style: none; margin: 0; padding: 0; display: grid; max-width: 80ch; }
+.since li { border-bottom: 1px solid var(--rule); }
+.since li:last-child { border-bottom: 0; }
+.ev { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 2px 10px; width: 100%; padding: 8px 6px; border-radius: 6px; align-items: baseline; }
+.ev:hover { background: var(--hover); }
+.ev > svg.i { width: 15px; height: 15px; color: var(--ink-3); align-self: center; }
+.ev .ev-t { min-width: 0; }
+.ev .ev-q { grid-column: 2 / 4; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: var(--fs-s); }
+.ev time { font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
+.ev .where { font-family: var(--font-code); font-size: var(--fs-xs); color: var(--ink-2); }
+.ev .turn { font-size: var(--fs-xs); margin-left: 6px; }
+
+/* Threads */
+.tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 14px; border: 1px solid var(--rule); background: var(--paper); font-size: var(--fs-s); color: var(--ink-2); }
+.chip:hover { border-color: var(--rule-strong); color: var(--ink); }
+.chip .n { font-size: var(--fs-xs); color: var(--ink-3); }
+.chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.chip[aria-pressed="true"] .n { color: inherit; opacity: .75; }
+.chip svg.check { width: 12px; height: 12px; display: none; }
+.chip[aria-pressed="true"] svg.check { display: block; }
+.seg { display: inline-flex; margin-left: auto; padding: 2px; border-radius: 8px; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--rule); }
+.seg button { height: 24px; padding: 0 10px; border-radius: 6px; font-size: var(--fs-s); color: var(--ink-2); }
+.seg button[aria-pressed="true"] { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--rule); }
+.filter-note { font-size: var(--fs-s); color: var(--ink-3); margin: 2px 0 0; }
+.tgrp { margin-top: 18px; }
+.tgrp > h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: var(--fs-s); font-weight: 700; scroll-margin-top: 50px; }
+.tgrp > h3 .n { color: var(--ink-3); font-weight: 500; }
+.tgrp > h3 .path { font-family: var(--font-code); font-weight: 500; font-size: var(--fs-s); overflow-wrap: anywhere; }
+.tgrp > h3 .path .dir { color: var(--ink-3); }
+.tgrp > h3 .ctype { font-weight: 500; color: var(--ink-3); font-size: var(--fs-xs); }
+@container detail (min-width: 760px) { .tgrp > h3 { scroll-margin-top: 8px; } }
+.more { display: inline-flex; align-items: center; gap: 6px; margin: 6px 0 0; padding: 6px 8px; border-radius: 6px; color: var(--ink-2); font-size: var(--fs-s); font-weight: 500; }
+.more:hover { background: var(--hover); color: var(--ink); }
+.more svg.i { width: 14px; height: 14px; }
+
+.th { position: relative; margin: 0 0 8px; border-left: 3px solid var(--tc); border-radius: 0 6px 6px 0; background: var(--paper); box-shadow: inset 0 0 0 1px var(--rule); scroll-margin-top: 54px; max-width: 86ch; }
+.th[data-turn="other"] { border-left-color: var(--rule-strong); }
+.th.is-cur { box-shadow: inset 0 0 0 1px var(--pen), 0 0 0 1px var(--pen); }
+.th.flash { animation: flash 900ms ease-out 1; }
+@keyframes flash { 0% { background: var(--pen-soft); } 100% { background: var(--paper); } }
+@container detail (min-width: 760px) { .th { scroll-margin-top: 12px; } }
+.th-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; width: 100%; padding: 9px 12px 9px 11px; border-radius: 0 6px 6px 0; }
+.th-head:hover { background: var(--hover); }
+.th-line1 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.th-where { font-family: var(--font-code); font-size: var(--fs-s); color: var(--ink); overflow-wrap: anywhere; min-width: 0; }
+.th-where .ln { color: var(--ink-3); }
+.th-where.general { font-family: var(--font-ui); color: var(--ink-2); }
+.th-side { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
+.th-side svg.i { width: 14px; height: 14px; transition: transform .15s; }
+.th-head[aria-expanded="true"] .th-side svg.chev { transform: rotate(90deg); }
+.tag { display: inline-flex; align-items: center; gap: 4px; height: 19px; padding: 0 6px; border-radius: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--ink-2); background: var(--sunken); box-shadow: inset 0 0 0 1px var(--rule); white-space: nowrap; }
+.tag.old { border: 0; background: repeating-linear-gradient(-45deg, var(--sunken) 0 4px, transparent 4px 8px); }
+.tag.task { color: var(--turn); }
+.tag.task.done { color: var(--ok); }
+.tag svg.g { width: 9px; height: 9px; }
+.th-latest { grid-column: 1 / -1; display: flex; gap: 6px; min-width: 0; font-size: var(--fs-s); color: var(--ink-2); }
+.th-latest b { color: var(--ink); font-weight: 600; flex: none; }
+.th-latest span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.th-body { padding: 0 12px 12px 11px; }
+.th-body[hidden] { display: none; }
+
+.code { margin: 2px 0 12px; border-radius: 6px; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--rule); overflow: hidden; }
+.code pre { margin: 0; padding: 6px 0; overflow-x: auto; font-size: 12.25px; line-height: 1.6; }
+.cl { display: grid; grid-template-columns: 4.2ch 2ch max-content; padding-right: 12px; }
+.cl .no { text-align: right; color: var(--ink-3); user-select: none; }
+.cl .sg { text-align: center; color: var(--ink-3); user-select: none; }
+.cl.add { background: var(--add); }
+.cl.del { background: var(--del); }
+.cl.hit { background: var(--hit); box-shadow: inset 3px 0 0 var(--mark-edge); }
+.cl.hit .no { color: var(--ink); font-weight: 600; }
+.code-note { margin: 0; padding: 6px 10px; font-size: var(--fs-xs); color: var(--ink-2); border-bottom: 1px dashed var(--rule-strong); }
+
+.msgs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.msg { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 3px 9px; scroll-margin-top: 60px; border-radius: 6px; }
+.msg-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: var(--fs-s); color: var(--ink-3); }
+.msg-h b { color: var(--ink); font-weight: 600; }
+.msg-b { grid-column: 2; max-width: 72ch; overflow-wrap: anywhere; }
+.msg-b p { margin: 0 0 6px; }
+.msg-b p:last-child { margin: 0; }
+.msg.is-new .msg-b { margin-left: -8px; padding: 4px 8px; border-radius: 4px; background: var(--mark); box-shadow: inset 2px 0 0 var(--mark-edge); }
+.new-l { font-size: var(--fs-xs); font-weight: 700; color: var(--ink); padding: 0 5px; border-radius: 3px; background: var(--mark); box-shadow: inset 0 -2px 0 var(--mark-edge); }
+.deleted { color: var(--ink-3); font-style: italic; }
+.fold { grid-column: 2; justify-self: start; display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; margin-left: -8px; border-radius: 4px; font-size: var(--fs-s); color: var(--pen); font-weight: 500; }
+.fold:hover { background: var(--hover); }
+.th-foot { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; padding-left: 31px; }
+
+/* Files and commits */
+.files { list-style: none; margin: 0; padding: 0; max-width: 86ch; }
+.files li { display: grid; grid-template-columns: 74px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--rule); }
+.files .ct { font-size: var(--fs-xs); color: var(--ink-3); }
+.files .p { font-family: var(--font-code); font-size: var(--fs-s); overflow-wrap: anywhere; min-width: 0; }
+.files .p .dir { color: var(--ink-3); }
+.files .fc { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--ink-3); }
+.commits { list-style: none; margin: 0; padding: 0; max-width: 86ch; }
+.commits li.c { display: grid; grid-template-columns: 9ch minmax(0, 1fr) auto; gap: 2px 12px; padding: 7px 0; border-bottom: 1px solid var(--rule); align-items: baseline; }
+.commits .h { font-family: var(--font-code); font-size: var(--fs-xs); color: var(--ink-2); }
+.commits .msgline { min-width: 0; overflow-wrap: anywhere; }
+.commits .by { font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
+.commits li.c.new .h::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--turn); vertical-align: 1px; }
+.commits li.mark { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: var(--fs-s); color: var(--ink-2); font-weight: 600; }
+.commits li.mark::before, .commits li.mark::after { content: ""; height: 1px; flex: 1; background: var(--rule-strong); }
+.commits li.mark::before { flex: 0 0 12px; }
+.commits li.mark-new { font-size: var(--fs-xs); color: var(--turn); font-weight: 600; padding: 2px 0 4px; }
+
+/* M2 and M3 placeholders */
+.later { max-width: 64ch; padding-top: 22px; }
+.later h2 { margin: 0 0 6px; font-size: 16px; }
+.later p { margin: 0 0 10px; color: var(--ink-2); }
+.ghost { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 12px; margin-top: 16px; }
+.ghost div { border: 1px dashed var(--rule-strong); border-radius: 6px; padding: 10px; font-size: var(--fs-s); color: var(--ink-3); min-height: 120px; }
+.ghost i { display: block; height: 9px; margin: 8px 0; border-radius: 3px; background: var(--sunken); font-style: normal; }
+
+/* Help and toast */
+dialog { border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; background: var(--paper); color: var(--ink); max-width: min(560px, calc(100vw - 32px)); width: 100%; }
+dialog::backdrop { background: var(--overlay); }
+dialog h2 { margin: 0 0 12px; font-size: 16px; }
+dialog h3 { margin: 14px 0 6px; font-size: var(--fs-s); color: var(--ink-3); font-weight: 600; }
+.keys { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: var(--fs-s); }
+.keys dt { display: flex; gap: 4px; align-items: center; }
+.keys dd { margin: 0; color: var(--ink-2); }
+.keys dd .soon { margin-left: 6px; }
+.dlg-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 9px 14px; border-radius: 8px; background: var(--ink); color: var(--paper); font-size: var(--fs-s); box-shadow: 0 6px 24px rgba(0,0,0,.18); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 10; }
+.toast.on { opacity: 1; }
+
+.m-only { display: none; }
+
+@media (max-width: 1099px) {
+  .app { grid-template-columns: 60px 320px minmax(0, 1fr); }
+  .side .lbl, .side h2, .proj, .side .n, .side .soon, .sync span, .brand span { display: none; }
+  .brand { justify-content: center; padding: 16px 0 10px; }
+  .nav-i { justify-content: center; padding: 6px 0; }
+  .side-foot { padding: 10px 6px; justify-items: center; }
+  .sync { justify-content: center; }
+  .foot-btns { flex-direction: column; align-items: center; }
+  .foot-btns .grow { display: none; }
+  .foot-btns .btn .lbl { display: none; }
+  .foot-btns .btn { width: 32px; padding: 0; margin: 0 0 4px; justify-content: center; }
+}
+@media (max-width: 759px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .app > .side, .app > .list, .app > .detail { display: none; }
+  .app[data-mobile="side"] > .side, .app[data-mobile="list"] > .list, .app[data-mobile="detail"] > .detail { display: grid; }
+  .side .lbl, .side h2, .proj, .side .n, .side .soon, .sync span, .brand span { display: revert; }
+  .side .nav-i .n, .side .nav-i .soon, .repo .n { display: inline; }
+  .brand { justify-content: flex-start; padding: 16px 16px 10px; }
+  .nav-i { justify-content: flex-start; padding: 6px 8px; min-height: 40px; }
+  .repo { min-height: 36px; }
+  .side-foot { justify-items: stretch; padding: 10px 12px 12px; }
+  .foot-btns { flex-direction: row; }
+  .foot-btns .grow { display: block; }
+  .foot-btns .btn .lbl { display: inline; }
+  .foot-btns .btn { width: auto; padding: 0 10px; margin: 0 6px 0 0; }
+  .m-only, .checks .m-only { display: inline-flex; }
+  .w-only { display: none; }
+  .dh { padding: 10px 16px 12px; gap: 6px; }
+  .dh-actions { margin-left: 0; }
+  .dcontent { padding: 0 16px 56px; }
+  .rail { padding: 6px 8px; }
+  .list-foot { display: none; }
+  .ghost { grid-template-columns: minmax(0, 1fr); }
+  .files li { grid-template-columns: minmax(0, 1fr) auto; }
+  .files .ct { grid-column: 1 / -1; }
+  .commits li.c { grid-template-columns: 8ch minmax(0, 1fr); }
+  .commits .by { grid-column: 2; }
+  .th-foot { padding-left: 0; }
+  .msg { grid-template-columns: minmax(0, 1fr); }
+  .msg .av { display: none; }
+  .msg-b, .fold { grid-column: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+
+<div class="app" id="app" data-mobile="list">
+  <nav class="side" id="side" aria-label="Views"></nav>
+  <section class="list" id="list" aria-labelledby="view-name"></section>
+  <main class="detail" id="detail" aria-label="Pull request"></main>
+</div>
+
+<dialog id="help" aria-labelledby="help-title">
+  <h2 id="help-title">Keyboard shortcuts</h2>
+  <h3>Move</h3>
+  <dl class="keys">
+    <dt><kbd>j</kbd><kbd>k</kbd></dt><dd>Next or previous pull request in the list, or thread in the detail</dd>
+    <dt><kbd>Enter</kbd><kbd>→</kbd></dt><dd>Open the pull request at the thread that put it in the inbox</dd>
+    <dt><kbd>Esc</kbd><kbd>←</kbd></dt><dd>Back to the list</dd>
+    <dt><kbd>/</kbd></dt><dd>Filter the list</dd>
+  </dl>
+  <h3>Pull request</h3>
+  <dl class="keys">
+    <dt><kbd>n</kbd><kbd>N</kbd></dt><dd>Next or previous new message</dd>
+    <dt><kbd>y</kbd></dt><dd>Next thread where it is your turn</dd>
+    <dt><kbd>o</kbd></dt><dd>Open or close the current thread</dd>
+    <dt><kbd>g</kbd> then <kbd>o</kbd><kbd>s</kbd><kbd>t</kbd><kbd>f</kbd><kbd>c</kbd></dt><dd>Go to Overview, Since your last visit, Threads, Files, Commits</dd>
+    <dt><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></dt><dd>Conversation, Review, Run log</dd>
+    <dt><kbd>r</kbd></dt><dd>Start a review<span class="soon">M2</span></dd>
+    <dt><kbd>a</kbd><kbd>d</kbd><kbd>e</kbd><kbd>p</kbd></dt><dd>Accept, discard, edit, post review items<span class="soon">M3</span></dd>
+    <dt><kbd>?</kbd></dt><dd>Show or hide this list</dd>
+  </dl>
+  <div class="dlg-foot"><button class="btn" id="help-close" type="button">Close</button></div>
+</dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+// Fixed clock for the fictional data: Saturday 10 October 2026, 14:32.
+const NOW = new Date(2026, 9, 10, 14, 32).getTime();
+
+const PEOPLE = {
+  me: "Jordan Reyes", lena: "Lena Petrova", dan: "Dan Okafor", mira: "Mira Kovač",
+  priya: "Priya Raman", tomas: "Tomás Ferreira", yuki: "Yuki Sato",
+};
+
+// ---------- Fictional data ----------
+let mid = 1;
+const m = (who, ago, text, o = {}) => ({ id: mid++, who, ago, text, new: !!o.new, edited: !!o.edited, task: o.task || null, to: o.to || null });
+const L = (n, k, s) => [n, k, s];
+
+const PRS = [
+  {
+    id: 4182, project: "ENGINE", repo: "render", title: "Take cache mutex inside ResourceCache::evict",
+    author: "lena", role: "REVIEWER", my: "NEEDS_WORK", state: "OPEN", branch: "feature/evict-locking", target: "develop",
+    lastVisit: 1227, reviewedAt: "51e0a3c", reviewedAgo: 1300,
+    reviewers: [["me", "NEEDS_WORK"], ["mira", "APPROVED"], ["dan", "UNAPPROVED"]],
+    description: "`evict()` now takes `cacheMutex_` itself, so callers no longer lock. `trim()` destroys evicted entries after the lock ends.\n\n- Splits `EvictionPolicy` out of `ResourceCache`.\n- Adds `Budget` to the cache config.\n- City scene: evict p99 drops from 2.1 ms to 0.4 ms. The capture is on the perf share under render/evict-locking.\n\nRisk: plugins that called `evictLocked()` directly must switch to `evict()`. No plugin in this repository does.",
+    files: [
+      ["MODIFY", "src/render/ResourceCache.cpp"], ["MODIFY", "src/render/ResourceCache.h"], ["ADD", "src/render/EvictionPolicy.cpp"],
+      ["ADD", "src/render/EvictionPolicy.h"], ["MODIFY", "tests/render/ResourceCacheTest.cpp"], ["MODIFY", "docs/render/caching.md"],
+    ],
+    commits: [
+      ["a3f9e21", "Destroy evicted entries after the guard ends", "lena", 12, true],
+      ["7c0d4b8", "Add EvictsOldestOnTie test", "lena", 64, true],
+      ["51e0a3c", "Unpin on the acquire error path", "lena", 2890],
+      ["9b2f611", "Take cacheMutex_ inside evict()", "lena", 4330],
+      ["0d7e3aa", "Split EvictionPolicy out of ResourceCache", "lena", 4380],
+      ["e44c190", "Add Budget to the cache config", "lena", 4400],
+      ["3a8d5f2", "Rename trimToBudget to trim", "lena", 4420],
+    ],
+    events: [{ kind: "approve", who: "mira", ago: 118 }],
+    threads: [
+      { id: 1, path: "src/render/ResourceCache.cpp", line: 143,
+        code: [L(139, "ctx", "bool ResourceCache::evict(Handle h) {"), L(140, "add", "    std::lock_guard<std::mutex> guard(cacheMutex_);"), L(141, "ctx", "    auto it = entries_.find(h);"), L(142, "add", "    if (it == entries_.end()) return false;"), L(143, "add", "    return evictLocked(it);"), L(144, "ctx", "}")],
+        msgs: [
+          m("me", 4320, "Does `evictLocked()` expect the caller to hold `cacheMutex_`? The header still says it takes the lock itself."),
+          m("lena", 2880, "It did before. In this PR the caller holds the lock. I updated the header comment.", { to: "me" }),
+          m("me", 2870, "OK. But `flushPending()` still calls `evictLocked()`. Does it hold the lock there?", { to: "lena" }),
+          m("lena", 2860, "Yes, `flushPending()` takes the lock first, see line 210.", { to: "me" }),
+          m("dan", 25, "Line 210 locks `pendingMutex_`, not `cacheMutex_`. So that path still calls `evictLocked()` without the cache lock. Jordan, you asked first, so I leave it with you.", { new: true, to: "me" }),
+        ] },
+      { id: 2, path: "src/render/ResourceCache.cpp", line: 198,
+        code: [L(196, "ctx", "void ResourceCache::trim(size_t budget) {"), L(197, "add", "    std::lock_guard<std::mutex> guard(cacheMutex_);"), L(198, "add", "    while (bytes_ > budget) evictLocked(lru_.back());"), L(199, "ctx", "}")],
+        msgs: [
+          m("mira", 1440, "This loop holds `cacheMutex_` while each entry's destructor runs. A destructor that calls back into the cache deadlocks."),
+          m("me", 1262, "Agreed. Lena, can you move the entries out first and destroy them after the guard ends?", { to: "mira" }),
+          m("lena", 12, "Done in a3f9e21. Entries move to a local vector and are destroyed after the guard ends.", { new: true, to: "me" }),
+        ] },
+      { id: 3, path: "src/render/ResourceCache.h", line: 57,
+        code: [L(55, "ctx", "    /// Removes the entry. Returns false for an unknown handle."), L(56, "add", "    /// Takes cacheMutex_. Do not call while you hold it."), L(57, "add", "    bool evict(Handle h);")],
+        msgs: [m("me", 1300, "Please also say that `evict()` is now safe to call from any thread. Plugin authors read this header, not the cpp.")] },
+      { id: 4, path: "src/render/ResourceCache.h", line: 31, resolved: true,
+        code: [L(30, "ctx", "private:"), L(31, "add", "    bool evictLocked(EntryIt it);")],
+        msgs: [
+          m("dan", 4300, "Name nit: `evictLocked` reads like evict-and-lock. Maybe `evictWhileLocked`?"),
+          m("lena", 4200, "I kept the name. The style guide uses `fooLocked` for functions whose caller holds the lock.", { to: "dan" }),
+        ] },
+      { id: 5, path: "src/render/EvictionPolicy.cpp", line: 44,
+        code: [L(42, "add", "    // Ties go to the entry that was inserted first."), L(43, "add", "    if (a.lastUse == b.lastUse)"), L(44, "add", "        return a.seq < b.seq;")],
+        msgs: [
+          m("me", 2900, "Please add a test for the tie case: two entries with the same `lastUse`.", { task: "open" }),
+          m("lena", 64, "Added `EvictsOldestOnTie` in ResourceCacheTest.cpp (7c0d4b8). Can you resolve the task?", { new: true, to: "me" }),
+        ] },
+      { id: 6, path: "src/render/EvictionPolicy.cpp", line: 12,
+        code: [L(11, "add", "enum Policy {"), L(12, "add", "    Lru,"), L(13, "add", "    Lfu,")],
+        msgs: [
+          m("mira", 2800, "Nit: make this an `enum class`, so `Lru` does not leak into the render namespace."),
+          m("lena", 2700, "Changed.", { to: "mira" }),
+        ] },
+      { id: 7, path: "src/render/EvictionPolicy.cpp", line: 88,
+        code: [L(87, "add", "struct Budget {"), L(88, "add", "    int maxBytes = -1;  // -1: no limit"), L(89, "add", "};")],
+        msgs: [m("dan", 41, "Why is `maxBytes` signed? A negative value from the config turns eviction off with no warning. `std::optional<size_t>` says what it means.", { new: true })] },
+      { id: 8, path: "tests/render/ResourceCacheTest.cpp", line: 73, outdated: true,
+        code: [L(72, "ctx", "    cache.evictAsync(h);"), L(73, "add", "    std::this_thread::sleep_for(50ms);"), L(74, "ctx", "    EXPECT_FALSE(cache.contains(k));")],
+        msgs: [
+          m("mira", 2850, "A fixed sleep will flake on the build farm. Wait on the eviction instead."),
+          m("lena", 1380, "Replaced it with a latch.", { to: "mira" }),
+        ] },
+      { id: 9, path: "src/render/ResourceCache.cpp", line: 61, outdated: true, resolved: true,
+        code: [L(60, "ctx", "    auto h = lookup(key);"), L(61, "add", "    if (!h.valid()) return {};"), L(62, "add", "    pin(h);")],
+        msgs: [
+          m("me", 4310, "This early return skips `unpin()` on the error path, so the pin leaks."),
+          m("lena", 4100, "Fixed in 51e0a3c.", { to: "me" }),
+        ] },
+      { id: 10, path: null,
+        msgs: [
+          m("lena", 4250, "Numbers from the city scene: evict p99 drops from 2.1 ms to 0.4 ms. The lock now covers less work."),
+          m("dan", 2600, "Can you attach the capture?", { to: "lena" }),
+          m("lena", 8, "The capture is on the perf share. I added the path to the description.", { new: true, to: "dan" }),
+        ] },
+      { id: 11, path: null,
+        msgs: [
+          m("dan", 1450, "Mira, does the header change break the plugin SDK ABI?"),
+          m("mira", 1320, "No. The SDK does not include ResourceCache.h.", { to: "dan" }),
+        ] },
+    ],
+  },
+  {
+    id: 2215, project: "ENGINE", repo: "core", title: "Replace the custom spinlock with std::mutex",
+    author: "dan", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "chore/drop-spinlock", target: "develop", lastVisit: 900,
+    reviewers: [["me", "UNAPPROVED"], ["yuki", "APPROVED"]],
+    description: "Removes `SpinLock` and its last user in the job queue. Benchmarks show no change in frame time.",
+    files: [["DELETE", "src/core/SpinLock.h"], ["MODIFY", "src/core/JobQueue.cpp"], ["MODIFY", "src/core/JobQueue.h"]],
+    commits: [["c81f0aa", "Use std::mutex in JobQueue", "dan", 300], ["5d2e9b7", "Delete SpinLock", "dan", 290]],
+    threads: [
+      { id: 21, path: "src/core/JobQueue.cpp", line: 40,
+        code: [L(39, "del", "    SpinLock::Guard g(lock_);"), L(40, "add", "    std::lock_guard<std::mutex> g(mutex_);")],
+        msgs: [
+          m("me", 1200, "Does the audio thread still take this lock? `std::mutex` can block it under priority inversion."),
+          m("dan", 34, "Audio uses its own lock-free queue since #2190. This change removes the last user.", { new: true, to: "me" }),
+        ] },
+      { id: 22, path: null,
+        msgs: [
+          m("yuki", 300, "Bench on the 16-core box: no change in frame time."),
+          m("dan", 130, "Thanks, I added it to the description.", { new: true, to: "yuki" }),
+        ] },
+    ],
+  },
+  {
+    id: 1340, project: "TOOLS", repo: "asset-pipeline", title: "Cook textures in parallel on the job graph",
+    author: "me", role: "AUTHOR", my: null, state: "OPEN", branch: "feature/parallel-cook", target: "main", lastVisit: 600,
+    reviewers: [["mira", "UNAPPROVED"], ["dan", "APPROVED"]],
+    description: "Each texture cooks as one job. Shared textures still cook once per material.",
+    files: [["MODIFY", "tools/cook/TextureCook.cpp"], ["MODIFY", "tools/cook/JobGraph.cpp"]],
+    commits: [["2bb91c4", "Cook textures as jobs", "me", 1500]],
+    threads: [
+      { id: 31, path: "tools/cook/TextureCook.cpp", line: 212,
+        code: [L(211, "add", "    auto out = outputPath(tex);"), L(212, "add", "    graph.add([=] { writeDds(out, cook(tex)); });")],
+        msgs: [m("mira", 18, "Two jobs can write the same .dds when two materials share a texture. Deduplicate by output path first.", { new: true })] },
+      { id: 32, path: null, resolved: true, msgs: [m("dan", 1400, "Looks good to me after Mira's point is fixed.")] },
+    ],
+  },
+  {
+    id: 977, project: "ENGINE", repo: "netcode", title: "Delta-compress snapshot headers",
+    author: "priya", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "feature/delta-headers", target: "develop", lastVisit: null,
+    reviewers: [["me", "UNAPPROVED"], ["tomas", "UNAPPROVED"]],
+    description: "Encodes each snapshot header as a delta against the last acknowledged header. Saves 18 bytes per packet on average.",
+    files: [["MODIFY", "src/net/Snapshot.cpp"], ["MODIFY", "src/net/Snapshot.h"], ["ADD", "src/net/HeaderDelta.cpp"], ["MODIFY", "src/net/AckWindow.cpp"]],
+    commits: [["8e0c3d2", "Delta-encode snapshot headers", "priya", 400], ["f1a7b65", "Pin the delta base in AckWindow", "priya", 200]],
+    threads: [
+      { id: 41, path: "src/net/Snapshot.cpp", line: 88,
+        code: [L(87, "add", "    const Header& base = acks_.lastAcked();"), L(88, "add", "    writeDelta(out, base, header);")],
+        msgs: [
+          m("tomas", 180, "The delta base can be a snapshot that the client already dropped.", { new: true }),
+          m("priya", 120, "The ack window keeps the base alive. See `AckWindow::pin`.", { new: true, to: "tomas" }),
+        ] },
+      { id: 42, path: null, msgs: [m("yuki", 50, "Can we keep the old format behind a flag for one release?", { new: true })] },
+    ],
+  },
+  {
+    id: 388, project: "TOOLS", repo: "build-farm", title: "Cache precompiled headers per toolchain",
+    author: "tomas", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "feature/pch-cache", target: "main", lastVisit: null,
+    reviewers: [["me", "UNAPPROVED"]],
+    description: "Keys the PCH cache by compiler version and flags, so a toolchain update no longer reuses stale headers.",
+    files: [["MODIFY", "farm/cache/PchCache.py"], ["ADD", "farm/cache/toolchain_key.py"]],
+    commits: [["0b4d1e9", "Key the PCH cache by toolchain", "tomas", 240]],
+    threads: [],
+  },
+  {
+    id: 2209, project: "ENGINE", repo: "core", title: "Pool job allocations per worker",
+    author: "tomas", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "perf/job-pools", target: "develop", lastVisit: null,
+    incomplete: "Bitbucket did not answer for activities page 3. The previous state stays. The next check continues from page 3.",
+    reviewers: [["me", "UNAPPROVED"], ["dan", "UNAPPROVED"]],
+    description: "Each worker allocates jobs from its own pool.",
+    files: [["MODIFY", "src/core/JobQueue.cpp"], ["ADD", "src/core/JobPool.h"]],
+    commits: [["44aa0c2", "Add per-worker job pools", "tomas", 620]],
+    threads: [],
+  },
+  {
+    id: 612, project: "ENGINE", repo: "audio", title: "Stream Opus banks from pak files",
+    author: "yuki", role: "REVIEWER", my: "NEEDS_WORK", state: "OPEN", branch: "feature/opus-pak", target: "develop", lastVisit: 2000,
+    reviewedAt: "6d1e0f3", reviewedAgo: 2100,
+    reviewers: [["me", "NEEDS_WORK"]],
+    description: "Reads Opus banks directly from the pak file instead of extracting them first.",
+    files: [["MODIFY", "src/audio/OpusBank.cpp"], ["MODIFY", "src/audio/PakStream.cpp"]],
+    commits: [["b7c2a90", "Seek by granule position, not by byte offset", "yuki", 95, true], ["6d1e0f3", "Stream banks from pak files", "yuki", 2400]],
+    events: [],
+    threads: [
+      { id: 61, path: "src/audio/PakStream.cpp", line: 77, resolved: true,
+        code: [L(77, "add", "    stream.seek(byteOffset);")],
+        msgs: [m("me", 2100, "Seeking by byte offset lands inside an Opus page. Seek by granule position."), m("yuki", 95, "Fixed in b7c2a90.", { to: "me" })] },
+    ],
+  },
+  {
+    id: 95, project: "TOOLS", repo: "crash-uploader", title: "Retry symbol uploads with backoff",
+    author: "dan", role: "REVIEWER", my: "NEEDS_WORK", state: "OPEN", branch: "feature/upload-retry", target: "main", lastVisit: 300,
+    reviewers: [["me", "NEEDS_WORK"]],
+    description: "Retries failed symbol uploads up to five times with exponential backoff.",
+    files: [["MODIFY", "uploader/upload.py"]],
+    commits: [["9fe1d33", "Retry uploads with backoff", "dan", 3000]],
+    threads: [
+      { id: 71, path: "uploader/upload.py", line: 52,
+        code: [L(52, "add", "        time.sleep(2 ** attempt)")],
+        msgs: [m("dan", 1000, "I kept the sleep in the worker thread. Is that OK for the CLI?"), m("me", 280, "Not for the CLI. It blocks Ctrl+C. Please use the retry helper from `uploader/net.py`.", { to: "dan" })] },
+    ],
+  },
+  {
+    id: 4177, project: "ENGINE", repo: "render", title: "Fix gamma in the tonemap pass",
+    author: "mira", role: "REVIEWER", my: "APPROVED", state: "MERGED", branch: "fix/tonemap-gamma", target: "develop", lastVisit: 1500,
+    reviewers: [["me", "APPROVED"]],
+    description: "Applies the sRGB curve after tonemapping, not before.",
+    files: [["MODIFY", "src/render/Tonemap.hlsl"]],
+    commits: [["d00b1a7", "Apply sRGB after tonemapping", "mira", 3000]],
+    threads: [
+      { id: 81, path: "src/render/Tonemap.hlsl", line: 30,
+        code: [L(30, "add", "    color = LinearToSrgb(Aces(color));")],
+        msgs: [m("me", 1600, "Does the UI pass expect linear input now?"), m("mira", 70, "Yes. I opened a follow-up for the UI pass: ENGINE/render #4190.", { new: true, to: "me" })] },
+    ],
+  },
+  {
+    id: 77, project: "TOOLS", repo: "shader-cache", title: "Hash shader permutations at build time",
+    author: "me", role: "AUTHOR", my: null, state: "OPEN", branch: "feature/perm-hash", target: "main", lastVisit: 100,
+    reviewers: [["yuki", "UNAPPROVED"]],
+    description: "Moves permutation hashing from load time to build time.",
+    files: [["MODIFY", "shadercache/build.py"]],
+    commits: [["71c0e55", "Hash permutations at build time", "me", 2000]],
+    threads: [],
+  },
+];
+
+// ---------- Derived state ----------
+// Turn rule: a thread is mine when I wrote a message in it, or when I authored the PR.
+// It is my turn when it is mine, not resolved, and the newest message is by someone else.
+const BY_ID = new Map(PRS.map((p) => [p.id, p]));
+for (const p of PRS) {
+  for (const t of p.threads) {
+    const people = [...new Set(t.msgs.map((x) => x.who))];
+    const last = t.msgs[t.msgs.length - 1];
+    t.people = people;
+    t.mine = people.includes("me") || p.author === "me";
+    t.last = last;
+    t.ago = Math.min(...t.msgs.map((x) => x.ago));
+    t.unread = t.msgs.filter((x) => x.new).length;
+    t.turn = t.resolved ? "resolved" : !t.mine ? "other" : last.who === "me" ? "wait" : "your";
+    const lastOther = [...t.msgs].reverse().find((x) => x.who !== "me");
+    t.waitOn = t.turn === "wait" ? (lastOther ? lastOther.who : p.author !== "me" ? p.author : null) : null;
+    t.task = t.msgs.find((x) => x.task)?.task || null;
+  }
+  p.unread = p.threads.reduce((n, t) => n + t.unread, 0);
+  p.yourTurn = p.threads.filter((t) => t.turn === "your");
+  p.newCommits = p.commits.filter((c) => c[4]);
+  p.lastActivity = Math.min(...p.threads.map((t) => t.ago), ...p.commits.map((c) => c[3]));
+  const unreadThreads = p.threads.filter((t) => t.unread).sort((a, b) => a.ago - b.ago);
+  p.cause = p.yourTurn.filter((t) => t.unread).sort((a, b) => a.ago - b.ago)[0] || p.yourTurn[0] || unreadThreads[0] || null;
+  p.group =
+    p.state !== "OPEN" ? "closed"
+    : p.yourTurn.length ? "your"
+    : p.role === "REVIEWER" && p.my === "UNAPPROVED" && !p.reviewedAt ? "review"
+    : p.newCommits.length && p.reviewedAt ? "commits"
+    : p.unread ? "comments"
+    : p.threads.some((t) => t.turn === "wait") ? "waiting"
+    : "quiet";
+}
+
+const GROUPS = [
+  ["your", "Your turn"], ["review", "Review requested"], ["commits", "New commits since your review"],
+  ["comments", "New comments"], ["waiting", "Waiting on others"], ["quiet", "Nothing new"], ["closed", "Merged or declined"],
+];
+const VIEWS = {
+  needs: { label: "Needs you", icon: "bell", test: (p) => p.unread > 0 || p.yourTurn.length > 0 || (p.state === "OPEN" && p.role === "REVIEWER" && p.my !== "APPROVED") },
+  reviewing: { label: "Reviewing", icon: "eye", test: (p) => p.state === "OPEN" && p.role === "REVIEWER" },
+  mine: { label: "My PRs", icon: "pr", test: (p) => p.state === "OPEN" && p.role === "AUTHOR" },
+  following: { label: "Following", icon: "star", test: () => true },
+};
+const TURN_ORDER = ["your", "wait", "other", "resolved"];
+const TURN_LABEL = { your: "Your turn", wait: "Waiting on others", other: "Other discussions", resolved: "Resolved" };
+const FILTERS = [
+  ["unread", "Unread", (t) => t.unread > 0],
+  ["your", "Waiting on me", (t) => t.turn === "your"],
+  ["open", "Unresolved", (t) => !t.resolved],
+  ["mine", "Mine", (t) => t.people.includes("me")],
+  ["old", "Outdated", (t) => !!t.outdated],
+];
+
+const S = {
+  view: "needs", repo: null, query: "", sel: 4182, focus: "list", page: "conv",
+  group: "turn", filters: new Set(), open: new Map(), unfold: new Set(), showResolved: false, cur: null, descOpen: false,
+  following: new Set(PRS.map((p) => p.id)),
+};
+
+// ---------- Helpers ----------
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const inline = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+const paras = (s) => s.split(/\n\n/).map((b) => (/^- /m.test(b) ? `<ul>${b.split("\n").map((l) => `<li>${inline(l.replace(/^- /, ""))}</li>`).join("")}</ul>` : `<p>${inline(b)}</p>`)).join("");
+const plain = (s) => s.replace(/`/g, "");
+const name = (w) => (w === "me" ? "You" : PEOPLE[w]);
+const first = (w) => (w === "me" ? "you" : PEOPLE[w].split(" ")[0]);
+const initials = (w) => PEOPLE[w].split(" ").map((x) => x[0]).join("").slice(0, 2);
+const ago = (min) => (min < 1 ? "now" : min < 60 ? `${min}m` : min < 1440 ? `${Math.round(min / 60)}h` : `${Math.round(min / 1440)}d`);
+const full = (min) => new Date(NOW - min * 60000).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const visit = (min) => {
+  const d = new Date(NOW - min * 60000);
+  const t = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const days = Math.round((new Date(NOW).setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+  return days === 0 ? `today at ${t}` : days === 1 ? `yesterday at ${t}` : `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} at ${t}`;
+};
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const base = (p) => p.slice(p.lastIndexOf("/") + 1);
+const dir = (p) => p.slice(0, p.lastIndexOf("/") + 1);
+const key = (p) => `${p.project}/${p.repo} #${p.id}`;
+const snippet = (s, n = 110) => { const t = plain(s).replace(/\s+/g, " "); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+const where = (t) => (t.path ? `${base(t.path)}:${t.line}` : "General comment");
+const shown = () => PRS.filter((p) => S.following.has(p.id) || p.state === "OPEN");
+
+const ICON = {
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  pr: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M6 9v12"/>',
+  star: '<path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8-6.2-3.2-6.2 3.2 1.2-6.8-5-4.9 6.9-1z"/>',
+  run: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  refresh: '<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  rows: '<path d="M3 5h18M3 12h18M3 19h18"/>',
+  rows4: '<path d="M3 4h18M3 9.3h18M3 14.7h18M3 20h18"/>',
+  settings: '<path d="M20 7h-9M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+  ext: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  chev: '<path d="m9 18 6-6-6-6"/>',
+  left: '<path d="m15 18-6-6 6-6"/>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
+  ok: '<circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/>',
+  reply: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  commit: '<circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  fold: '<path d="m7 15 5 5 5-5M7 9l5-5 5 5"/>',
+};
+const icon = (n, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
+// Turn glyphs: the shape alone tells the state apart. Filled square: your turn. Hollow square: waiting. Dot: others. Check: resolved.
+const GLYPH = {
+  your: '<rect x="1" y="1" width="8" height="8" rx="1.5" fill="currentColor"/>',
+  wait: '<rect x="1.75" y="1.75" width="6.5" height="6.5" rx="1.25" fill="none" stroke="currentColor" stroke-width="1.5"/>',
+  other: '<circle cx="5" cy="5" r="2.4" fill="currentColor"/>',
+  resolved: '<path d="M1.5 5.3 4 7.8 8.6 2.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+};
+const glyph = (t) => `<svg class="g" viewBox="0 0 10 10" aria-hidden="true">${GLYPH[t]}</svg>`;
+const turnText = (t) => (t.turn === "your" ? "Your turn" : t.turn === "wait" ? (t.waitOn ? `Waiting on ${first(t.waitOn)}` : "Waiting on reviewers") : t.turn === "other" ? t.people.map(first).join(" and ") : "Resolved");
+const turnPill = (t) => `<span class="turn" data-turn="${t.turn}">${glyph(t.turn)}${esc(turnText(t))}</span>`;
+const avatar = (w) => `<span class="av${w === "me" ? " me" : ""}" aria-hidden="true">${initials(w)}</span>`;
+const STATUS = { APPROVED: ["Approved", "ok"], NEEDS_WORK: ["Needs work", "work"], UNAPPROVED: ["Not reviewed", "none"] };
+
+let toastTimer = 0;
+function toast(msg) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("on"), 2600);
+}
+
+// ---------- Sidebar ----------
+function renderSide() {
+  const all = shown();
+  const counts = Object.fromEntries(Object.entries(VIEWS).map(([k, v]) => [k, all.filter(v.test).length]));
+  const projects = {};
+  for (const p of all) (projects[p.project] ||= {})[p.repo] = ((projects[p.project] || {})[p.repo] || 0) + p.unread;
+  const theme = document.documentElement.dataset.theme || "system";
+  const dens = document.documentElement.dataset.density || "comfortable";
+  $("#side").innerHTML = `
+    <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-3.2-6.4"/><path d="M20 4v5h-5"/></svg><span>Review Loop</span></div>
+    <div class="side-scroll">
+      <div class="nav">
+        <h2>Inbox</h2>
+        ${Object.entries(VIEWS).map(([k, v]) => `<button type="button" class="nav-i" data-act="view" data-view="${k}" ${S.view === k && !S.repo ? 'aria-current="page"' : ""} title="${v.label}: ${counts[k]}">${icon(v.icon)}<span class="lbl">${v.label}</span><span class="n">${counts[k] || ""}</span></button>`).join("")}
+      </div>
+      <div class="nav">
+        <h2>AI review</h2>
+        <button type="button" class="nav-i" aria-disabled="true" data-act="soon" data-msg="Review runs arrive in M2." title="Review runs arrive in M2">${icon("run")}<span class="lbl">Review runs</span><span class="soon">M2</span></button>
+        <button type="button" class="nav-i" aria-disabled="true" data-act="soon" data-msg="Ready to post arrives in M3." title="Ready to post arrives in M3">${icon("send")}<span class="lbl">Ready to post</span><span class="soon">M3</span></button>
+      </div>
+      <div class="proj">
+        <h2>Repositories</h2>
+        ${Object.entries(projects).sort().map(([proj, repos]) => `<div class="proj-h">${proj}</div>${Object.entries(repos).sort().map(([r, n]) => `<button type="button" class="repo" data-act="repo" data-repo="${proj}/${r}" aria-pressed="${S.repo === `${proj}/${r}`}"><span class="lbl">${r}</span><span class="n">${n ? `${n}<span class="sr"> new</span>` : ""}</span></button>`).join("")}`).join("")}
+      </div>
+    </div>
+    <div class="side-foot">
+      <div class="sync" title="Checked at 14:32. Next check in 45 seconds.">${icon("ok")}<span>Checked 14:32, next in 45 s</span></div>
+      <div class="foot-btns">
+        <button type="button" class="btn" data-act="check" title="Check now">${icon("refresh")}<span class="lbl">Check now</span></button>
+        <span class="grow"></span>
+        <button type="button" class="icon-btn" data-act="theme" title="Theme: ${theme}. Switch the theme." aria-label="Theme: ${theme}. Switch the theme.">${icon(theme === "dark" ? "moon" : theme === "light" ? "sun" : "monitor")}</button>
+        <button type="button" class="icon-btn" data-act="density" title="Compact rows" aria-label="Compact rows" aria-pressed="${dens === "compact"}">${icon(dens === "compact" ? "rows4" : "rows")}</button>
+        <button type="button" class="icon-btn" data-act="settings" title="Settings" aria-label="Settings">${icon("settings")}</button>
+      </div>
+    </div>`;
+}
+
+// ---------- List ----------
+function listRows() {
+  const q = S.query.trim().toLowerCase();
+  return shown().filter((p) => (S.repo ? `${p.project}/${p.repo}` === S.repo : VIEWS[S.view].test(p)) && (!q || `${key(p)} ${p.title} ${PEOPLE[p.author]}`.toLowerCase().includes(q)));
+}
+function orderedRows() {
+  const rows = listRows();
+  const out = [];
+  for (const [g] of GROUPS) out.push(...rows.filter((p) => p.group === g).sort((a, b) => (b.unread > 0) - (a.unread > 0) || a.lastActivity - b.lastActivity));
+  return out;
+}
+
+function why(p) {
+  const c = p.cause;
+  const quote = (msg) => `<span class="quote">${esc(name(msg.who))}: ${esc(snippet(msg.text, 90))}</span>`;
+  switch (p.group) {
+    case "your": {
+      const n = p.yourTurn.length;
+      const onMine = p.author === "me" && c && c.msgs[0].who !== "me";
+      return `<span class="row-why">${turnPill({ turn: "your", people: [] }).replace("Your turn", n > 1 ? `Your turn in ${n} threads` : onMine ? "Comment on your PR" : "Your turn")}${quote(c.last)}</span>`;
+    }
+    case "review":
+      return `<span class="row-why"><span><b>${esc(PEOPLE[p.author])}</b> asked for your review.</span></span>`;
+    case "commits":
+      return `<span class="row-why"><span class="quote"><b>${plural(p.newCommits.length, "commit")} since your review.</b> ${esc(p.newCommits[0][1])}</span></span>`;
+    case "comments":
+      return `<span class="row-why"><span class="quote">${quote(c.last)}</span></span>`;
+    case "waiting": {
+      const t = p.threads.find((x) => x.turn === "wait");
+      return `<span class="row-why">${turnPill(t)}<span class="quote">You replied last, ${ago(t.ago)} ago.</span></span>`;
+    }
+    case "closed":
+      return `<span class="row-why"><span class="quote"><b>${p.state === "MERGED" ? "Merged." : "Declined."}</b> ${c ? `${esc(first(c.last.who))} replied to you after that.` : ""}</span></span>`;
+    default:
+      return `<span class="row-why"><span class="quote">No new messages.</span></span>`;
+  }
+}
+
+function rowMeta(p) {
+  const bits = [];
+  if (p.unread) bits.push(`<span class="newc">${p.unread} new</span>`);
+  if (p.group === "review") bits.push(`<span>${p.threads.length ? `${plural(p.threads.length, "thread")}, none yours` : "No comments yet"}</span><span>${plural(p.files.length, "file")} changed</span>`);
+  if (p.group !== "commits" && p.newCommits.length && p.reviewedAt) bits.push(`<span>${plural(p.newCommits.length, "commit")} since your review</span>`);
+  if (p.incomplete) bits.push(`<span class="warn-t">${icon("alert")}Last check incomplete</span>`);
+  if (p.threads.length) bits.push(tiles(p, true));
+  return bits.length ? `<span class="row-meta">${bits.join("")}</span>` : "";
+}
+
+function tiles(p, mini) {
+  const ts = [...p.threads].sort((a, b) => TURN_ORDER.indexOf(a.turn) - TURN_ORDER.indexOf(b.turn));
+  const counts = TURN_ORDER.map((k) => [k, ts.filter((t) => t.turn === k).length]).filter(([, n]) => n);
+  const label = counts.map(([k, n]) => `${n} ${TURN_LABEL[k].toLowerCase()}`).join(", ");
+  if (mini) return `<span class="tiles mini" role="img" aria-label="Threads: ${label}">${ts.map((t) => `<span class="tile" data-turn="${t.turn}">${glyph(t.turn)}</span>`).join("")}</span>`;
+  return `<span class="tiles" role="group" aria-label="Threads by state: ${label}">${ts.map((t) => `<button type="button" class="tile" data-turn="${t.turn}" data-act="jump" data-thread="${t.id}" title="${esc(`${turnText(t)}: ${where(t)}`)}" aria-label="${esc(`${turnText(t)}, ${where(t)}`)}">${glyph(t.turn)}</button>`).join("")}</span>`;
+}
+
+function renderList() {
+  const rows = listRows();
+  const title = S.repo ? S.repo : VIEWS[S.view].label;
+  let body = "";
+  for (const [g, label] of GROUPS) {
+    const rs = rows.filter((p) => p.group === g).sort((a, b) => (b.unread > 0) - (a.unread > 0) || a.lastActivity - b.lastActivity);
+    if (!rs.length) continue;
+    const gl = g === "your" ? glyph("your") : g === "waiting" ? glyph("wait") : "";
+    body += `<section class="lgrp" aria-labelledby="g-${g}"><h2 id="g-${g}" ${g === "your" ? 'data-turn="your"' : g === "waiting" ? 'data-turn="wait"' : ""}><span class="turn" style="font-weight:600">${gl}</span>${label}<span class="n">${rs.length}</span></h2><ul>${rs.map((p) => `<li><button type="button" class="row${p.unread ? " unread" : ""}" data-act="row" data-pr="${p.id}" ${p.id === S.sel ? 'aria-current="true"' : ""}>
+      <span class="row-top"><span class="key">${esc(key(p))}</span>${p.author === "me" ? "<span>Your PR</span>" : ""}<time title="${esc(full(p.lastActivity))}">${ago(p.lastActivity)}</time></span>
+      <span class="row-title">${esc(p.title)}</span>
+      ${why(p)}
+      ${rowMeta(p)}
+      ${p.unread ? `<span class="sr">${p.unread} new messages.</span>` : ""}
+    </button></li>`).join("")}</ul></section>`;
+  }
+  if (!body) body = `<p class="empty">${S.query ? "No pull requests match this filter." : "Nothing needs you. New replies and review requests show here."}</p>`;
+  $("#list").innerHTML = `
+    <header class="list-h">
+      <div class="list-title"><button type="button" class="icon-btn m-only" data-act="side" aria-label="Open views">${icon("menu")}</button><h1 id="view-name">${esc(title)}</h1><span class="n">${rows.length}</span></div>
+      <div class="filter">${icon("search")}<input id="q" type="search" placeholder="Filter, or paste a pull request URL" aria-label="Filter pull requests" value="${esc(S.query)}" autocomplete="off" spellcheck="false">${S.repo ? `<span class="chip-x">${esc(S.repo)}<button type="button" data-act="repo-x" aria-label="Show all repositories">${icon("x")}</button></span>` : ""}</div>
+    </header>
+    <div class="list-scroll" id="list-scroll">${body}</div>
+    <footer class="list-foot"><span><kbd>j</kbd><kbd>k</kbd> move</span><span><kbd>Enter</kbd> open</span><span><kbd>/</kbd> filter</span><span><kbd>?</kbd> all keys</span></footer>`;
+}
+
+// ---------- Detail ----------
+const cur = () => BY_ID.get(S.sel);
+const isOpen = (t) => (S.open.has(t.id) ? S.open.get(t.id) : t.unread > 0 || t.turn === "your");
+const passes = (t) => [...S.filters].every((f) => FILTERS.find((x) => x[0] === f)[2](t));
+
+function renderDetail() {
+  const p = cur();
+  if (!p) { $("#detail").innerHTML = `<p class="empty">Select a pull request.</p>`; return; }
+  const scrollTop = $("#dbody")?.scrollTop ?? 0;
+  const ts = p.threads;
+  const counts = Object.fromEntries(TURN_ORDER.map((k) => [k, ts.filter((t) => t.turn === k).length]));
+  const since = sinceEvents(p);
+  const followed = S.following.has(p.id);
+  $("#detail").innerHTML = `
+    <header class="dh">
+      <div class="dh-meta">
+        <button type="button" class="back m-only" data-act="back">${icon("left")}Inbox</button>
+        <span class="key">${esc(key(p))}</span>
+        <span class="branch"><code>${esc(p.branch)}</code> into <code>${esc(p.target)}</code></span>
+        <a href="#" data-act="bb">Open in Bitbucket${icon("ext")}</a>
+        <span class="dh-actions">
+          <button type="button" class="btn quiet w-only" data-act="follow">${followed ? "Unfollow" : "Follow"}</button>
+          <button type="button" class="btn quiet w-only" data-act="archive">Archive</button>
+          <button type="button" class="btn primary" aria-disabled="true" data-act="soon" data-msg="Review arrives in M2. It runs Claude Code on a sanitized snapshot." aria-describedby="rv-note">Review<span class="soon" id="rv-note">M2</span></button>
+        </span>
+      </div>
+      <h1>${esc(p.title)}</h1>
+      ${ts.length ? `<div class="ledger">${tiles(p, false)}<span class="legend">${TURN_ORDER.filter((k) => counts[k]).map((k) => `<button type="button" data-turn="${k}" data-act="tgroup" data-g="${k}"><b>${counts[k]}</b>${k === "wait" ? "waiting on others" : TURN_LABEL[k].toLowerCase()}</button>`).join("")}${p.unread ? `<span class="newc">${p.unread} new</span>` : ""}</span></div>` : ""}
+    </header>
+    <div class="dbody" id="dbody" tabindex="-1">
+      <div class="dgrid">
+        ${rail(p, counts, since)}
+        <div class="dcontent" id="dcontent">${S.page === "conv" ? conversation(p, since) : later(S.page)}</div>
+      </div>
+    </div>`;
+  const db = $("#dbody");
+  db.scrollTop = scrollTop;
+  spy();
+}
+
+function rail(p, counts, since) {
+  const sec = (id, label, n, extra = "") => `<a class="rail-i" href="#s-${id}" data-act="sec" data-sec="${id}">${label}${n !== "" ? `<span class="n">${n}</span>` : ""}${extra}</a>`;
+  const sub = (k) => counts[k] ? `<a class="rail-i rail-sub" href="#tg-${k}" data-act="tgroup" data-g="${k}"><span class="turn" data-turn="${k}">${glyph(k)}</span>${k === "wait" ? "Waiting on others" : TURN_LABEL[k]}<span class="n">${counts[k]}</span></a>` : "";
+  const conv = S.page === "conv";
+  return `<nav class="rail" aria-label="Sections">
+    ${conv ? `${sec("overview", "Overview", "")}
+    ${sec("since", "Since last visit", since.length || "")}
+    ${sec("threads", "Threads", p.threads.length)}
+    ${S.group === "turn" ? TURN_ORDER.map(sub).join("") : ""}
+    ${sec("files", "Files", p.files.length)}
+    ${sec("commits", "Commits", p.commits.length)}` : `<button type="button" class="rail-i" data-act="page" data-page="conv">${icon("left")}Conversation</button>`}
+    <span class="rail-sep"></span>
+    <span class="rail-h">AI review</span>
+    <button type="button" class="rail-i" aria-disabled="true" data-act="page" data-page="review" ${S.page === "review" ? 'aria-current="true"' : ""}>Review<span class="soon">M2</span></button>
+    <button type="button" class="rail-i" aria-disabled="true" data-act="page" data-page="log" ${S.page === "log" ? 'aria-current="true"' : ""}>Run log<span class="soon">M2</span></button>
+    <button type="button" class="rail-i" aria-disabled="true" data-act="soon" data-msg="Ready to post arrives in M3. Approved items and replies wait there for your confirmation.">Ready to post<span class="soon">M3</span></button>
+  </nav>`;
+}
+
+function sinceEvents(p) {
+  if (p.lastVisit === null) return [];
+  const ev = [];
+  for (const t of p.threads) for (const [i, x] of t.msgs.entries()) if (x.new) ev.push({ kind: i === 0 ? "thread" : "reply", who: x.who, ago: x.ago, t, msg: x });
+  if (p.newCommits.length) ev.push({ kind: "push", who: p.author, ago: Math.min(...p.newCommits.map((c) => c[3])), commits: p.newCommits });
+  for (const e of p.events || []) if (e.ago < p.lastVisit) ev.push(e);
+  return ev.sort((a, b) => a.ago - b.ago);
+}
+
+function conversation(p, since) {
+  return `${overview(p)}${sinceSec(p, since)}${threadsSec(p)}${filesSec(p)}${commitsSec(p)}`;
+}
+
+function overview(p) {
+  const unresolved = p.threads.filter((t) => !t.resolved);
+  const tasks = p.threads.filter((t) => t.task === "open");
+  const long = p.description.length > 260;
+  return `<section class="sec" id="s-overview" aria-labelledby="h-overview">
+    <h2 id="h-overview">Overview<span class="aside">Opened by ${p.author === "me" ? "you" : esc(PEOPLE[p.author])}</span></h2>
+    <div class="desc prose${long && !S.descOpen ? " clamp" : ""}" id="desc">${paras(p.description)}</div>
+    ${long ? `<button type="button" class="linkish" data-act="desc" aria-expanded="${S.descOpen}" aria-controls="desc">${S.descOpen ? "Show less" : "Show the full description"}</button>` : ""}
+    ${p.incomplete ? `<div class="banner" role="note">${icon("alert")}<div><b>Last check incomplete.</b> ${esc(p.incomplete)}</div></div>` : ""}
+    <dl class="checks">
+      <dt>Before merge</dt>
+      <dd>${unresolved.length ? `<button type="button" class="linkish" data-act="filter-set" data-f="open">${plural(unresolved.length, "unresolved thread")}</button>` : "<span>No unresolved threads</span>"}${p.yourTurn.length ? `<button type="button" class="linkish" data-act="filter-set" data-f="your">${p.yourTurn.length} ${p.yourTurn.length === 1 ? "waits" : "wait"} on you</button>` : ""}${tasks.length ? `<span class="turn" data-turn="your">${plural(tasks.length, "open task")}</span>` : ""}</dd>
+      <dt>Reviewers</dt>
+      <dd>${p.reviewers.map(([w, st]) => `<span class="person">${avatar(w)}${esc(name(w))}<span class="st ${STATUS[st][1]}">${STATUS[st][0]}</span></span>`).join("")}</dd>
+      <dt class="m-only">This pull request</dt>
+      <dd class="m-only"><button type="button" class="btn" data-act="follow">${S.following.has(p.id) ? "Unfollow" : "Follow"}</button><button type="button" class="btn" data-act="archive">Archive</button></dd>
+      ${p.reviewedAt ? `<dt>Your review</dt><dd><span>${STATUS[p.my][0]} at <code>${p.reviewedAt}</code>, ${ago(p.reviewedAgo)} ago.</span>${p.newCommits.length ? `<button type="button" class="linkish" data-act="sec" data-sec="commits">${plural(p.newCommits.length, "commit")} since then</button>` : ""}</dd>` : ""}
+    </dl>
+  </section>`;
+}
+
+function sinceSec(p, since) {
+  const head = p.lastVisit === null ? "You have not opened this pull request yet." : `Your last visit: ${visit(p.lastVisit)}.`;
+  const items = since.map((e) => {
+    if (e.kind === "push") return `<li><button type="button" class="ev" data-act="sec" data-sec="commits">${icon("commit")}<span class="ev-t"><b>${esc(name(e.who))}</b> pushed ${plural(e.commits.length, "commit")}</span><time title="${esc(full(e.ago))}">${ago(e.ago)}</time><span class="ev-q">${e.commits.map((c) => esc(c[1])).join("; ")}</span></button></li>`;
+    if (e.kind === "approve") return `<li><div class="ev">${icon("check")}<span class="ev-t"><b>${esc(name(e.who))}</b> approved</span><time title="${esc(full(e.ago))}">${ago(e.ago)}</time></div></li>`;
+    const verb = e.kind === "thread" ? (e.t.path ? "commented on" : "started a general thread") : "replied in";
+    return `<li><button type="button" class="ev" data-act="jump" data-thread="${e.t.id}" data-msg-id="${e.msg.id}">${icon(e.kind === "thread" ? "plus" : "reply")}<span class="ev-t"><b>${esc(name(e.who))}</b> ${verb} ${e.t.path ? `<span class="where">${esc(where(e.t))}</span>` : e.kind === "reply" ? "a general thread" : ""}${e.t.turn === "your" ? turnPill(e.t) : ""}</span><time title="${esc(full(e.ago))}">${ago(e.ago)}</time><span class="ev-q">${esc(snippet(e.msg.text, 140))}</span></button></li>`;
+  });
+  return `<section class="sec" id="s-since" aria-labelledby="h-since">
+    <h2 id="h-since">Since your last visit<span class="n">${since.length || ""}</span><span class="aside">${esc(head)}</span></h2>
+    ${items.length ? `<ul class="since">${items.join("")}</ul>` : `<p class="filter-note">${p.lastVisit === null ? "Everything below is new to you." : "Nothing changed since then."}</p>`}
+  </section>`;
+}
+
+function threadsSec(p) {
+  const all = p.threads;
+  const vis = all.filter(passes);
+  const chips = FILTERS.map(([k, label, fn]) => `<button type="button" class="chip" data-act="filter" data-f="${k}" aria-pressed="${S.filters.has(k)}"><svg class="i check" viewBox="0 0 24 24" aria-hidden="true">${ICON.check}</svg>${label}<span class="n">${all.filter(fn).length}</span></button>`).join("");
+  let groups = "";
+  if (S.group === "turn") {
+    for (const k of TURN_ORDER) {
+      const ts = vis.filter((t) => t.turn === k).sort((a, b) => a.ago - b.ago);
+      if (!ts.length) continue;
+      const hide = k === "resolved" && !S.showResolved && !S.filters.size;
+      groups += `<div class="tgrp" data-turn="${k}"><h3 id="tg-${k}" tabindex="-1"><span class="turn">${glyph(k)}${TURN_LABEL[k]}</span><span class="n">${ts.length}</span></h3>
+        ${hide ? `<button type="button" class="more" data-act="show-resolved">${icon("fold")}Show ${plural(ts.length, "resolved thread")}</button>` : ts.map((t) => thread(p, t)).join("")}</div>`;
+    }
+  } else {
+    const paths = [...new Set(p.files.map((f) => f[1]))].filter((x) => vis.some((t) => t.path === x));
+    for (const path of paths) {
+      const ts = vis.filter((t) => t.path === path).sort((a, b) => a.line - b.line);
+      const ct = p.files.find((f) => f[1] === path)[0];
+      groups += `<div class="tgrp"><h3 id="tf-${esc(path)}" tabindex="-1"><span class="path"><span class="dir">${esc(dir(path))}</span>${esc(base(path))}</span><span class="ctype">${CT[ct]}</span><span class="n">${ts.length}</span></h3>${ts.map((t) => thread(p, t)).join("")}</div>`;
+    }
+    const gen = vis.filter((t) => !t.path);
+    if (gen.length) groups += `<div class="tgrp"><h3 id="tf-general" tabindex="-1">General comments<span class="n">${gen.length}</span></h3>${gen.map((t) => thread(p, t)).join("")}</div>`;
+  }
+  const none = all.length ? `<p class="filter-note">No thread matches these filters. <button type="button" class="linkish" data-act="filter-clear">Clear the filters</button></p>` : `<p class="filter-note">No comments yet.</p>`;
+  return `<section class="sec" id="s-threads" aria-labelledby="h-threads">
+    <h2 id="h-threads">Threads<span class="n">${S.filters.size ? `${vis.length} of ${all.length}` : all.length}</span></h2>
+    ${all.length ? `<div class="tools"><div class="chips" role="group" aria-label="Filter threads">${chips}</div>
+      <div class="seg" role="group" aria-label="Group threads"><button type="button" data-act="group" data-group="turn" aria-pressed="${S.group === "turn"}">By turn</button><button type="button" data-act="group" data-group="file" aria-pressed="${S.group === "file"}">By file</button></div></div>` : ""}
+    ${vis.length ? groups : none}
+  </section>`;
+}
+
+const CT = { MODIFY: "Modified", ADD: "Added", DELETE: "Deleted", MOVE: "Moved" };
+
+function thread(p, t) {
+  const open = isOpen(t);
+  const tags = `${t.outdated ? '<span class="tag old" title="The code changed after this comment">Outdated</span>' : ""}${t.task ? `<span class="tag task${t.task === "done" ? " done" : ""}">${glyph(t.task === "done" ? "resolved" : "wait")}Task ${t.task === "done" ? "done" : "open"}</span>` : ""}`;
+  const n = t.msgs.length;
+  const side = `${t.unread ? `<span class="newc">${t.unread} new</span>` : ""}<span>${n > 1 ? plural(n - 1, "reply", "replies") : "No replies"}</span><time title="${esc(full(t.ago))}">${ago(t.ago)}</time>${icon("chev", "chev")}`;
+  const latest = open ? "" : `<span class="th-latest"><b>${esc(name(t.last.who))}</b><span>${esc(snippet(t.last.text, 160))}</span></span>`;
+  return `<article class="th${S.cur === t.id ? " is-cur" : ""}" id="t-${t.id}" data-turn="${t.turn}" data-thread="${t.id}" tabindex="-1" aria-label="${esc(`${turnText(t)}. ${where(t)}.${t.unread ? ` ${t.unread} new.` : ""}`)}">
+    <button type="button" class="th-head" data-act="toggle" data-thread="${t.id}" aria-expanded="${open}" aria-controls="tb-${t.id}">
+      <span class="th-line1">${turnPill(t)}<span class="th-where${t.path ? "" : " general"}">${t.path ? `${esc(base(t.path))}<span class="ln">:${t.line}</span>` : "General comment"}</span>${tags}</span>
+      <span class="th-side">${side}</span>
+      ${latest}
+    </button>
+    <div class="th-body" id="tb-${t.id}" ${open ? "" : "hidden"}>
+      ${t.code ? codeBlock(t) : ""}
+      <ol class="msgs">${messages(t)}</ol>
+      <div class="th-foot">
+        <button type="button" class="btn" aria-disabled="true" data-act="soon" data-msg="Replies arrive in M3. You write here, see a preview, and confirm before it posts.">${icon("reply")}Reply<span class="soon">M3</span></button>
+        <button type="button" class="btn quiet" data-act="bb">Open in Bitbucket${icon("ext")}</button>
+      </div>
+    </div>
+  </article>`;
+}
+
+function codeBlock(t) {
+  return `<div class="code" role="group" aria-label="${esc(`Code at ${t.path} line ${t.line}${t.outdated ? ", as it was when the comment was written" : ""}`)}">
+    ${t.outdated ? '<p class="code-note">Code as it was when the comment was written. The file changed after that.</p>' : ""}
+    <pre>${t.code.map(([n, k, s]) => `<span class="cl ${k}${n === t.line ? " hit" : ""}"><span class="no">${n}</span><span class="sg">${k === "add" ? "+" : k === "del" ? "−" : " "}</span><span class="tx">${esc(s)}${n === t.line ? '<span class="sr"> (commented line)</span>' : ""}</span></span>`).join("")}</pre>
+  </div>`;
+}
+
+function messages(t) {
+  const ms = t.msgs;
+  const msg = (x, i) => `<li class="msg${x.new ? " is-new" : ""}" id="m-${x.id}" tabindex="-1">${avatar(x.who)}
+    <div class="msg-h"><b>${esc(name(x.who))}</b>${i > 0 && x.to && x.to !== ms[i - 1].who ? `<span>to ${esc(first(x.to))}</span>` : ""}<time title="${esc(full(x.ago))}">${ago(x.ago)}</time>${x.edited ? "<span>edited</span>" : ""}${x.task ? `<span class="tag task">${glyph("wait")}Task</span>` : ""}${x.new ? '<span class="new-l">New</span>' : ""}</div>
+    <div class="msg-b">${paras(x.text)}</div></li>`;
+  // Long threads: the root and the newest two stay. Read replies between them fold.
+  if (ms.length > 3 && !S.unfold.has(t.id)) {
+    const firstNew = ms.findIndex((x) => x.new);
+    const keep = Math.min(firstNew < 0 ? 2 : Math.max(2, ms.length - firstNew), ms.length - 1);
+    const hidden = ms.length - 1 - keep;
+    if (hidden > 0) return `${msg(ms[0], 0)}<li class="msg"><span></span><button type="button" class="fold" data-act="unfold" data-thread="${t.id}">${icon("fold")}Show ${plural(hidden, "earlier reply", "earlier replies")}</button></li>${ms.slice(ms.length - keep).map((x, j) => msg(x, ms.length - keep + j)).join("")}`;
+  }
+  return ms.map(msg).join("");
+}
+
+function filesSec(p) {
+  return `<section class="sec" id="s-files" aria-labelledby="h-files">
+    <h2 id="h-files">Files<span class="n">${p.files.length}</span><span class="aside"><a href="#" data-act="bb">Diff in Bitbucket</a></span></h2>
+    <ul class="files">${p.files.map(([ct, path]) => {
+      const ts = p.threads.filter((t) => t.path === path);
+      return `<li><span class="ct">${CT[ct]}</span><span class="p"><span class="dir">${esc(dir(path))}</span>${esc(base(path))}</span><span class="fc">${ts.length ? `<span class="tiles mini" aria-hidden="true">${ts.map((t) => `<span class="tile" data-turn="${t.turn}">${glyph(t.turn)}</span>`).join("")}</span><button type="button" class="linkish" data-act="file" data-path="${esc(path)}">${plural(ts.length, "thread")}</button>` : "<span>No comments</span>"}</span></li>`;
+    }).join("")}</ul>
+  </section>`;
+}
+
+function commitsSec(p) {
+  const rows = [];
+  let marked = false;
+  if (p.newCommits.length) rows.push(`<li class="mark-new">New since your review</li>`);
+  for (const c of p.commits) {
+    if (p.reviewedAt && !marked && c[0] === p.reviewedAt) {
+      rows.push(`<li class="mark">Your review: ${STATUS[p.my][0].toLowerCase()}, ${ago(p.reviewedAgo)} ago. It covered the commits below.</li>`);
+      marked = true;
+    }
+    rows.push(`<li class="c${c[4] ? " new" : ""}"><span class="h">${c[0]}</span><span class="msgline">${esc(c[1])}${c[4] ? '<span class="sr"> (new since your review)</span>' : ""}</span><span class="by">${esc(name(c[2]))}, ${ago(c[3])}</span></li>`);
+  }
+  return `<section class="sec" id="s-commits" aria-labelledby="h-commits">
+    <h2 id="h-commits">Commits<span class="n">${p.commits.length}</span>${p.newCommits.length && p.reviewedAt ? `<span class="aside">${plural(p.newCommits.length, "commit")} since your review</span>` : ""}</h2>
+    <ul class="commits">${rows.join("")}</ul>
+  </section>`;
+}
+
+function later(page) {
+  if (page === "review") return `<section class="later" aria-labelledby="h-later"><h2 id="h-later">Review arrives in M2</h2>
+    <p>Start a Claude Code review of this pull request here. The result lists the reviewed commits, a summary, risk areas, questions for the author, findings, and a coverage report.</p>
+    <p>You accept, edit, or discard each item. Accepted items go to Ready to post (M3).</p>
+    <div class="ghost" aria-hidden="true"><div>Items<i></i><i></i><i></i><i></i></div><div>Selected item<i></i><i></i><i></i></div></div></section>`;
+  return `<section class="later" aria-labelledby="h-later"><h2 id="h-later">Run log arrives in M2</h2>
+    <p>Each tool call of a running review shows here: its target, its result, and each error. Finished, failed, and cancelled runs keep their log.</p>
+    <div class="ghost" aria-hidden="true" style="grid-template-columns:minmax(0,1fr)"><div>Run log<i></i><i></i><i></i><i></i><i></i></div></div></section>`;
+}
+
+// ---------- Section spy ----------
+let observer = null;
+function spy() {
+  observer?.disconnect();
+  const root = $("#dbody");
+  const secs = $$(".sec", root);
+  if (!secs.length) { setRail(null); return; }
+  const seen = new Map();
+  observer = new IntersectionObserver((entries) => {
+    for (const e of entries) seen.set(e.target.id, e.isIntersecting);
+    const firstVisible = secs.find((s) => seen.get(s.id));
+    if (firstVisible) setRail(firstVisible.id.slice(2));
+  }, { root, rootMargin: "-56px 0px -55% 0px" });
+  secs.forEach((s) => observer.observe(s));
+}
+function setRail(id) {
+  for (const a of $$(".rail-i[data-sec]")) {
+    if (a.dataset.sec === id) a.setAttribute("aria-current", "true");
+    else a.removeAttribute("aria-current");
+  }
+  const on = $(".rail-i[data-sec][aria-current]");
+  if (on && $(".rail").scrollWidth > $(".rail").clientWidth) on.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+// ---------- Navigation ----------
+function renderAll() { renderSide(); renderList(); renderDetail(); }
+
+function select(id, { focusDetail = false, toCause = false } = {}) {
+  const changed = S.sel !== id;
+  S.sel = id;
+  if (changed) { S.page = "conv"; S.cur = null; S.filters.clear(); S.unfold.clear(); S.showResolved = false; S.descOpen = false; const db = $("#dbody"); if (db) db.scrollTop = 0; }
+  renderList();
+  renderDetail();
+  if (changed && !toCause) $("#dbody").scrollTop = 0;
+  if (focusDetail) {
+    S.focus = "detail";
+    $("#app").dataset.mobile = "detail";
+    const p = cur();
+    if (toCause && p.cause) jumpThread(p.cause.id, { msgId: p.cause.msgs.find((x) => x.new)?.id });
+    else $("#dbody").focus({ preventScroll: true });
+  }
+}
+
+// The selection moves to the first row when the current one leaves the list, as in M1.
+function keepSelection() {
+  renderSide();
+  const rows = orderedRows();
+  if (rows.length && !rows.some((p) => p.id === S.sel)) select(rows[0].id);
+  else renderList();
+}
+
+function goSection(id) {
+  if (S.page !== "conv") { S.page = "conv"; renderDetail(); }
+  const el = $(`#s-${id}`);
+  if (!el) return;
+  el.scrollIntoView({ block: "start", behavior: "instant" });
+  setRail(id);
+}
+
+function jumpThread(tid, { msgId } = {}) {
+  const p = cur();
+  const t = p.threads.find((x) => x.id === tid);
+  if (!t) return;
+  if (S.page !== "conv") S.page = "conv";
+  if (!passes(t)) S.filters.clear();
+  if (t.turn === "resolved") S.showResolved = true;
+  S.open.set(tid, true);
+  if (msgId) S.unfold.add(tid);
+  S.cur = tid;
+  S.focus = "detail";
+  renderDetail();
+  const el = $(`#t-${tid}`);
+  const target = (msgId && $(`#m-${msgId}`)) || el;
+  target.scrollIntoView({ block: "start", behavior: "instant" });
+  el.classList.add("flash");
+  setTimeout(() => el.classList.remove("flash"), 950);
+  target.focus({ preventScroll: true });
+}
+
+function visibleThreads() { return $$(".th").map((el) => Number(el.dataset.thread)); }
+
+function stepThread(d) {
+  const ids = visibleThreads();
+  if (!ids.length) return;
+  const i = ids.indexOf(S.cur);
+  const next = ids[i < 0 ? (d > 0 ? 0 : ids.length - 1) : Math.max(0, Math.min(ids.length - 1, i + d))];
+  setCur(next);
+}
+function setCur(id) {
+  S.cur = id;
+  for (const el of $$(".th")) el.classList.toggle("is-cur", Number(el.dataset.thread) === id);
+  const el = $(`#t-${id}`);
+  el.scrollIntoView({ block: "nearest", behavior: "instant" });
+  el.focus({ preventScroll: true });
+}
+
+function nextNew(d) {
+  const p = cur();
+  const order = visibleThreads();
+  const msgs = [];
+  for (const tid of order) for (const x of p.threads.find((t) => t.id === tid).msgs) if (x.new) msgs.push([tid, x.id]);
+  if (!msgs.length) { toast("No new message is left in this view."); return; }
+  const at = document.activeElement?.closest?.(".msg")?.id;
+  const i = msgs.findIndex(([, id]) => `m-${id}` === at);
+  const n = msgs[(i < 0 ? (d > 0 ? 0 : msgs.length - 1) : i + d + msgs.length) % msgs.length];
+  jumpThread(n[0], { msgId: n[1] });
+}
+
+function nextYour() {
+  const p = cur();
+  const ids = visibleThreads().filter((id) => p.threads.find((t) => t.id === id).turn === "your");
+  if (!ids.length) { toast("No thread waits on you."); return; }
+  const i = ids.indexOf(S.cur);
+  jumpThread(ids[(i + 1) % ids.length]);
+}
+
+function toggleThread(id) {
+  const t = cur().threads.find((x) => x.id === id);
+  S.open.set(id, !isOpen(t));
+  S.cur = id;
+  renderDetail();
+  $(`#t-${id} .th-head`).focus({ preventScroll: true });
+}
+
+function pages(page) {
+  S.page = page;
+  renderDetail();
+  if (page !== "conv") $("#dbody").scrollTop = 0;
+}
+
+// ---------- Events ----------
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-act]");
+  if (!el) return;
+  const act = el.dataset.act;
+  if (el.tagName === "A") e.preventDefault();
+  switch (act) {
+    case "view": S.view = el.dataset.view; S.repo = null; $("#app").dataset.mobile = "list"; keepSelection(); break;
+    case "repo": S.repo = S.repo === el.dataset.repo ? null : el.dataset.repo; $("#app").dataset.mobile = "list"; keepSelection(); break;
+    case "repo-x": S.repo = null; renderSide(); renderList(); break;
+    case "row": select(Number(el.dataset.pr), { focusDetail: true, toCause: true }); break;
+    case "side": $("#app").dataset.mobile = "side"; break;
+    case "back": S.focus = "list"; $("#app").dataset.mobile = "list"; $(`.row[data-pr="${S.sel}"]`)?.focus(); break;
+    case "sec": goSection(el.dataset.sec); break;
+    case "tgroup": {
+      if (S.page !== "conv") S.page = "conv";
+      S.group = "turn";
+      if (el.dataset.g === "resolved") S.showResolved = true;
+      S.filters.clear();
+      renderDetail();
+      const h = $(`#tg-${el.dataset.g}`);
+      h?.scrollIntoView({ block: "start", behavior: "instant" });
+      h?.focus({ preventScroll: true });
+      break;
+    }
+    case "jump": jumpThread(Number(el.dataset.thread), { msgId: el.dataset.msgId ? Number(el.dataset.msgId) : undefined }); break;
+    case "toggle": toggleThread(Number(el.dataset.thread)); break;
+    case "unfold": S.unfold.add(Number(el.dataset.thread)); renderDetail(); break;
+    case "filter": { const f = el.dataset.f; S.filters.has(f) ? S.filters.delete(f) : S.filters.add(f); renderDetail(); $(`.chip[data-f="${f}"]`)?.focus(); break; }
+    case "filter-set": S.filters = new Set([el.dataset.f]); S.group = "turn"; renderDetail(); goSection("threads"); break;
+    case "filter-clear": S.filters.clear(); renderDetail(); break;
+    case "group": S.group = el.dataset.group; renderDetail(); $(`.seg [data-group="${S.group}"]`)?.focus(); break;
+    case "show-resolved": S.showResolved = true; renderDetail(); break;
+    case "file": S.group = "file"; S.filters.clear(); renderDetail(); { const h = document.getElementById(`tf-${el.dataset.path}`); h?.scrollIntoView({ block: "start" }); h?.focus({ preventScroll: true }); } break;
+    case "desc": S.descOpen = !S.descOpen; renderDetail(); break;
+    case "page": pages(el.dataset.page); break;
+    case "soon": toast(el.dataset.msg); break;
+    case "bb": toast("Opens this place in Bitbucket in a new tab."); break;
+    case "follow": { const id = S.sel; S.following.has(id) ? S.following.delete(id) : S.following.add(id); toast(S.following.has(id) ? "Following. Review Loop checks it for new comments." : "Not followed. Review Loop stops checking it for new comments."); renderDetail(); break; }
+    case "archive": toast(`Archived ${key(cur())}. Paste its URL into the filter to follow it again.`); break;
+    case "check": toast("Checked just now. Nothing new."); break;
+    case "settings": toast("Settings are unchanged from M1."); break;
+    case "theme": {
+      const order = ["system", "light", "dark"];
+      const t = order[(order.indexOf(document.documentElement.dataset.theme || "system") + 1) % 3];
+      if (t === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+      try { localStorage.setItem("rl-v3-theme", t); } catch {}
+      renderSide();
+      $('[data-act="theme"]').focus();
+      break;
+    }
+    case "density": {
+      const c = document.documentElement.dataset.density === "compact";
+      if (c) delete document.documentElement.dataset.density; else document.documentElement.dataset.density = "compact";
+      try { localStorage.setItem("rl-v3-density", c ? "comfortable" : "compact"); } catch {}
+      renderSide();
+      $('[data-act="density"]').focus();
+      break;
+    }
+  }
+});
+
+document.addEventListener("input", (e) => {
+  if (e.target.id !== "q") return;
+  S.query = e.target.value;
+  const pos = e.target.selectionStart;
+  renderList();
+  const q = $("#q");
+  q.focus();
+  q.setSelectionRange(pos, pos);
+});
+
+document.addEventListener("focusin", (e) => {
+  if (e.target.closest("#list")) S.focus = "list";
+  else if (e.target.closest("#detail")) S.focus = "detail";
+});
+
+let gChord = 0;
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const help = $("#help");
+  const typing = e.target.matches?.("input, textarea, [contenteditable]");
+  if (e.key === "Escape") {
+    if (help.open) return;
+    if (typing) { e.target.blur(); S.focus = "list"; return; }
+    if (S.focus === "detail" || $("#app").dataset.mobile !== "list") { e.preventDefault(); S.focus = "list"; $("#app").dataset.mobile = "list"; $(`.row[data-pr="${S.sel}"]`)?.focus(); }
+    return;
+  }
+  if (typing) return;
+  if (e.key === "?") { e.preventDefault(); help.open ? help.close() : help.showModal(); return; }
+  if (help.open) return;
+  if (gChord) {
+    clearTimeout(gChord);
+    gChord = 0;
+    const sec = { o: "overview", s: "since", t: "threads", f: "files", c: "commits" }[e.key];
+    if (sec) { e.preventDefault(); S.focus = "detail"; $("#app").dataset.mobile = "detail"; goSection(sec); }
+    return;
+  }
+  const onButton = e.target.matches?.("button, a") && !e.target.matches(".row");
+  const rows = orderedRows().map((p) => p.id);
+  switch (e.key) {
+    case "g": gChord = setTimeout(() => { gChord = 0; }, 1200); return;
+    case "/": e.preventDefault(); $("#app").dataset.mobile = "list"; $("#q").focus(); return;
+    case "j": case "k": {
+      e.preventDefault();
+      const d = e.key === "j" ? 1 : -1;
+      if (S.focus === "detail") { stepThread(d); return; }
+      const i = rows.indexOf(S.sel);
+      const id = rows[i < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, i + d))];
+      if (id !== undefined) { select(id); $(`.row[data-pr="${id}"]`)?.focus(); $(`.row[data-pr="${id}"]`)?.scrollIntoView({ block: "nearest" }); }
+      return;
+    }
+    case "Enter": case "ArrowRight":
+      if (S.focus === "list" && !(e.key === "Enter" && onButton)) { e.preventDefault(); select(S.sel, { focusDetail: true, toCause: true }); }
+      else if (S.focus === "detail" && e.key === "Enter" && S.cur && !onButton) { e.preventDefault(); toggleThread(S.cur); }
+      return;
+    case "ArrowLeft":
+      if (S.focus === "detail") { e.preventDefault(); S.focus = "list"; $("#app").dataset.mobile = "list"; $(`.row[data-pr="${S.sel}"]`)?.focus(); }
+      return;
+    case "o": if (S.cur) { e.preventDefault(); toggleThread(S.cur); } return;
+    case "n": e.preventDefault(); S.focus = "detail"; $("#app").dataset.mobile = "detail"; nextNew(1); return;
+    case "N": e.preventDefault(); S.focus = "detail"; $("#app").dataset.mobile = "detail"; nextNew(-1); return;
+    case "y": e.preventDefault(); S.focus = "detail"; $("#app").dataset.mobile = "detail"; nextYour(); return;
+    case "1": pages("conv"); return;
+    case "2": pages("review"); return;
+    case "3": pages("log"); return;
+    case "r": toast("Review arrives in M2."); return;
+  }
+});
+$("#help-close").addEventListener("click", () => $("#help").close());
+
+try {
+  const t = localStorage.getItem("rl-v3-theme");
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  if (localStorage.getItem("rl-v3-density") === "compact") document.documentElement.dataset.density = "compact";
+} catch {}
+renderAll();
+</script>
