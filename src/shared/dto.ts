@@ -48,6 +48,17 @@ export type SyncStatus = {
 
 export type Reason = "reply_to_you" | "review_requested" | "new_commits" | "closed";
 
+// The inbox reason of a row. views.ts GROUPS maps each one to a list group. "triage" needs review drafts (M2).
+export type Group = "your" | "triage" | "review" | "commits" | "comments" | "waiting" | "quiet" | "closed";
+
+// The thread that the row opens at. msg: the first unread message, else the newest live message.
+// author and snippet come from the newest live message. author: the display name, else the slug.
+export type Cause = { thread: number; msg: number; author: string; snippet: string };
+
+export type TaskSource = "branch" | "title" | "description";
+
+export type PrTask = { key: string; source: TaskSource; url: string | null };
+
 // Metadata fields are null for a PR followed by URL until its first sync cycle.
 export type PrRow = {
   id: number;
@@ -71,6 +82,16 @@ export type PrRow = {
   // 0 for an unfollowed PR.
   unread: number;
   reasons: Reason[];
+  group: Group;
+  // The count of threads where it is my turn (src/shared/turn.ts).
+  yourTurn: number;
+  cause: Cause | null;
+  // ms: the newest live message of the longest-waiting "wait" thread. null without a "wait" thread.
+  waitSince: number | null;
+  // ms: the last POST /api/prs/:id/seen. null before the first visit.
+  seenAt: number | null;
+  // Empty until WP2 writes task IDs.
+  tasks: PrTask[];
   // ms: the newest of the PR update and the comment updates.
   lastActivity: number;
   checkpoint: CheckpointDto | null;
@@ -123,3 +144,6 @@ export const readInput = z.object({
 export const followInput = z.object({ followed: z.boolean() });
 export const archiveInput = z.object({ archived: z.boolean() });
 export const followUrlInput = z.object({ url: z.string().trim().min(1).max(2048) });
+
+// GET /api/meta. Product names only, never a setting value.
+export type MetaDto = { forge: { name: string } };

@@ -16,6 +16,7 @@ import {
   followKey,
   listPrs,
   markRead,
+  markSeen,
   prDetail,
   setArchived,
   setFollowed,
@@ -82,6 +83,14 @@ export function createInboxRoutes(opts: { settings: Settings; sync: SyncEngine; 
       changed(state.id);
       if (followed) void sync.syncNow();
       return c.json(state, 200);
+    })
+    .post("/prs/:id/seen", idParam, (c) => {
+      const s = open();
+      if (!s) return c.json(unconfigured, 409);
+      const seen = markSeen(s.db, c.req.valid("param").id, now());
+      if (!seen) return c.json({ error: "Pull request not found." }, 404);
+      changed(seen.id);
+      return c.json(seen, 200);
     })
     .post("/prs/:id/archive", idParam, json(archiveInput), (c) => {
       const s = open();

@@ -21,6 +21,12 @@ const row = (o: Partial<PrRow>): PrRow => ({
   followed: true,
   unread: 0,
   reasons: [],
+  group: "quiet",
+  yourTurn: 0,
+  cause: null,
+  waitSince: null,
+  seenAt: null,
+  tasks: [],
   lastActivity: 0,
   checkpoint: null,
   ...o,
@@ -52,8 +58,21 @@ describe("view predicates", () => {
     expect(views(row({ state: "MERGED", onDashboard: false }))).toEqual(["following"]);
   });
 
-  test("sort puts unread first, then the newest activity", () => {
-    const list = [row({ id: 1, lastActivity: 5 }), row({ id: 2, lastActivity: 1, unread: 1 }), row({ id: 3, lastActivity: 9 })];
-    expect(list.sort(byInbox).map((r) => r.id)).toEqual([2, 3, 1]);
+  test("a read your-turn PR needs me", () => {
+    expect(views(row({ status: "APPROVED", yourTurn: 1, group: "your" }))).toEqual(["needs", "reviewing", "following"]);
+    expect(views(row({ status: "APPROVED", yourTurn: 1, followed: false }))).toEqual(["reviewing"]);
+  });
+
+  test("sort follows the reason order, then unread first, then the newest activity", () => {
+    const list = [
+      row({ id: 1, lastActivity: 5, group: "quiet" }),
+      row({ id: 2, lastActivity: 1, unread: 1, group: "comments" }),
+      row({ id: 3, lastActivity: 9, group: "comments" }),
+      row({ id: 4, lastActivity: 0, group: "your" }),
+      row({ id: 5, lastActivity: 7, group: "closed", unread: 0 }),
+      row({ id: 6, lastActivity: 8, group: "waiting" }),
+      row({ id: 7, lastActivity: 2, group: "review" }),
+    ];
+    expect(list.sort(byInbox).map((r) => r.id)).toEqual([4, 7, 2, 3, 6, 1, 5]);
   });
 });

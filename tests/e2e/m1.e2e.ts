@@ -250,7 +250,7 @@ test("A14: two pages get one notification; read in one page updates the other; a
   await expect(row(watcher, TITLE.a)).not.toContainText("1 new");
 });
 
-test("A15: a merge leaves Reviewing, stays in Needs you while unread, and stays followed", async ({ page, request }) => {
+test("A15: a merge leaves Reviewing, stays in Needs you on my turn, and stays followed", async ({ page, request }) => {
   await connect(page);
   await park(page, TITLE.b);
   await control("state", { merge: "reply" });
@@ -262,8 +262,10 @@ test("A15: a merge leaves Reviewing, stays in Needs you while unread, and stays 
   await nav(page, "Needs you").click();
   await expect(row(page, TITLE.c)).toContainText("Merged");
   await expect(row(page, TITLE.c)).toContainText("1 new");
-  // Needs you shows it first, so it gets read and then leaves Needs you. Following keeps it.
-  await expect(row(page, TITLE.c)).toHaveCount(0);
+  // v3 (WP1): the reply makes it my turn, so the PR stays in Needs you after the read. M1 dropped it from Needs you.
+  await expect(row(page, TITLE.c)).not.toContainText("1 new");
+  expect(await prRow(request, TITLE.c)).toMatchObject({ state: "MERGED", unread: 0, yourTurn: 1, group: "your" });
+  await expect(row(page, TITLE.c)).toContainText("Merged");
   await nav(page, "Following").click();
   await expect(row(page, TITLE.c)).toContainText("Merged");
 });

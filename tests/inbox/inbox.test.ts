@@ -12,6 +12,7 @@ import { createSettings } from "../../src/server/settings";
 import { openDb } from "../../src/server/storage/db";
 import type { SyncEngine } from "../../src/server/sync/engine";
 import type { ClaimedEvent, FollowState, PrDetail, PrRow } from "../../src/shared/dto";
+import { VIEWS } from "../../src/shared/views";
 import { FAKE_TOKEN, FAKE_USER, type FakeBitbucket, fixture, key, startFakeBitbucket } from "../support/fake-bitbucket";
 import { DASHBOARD_PATH, PR_PATH } from "../support/scenarios";
 
@@ -102,8 +103,10 @@ async function setup(me = ME) {
   const comment = (prId: number, id: number, o: Record<string, string | number | null> = {}) =>
     db
       .query(
-        `INSERT INTO comment (pr, comment_id, version, root_id, author_slug, text, created_at, updated_at, ack_version, tombstoned_at)
-        VALUES ($pr, $id, $version, $root_id, $author_slug, $text, $created_at, $updated_at, $ack_version, $tombstoned_at)`,
+        `INSERT INTO comment (pr, comment_id, version, root_id, author_slug, author_name, text, thread_resolved, created_at, updated_at, ack_version,
+          tombstoned_at)
+        VALUES ($pr, $id, $version, $root_id, $author_slug, $author_name, $text, $thread_resolved, $created_at, $updated_at, $ack_version,
+          $tombstoned_at)`,
       )
       .run({
         pr: prId,
@@ -111,7 +114,9 @@ async function setup(me = ME) {
         version: 0,
         root_id: id,
         author_slug: "other",
+        author_name: null,
         text: `Comment ${id}`,
+        thread_resolved: 0,
         created_at: 2000,
         updated_at: 2000,
         ack_version: null,
@@ -388,9 +393,14 @@ describe("GET /api/prs and /api/prs/:id", () => {
     expect(by(approved)).toMatchObject({ reasons: [], unread: 1 });
     expect(by(mine)).toMatchObject({ reasons: ["reply_to_you"], unread: 1, lastActivity: 9000, role: "AUTHOR" });
     expect(by(unfollowed)).toMatchObject({ followed: false, unread: 0, reasons: ["review_requested"] });
-    // Unread first, then the newest activity.
-    expect(list[0]?.id).toBe(mine);
-    expect(list[1]?.id).toBe(approved);
+    // v3 order: reason order first (your, review, commits, comments), then unread, then the newest activity. M1 put unread first.
+    expect(list.map((r) => [r.id, r.group])).toEqual([
+      [mine, "your"],
+      [unfollowed, "review"],
+      [requested, "review"],
+      [newCommits, "commits"],
+      [approved, "comments"],
+    ]);
   });
 
   test("a merged PR with unread replies stays listed and unread (A15)", async () => {
@@ -400,6 +410,88 @@ describe("GET /api/prs and /api/prs/:id", () => {
     h.comment(p, 2, { root_id: 1 });
     h.comment(p, 3, { root_id: 1 });
     expect(await h.row(p)).toMatchObject({ state: "MERGED", unread: 2, reasons: ["reply_to_you", "closed"], followed: true });
+  });
+
+  test("a closed PR with a your-turn or unread reason keeps it (D1), else it is closed", async () => {
+    const h = await setup();
+    const yours = h.pr({ state: "MERGED", on_dashboard: 0 });
+    h.comment(yours, 1, { author_slug: ME, created_at: 10, ack_version: 0 });
+    h.comment(yours, 2, { root_id: 1, created_at: 20, ack_version: 0 });
+    const unread = h.pr({ state: "DECLINED" });
+    h.comment(unread, 3);
+    const quiet = h.pr({ state: "MERGED" });
+    h.comment(quiet, 4, { ack_version: 0 });
+    const list = await h.rows();
+    expect(list.map((r) => [r.id, r.group])).toEqual([
+      [yours, "your"],
+      [unread, "comments"],
+      [quiet, "closed"],
+    ]);
+  });
+
+  test("groups follow the reason order, and waitSince names the longest wait", async () => {
+    const h = await setup();
+    const review = h.pr();
+    const waiting = h.pr({ my_status: "NEEDS_WORK", last_reviewed_commit: "head1" });
+    h.comment(waiting, 1, { created_at: 10, ack_version: 0 });
+    h.comment(waiting, 2, { root_id: 1, author_slug: ME, created_at: 30, ack_version: 0 });
+    h.comment(waiting, 3, { author_slug: ME, created_at: 20, ack_version: 0 });
+    const quiet = h.pr({ my_status: "APPROVED", last_reviewed_commit: "head1" });
+    h.comment(quiet, 4, { ack_version: 0 });
+    const list = await h.rows();
+    expect(list.map((r) => [r.id, r.group, r.waitSince])).toEqual([
+      [review, "review", null],
+      [waiting, "waiting", 20],
+      [quiet, "quiet", null],
+    ]);
+    expect(list.every((r) => r.yourTurn === 0 && r.cause === null && r.seenAt === null && r.tasks.length === 0)).toBe(true);
+  });
+
+  test("the cause is the newest unread your-turn thread and opens at its first unread message", async () => {
+    const h = await setup();
+    const p = h.pr({ my_role: "AUTHOR", my_status: null, author_slug: ME });
+    // Your turn, read, newest.
+    h.comment(p, 1, { created_at: 100, ack_version: 0 });
+    // Your turn, unread from message 3.
+    h.comment(p, 2, { created_at: 10, ack_version: 0 });
+    h.comment(p, 3, { root_id: 2, created_at: 20, author_name: "Kenji Sato", text: "First  `new`\n reply" });
+    h.comment(p, 4, { root_id: 2, created_at: 30, author_name: "Mira Patel", text: `Second ${"x".repeat(200)}` });
+    // Unread, but resolved.
+    h.comment(p, 5, { created_at: 200, thread_resolved: 1 });
+    const r = (await h.row(p)) as PrRow;
+    expect(r).toMatchObject({ group: "your", yourTurn: 2, unread: 3 });
+    expect(r.cause).toMatchObject({ thread: 2, msg: 3, author: "Mira Patel" });
+    expect(r.cause?.snippet).toHaveLength(110);
+    expect(r.cause?.snippet.startsWith("Second xxx")).toBe(true);
+    expect(r.cause?.snippet.endsWith("…")).toBe(true);
+  });
+
+  test("without unread your-turn threads, the cause is the newest your-turn thread, then the newest unread thread", async () => {
+    const h = await setup();
+    const read = h.pr({ my_role: "AUTHOR", my_status: null, author_slug: ME });
+    h.comment(read, 1, { created_at: 10, ack_version: 0, text: "Old" });
+    h.comment(read, 2, { created_at: 20, ack_version: 0, text: "Why  `x`?\n\nSee   here." });
+    const other = h.pr({ my_status: "APPROVED", last_reviewed_commit: "head1" });
+    h.comment(other, 3, { created_at: 10 });
+    h.comment(other, 4, { created_at: 20 });
+    h.comment(other, 5, { root_id: 3, created_at: 30, tombstoned_at: 1 });
+    expect((await h.row(read))?.cause).toEqual({ thread: 2, msg: 2, author: "other", snippet: "Why x? See here." });
+    expect((await h.row(other))?.cause).toEqual({ thread: 4, msg: 4, author: "other", snippet: "Comment 4" });
+  });
+
+  test("a read your-turn PR stays in Needs you", async () => {
+    const h = await setup();
+    const p = h.pr({ my_status: "APPROVED", last_reviewed_commit: "head1" });
+    h.comment(p, 1, { author_slug: ME, created_at: 10, ack_version: 0 });
+    h.comment(p, 2, { root_id: 1, created_at: 20, ack_version: 0 });
+    const r = (await h.row(p)) as PrRow;
+    expect(r).toMatchObject({ unread: 0, yourTurn: 1, group: "your" });
+    expect(VIEWS.needs(r)).toBe(true);
+    // A deleted reply hands the turn back to the other side.
+    h.db.query("UPDATE comment SET tombstoned_at = 1 WHERE comment_id = 2").run();
+    const after = (await h.row(p)) as PrRow;
+    expect(after).toMatchObject({ yourTurn: 0, group: "waiting", waitSince: 10 });
+    expect(VIEWS.needs(after)).toBe(false);
   });
 
   test("the detail gives comments with unread flags, deleted comments without text, and the checkpoint", async () => {
@@ -457,5 +549,44 @@ describe("GET /api/prs and /api/prs/:id", () => {
     const body = await detail.json();
     const flag: boolean | undefined = body.comments[0]?.unread;
     expect(flag).toBe(false);
+  });
+});
+
+describe("POST /api/prs/:id/seen", () => {
+  test("seen sets seenAt on the row and the detail, and broadcasts changed", async () => {
+    const h = await setup();
+    const p = h.pr();
+    expect((await h.row(p))?.seenAt).toBeNull();
+    const res = await h.json<{ id: number; seenAt: number }>(`/api/prs/${p}/seen`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(p);
+    expect(typeof res.body.seenAt).toBe("number");
+    expect((await h.row(p))?.seenAt).toBe(res.body.seenAt);
+    expect((await h.json<PrDetail>(`/api/prs/${p}`)).body.pr.seenAt).toBe(res.body.seenAt);
+    expect(h.sent).toEqual([["changed", { prs: [p] }]]);
+  });
+
+  test("an unknown PR gives 404, a bad ID gives 400, and no session gives 403", async () => {
+    const h = await setup();
+    const p = h.pr();
+    expect((await h.call("/api/prs/999/seen", { method: "POST" })).status).toBe(404);
+    expect((await h.call("/api/prs/abc/seen", { method: "POST" })).status).toBe(400);
+    const res = await h.app.request(`${ORIGIN}/api/prs/${p}/seen`, { method: "POST", headers: { host: HEADERS.host, origin: ORIGIN } });
+    expect(res.status).toBe(403);
+    expect((await h.row(p))?.seenAt).toBeNull();
+    expect(h.sent).toEqual([]);
+  });
+});
+
+describe("GET /api/meta", () => {
+  test("meta gives the forge name and no setting value", async () => {
+    const h = await setup();
+    const res = await h.call("/api/meta");
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ forge: { name: "Bitbucket" } });
+    expect(text).not.toContain(FAKE_TOKEN);
+    expect(text).not.toContain(fake.url);
+    expect(text).not.toContain(SESSION);
   });
 });

@@ -4,6 +4,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { allowedOrigins, type GuardOptions, guard } from "./guard";
 import { createInboxRoutes } from "./inbox/routes";
 import type { Live } from "./live";
+import { meta } from "./meta";
 import { createSettings, type Settings } from "./settings";
 import { createSyncEngine, type SyncEngine } from "./sync/engine";
 
@@ -41,6 +42,7 @@ export function createApp(opts: AppOptions) {
     .use(csrf({ origin: allowedOrigins(opts) }))
     .get("/api/live", (c) => opts.live.handler(c))
     .route("/api/settings", settings.routes)
+    .route("/api/meta", meta)
     .post("/api/sync", (c) => {
       void sync.syncNow();
       return c.json(sync.status(), 202);
