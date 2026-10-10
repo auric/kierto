@@ -5,14 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hc } from "hono/client";
 import { type AppType, createApp } from "../../src/server/app";
-import { writeConfig } from "../../src/server/config";
+import { dbPath, writeConfig } from "../../src/server/config";
 import { createLive, type LiveEvent } from "../../src/server/live";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
+import { openDb } from "../../src/server/storage/db";
 import type { SyncEngine } from "../../src/server/sync/engine";
 import type { ClaimedEvent, FollowState, PrDetail, PrRow } from "../../src/shared/dto";
 import { FAKE_TOKEN, FAKE_USER, type FakeBitbucket, fixture, key, startFakeBitbucket } from "../support/fake-bitbucket";
-import { PR_PATH } from "../support/scenarios";
+import { DASHBOARD_PATH, PR_PATH } from "../support/scenarios";
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
 const root = mkdtempSync(join(tmpdir(), "rl-inbox-"));
@@ -37,9 +38,9 @@ afterEach(() => {
 });
 
 let n = 0;
-async function setup() {
+async function setup(me = ME) {
   const dir = join(root, `case-${n++}`);
-  writeConfig(dir, { baseUrl: fake.url, userSlug: ME, notifications: true });
+  writeConfig(dir, { baseUrl: fake.url, userSlug: me, notifications: true });
   const secrets = createSecrets(null);
   await secrets.set(FAKE_TOKEN);
   const settings = createSettings({ dir, secrets });
@@ -126,7 +127,7 @@ async function setup() {
   const rows = async () => (await json<PrRow[]>("/api/prs")).body;
   const row = async (id: number) => (await rows()).find((r) => r.id === id);
 
-  return { app, db, sent, syncs, call, json, pr, comment, ack, rows, row };
+  return { dir, settings, app, db, sent, syncs, call, json, pr, comment, ack, rows, row };
 }
 
 describe("POST /api/read (A2)", () => {
@@ -329,6 +330,23 @@ describe("POST /api/follow (by URL)", () => {
     const p = h.pr({ project: "~JDOE", repo: "sample-repo-1", pr_id: 2, followed: 0, archived_at: 5 });
     const res = await h.json<FollowState>("/api/follow", { body: { url: `${fake.url}/users/jdoe/repos/sample-repo-1/pull-requests/2` } });
     expect(res.body).toEqual({ id: p, followed: true, archivedAt: null });
+  });
+
+  test("a settings change to another origin during the PR request gives 409 and writes no row", async () => {
+    const h = await setup();
+    fake.routes[key("GET", PR_PATH)] = { ...fixture<object>("pull-request.json"), delayMs: 300 };
+    const other = startFakeBitbucket({ routes: { [key("GET", DASHBOARD_PATH)]: fixture("dashboard-pull-requests-page.json") } });
+    cleanup.push(() => other.stop());
+    const follow = h.call("/api/follow", { body: { url: `${fake.url}/users/jdoe/repos/sample-repo-1/pull-requests/2` } });
+    for (const end = Date.now() + 2000; fake.inFlight !== 1; await Bun.sleep(5)) if (Date.now() > end) throw new Error("timed out");
+    expect((await h.call("/api/settings", { method: "PUT", body: { baseUrl: other.url, token: FAKE_TOKEN } })).status).toBe(200);
+    expect((await follow).status).toBe(409);
+    const next = h.settings.db() as Database;
+    cleanup.push(() => next.close());
+    const old = openDb(dbPath(h.dir, fake.url));
+    cleanup.push(() => old.close());
+    for (const db of [old, next]) expect(db.query("SELECT COUNT(*) AS n FROM pull_request").get()).toEqual({ n: 0 });
+    expect(h.syncs.count).toBe(0);
   });
 
   test("a PR that Bitbucket does not know gives 404", async () => {

@@ -4,7 +4,8 @@ export type PrRef = { project: string; repo: string; id: number };
 
 export type Role = "REVIEWER" | "AUTHOR";
 
-export type User = { slug: string; name: string };
+// name: the display name. login: the username.
+export type User = { slug: string; name: string; login: string };
 
 // `status` and `state` stay open strings: servers send values beyond the known ones.
 export type Reviewer = User & { status: string; lastReviewedCommit?: string };

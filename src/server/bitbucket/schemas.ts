@@ -2,7 +2,8 @@
 // Enum-like fields stay z.string(): real streams carry values beyond the documented ones.
 import { z } from "zod";
 
-export const user = z.object({ slug: z.string(), displayName: z.string() });
+// name: the username. X-AUSERNAME carries it.
+export const user = z.object({ name: z.string(), slug: z.string(), displayName: z.string() });
 
 const ref = z.object({
   displayId: z.string(),

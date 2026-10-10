@@ -98,3 +98,18 @@ export function reviewPr(): RawPr {
   if (!pr) throw new Error("dashboard-reviewer-page.json has no PR");
   return clone(pr);
 }
+
+// Synthetic: the token owner logs in as `name`. Bitbucket then sends `name` in X-AUSERNAME, and the slug stays lowercase.
+export function asUsername<T>(value: T, slug: string, name: string): T {
+  const out = clone(value);
+  const walk = (v: unknown): void => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      if (o.slug === slug && typeof o.name === "string") o.name = name;
+      Object.values(o).forEach(walk);
+    }
+  };
+  walk(out);
+  return out;
+}

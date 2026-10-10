@@ -8,6 +8,14 @@ import { createAck, isSeen } from "./ack";
 // ponytail: 1% steps catch a message up to 50 times the pane height. A taller one needs per-element thresholds.
 const THRESHOLDS = Array.from({ length: 101 }, (_, i) => i / 100);
 
+// Observing again reports the current intersections.
+function reobserve(observer: IntersectionObserver, nodes: Set<Element>) {
+  for (const n of nodes) {
+    observer.unobserve(n);
+    observer.observe(n);
+  }
+}
+
 // Returns a ref callback for each unread message element. The element needs data-id.
 export function useAck(pr: number, comments: CommentDto[]) {
   const ack = useRef<ReturnType<typeof createAck> | null>(null);
@@ -33,11 +41,7 @@ export function useAck(pr: number, comments: CommentDto[]) {
     for (const n of nodes.current) observer.observe(n);
     const onVisibility = () => {
       if (document.visibilityState === "hidden") return a.flush();
-      // Observing again reports the current intersections.
-      for (const n of nodes.current) {
-        observer.unobserve(n);
-        observer.observe(n);
-      }
+      reobserve(observer, nodes.current);
     };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", a.flush);
@@ -55,6 +59,8 @@ export function useAck(pr: number, comments: CommentDto[]) {
   // After each commit, the rendered versions are the versions on screen.
   useEffect(() => {
     ack.current?.setRendered(comments.filter((c) => c.unread));
+    // A new version keeps the DOM node, so the observer does not report a visible message again.
+    if (io.current) reobserve(io.current, nodes.current);
   }, [comments]);
 
   return useCallback((el: HTMLElement | null) => {

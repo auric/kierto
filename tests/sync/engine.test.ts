@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
 import { writeConfig } from "../../src/server/config";
+import { listPrs } from "../../src/server/inbox/queries";
 import { createLive, type LiveEvent } from "../../src/server/live";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings, type Settings } from "../../src/server/settings";
@@ -15,6 +16,7 @@ import {
   type Activity,
   activities,
   addReply,
+  asUsername,
   byUser,
   clone,
   DASHBOARD_PATH,
@@ -111,8 +113,8 @@ type Checkpoint = { last_complete_at: number | null; incomplete_reason: string |
 
 let n = 0;
 // token: false is a memory-mode restart: config.json exists, but the token is gone.
-async function setup(dir = join(root, `case-${n++}`), opts: { token?: boolean; caFile?: string } = {}) {
-  writeConfig(dir, { baseUrl: fake.url, userSlug: FAKE_USER, notifications: false, caFile: opts.caFile });
+async function setup(dir = join(root, `case-${n++}`), opts: { token?: boolean; caFile?: string; user?: string } = {}) {
+  writeConfig(dir, { baseUrl: fake.url, userSlug: opts.user ?? FAKE_USER, notifications: false, caFile: opts.caFile });
   const secrets = createSecrets(null);
   if (opts.token !== false) await secrets.set(FAKE_TOKEN);
   const settings = createSettings({ dir, secrets });
@@ -350,6 +352,28 @@ describe("deletes (A4)", () => {
     }
   });
 
+  test("a settings change during the delete checks sends no further check with the old token", async () => {
+    world.own = inline();
+    const h = await setup();
+    await h.cycle();
+    world.own = activities("activities-after-delete.json");
+    let checks = 0;
+    const check = (): Reply => (checks++ ? fixture("comment-get-after-delete-404.json") : { hang: true });
+    for (const id of IDS) fake.routes[key("GET", `${PR_PATH}/comments/${id}`)] = check;
+    const other = startFakeBitbucket({ routes: { [key("GET", DASHBOARD_PATH)]: page([]) } });
+    const from = fake.requests.length;
+    try {
+      const running = h.engine.syncNow();
+      await until(() => requests(from, "/comments/").length === 1);
+      expect((await put(h.settings, { baseUrl: other.url, token: FAKE_TOKEN })).status).toBe(200);
+      fake.release();
+      await running;
+    } finally {
+      other.stop();
+    }
+    expect(requests(from, "/comments/")).toHaveLength(1);
+  });
+
   test("a comment that is still present gets no delete check", async () => {
     world.own = inline();
     const h = await setup();
@@ -555,6 +579,32 @@ describe("events", () => {
     await h.cycle();
     expect(h.events()).toEqual([{ kind: "comment_new", ref: "1000020", digest: 0 }]);
     expect(h.unread()).toBe(2);
+  });
+});
+
+describe("current user by username (synthetic)", () => {
+  // X-AUSERNAME carries the username JDoe. The user objects carry name JDoe and slug jdoe.
+  const NAME = "JDoe";
+  const mine = <T>(v: T) => asUsername(v, FAKE_USER, NAME);
+
+  test("role, own comments, events, and reply_to_you match the username and the slug", async () => {
+    fake.user = NAME;
+    world.author = [mine(ownPr())];
+    world.reviewer = [mine(reviewPr())];
+    const base = mine(inline());
+    world.own = base;
+    const h = await setup(undefined, { user: NAME });
+    await h.cycle();
+    expect(h.pr(2)).toMatchObject({ my_role: "AUTHOR" });
+    expect(h.pr(1001)).toMatchObject({ my_role: "REVIEWER", my_status: "UNAPPROVED" });
+
+    world.own = addReply(addReply(base, 1000003, 1000010, findComment(base, 1000003).author), 1000003, 1000011, OTHER);
+    await h.cycle();
+    expect(h.comment(1000010).ack_version).toBe(0);
+    expect(h.unread()).toBe(1);
+    expect(h.events()).toEqual([{ kind: "comment_new", ref: "1000011", digest: 0 }]);
+    const row = listPrs(h.db(), NAME).find((r) => r.id === h.pr(2).id);
+    expect(row?.reasons).toContain("reply_to_you");
   });
 });
 

@@ -12,7 +12,7 @@ const SQL = {
       p.source_head, p.source_branch, p.target_branch, p.web_url, p.on_dashboard, p.followed, p.reviewers_json,
       (SELECT COUNT(*) FROM comment c WHERE ${UNREAD}) AS unread,
       EXISTS (SELECT 1 FROM comment c WHERE ${UNREAD}
-        AND EXISTS (SELECT 1 FROM comment m WHERE m.pr = c.pr AND m.root_id = c.root_id AND m.author_slug = $me)) AS reply,
+        AND EXISTS (SELECT 1 FROM comment m WHERE m.pr = c.pr AND m.root_id = c.root_id AND (lower(m.author_slug) = lower($me) OR lower(m.author_login) = lower($me)))) AS reply,
       MAX(COALESCE(p.updated_date, 0), COALESCE((SELECT MAX(c.updated_at) FROM comment c WHERE c.pr = p.id), 0)) AS last_activity,
       k.scope IS NOT NULL AS has_checkpoint, k.last_complete_at, k.incomplete_reason, k.last_error
     FROM pull_request p LEFT JOIN sync_checkpoint k ON k.scope = 'pr:' || p.id
@@ -99,7 +99,7 @@ const toRow = (r: RawRow): PrRow => ({
   sourceBranch: r.source_branch,
   targetBranch: r.target_branch,
   webUrl: r.web_url,
-  reviewers: r.reviewers_json === null ? [] : (JSON.parse(r.reviewers_json) as Reviewer[]),
+  reviewers: r.reviewers_json === null ? [] : (JSON.parse(r.reviewers_json) as Omit<Reviewer, "login">[]),
   onDashboard: r.on_dashboard === 1,
   followed: r.followed === 1,
   unread: r.unread,

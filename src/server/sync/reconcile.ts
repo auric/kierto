@@ -7,13 +7,20 @@ const MAX_BACKOFF_MS = 15 * 60_000;
 export type EventKind = "comment_new" | "commits_pushed" | "reviewer_added";
 export type NewEvent = { kind: EventKind; ref: string };
 
+// me: the X-AUSERNAME value. Bitbucket matches usernames without case.
+export const isMe = (u: { slug: string; login?: string | null }, me: string) => {
+  const m = me.toLowerCase();
+  return u.slug.toLowerCase() === m || u.login?.toLowerCase() === m;
+};
+
 export function roleOf(pr: PullRequest, me: string): Role | null {
-  if (pr.author.slug === me) return "AUTHOR";
-  return pr.reviewers.some((r) => r.slug === me) ? "REVIEWER" : null;
+  if (isMe(pr.author, me)) return "AUTHOR";
+  return pr.reviewers.some((r) => isMe(r, me)) ? "REVIEWER" : null;
 }
 
 // Every stored row of the PR, tombstoned ones included.
-export type StoredComment = { id: number; rootId: number; author: string; live: boolean };
+// author: the slug. login: null for rows stored before the column existed.
+export type StoredComment = { id: number; rootId: number; author: string; login: string | null; live: boolean };
 
 export type CommentRow = Comment & { ackVersion: number | null };
 
@@ -23,17 +30,17 @@ export function reconcile(input: { stored: StoredComment[]; fetched: Comment[]; 
   const ids = new Set(fetched.map((c) => c.id));
   const known = new Set(stored.map((s) => s.id));
   const myThreads = new Set([
-    ...stored.filter((s) => s.author === me).map((s) => s.rootId),
-    ...fetched.filter((c) => c.author.slug === me).map((c) => c.rootId),
+    ...stored.filter((s) => isMe({ slug: s.author, login: s.login }, me)).map((s) => s.rootId),
+    ...fetched.filter((c) => isMe(c.author, me)).map((c) => c.rootId),
   ]);
   return {
     // The first sync and own comments are read at once.
-    rows: fetched.map((c): CommentRow => ({ ...c, ackVersion: !initialized || c.author.slug === me ? c.version : null })),
+    rows: fetched.map((c): CommentRow => ({ ...c, ackVersion: !initialized || isMe(c.author, me) ? c.version : null })),
     // A candidate is deleted only after its GET returns 404.
     candidates: stored.filter((s) => s.live && !ids.has(s.id)).map((s) => s.id),
     // US3: a reply in a thread that I started or joined, or any comment on my PR.
     newCommentIds: initialized
-      ? fetched.filter((c) => !known.has(c.id) && c.author.slug !== me && (role === "AUTHOR" || myThreads.has(c.rootId))).map((c) => c.id)
+      ? fetched.filter((c) => !known.has(c.id) && !isMe(c.author, me) && (role === "AUTHOR" || myThreads.has(c.rootId))).map((c) => c.id)
       : [],
   };
 }
@@ -48,7 +55,7 @@ export function prEvents(before: PrBefore | null, pr: PullRequest, me: string, d
   const out: NewEvent[] = [];
   if (dashboardSeen && role === "REVIEWER" && before?.role !== "REVIEWER") out.push({ kind: "reviewer_added", ref: String(pr.version) });
   // G5 reason new_commits: last_reviewed_commit set and different from the source head.
-  const reviewed = pr.reviewers.find((r) => r.slug === me)?.lastReviewedCommit;
+  const reviewed = pr.reviewers.find((r) => isMe(r, me))?.lastReviewedCommit;
   if (
     before?.initialized &&
     before.sourceHead &&

@@ -4,7 +4,9 @@ import { join } from "node:path";
 
 // Index i holds the SQL that raises user_version from i to i + 1.
 // ponytail: read from disk; `bun build --compile` (M4) must embed these files.
-const MIGRATIONS = ["001_m1.sql", "002_reviewers.sql"].map((f) => readFileSync(join(import.meta.dir, "migrations", f), "utf8"));
+const MIGRATIONS = ["001_m1.sql", "002_reviewers.sql", "003_author_login.sql"].map((f) =>
+  readFileSync(join(import.meta.dir, "migrations", f), "utf8"),
+);
 
 export function openDb(path: string): Database {
   const db = new Database(path, { create: true, strict: true });

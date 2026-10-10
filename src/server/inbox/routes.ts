@@ -108,6 +108,8 @@ export function createInboxRoutes(opts: { settings: Settings; sync: SyncEngine; 
         return c.json({ error: "Cannot read the CA file." }, 409);
       }
       if (!provider) return c.json(unconfigured, 409);
+      const s = open();
+      if (!s) return c.json(unconfigured, 409);
       let key: { project: string; repo: string; pr_id: number };
       try {
         // The response key is canonical. The URL key can differ in case.
@@ -118,8 +120,8 @@ export function createInboxRoutes(opts: { settings: Settings; sync: SyncEngine; 
         if (e.kind === "not_found") return c.json({ error: "Bitbucket does not know this pull request." }, 404);
         return c.json({ error: `Bitbucket request failed: ${e.message}` }, 502);
       }
-      const s = open();
-      if (!s) return c.json(unconfigured, 409);
+      // A settings change during the request switched the database. The key belongs to the old origin.
+      if (settings.db() !== s.db) return c.json({ error: "The settings changed. Try again." }, 409);
       const state = followKey(s.db, key);
       changed(state.id);
       void sync.syncNow();

@@ -64,7 +64,8 @@ export type PrRow = {
   targetBranch: string | null;
   webUrl: string | null;
   // Empty until the first sync cycle that writes the PR.
-  reviewers: Reviewer[];
+  // reviewers_json stores no username.
+  reviewers: Omit<Reviewer, "login">[];
   onDashboard: boolean;
   followed: boolean;
   // 0 for an unfollowed PR.

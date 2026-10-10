@@ -9,7 +9,7 @@ const DASHBOARD = `${API}/dashboard/pull-requests`;
 
 const prPath = (ref: PrRef) =>
   `${API}/projects/${encodeURIComponent(ref.project)}/repos/${encodeURIComponent(ref.repo)}/pull-requests/${ref.id}`;
-const toUser = (u: z.infer<typeof user>) => ({ slug: u.slug, name: u.displayName });
+const toUser = (u: z.infer<typeof user>) => ({ slug: u.slug, name: u.displayName, login: u.name });
 
 export function createBitbucketProvider(opts: ClientOptions) {
   const client = createClient(opts);
@@ -39,7 +39,7 @@ export function createBitbucketProvider(opts: ClientOptions) {
   }
 
   return {
-    // The slug of the token owner, from the X-AUSERNAME header.
+    // The username of the token owner, from the X-AUSERNAME header. It can differ from the slug.
     async currentUser(): Promise<string> {
       const { headers } = await client.get(`${DASHBOARD}?limit=1`, z.unknown());
       const slug = headers.get("x-ausername");

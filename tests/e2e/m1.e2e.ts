@@ -147,6 +147,35 @@ test("A2: a message below the viewport stays unread; the scroll position stays w
   expect(await page.locator("#rows").evaluate((el) => el.scrollTop)).toBe(listBefore);
 });
 
+test("A2: a visible message edited before its ack is read at the new version", async ({ page, request }) => {
+  await connect(page);
+  await park(page);
+  await control("state", { reply: "new" });
+  await expect(row(page, TITLE.a)).toContainText("1 new");
+  // Holds the first ack, so the edit lands while the message is still unread on screen.
+  let release = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  let first = true;
+  const sent = new Promise<void>((resolve) =>
+    page.route("**/api/read", async (route) => {
+      if (!first) return route.continue();
+      first = false;
+      resolve();
+      await held;
+      await route.continue();
+    }),
+  );
+  await row(page, TITLE.a).click();
+  await expect(page.locator("#c-1000010")).toBeVisible();
+  await sent;
+  await control("state", { reply: "edit" });
+  await expect(page.locator("#c-1000010")).toContainText("Edited: the flush order is fixed now.");
+  release();
+  await expect.poll(() => unreadIds(request, TITLE.a)).toEqual([]);
+});
+
 test("A3, A4, A5: duplicates, edit, delete after the 404, multi-page data, and a visible gap", async ({ page, request }) => {
   await connect(page);
   await park(page);

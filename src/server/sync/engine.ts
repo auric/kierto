@@ -6,7 +6,7 @@ import type { ForgeProvider } from "../bitbucket/provider";
 import type { Live } from "../live";
 import { log } from "../log";
 import type { Settings } from "../settings";
-import { type NewEvent, nextDelay, parseRetryAfter, prEvents, reconcile, roleOf, type StoredComment } from "./reconcile";
+import { isMe, type NewEvent, nextDelay, parseRetryAfter, prEvents, reconcile, roleOf, type StoredComment } from "./reconcile";
 
 const DIGEST_GAP_MS = 120_000;
 const NETWORK = new Set(["network", "timeout"]);
@@ -42,14 +42,15 @@ const SQL = {
     "UPDATE pull_request SET on_dashboard = 0 WHERE on_dashboard = 1 AND id NOT IN (SELECT value FROM json_each($ids)) RETURNING id",
   prState: "SELECT my_role, initialized_at FROM pull_request WHERE id = $id",
   watched: "SELECT id FROM pull_request WHERE id = $id AND followed = 1 AND archived_at IS NULL",
-  stored: "SELECT comment_id AS id, root_id AS rootId, author_slug AS author, tombstoned_at IS NULL AS live FROM comment WHERE pr = $pr",
+  stored:
+    "SELECT comment_id AS id, root_id AS rootId, author_slug AS author, author_login AS login, tombstoned_at IS NULL AS live FROM comment WHERE pr = $pr",
   // A3: a lower or equal version never overwrites. ack_version stays unless this write acknowledges the new version. commentMeta writes the anchor and the resolved flag.
-  commentUpsert: `INSERT INTO comment (pr, comment_id, version, parent_id, root_id, author_slug, author_name, text, anchor_json, thread_resolved,
-      created_at, updated_at, ack_version)
-    VALUES ($pr, $comment_id, $version, $parent_id, $root_id, $author_slug, $author_name, $text, $anchor_json, $thread_resolved,
-      $created_at, $updated_at, $ack_version)
+  commentUpsert: `INSERT INTO comment (pr, comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json,
+      thread_resolved, created_at, updated_at, ack_version)
+    VALUES ($pr, $comment_id, $version, $parent_id, $root_id, $author_slug, $author_name, $author_login, $text, $anchor_json,
+      $thread_resolved, $created_at, $updated_at, $ack_version)
     ON CONFLICT (pr, comment_id) DO UPDATE SET version = excluded.version, parent_id = excluded.parent_id, root_id = excluded.root_id,
-      author_slug = excluded.author_slug, author_name = excluded.author_name, text = excluded.text, updated_at = excluded.updated_at,
+      author_slug = excluded.author_slug, author_name = excluded.author_name, author_login = excluded.author_login, text = excluded.text, updated_at = excluded.updated_at,
       ack_version = COALESCE(excluded.ack_version, comment.ack_version)
     WHERE excluded.version > comment.version`,
   // Bitbucket can change orphaned and threadResolved without a new version. The stored row with the highest version wins; at an equal version, the latest complete fetch wins.
@@ -145,7 +146,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
         followed: number;
         archived_at: number | null;
       } | null;
-      const mine = pr.reviewers.find((r) => r.slug === me);
+      const mine = pr.reviewers.find((r) => isMe(r, me));
       const { id } = db.query(SQL.prUpsert).get({
         ...key,
         title: pr.title,
@@ -265,6 +266,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
       const gaps: number[] = [];
       let unsure: { reason: CheckpointReason; message: string } | null = null;
       for (const id of plan.candidates) {
+        if (gen !== generation) throw new Cancelled();
         try {
           ((await forge.commentStatus(ref, id)) === "deleted" ? deleted : gaps).push(id);
           reached = true;
@@ -291,6 +293,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
             root_id: c.rootId,
             author_slug: c.author.slug,
             author_name: c.author.name,
+            author_login: c.author.login,
             text: c.text,
             anchor_json: anchor,
             thread_resolved: resolved,

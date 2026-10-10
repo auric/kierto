@@ -13,7 +13,7 @@ const comment = (id: number, rootId: number, author: string, version = 0): Comme
   version,
   parentId: id === rootId ? null : rootId,
   rootId,
-  author: { slug: author, name: author },
+  author: { slug: author, name: author, login: author },
   text: `text ${id}`,
   threadResolved: false,
   createdAt: 1,
@@ -25,8 +25,8 @@ const pr = (over: Partial<PullRequest> = {}): PullRequest => ({
   version: 3,
   title: "t",
   state: "OPEN",
-  author: { slug: OTHER, name: OTHER },
-  reviewers: [{ slug: ME, name: ME, status: "UNAPPROVED", lastReviewedCommit: REVIEWED }],
+  author: { slug: OTHER, name: OTHER, login: OTHER },
+  reviewers: [{ slug: ME, name: ME, login: ME, status: "UNAPPROVED", lastReviewedCommit: REVIEWED }],
   sourceHead: NEW_HEAD,
   targetHead: "d".repeat(40),
   sourceBranch: "s",
@@ -37,9 +37,26 @@ const pr = (over: Partial<PullRequest> = {}): PullRequest => ({
 
 describe("roleOf", () => {
   test("author, reviewer, or neither", () => {
-    expect(roleOf(pr({ author: { slug: ME, name: ME }, reviewers: [] }), ME)).toBe("AUTHOR");
+    expect(roleOf(pr({ author: { slug: ME, name: ME, login: ME }, reviewers: [] }), ME)).toBe("AUTHOR");
     expect(roleOf(pr(), ME)).toBe("REVIEWER");
     expect(roleOf(pr({ reviewers: [] }), ME)).toBeNull();
+  });
+});
+
+describe("current user by username", () => {
+  // X-AUSERNAME gives the username. It can differ from the slug in case and in form.
+  const LOGIN = "J.Doe";
+  const user = { slug: "jdoe", name: "Jordan Doe", login: LOGIN };
+  const own = (id: number, rootId: number): Comment => ({ ...comment(id, rootId, OTHER), author: user });
+
+  test("role, acknowledgement, events, and stored threads match the username or the slug, ignoring case", () => {
+    expect(roleOf(pr({ author: user, reviewers: [] }), LOGIN)).toBe("AUTHOR");
+    expect(roleOf(pr({ reviewers: [{ ...user, status: "UNAPPROVED" }] }), "JDOE")).toBe("REVIEWER");
+    const stored = [{ id: 1, rootId: 1, author: "jdoe", login: "j.doe", live: false }];
+    const fetched = [comment(2, 1, OTHER), own(3, 3), comment(4, 3, OTHER)];
+    const r = reconcile({ me: LOGIN, role: "REVIEWER", initialized: true, stored, fetched });
+    expect(r.rows.map((c) => c.ackVersion)).toEqual([null, 0, null]);
+    expect(r.newCommentIds).toEqual([2, 4]);
   });
 });
 
@@ -59,18 +76,18 @@ describe("reconcile", () => {
 
   test("delete candidates are live stored comments absent from the fetch", () => {
     const stored = [
-      { id: 1, rootId: 1, author: OTHER, live: true },
-      { id: 2, rootId: 1, author: OTHER, live: true },
-      { id: 3, rootId: 3, author: OTHER, live: false },
+      { id: 1, rootId: 1, author: OTHER, login: null, live: true },
+      { id: 2, rootId: 1, author: OTHER, login: null, live: true },
+      { id: 3, rootId: 3, author: OTHER, login: null, live: false },
     ];
     expect(reconcile({ ...base, initialized: true, stored, fetched: [comment(1, 1, OTHER)] }).candidates).toEqual([2]);
   });
 
   test("on a reviewed PR a new comment notifies only in a thread that holds my comment", () => {
     const stored = [
-      { id: 1, rootId: 1, author: OTHER, live: true },
-      { id: 2, rootId: 1, author: ME, live: true },
-      { id: 5, rootId: 5, author: OTHER, live: true },
+      { id: 1, rootId: 1, author: OTHER, login: null, live: true },
+      { id: 2, rootId: 1, author: ME, login: null, live: true },
+      { id: 5, rootId: 5, author: OTHER, login: null, live: true },
     ];
     const fetched = [
       comment(1, 1, OTHER),
@@ -93,7 +110,7 @@ describe("reconcile", () => {
   });
 
   test("a known ID never notifies again, also after a tombstone", () => {
-    const stored = [{ id: 1, rootId: 1, author: OTHER, live: false }];
+    const stored = [{ id: 1, rootId: 1, author: OTHER, login: null, live: false }];
     const r = reconcile({ me: ME, role: "AUTHOR", initialized: true, stored, fetched: [comment(1, 1, OTHER, 1)] });
     expect(r.newCommentIds).toEqual([]);
   });
@@ -115,10 +132,12 @@ describe("prEvents", () => {
     expect(prEvents({ ...before, initialized: false }, pr(), ME, false)).toEqual([]);
     expect(prEvents({ ...before, sourceHead: null }, pr(), ME, false)).toEqual([]);
     expect(prEvents({ ...before, watched: false }, pr(), ME, false)).toEqual([]);
-    expect(prEvents(before, pr({ reviewers: [{ slug: ME, name: ME, status: "UNAPPROVED" }] }), ME, false)).toEqual([]);
-    const reviewedHead = pr({ reviewers: [{ slug: ME, name: ME, status: "APPROVED", lastReviewedCommit: NEW_HEAD }] });
+    expect(prEvents(before, pr({ reviewers: [{ slug: ME, name: ME, login: ME, status: "UNAPPROVED" }] }), ME, false)).toEqual([]);
+    const reviewedHead = pr({ reviewers: [{ slug: ME, name: ME, login: ME, status: "APPROVED", lastReviewedCommit: NEW_HEAD }] });
     expect(prEvents(before, reviewedHead, ME, false)).toEqual([]);
-    expect(prEvents({ ...before, role: "AUTHOR" }, pr({ author: { slug: ME, name: ME }, reviewers: [] }), ME, false)).toEqual([]);
+    expect(prEvents({ ...before, role: "AUTHOR" }, pr({ author: { slug: ME, name: ME, login: ME }, reviewers: [] }), ME, false)).toEqual(
+      [],
+    );
   });
 });
 

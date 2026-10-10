@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server/app";
+import { dbPath } from "../src/server/config";
 import { createLive } from "../src/server/live";
 import { log } from "../src/server/log";
 import { createSecrets, type SecretBackend } from "../src/server/secrets";
@@ -97,6 +98,23 @@ describe("settings API", () => {
     expect((await s.put({ baseUrl: fake.url, caFile: TEST_CA_FILE })).status).toBe(200);
     expect(fake.requests.length).toBe(before + 1);
     expect((await s.get()).caFile).toBe(TEST_CA_FILE);
+  });
+
+  test("overlapping PUTs run one at a time, so the config and the database stay a pair", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
+    fake.routes[key("GET", DASHBOARD_PATH)] = { ...fixture<object>("dashboard-pull-requests-page.json"), delayMs: 200 };
+    const other = startFakeBitbucket({ routes: { [key("GET", DASHBOARD_PATH)]: fixture("dashboard-pull-requests-page.json") } });
+    try {
+      const toOther = s.put({ baseUrl: other.url, token: FAKE_TOKEN });
+      const tokenOnly = s.put({ baseUrl: fake.url, token: FAKE_TOKEN });
+      expect((await toOther).status).toBe(200);
+      expect((await tokenOnly).status).toBe(200);
+    } finally {
+      other.stop();
+    }
+    expect(s.settings.config()?.baseUrl).toBe(fake.url);
+    expect(s.settings.db()?.filename).toBe(dbPath(dir, fake.url));
   });
 
   test("notifications-only PUT saves without a Bitbucket request", async () => {

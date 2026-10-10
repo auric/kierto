@@ -152,7 +152,7 @@ describe("comments", () => {
     const values = byUser(activities("activities-after-edit.json"), 1000003, secondUser());
     const body = { size: 2, limit: 50, start: 0, isLastPage: true, values };
     const r = await setup({ [key("GET", ACTIVITIES_PATH)]: { status: 200, body } }).listComments(PR_REF);
-    expect(r.items[0]?.author).toEqual({ slug: "asmith", name: "Alex Smith" });
+    expect(r.items[0]?.author).toEqual({ slug: "asmith", name: "Alex Smith", login: "asmith" });
   });
 
   test("the inline anchor maps path and line", async () => {
