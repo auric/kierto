@@ -148,6 +148,7 @@ summary::-webkit-details-marker { display: none; }
 .row[aria-current="true"] { background: var(--sel); }
 .row-top { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--fs-xs); color: var(--ink-3); }
 .row-top .key { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-code); }
+.row-top .tk { flex: none; font-family: var(--font-code); color: var(--ink-2); }
 .row-top time { margin-left: auto; white-space: nowrap; }
 .row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .row-why { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: var(--fs-s); color: var(--ink-2); }
@@ -172,28 +173,49 @@ summary::-webkit-details-marker { display: none; }
 .dh-sum button { border-radius: 4px; }
 .dh-sum button:hover { text-decoration: underline; }
 .dh-sum .since { margin-left: .3em; font-weight: 400; color: var(--ink-2); }
-.dh-title { display: flex; align-items: flex-start; gap: 8px 16px; }
-.dh-title h1 { flex: 1; min-width: 0; }
-/* Review: one button with the last profile, and a menu of the profiles from the settings. */
-.split { position: relative; display: inline-flex; flex: none; gap: 1px; margin-top: 1px; }
-.split > .btn:first-child { border-radius: 6px 0 0 6px; padding: 0 14px; }
-.split > .btn.more-b { border-radius: 0 6px 6px 0; padding: 0 6px; }
-.menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 6; width: 290px; max-width: calc(100vw - 32px); padding: 4px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); box-shadow: 0 8px 24px var(--shade); }
-.menu[hidden] { display: none; }
-.menu button { display: grid; gap: 1px; width: 100%; padding: 6px 10px; border-radius: 5px; }
-.menu button:hover, .menu button:focus-visible { background: var(--hover); outline-offset: -2px; }
-.mi-t { display: flex; align-items: center; gap: 6px; font-size: var(--fs-s); font-weight: 600; }
-.mi-t svg.i { margin-left: auto; color: var(--ink-3); }
-.mi-d { font-size: var(--fs-xs); color: var(--ink-3); }
-/* Note for the runner: your own input, so it goes into the prompt as an instruction. Pull request text goes in as data only. */
-.note { display: grid; gap: 4px; padding: 6px 8px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--rule); }
-.note label { font-size: var(--fs-s); font-weight: 600; }
-.note textarea { display: block; width: 100%; min-height: 4.6em; padding: 6px 8px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); font-size: var(--fs-s); line-height: 1.45; resize: vertical; }
-.note textarea:focus-visible { outline: 2px solid var(--pen); outline-offset: 0; }
-.note-h { margin: 0; font-size: var(--fs-xs); color: var(--ink-3); }
-/* The note shows with your person icon and as plain text, never as Markdown. */
-.you-note { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: var(--fs-s); color: var(--ink-2); }
-.you-note > svg.i { color: var(--ink-3); }
+.dh-title { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; }
+.dh-title h1 { flex: 1 1 24ch; min-width: 0; }
+/* Review: one button that names the profile. It opens the review brief under the title. */
+.rv { flex: none; margin-top: 1px; padding: 0 9px 0 14px; }
+.rv .chev-d { transition: transform .15s; }
+.rv[aria-expanded="true"] .chev-d { transform: rotate(180deg); }
+/* Review brief: task, your note, profile. Your note goes into the prompt as your instruction. Pull request text goes in as data only. */
+.brief { display: grid; gap: 14px; margin: 6px 0 2px; padding: 14px 16px 16px; border: 1px solid var(--rule-strong); border-radius: 8px; }
+.brief h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.bf-l { padding: 0; font-size: var(--fs-s); font-weight: 600; color: var(--ink); }
+.bf-task { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: var(--fs-s); }
+.bf-task > .bf-l { margin-right: 6px; }
+.bf-task .none { color: var(--ink-2); }
+/* Task ID chip: a link to the issue in the tracker. */
+.task-c { display: inline-flex; align-items: baseline; gap: 5px; padding: 2px 8px; border: 1px solid var(--rule); border-radius: 5px; color: var(--ink-3); font-size: var(--fs-xs); text-decoration: none; white-space: nowrap; }
+.task-c code { color: var(--pen); font-size: 12px; }
+.task-c:hover { border-color: var(--rule-strong); }
+.task-c:hover code { text-decoration: underline; }
+.quiet { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 6px; border-radius: 5px; color: var(--ink-3); font-size: var(--fs-xs); }
+.quiet[aria-disabled="true"] { cursor: default; }
+.bf-main { display: grid; gap: 14px 28px; }
+@container detail (min-width: 640px) { .bf-main { grid-template-columns: minmax(0, 1fr) minmax(200px, 250px); } }
+.bf-note { display: grid; gap: 5px; align-content: start; }
+.bf-note textarea { display: block; width: 100%; padding: 8px 10px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); line-height: 1.5; resize: vertical; }
+.bf-note textarea:focus-visible { outline: 2px solid var(--pen); outline-offset: 0; }
+.bf-h { margin: 0; font-size: var(--fs-xs); color: var(--ink-3); }
+.bf-prof { display: grid; gap: 1px; align-content: start; min-width: 0; margin: 0; padding: 0; border: 0; }
+.bf-prof legend { margin-bottom: 4px; }
+.pf-o { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 8px; padding: 5px 6px; margin: 0 -6px; border-radius: 5px; cursor: pointer; }
+.pf-o:hover { background: var(--hover); }
+.pf-o input { margin: 3px 0 0; accent-color: var(--ink); }
+.pf-n { font-size: var(--fs-s); font-weight: 600; }
+.pf-d { grid-column: 2; font-size: var(--fs-xs); color: var(--ink-3); }
+.bf-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.bf-acts .hint { margin-left: 6px; font-size: var(--fs-xs); color: var(--ink-3); }
+/* A tall brief scrolls inside the header, so the body keeps some height. */
+.dh:has(> .brief) { max-height: 82dvh; overflow-y: auto; }
+/* Brief of a run: the task IDs from the pull request, then your note. The note shows with your person icon and as plain text, never as Markdown. */
+.bl { display: flex; align-items: center; gap: 4px 14px; min-width: 0; margin: 0; font-size: var(--fs-s); color: var(--ink-2); }
+.tids { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.tids code { font-size: 12px; color: var(--ink-2); }
+.bl svg.i { color: var(--ink-3); }
+.you-note { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .you-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .you-t b { font-weight: 600; }
 /* Run line: one line under the title for the newest review run. */
@@ -436,12 +458,12 @@ details.sec[open] { padding-bottom: 12px; }
 }
 
 /* Run log: a side sheet over the detail pane, out of the reading path. Plain lines: status, tool, target, duration. */
-.sheet { position: fixed; top: 0; right: 0; bottom: 0; z-index: 8; width: min(520px, 100vw); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--paper); border-left: 1px solid var(--rule-strong); box-shadow: -12px 0 32px var(--shade); }
+.sheet { position: fixed; top: 0; right: 0; bottom: 0; z-index: 8; width: min(520px, 100vw); display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; background: var(--paper); border-left: 1px solid var(--rule-strong); box-shadow: -12px 0 32px var(--shade); }
 .sheet[hidden] { display: none; }
 .sh-h { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--rule); }
 .sh-h h2 { margin: 0; font-size: 15px; }
 .sh-meta { grid-column: 1 / -1; margin: 0; font-size: var(--fs-xs); color: var(--ink-3); }
-.sh-h .you-note { grid-column: 1 / -1; font-size: var(--fs-xs); }
+.sh-h .bl { grid-column: 1 / -1; font-size: var(--fs-xs); }
 /* Subagent calls nest as a tree with the thin neutral line of the reply tree. The fold chevron hangs in a gutter left of the status column. */
 .log { --g: 16px; --step: 20px; --mid: 12px; --ln: var(--rule-strong); list-style: none; margin: 0; padding: 8px 16px 8px calc(16px - var(--g)); overflow: auto; font: 12px/1.55 var(--font-code); }
 .log ol { list-style: none; margin: 0; padding: 0 0 0 var(--step); }
@@ -466,8 +488,52 @@ button.ll:hover { background: var(--hover); }
 .lg { color: var(--ink-2); overflow-wrap: anywhere; }
 .lnote { display: block; }
 .ll.error .lnote, .ll.error .ls { color: var(--err); }
-.sh-f { padding: 10px 16px 14px; border-top: 1px solid var(--rule); font-size: var(--fs-s); color: var(--ink-2); }
+.sh-f { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 10px 16px 14px; border-top: 1px solid var(--rule); font-size: var(--fs-s); color: var(--ink-2); }
 .sh-f .err { white-space: normal; }
+/* Raw output of a failed run: read-only, kept with the run. */
+.raw { display: grid; grid-template-rows: auto minmax(0, 1fr); max-height: 58dvh; border-top: 1px solid var(--rule); }
+.raw-h { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 8px 12px 8px 16px; }
+.raw-h h3 { margin: 0; font-size: var(--fs-s); }
+.raw-h .aside { font-size: var(--fs-xs); color: var(--ink-3); }
+.raw-h .btn { margin-left: auto; }
+.raw pre { margin: 0; padding: 10px 16px 14px; overflow: auto; background: var(--sunken); font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.raw pre:focus-visible { outline-offset: -2px; border-radius: 0; }
+
+/* Settings: a view in the detail pane. Task ID rules run from top to bottom. */
+.set-stub { max-width: 72ch; margin: 16px 0 0; font-size: var(--fs-s); color: var(--ink-3); }
+.lead { max-width: 72ch; margin: 0 0 12px; font-size: var(--fs-s); color: var(--ink-2); }
+.lead code { padding: 0 3px; border-radius: 3px; background: var(--sunken); overflow-wrap: anywhere; }
+.rules { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+.rule { display: grid; grid-template-columns: 2ch 8.5rem minmax(0, 1fr) 8rem auto; gap: 4px 12px; align-items: end; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+.rule-n { line-height: 30px; text-align: right; font-size: var(--fs-s); color: var(--ink-3); }
+.fld { display: grid; gap: 3px; min-width: 0; font-size: var(--fs-xs); color: var(--ink-3); }
+.fld input, .fld select { width: 100%; min-width: 0; height: 30px; padding: 0 8px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); color: var(--ink); font-size: var(--fs-s); }
+.fld .mono { font-family: var(--font-code); font-size: 12.5px; }
+.fld input:focus-visible, .fld select:focus-visible { outline-offset: 0; }
+.fld input[aria-invalid="true"] { border-color: var(--err); }
+.rule-b { display: flex; gap: 2px; }
+.icon-btn:disabled { opacity: .35; cursor: default; background: none; }
+.rule-err { grid-column: 3 / -1; display: flex; align-items: flex-start; margin: 2px 0 0; font-size: var(--fs-xs); white-space: normal; }
+.rule-err svg.i { margin-top: 1px; }
+.rule-err[hidden] { display: none; }
+.add-r { margin: 10px 0 16px; }
+.pv { max-width: 72ch; margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.pv-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin-bottom: 8px; }
+.pv-h h3 { margin: 0; font-size: var(--fs-s); font-weight: 700; }
+.pv-h .key { font-family: var(--font-code); font-size: var(--fs-xs); color: var(--ink-2); }
+.pv-h .aside { font-size: var(--fs-xs); color: var(--ink-3); }
+.pv-src { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 14px; margin: 0 0 10px; font-size: var(--fs-xs); }
+.pv-src dt { color: var(--ink-3); }
+.pv-src dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.pv-ids { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.pv .none { margin: 0; font-size: var(--fs-s); color: var(--ink-2); }
+.pv .skip { margin: 8px 0 0; font-size: var(--fs-xs); color: var(--ink-3); }
+@container detail (max-width: 559px) {
+  .rule { grid-template-columns: 2ch minmax(0, 1fr) auto; }
+  .rule-n, .f-src, .rule-b { grid-row: 1; }
+  .rule-b { grid-column: 3; }
+  .f-pat, .f-keys, .rule-err { grid-column: 2 / -1; }
+}
 
 /* Help and toast */
 dialog { border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; background: var(--paper); color: var(--ink); max-width: min(560px, calc(100vw - 32px)); width: 100%; }
@@ -554,10 +620,11 @@ dialog h3 { margin: 14px 0 6px; font-size: var(--fs-s); color: var(--ink-3); fon
   </dl>
   <h3 id="help-ai">AI review</h3>
   <dl class="keys">
-    <dt><kbd>r</kbd></dt><dd>Start a review with the last profile and your saved note</dd>
-    <dt><kbd>Shift</kbd><kbd>R</kbd></dt><dd>Write a note for the review, or choose a profile</dd>
+    <dt><kbd>r</kbd></dt><dd>Run the last brief of this pull request again. With no brief yet, open the review brief.</dd>
+    <dt><kbd>Shift</kbd><kbd>R</kbd></dt><dd>Open the review brief: task, your note, and profile</dd>
+    <dt><kbd>Ctrl</kbd><kbd>Enter</kbd></dt><dd>Start the review from the brief</dd>
     <dt><kbd>a</kbd><kbd>e</kbd><kbd>d</kbd></dt><dd>Accept, edit, or discard the current draft or question. <kbd>a</kbd> again undoes an accept, <kbd>d</kbd> again restores.</dd>
-    <dt><kbd>Esc</kbd></dt><dd>Cancel an edit, the post confirm, the profile menu, or the run log</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Close an edit, the review brief, the post confirm, the run log, or the settings</dd>
     <dt><kbd>p</kbd></dt><dd id="help-post">Post the accepted items, after a confirm</dd>
   </dl>
   <div class="dlg-foot"><button class="btn" id="help-close" type="button">Close</button></div>
@@ -590,6 +657,19 @@ const RUNNER = {
 };
 // Context sources (an issue tracker, other repositories). None is set up in this sample.
 const CONTEXT = [];
+// Issue tracker. Task IDs link to it without a connector. Only a tracker connector in CONTEXT can import the issue text.
+const TRACKER = {
+  name: "Jira",
+  // Fictional host.
+  issueUrl: (id) => `https://tracker.example.test/browse/${id}`,
+};
+// Task ID rules from the settings, in order. source: a pull request field. pattern: a regex. keys: allowed project keys, so UTF-8 or SHA-256 never count.
+const ID_PATTERN = "[A-Z][A-Z0-9]+-\\d+";
+const EXTRACTOR = [
+  { source: "branch", pattern: ID_PATTERN, keys: ["ABC"] },
+  { source: "title", pattern: ID_PATTERN, keys: ["ABC"] },
+  { source: "description", pattern: ID_PATTERN, keys: ["ABC"] },
+];
 // Review profiles come from the settings. Explain asks only for the summary and the questions.
 const PROFILES = [
   { id: "general", name: "General", note: "Correctness, concurrency, effects outside the diff" },
@@ -608,8 +688,8 @@ const L = (n, k, s) => [n, k, s];
 
 const PRS = [
   {
-    id: 4182, project: "ENGINE", repo: "render", title: "Take cache mutex inside ResourceCache::evict",
-    author: "lena", role: "REVIEWER", my: "NEEDS_WORK", state: "OPEN", branch: "feature/evict-locking", target: "develop",
+    id: 4182, project: "ENGINE", repo: "render", title: "[ABC-10145] Take cache mutex inside ResourceCache::evict",
+    author: "lena", role: "REVIEWER", my: "NEEDS_WORK", state: "OPEN", branch: "bugfix/ABC-10145-evict-takes-cache-mutex", target: "develop",
     lastVisit: 1227, reviewedAt: "51e0a3c", reviewedAgo: 1300,
     reviewers: [["me", "NEEDS_WORK"], ["mira", "APPROVED"], ["dan", "UNAPPROVED"]],
     description: "`evict()` now takes `cacheMutex_` itself, so callers no longer lock. `trim()` destroys evicted entries after the lock ends.\n\n- Splits `EvictionPolicy` out of `ResourceCache`.\n- Adds `Budget` to the cache config.\n- City scene: evict p99 drops from 2.1 ms to 0.4 ms. The capture is on the perf share under render/evict-locking.\n\nRisk: plugins that called `evictLocked()` directly must switch to `evict()`. No plugin in this repository does.",
@@ -705,7 +785,7 @@ const PRS = [
   },
   {
     id: 2215, project: "ENGINE", repo: "core", title: "Replace the custom spinlock with std::mutex",
-    author: "dan", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "chore/drop-spinlock", target: "develop", lastVisit: 900,
+    author: "dan", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "chore/ABC-10577-drop-spinlock", target: "develop", lastVisit: 900,
     reviewers: [["me", "UNAPPROVED"], ["yuki", "APPROVED"]],
     description: "Removes `SpinLock` and its last user in the job queue. Benchmarks show no change in frame time.",
     files: [["DELETE", "src/core/SpinLock.h"], ["MODIFY", "src/core/JobQueue.cpp"], ["MODIFY", "src/core/JobQueue.h"]],
@@ -725,8 +805,9 @@ const PRS = [
     ],
   },
   {
-    id: 1340, project: "TOOLS", repo: "asset-pipeline", title: "Cook textures in parallel on the job graph",
-    author: "me", role: "AUTHOR", my: null, state: "OPEN", branch: "feature/parallel-cook", target: "main", lastVisit: 600,
+    // The default title that the forge builds from the branch name.
+    id: 1340, project: "TOOLS", repo: "asset-pipeline", title: "Feature/ABC-10613 parallel texture cook",
+    author: "me", role: "AUTHOR", my: null, state: "OPEN", branch: "feature/ABC-10613-parallel-texture-cook", target: "main", lastVisit: 600,
     reviewers: [["mira", "UNAPPROVED"], ["dan", "APPROVED"]],
     description: "Each texture cooks as one job. Shared textures still cook once per material.",
     files: [["MODIFY", "tools/cook/TextureCook.cpp"], ["MODIFY", "tools/cook/JobGraph.cpp"]],
@@ -739,10 +820,10 @@ const PRS = [
     ],
   },
   {
-    id: 977, project: "ENGINE", repo: "netcode", title: "Delta-compress snapshot headers",
-    author: "priya", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "feature/delta-headers", target: "develop", lastVisit: null,
+    id: 977, project: "ENGINE", repo: "netcode", title: "[ABC-10702] Delta-compress snapshot headers",
+    author: "priya", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "feature/ABC-10702-delta-headers", target: "develop", lastVisit: null,
     reviewers: [["me", "UNAPPROVED"], ["tomas", "UNAPPROVED"]],
-    description: "Encodes each snapshot header as a delta against the last acknowledged header. Saves 18 bytes per packet on average.",
+    description: "Encodes each snapshot header as a delta against the last acknowledged header. Saves 18 bytes per packet on average.\n\nAlso fixes ABC-10688: the snapshot size regression from the last release.",
     files: [["MODIFY", "src/net/Snapshot.cpp"], ["MODIFY", "src/net/Snapshot.h"], ["ADD", "src/net/HeaderDelta.cpp"], ["MODIFY", "src/net/AckWindow.cpp"]],
     commits: [["8e0c3d2", "Delta-encode snapshot headers", "priya", 400], ["f1a7b65", "Pin the delta base in AckWindow", "priya", 200]],
     threads: [
@@ -766,7 +847,7 @@ const PRS = [
   },
   {
     id: 2209, project: "ENGINE", repo: "core", title: "Pool job allocations per worker",
-    author: "tomas", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "perf/job-pools", target: "develop", lastVisit: null,
+    author: "tomas", role: "REVIEWER", my: "UNAPPROVED", state: "OPEN", branch: "perf/ABC-10590-job-pools", target: "develop", lastVisit: null,
     incomplete: `${FORGE.name} did not answer for activities page 3. The previous state stays. The next check continues from page 3.`,
     reviewers: [["me", "UNAPPROVED"], ["dan", "UNAPPROVED"]],
     description: "Each worker allocates jobs from its own pool.",
@@ -776,7 +857,7 @@ const PRS = [
   },
   {
     id: 612, project: "ENGINE", repo: "audio", title: "Stream Opus banks from pak files",
-    author: "yuki", role: "REVIEWER", my: "NEEDS_WORK", state: "OPEN", branch: "feature/opus-pak", target: "develop", lastVisit: 2000,
+    author: "yuki", role: "REVIEWER", my: "NEEDS_WORK", state: "OPEN", branch: "feature/ABC-10322-opus-pak", target: "develop", lastVisit: 2000,
     reviewedAt: "6d1e0f3", reviewedAgo: 2100,
     reviewers: [["me", "NEEDS_WORK"]],
     description: "Reads Opus banks directly from the pak file instead of extracting them first.",
@@ -789,8 +870,9 @@ const PRS = [
     ],
   },
   {
-    id: 95, project: "TOOLS", repo: "crash-uploader", title: "Retry symbol uploads with backoff",
-    author: "dan", role: "REVIEWER", my: "NEEDS_WORK", state: "OPEN", branch: "feature/upload-retry", target: "main", lastVisit: 300,
+    // UTF-8 matches the ID pattern. The keys of the title rule skip it.
+    id: 95, project: "TOOLS", repo: "crash-uploader", title: "Retry symbol uploads with backoff, keep UTF-8 paths",
+    author: "dan", role: "REVIEWER", my: "NEEDS_WORK", state: "OPEN", branch: "bugfix/ABC-10431-upload-retry", target: "main", lastVisit: 300,
     reviewers: [["me", "NEEDS_WORK"]],
     description: "Retries failed symbol uploads up to five times with exponential backoff.",
     files: [["MODIFY", "uploader/upload.py"]],
@@ -803,7 +885,7 @@ const PRS = [
   },
   {
     id: 4177, project: "ENGINE", repo: "render", title: "Fix gamma in the tonemap pass",
-    author: "mira", role: "REVIEWER", my: "APPROVED", state: "MERGED", branch: "fix/tonemap-gamma", target: "develop", lastVisit: 1500,
+    author: "mira", role: "REVIEWER", my: "APPROVED", state: "MERGED", branch: "fix/ABC-10199-tonemap-gamma", target: "develop", lastVisit: 1500,
     reviewers: [["me", "APPROVED"]],
     description: "Applies the sRGB curve after tonemapping, not before.",
     files: [["MODIFY", "src/render/Tonemap.hlsl"]],
@@ -816,7 +898,7 @@ const PRS = [
   },
   {
     id: 77, project: "TOOLS", repo: "shader-cache", title: "Hash shader permutations at build time",
-    author: "me", role: "AUTHOR", my: null, state: "OPEN", branch: "feature/perm-hash", target: "main", lastVisit: 100,
+    author: "me", role: "AUTHOR", my: null, state: "OPEN", branch: "feature/ABC-10650-perm-hash", target: "main", lastVisit: 100,
     reviewers: [["yuki", "UNAPPROVED"]],
     description: "Moves permutation hashing from load time to build time.",
     files: [["MODIFY", "shadercache/build.py"]],
@@ -1012,12 +1094,60 @@ function pastRun(pr, profile, status, agoMin, o = {}) {
   const r = o.r || resultFor(p, prof(profile));
   const log = events(r.at, o.upTo === undefined ? r.steps : r.steps.slice(0, o.upTo));
   if (status === "cancelled") log.at(-1).st = "stop";
-  RUNS.set(pr, { pr, profile, status, ago: agoMin, at: r.at, base: null, note: null, log, error: o.error || null, r: status === "done" ? r : null });
+  RUNS.set(pr, { pr, profile, status, ago: agoMin, at: r.at, base: null, note: o.note || null, tasks: taskIds(p), log, error: o.error || null, raw: o.raw || null, r: status === "done" ? r : null });
+  if (o.note) S.notes.set(pr, o.note);
   return r;
 }
+// Raw output of the failed run: each attempt as the runner returned it, and the schema errors. Lines that start with # come from Review Loop.
+const RAW_1340 = `# Attempt 1: the result text from ${RUNNER.short}. It ends inside findings[0].
+{
+  "schemaVersion": 1,
+  "explanation": {
+    "intendedBehavior": "Each texture cooks as one job on the job graph.",
+    "changedAreas": ["tools/cook/TextureCook.cpp", "tools/cook/JobGraph.cpp"]
+  },
+  "findings": [
+    {
+      "category": "Concurrency",
+      "severity": "high",
+      "confidence": "high",
+      "location": { "path": "tools/cook/TextureCook.cpp", "line": "212", "side": "new" },
+      "scenario": "Two materials share one texture, so two jobs get the same output path.",
+      "evidence": { "status": "code-grounded", "refs": ["tools/cook/TextureCook.cpp:211"] },
+      "consequence": "Both jobs write the same .dds at the same time. The file can end up torn.",
+      "direction": "Deduplicate the textures by output path befo
+
+# Schema check of attempt 1: 3 errors
+#   $.findings[0].severity: "high" is not one of blocker, major, minor, nit.
+#   $.findings[0].location.line: expected an integer, got the string "212".
+#   $: the JSON ends inside $.findings[0].direction.
+
+# Repair attempt 1 of 1: Review Loop sent the 3 errors back and asked for valid JSON.
+{
+  "schemaVersion": 1,
+  "findings": [
+    {
+      "category": "Concurrency",
+      "severity": "major",
+      "confidence": "high",
+      "location": { "path": "tools/cook/TextureCook.cpp", "line": 212, "side": "new" },
+      "scenario": "Two materials share one texture, so two jobs get the same output path.",
+      "evidence": { "status": "code-grounded", "refs": ["tools/cook/TextureCook.cpp:211"] },
+      "consequence": "Both jobs write the same .dds at the same time. The file can end up torn.",
+      "direction": "Deduplicate the textures by output path before you add the jobs."
+    }
+  ],
+  "questions": []
+}
+
+# Schema check of the repair: 2 errors
+#   $.explanation: required, missing.
+#   $.coverage: required, missing.
+# The run failed. No other repair attempt follows.
+`;
 // Past runs. The init at the end of the script creates them, after the helpers exist.
 function pastRuns() {
-  pastRun(977, "general", "done", 40);
+  pastRun(977, "general", "done", 40, { note: "ABC-10702: snapshot headers must shrink by 12 bytes or more on average. Old clients must get a clear version error, not wrong data.\n\nCheck first that the delta base stays alive until the client acks it." });
   const r2215 = pastRun(2215, "general", "done", 180);
   r2215.items[0].status = "accepted";
   r2215.items[1].status = "discarded";
@@ -1030,7 +1160,7 @@ function pastRuns() {
   } });
   pastRun(388, "security", "limit", 120, { upTo: 2, error: "It resets at 16:00. Review Loop does not retry by itself." });
   pastRun(95, "over", "cancelled", 300, { upTo: 2 });
-  pastRun(1340, "general", "failed", 1000, { error: "The output did not match the review schema, and one repair attempt failed too. The raw output is kept. Nothing from this run can be posted." });
+  pastRun(1340, "general", "failed", 1000, { raw: RAW_1340, error: "The output did not match the review schema, and one repair attempt failed too. The raw output is kept. Nothing from this run can be posted." });
 }
 
 // ---------- Derived state ----------
@@ -1132,10 +1262,11 @@ const S = {
   view: "needs", repo: null, query: "", sel: 4182, focus: "list", doneOpen: false,
   needMe: false, open: new Map(), unfold: new Set(), branches: new Set(), showResolved: false, cur: null, descOpen: false, openSec: new Set(),
   following: new Set(PRS.map((p) => p.id)),
-  // AI review: last profile, profile menu, run log of which PR, post confirm, the item in edit and its unsaved text.
-  profile: "general", menu: false, log: null, confirm: false, posting: false, editing: null, editText: null,
-  // Notes for the runner by PR, agent rows that you folded or unfolded in the log, the draft whose line you change.
-  notes: new Map(), agents: new Map(), moving: null,
+  // AI review: last profile, review brief open, run log of which PR, raw output shown, post confirm, the item in edit and its unsaved text.
+  profile: "general", brief: false, log: null, raw: false, confirm: false, posting: false, editing: null, editText: null,
+  // Notes and profiles of the brief by PR, agent rows that you folded or unfolded in the log, the draft whose line you change.
+  notes: new Map(), picks: new Map(), agents: new Map(), moving: null,
+  settings: false,
 };
 
 // ---------- Helpers ----------
@@ -1186,9 +1317,42 @@ const countText = (its) => {
 const toolCalls = (run) => run.log.filter((e) => !e.prep && e.tool !== "agent" && e.st !== "run").length;
 const agentCount = (run) => run.log.filter((e) => e.tool === "agent").length;
 const durLong = (s) => { const r = Math.round(s); const m = Math.floor(r / 60); return [m ? plural(m, "minute") : "", r % 60 || !m ? plural(r % 60, "second") : ""].filter(Boolean).join(" "); };
-// The note shows as plain text with your person icon: it is your own input.
-const noteLine = (note) => `<p class="you-note" title="${esc(note)}">${icon("user")}<span class="you-t"><b>Your note:</b> ${esc(note)}</span></p>`;
 const outside = (it) => it.anchor?.st === "outside";
+
+// ---------- Task IDs ----------
+const SRC = { branch: (p) => p.branch, title: (p) => p.title, description: (p) => p.description };
+const SRC_NAME = { branch: "Branch", title: "Title", description: "Description" };
+// An empty or broken pattern matches nothing. The settings show the error at the rule.
+function ruleError(r) {
+  if (!r.pattern) return "Enter a pattern.";
+  try { new RegExp(r.pattern, "g"); return ""; } catch (err) { return `This is not a valid regular expression: ${err.message.split(": ").at(-1)}.`; }
+}
+// Rules run in order. An ID keeps the source of the first rule that finds it. A match whose key is not in keys is skipped.
+// ponytail: no time cap on a user regex. The app must run it with a cap.
+function extract(p) {
+  const ids = new Map();
+  const skipped = new Map();
+  for (const r of EXTRACTOR) {
+    if (ruleError(r)) continue;
+    for (const [id] of (SRC[r.source](p) || "").matchAll(new RegExp(r.pattern, "g"))) {
+      if (!id) continue;
+      if (r.keys.length && !r.keys.includes(id.split("-")[0])) { if (!skipped.has(id)) skipped.set(id, r.source); }
+      else if (!ids.has(id)) ids.set(id, r.source);
+    }
+  }
+  const list = (m) => [...m].map(([id, src]) => ({ id, src }));
+  return { ids: list(ids), skipped: list(skipped).filter((t) => !ids.has(t.id)) };
+}
+const taskIds = (p) => extract(p).ids;
+const srcWord = (s) => SRC_NAME[s].toLowerCase();
+const taskChip = (t) => `<a class="task-c" href="${esc(TRACKER.issueUrl(t.id))}" target="_blank" rel="noopener noreferrer" data-act="task" data-id="${esc(t.id)}" title="Open ${esc(t.id)} in ${esc(TRACKER.name)}"><code>${esc(t.id)}</code><span>· from ${srcWord(t.src)}</span><span class="sr">, opens a new tab</span></a>`;
+const trackerOn = () => CONTEXT.some((c) => c.tracker);
+// Brief of a run: task IDs, then your note. The IDs come from the pull request, so they do not get your person icon.
+const briefLine = (run) => {
+  if (!run.tasks.length && !run.note) return "";
+  const ids = run.tasks.map((t) => t.id).join(", ");
+  return `<p class="bl">${run.tasks.length ? `<span class="tids" title="${esc(`${run.tasks.length > 1 ? "Tasks" : "Task"} from the pull request: ${run.tasks.map((t) => `${t.id} from ${srcWord(t.src)}`).join(", ")}`)}">${icon("ticket")}<code>${esc(ids)}</code></span>` : ""}${run.note ? `<span class="you-note" title="${esc(run.note)}">${icon("user")}<span class="you-t"><b>Your note:</b> ${esc(run.note)}</span></span>` : ""}</p>`;
+};
 
 // Paths copied from lucide-react 1.48.0 (ISC). The app imports the same icons from lucide-react.
 const ICON = {
@@ -1236,6 +1400,12 @@ const ICON = {
   scroll: '<path d="M15 12h-5"/><path d="M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
   stop: '<circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
+  up: '<path d="m18 15-6-6-6 6"/>',
+  braces: '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  download: '<path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  ticket: '<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/>',
 };
 const icon = (n, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
 // A meaningful icon without visible words. The tooltip and the accessible name carry the same words.
@@ -1295,7 +1465,7 @@ function renderSide() {
         <span class="grow"></span>
         <button type="button" class="icon-btn" data-act="theme" title="Theme: ${theme}. Switch the theme." aria-label="Theme: ${theme}. Switch the theme.">${icon(theme === "dark" ? "moon" : theme === "light" ? "sun" : "monitor")}</button>
         <button type="button" class="icon-btn" data-act="density" title="Compact rows" aria-label="Compact rows" aria-pressed="${dens === "compact"}">${icon(dens === "compact" ? "rows4" : "rows")}</button>
-        <button type="button" class="icon-btn" data-act="settings" title="Settings" aria-label="Settings">${icon("settings")}</button>
+        <button type="button" class="icon-btn" data-act="settings" title="Settings" aria-label="Settings" aria-pressed="${S.settings}">${icon("settings")}</button>
       </div>
     </div>`;
 }
@@ -1303,7 +1473,7 @@ function renderSide() {
 // ---------- List ----------
 function listRows() {
   const q = S.query.trim().toLowerCase();
-  return shown().filter((p) => (S.repo ? `${p.project}/${p.repo}` === S.repo : VIEW(S.view).test(p)) && (!q || `${key(p)} ${p.title} ${PEOPLE[p.author]}`.toLowerCase().includes(q)));
+  return shown().filter((p) => (S.repo ? `${p.project}/${p.repo}` === S.repo : VIEW(S.view).test(p)) && (!q || `${key(p)} ${p.title} ${PEOPLE[p.author]} ${taskIds(p).map((t) => t.id).join(" ")}`.toLowerCase().includes(q)));
 }
 const byReason = (a, b) => REASONS.indexOf(a.group) - REASONS.indexOf(b.group) || (b.unread > 0) - (a.unread > 0) || a.lastActivity - b.lastActivity;
 const runAgo = (p) => (RUNS.get(p.id).status === "running" ? -1 : RUNS.get(p.id).ago);
@@ -1364,8 +1534,9 @@ const whyPost = (p) => `<span class="quote"><b>Accepted:</b> ${countText(p.accep
 const row = (p) => {
   const mode = aiMode();
   const t = mode === "runs" ? Math.max(0, RUNS.get(p.id).ago) : p.lastActivity;
+  const tk = taskIds(p)[0];
   return `<li><button type="button" class="row" data-act="row" data-pr="${p.id}" ${p.id === S.sel ? 'aria-current="true"' : ""}>
-  <span class="row-top"><span class="key">${esc(key(p))}</span>${p.author === "me" ? ic("user", "Your pull request") : ""}${p.incomplete ? `<span class="err">${icon("alert")}Last check incomplete</span>` : ""}<time title="${esc(full(t))}">${ago(t)}</time></span>
+  <span class="row-top"><span class="key">${esc(key(p))}</span>${tk ? `<span class="tk" title="${esc(`Task ${tk.id}, from the ${srcWord(tk.src)}`)}">${esc(tk.id)}</span>` : ""}${p.author === "me" ? ic("user", "Your pull request") : ""}${p.incomplete ? `<span class="err">${icon("alert")}Last check incomplete</span>` : ""}<time title="${esc(full(t))}">${ago(t)}</time></span>
   <span class="row-title">${esc(p.title)}</span>
   <span class="row-why">${mode === "runs" ? whyRun(p) : mode === "post" ? whyPost(p) : `${why(p)}${p.unread ? newMark(`${p.unread} new`) : ""}`}</span>
 </button></li>`;
@@ -1408,6 +1579,7 @@ const ordered = (p) => TURN_ORDER.flatMap((k) => p.threads.filter((t) => t.turn 
 
 function renderDetail() {
   const p = cur();
+  if (S.settings) { renderSettings(); return; }
   if (!p) { $("#detail").innerHTML = `<p class="empty">Select a pull request.</p>`; return; }
   const scrollTop = $("#dbody")?.scrollTop ?? 0;
   const followed = S.following.has(p.id);
@@ -1433,10 +1605,11 @@ function renderDetail() {
         </span>
       </div>
       <div class="dh-title"><h1>${esc(p.title)}</h1>${reviewBtn()}</div>
+      ${S.brief ? briefHtml(p) : ""}
       ${sum ? `<p class="dh-sum">${sum}</p>` : ""}
       ${fresh ? `<p class="dh-sum">${fresh}</p>` : ""}
       <p class="dh-sum run" id="runline" ${RUNS.has(p.id) ? "" : "hidden"}>${runLine(p)}</p>
-      ${RUNS.get(p.id)?.note ? noteLine(RUNS.get(p.id).note) : ""}
+      ${RUNS.has(p.id) ? briefLine(RUNS.get(p.id)) : ""}
     </header>
     <div class="dbody" id="dbody" tabindex="-1">${overview(p)}${threadsSec(p)}${filesSec(p)}${commitsSec(p)}</div>
     ${postBar(p)}`;
@@ -1444,24 +1617,35 @@ function renderDetail() {
 }
 
 const savedNote = (id) => (S.notes.get(id) || "").trim();
+// The profile of the next brief: the one you picked for this pull request, else the profile of its last run, else the last one you used.
+const pickOf = (id) => S.picks.get(id) || RUNS.get(id)?.profile || S.profile;
 function reviewTitle() {
-  const busy = activeRun();
-  const note = savedNote(S.sel);
-  return busy ? `${RUNNER.short} is reviewing ${key(BY_ID.get(busy.pr))}. One review runs at a time.` : `Review with ${RUNNER.name}, ${prof(S.profile).name} profile${note ? `, and your note: ${snippet(note, 80)}` : ""}. Key: r`;
+  const run = RUNS.get(S.sel);
+  return `Open the review brief: task, your note, and profile. Key: Shift+R.${run ? ` Key r runs the last brief again: ${prof(run.profile).name}${run.note ? " with your note" : ""}.` : ""}`;
 }
 
-// The popup holds the note and the profiles. The note stays per pull request until you change it.
-function reviewBtn() {
+// The button names the profile that the brief starts with.
+const reviewBtn = () => `<button type="button" class="btn primary rv" data-act="brief" aria-expanded="${S.brief}"${S.brief ? ' aria-controls="brief"' : ""} title="${esc(reviewTitle())}">Review · ${esc(prof(pickOf(S.sel)).name)}${icon("down", "chev-d")}</button>`;
+
+// The brief: task IDs, your note, the profile. The note and the profile stay per pull request until you change them.
+function briefHtml(p) {
+  const ids = taskIds(p);
+  const pick = pickOf(p.id);
   const busy = activeRun();
-  return `<div class="split">
-      <button type="button" class="btn primary" data-act="review" aria-disabled="${!!busy}" title="${esc(reviewTitle())}">Review</button>
-      <button type="button" class="btn primary more-b" data-act="profiles" aria-haspopup="dialog" aria-expanded="${S.menu}" aria-controls="profiles" aria-label="Review options: note and profile" title="Write a note or choose a profile. Key: Shift+R">${icon("down")}</button>
-      <div class="menu" id="profiles" role="dialog" aria-label="Review options" ${S.menu ? "" : "hidden"}>
-        <div class="note"><label for="note-ta">Note for ${esc(RUNNER.short)}</label><textarea id="note-ta" rows="3" spellcheck="true" aria-describedby="note-h" placeholder="Focus on the locking change. The EvictionPolicy split is a pure move.">${esc(S.notes.get(S.sel) || "")}</textarea>
-          <p class="note-h" id="note-h">Optional. ${esc(RUNNER.short)} reads it as your instruction. It reads the pull request text as data only.</p></div>
-        <div role="menu" aria-label="Review profiles">${PROFILES.map((x) => `<button type="button" role="menuitem" data-act="review" data-profile="${x.id}"><span class="mi-t">${esc(x.name)}${x.id === S.profile ? `${icon("check")}<span class="sr">, last used</span>` : ""}</span><span class="mi-d">${esc(x.note)}</span></button>`).join("")}</div>
+  const task = ids.length
+    ? `${ids.map(taskChip).join("")}${trackerOn() ? "" : `<button type="button" class="quiet" data-act="fetch-task" aria-disabled="true" title="Arrives with the ${esc(TRACKER.name)} connector">${icon("download")}Fetch from ${esc(TRACKER.name)}</button>`}`
+    : `<span class="none">No task ID found.</span><button type="button" class="linkish" data-act="set-ids">Set up task IDs</button>`;
+  return `<section class="brief" id="brief" aria-labelledby="brief-t">
+      <h2 id="brief-t">Review brief</h2>
+      <div class="bf-task" role="group" aria-labelledby="bf-task-l"><span class="bf-l" id="bf-task-l">Task</span>${task}</div>
+      <div class="bf-main">
+        <div class="bf-note"><label class="bf-l" for="note-ta">Your note</label>
+          <textarea id="note-ta" rows="7" spellcheck="true" aria-describedby="note-h" placeholder="Paste the task text and its acceptance criteria. Then say what to check first.">${esc(S.notes.get(p.id) || "")}</textarea>
+          <p class="bf-h" id="note-h">Saved for this pull request. ${esc(RUNNER.short)} reads your note as your instruction. It reads the pull request text as data only.</p></div>
+        <fieldset class="bf-prof"><legend class="bf-l">Profile</legend>${PROFILES.map((x) => `<label class="pf-o"><input type="radio" name="bf-prof" id="bf-p-${x.id}" value="${x.id}"${x.id === pick ? " checked" : ""}><span class="pf-n">${esc(x.name)}</span><span class="pf-d">${esc(x.note)}</span></label>`).join("")}</fieldset>
       </div>
-    </div>`;
+      <div class="bf-acts"><button type="button" class="btn primary" data-act="brief-start"${busy ? ` aria-disabled="true" title="${esc(`${RUNNER.short} is reviewing ${key(BY_ID.get(busy.pr))}. One review runs at a time.`)}"` : ' title="Key: Ctrl+Enter"'}>Start review</button><button type="button" class="btn" data-act="brief-cancel" title="Key: Esc">Cancel</button><span class="hint">Ctrl+Enter starts the review. Esc closes the brief.</span></div>
+    </section>`;
 }
 
 // One line for the newest run. Failed, usage-limit, and cancelled runs are one line of text each, not a banner.
@@ -1481,7 +1665,7 @@ function runLine(p) {
       const since = at ? p.commits.filter((c) => c[3] < at[3]).length : 0;
       return `<span class="rl">${icon("bot")}${esc(RUNNER.short)} ${pf.explain ? "explained" : "reviewed"} <code>${run.at}</code>${run.base ? ` (changes since <code>${run.base}</code>)` : ""}</span>${run.ago ? `<time title="${esc(full(run.ago))}">${agoLong(run.ago)}</time>` : ""}<span>${countText(run.r.items)}</span><span>${run.r.tokens}k tokens</span>${since ? `<span>${plural(since, "commit")} since</span><button type="button" class="linkish" data-act="review-changes">Review changes</button>` : ""}${log}`;
     }
-    case "failed": return `<span class="err">${icon("alert")}<span>Review failed. ${esc(run.error)}</span></span>${log}`;
+    case "failed": return `<span class="err">${icon("alert")}<span>Review failed. ${esc(run.error)}</span></span>${run.raw ? `<button type="button" class="linkish" data-act="raw">${icon("braces")}Show raw output</button>` : ""}${log}`;
     case "limit": return `<span class="err">${icon("alert")}<span>${esc(RUNNER.name)} usage limit reached. ${esc(run.error)}</span></span>${log}`;
     default: return `<span class="rl">${icon("stop")}You cancelled the review after ${calls}.</span>${log}`;
   }
@@ -1548,7 +1732,7 @@ function aiSummary(p) {
       <summary><span class="ai-h">${aiAvatar()}<b>${esc(RUNNER.short)}'s summary</b><span class="ai-line">${inline(r.line)}</span>${open.length ? `<span class="n">${plural(open.length, "question")}</span>` : ""}${icon("chev", "chev")}</span></summary>
       <div class="ai-body">
         ${r.risks.length ? `<h3>Risk areas</h3><ul>${r.risks.map((x) => `<li>${inline(x)}</li>`).join("")}</ul>` : ""}
-        <h3>Coverage</h3><dl class="cov">${run.note ? `<dt>Your note</dt><dd class="you-c">${icon("user")}<span>${esc(run.note)}</span></dd>` : ""}${cov.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${inline(v)}</dd>`).join("")}${dropped}</dl>
+        <h3>Coverage</h3><dl class="cov">${run.tasks.length ? `<dt>Task</dt><dd>${run.tasks.map((t) => `<code>${esc(t.id)}</code> from the ${srcWord(t.src)}`).join(", ")}</dd>` : ""}${run.note ?`<dt>Your note</dt><dd class="you-c">${icon("user")}<span>${esc(run.note)}</span></dd>` : ""}${cov.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${inline(v)}</dd>`).join("")}${dropped}</dl>
         ${open.length ? `<h3>Questions for ${p.author === "me" ? "the author" : esc(first(p.author))}</h3><div class="qs">${open.map(question).join("")}</div>` : ""}
       </div>
     </details>`;
@@ -1804,11 +1988,15 @@ function logFoot(run) {
   switch (run.status) {
     case "running": return `<span class="rl">${icon("loader", "spin")}Running. ${plural(toolCalls(run), "tool call")} so far.</span>`;
     case "done": return `Result: ${countText(run.r.items)}. ${run.r.tokens}k tokens, ${dur(run.r.secs)}.`;
-    case "failed": return `<span class="err">${icon("alert")}Failed. ${esc(run.error)}</span>`;
+    case "failed": return `<span class="err">${icon("alert")}Failed. ${esc(run.error)}</span>${run.raw ? `<button type="button" class="linkish" data-act="raw-toggle" aria-expanded="${S.raw}"${S.raw ? ' aria-controls="raw"' : ""}>${icon("braces")}${S.raw ? "Hide raw output" : "Show raw output"}</button>` : ""}`;
     case "limit": return `<span class="err">${icon("alert")}Stopped: ${esc(RUNNER.name)} usage limit reached. ${esc(run.error)}</span>`;
     default: return "You cancelled the run. Nothing from it can be posted.";
   }
 }
+const rawBlock = (run) => `<section class="raw" id="raw" aria-labelledby="raw-t">
+    <div class="raw-h"><h3 id="raw-t">Raw output</h3><span class="aside">Read-only. Kept with the run.</span><button type="button" class="btn" data-act="raw-copy">${icon("copy")}Copy</button></div>
+    <pre id="raw-pre" tabindex="0" aria-labelledby="raw-t">${esc(run.raw)}</pre>
+  </section>`;
 function renderSheet() {
   const el = $("#sheet");
   const run = S.log && RUNS.get(S.log);
@@ -1816,10 +2004,31 @@ function renderSheet() {
   const p = BY_ID.get(run.pr);
   el.hidden = false;
   el.innerHTML = `<header class="sh-h"><h2 id="sheet-title">${esc(RUNNER.name)} run log</h2><button type="button" class="icon-btn" data-act="log-close" aria-label="Close the run log" title="Close. Key: Esc">${icon("x")}</button>
-      <p class="sh-meta">${esc(key(p))}, ${esc(prof(run.profile).name)} profile, commit <code>${run.at}</code>${run.ago ? `, ${agoLong(run.ago)}` : ""}</p>${run.note ? noteLine(run.note) : ""}</header>
+      <p class="sh-meta">${esc(key(p))}, ${esc(prof(run.profile).name)} profile, commit <code>${run.at}</code>${run.ago ? `, ${agoLong(run.ago)}` : ""}</p>${briefLine(run)}</header>
     <ol class="log" id="log" aria-label="Tool calls">${logTree(run)}</ol>
+    ${S.raw && run.raw ? rawBlock(run) : ""}
     <footer class="sh-f" id="log-foot" aria-live="polite">${logFoot(run)}</footer>`;
   $("#log").scrollTop = $("#log").scrollHeight;
+}
+// The copy starts inside the click handler, so the browser counts it as a user action. A blocked clipboard leaves the text selected.
+function copyRaw() {
+  const pre = $("#raw-pre");
+  const selectAll = () => {
+    const r = document.createRange();
+    r.selectNodeContents(pre);
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+    pre.focus();
+    toast("The clipboard is blocked here. The raw output is selected: press Ctrl+C to copy it.");
+  };
+  if (!navigator.clipboard?.writeText) { selectAll(); return; }
+  navigator.clipboard.writeText(pre.textContent).then(() => toast("Copied the raw output."), selectAll);
+}
+function toggleRaw(show = !S.raw) {
+  S.raw = show;
+  renderSheet();
+  if (show) { $("#raw").scrollIntoView({ block: "nearest" }); $("#raw-pre").focus({ preventScroll: true }); }
+  else $('#sheet [data-act="raw-toggle"]').focus();
 }
 // Live updates touch only the list and the footer. Focus on an agent row stays.
 function paintSheet(run, follow = true) {
@@ -1852,6 +2061,7 @@ function openLog(agent) {
 }
 function closeLog() {
   S.log = null;
+  S.raw = false;
   renderSheet();
   (logOpener?.isConnected ? logOpener : $('#runline [data-act="log"]'))?.focus();
 }
@@ -1865,7 +2075,8 @@ const RUN_MIN = 3;
 let runTimer = 0;
 const elapsed = (run) => Math.round(((Date.now() - run.t0) / 1000) * SCALE);
 
-function startReview(profileId, { changes = false } = {}) {
+// A brief is the profile, your note, and the task IDs of the pull request at the start.
+function startReview(profileId, { changes = false, note = savedNote(cur().id) } = {}) {
   const p = cur();
   const busy = activeRun();
   if (busy) { toast(`One review runs at a time. ${RUNNER.short} is reviewing ${key(BY_ID.get(busy.pr))}.`); return; }
@@ -1873,12 +2084,14 @@ function startReview(profileId, { changes = false } = {}) {
   const old = RUNS.get(p.id);
   const pf = prof(profileId);
   S.profile = pf.id;
-  S.menu = false;
+  S.picks.set(p.id, pf.id);
+  S.brief = false;
+  S.raw = false;
   S.editing = null;
   S.moving = null;
   S.agents.clear();
   const r = resultFor(p, pf);
-  const run = { pr: p.id, profile: pf.id, status: "running", ago: 0, at: r.at, base: changes && old ? old.at : null, note: savedNote(p.id) || null, log: [], error: null, r: null, t0: Date.now(),
+  const run = { pr: p.id, profile: pf.id, status: "running", ago: 0, at: r.at, base: changes && old ? old.at : null, note: note || null, tasks: taskIds(p), log: [], error: null, raw: null, r: null, t0: Date.now(),
     todo: events(r.at, r.steps), result: r };
   RUNS.set(p.id, run);
   derive(p);
@@ -2120,10 +2333,12 @@ function renderAll() { renderSide(); renderList(); renderDetail(); }
 function select(id, { focusDetail = false, toCause = false } = {}) {
   const changed = S.sel !== id;
   S.sel = id;
+  // Opening a pull request leaves the settings. j and k keep them open, so the preview follows the selection.
+  if (focusDetail && S.settings) { S.settings = false; renderSide(); }
   if (changed) {
     S.cur = null; S.needMe = false; S.unfold.clear(); S.branches.clear(); S.showResolved = false; S.descOpen = false; S.openSec.clear();
-    S.menu = false; S.confirm = false; S.editing = null; S.editText = null; S.moving = null; S.agents.clear();
-    if (S.log) { S.log = null; renderSheet(); }
+    S.brief = false; S.confirm = false; S.editing = null; S.editText = null; S.moving = null; S.agents.clear();
+    if (S.log) { S.log = null; S.raw = false; renderSheet(); }
     const db = $("#dbody"); if (db) db.scrollTop = 0;
   }
   renderList();
@@ -2239,20 +2454,113 @@ function goDrafts() {
   jumpThread(it.id);
 }
 
-// toNote: Shift+R opens the popup with focus in the note.
-function setMenu(open, refocus = false, toNote = false) {
-  S.menu = open;
-  const menu = $("#profiles");
-  if (!menu) return;
-  menu.hidden = !open;
-  $('[data-act="profiles"]').setAttribute("aria-expanded", open);
-  if (open) (toNote ? $("#note-ta") : $(`#profiles [data-profile="${S.profile}"]`)).focus();
-  else if (refocus) $('[data-act="profiles"]').focus();
+// The brief opens with focus in your note, the main input.
+function openBrief() {
+  S.brief = true;
+  S.focus = "detail";
+  $("#app").dataset.mobile = "detail";
+  renderDetail();
+  const ta = $("#note-ta");
+  ta.focus({ preventScroll: true });
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  $("#brief").scrollIntoView({ block: "nearest" });
+}
+function closeBrief() {
+  S.brief = false;
+  renderDetail();
+  $('[data-act="brief"]').focus();
+}
+// r: the last brief of this pull request runs again. With no run yet, the brief opens.
+function rerun() {
+  const run = RUNS.get(S.sel);
+  if (run) startReview(run.profile, { note: run.note }); else openBrief();
+}
+
+// ---------- Settings ----------
+const ruleRow = (r, i) => {
+  const err = ruleError(r);
+  const n = `<span class="sr"> of rule ${i + 1}</span>`;
+  return `<li class="rule">
+      <span class="rule-n" aria-hidden="true">${i + 1}</span>
+      <label class="fld f-src">Source${n}<select id="r-source-${i}" data-rule="${i}" data-f="source">${Object.entries(SRC_NAME).map(([k, v]) => `<option value="${k}"${k === r.source ? " selected" : ""}>${v}</option>`).join("")}</select></label>
+      <label class="fld f-pat">Pattern${n}<input id="r-pattern-${i}" class="mono" data-rule="${i}" data-f="pattern" value="${esc(r.pattern)}" spellcheck="false" autocomplete="off" aria-invalid="${!!err}" aria-describedby="r-err-${i}"></label>
+      <label class="fld f-keys">Keys${n}<input id="r-keys-${i}" class="mono" data-rule="${i}" data-f="keys" value="${esc(r.keys.join(", "))}" placeholder="Any key" spellcheck="false" autocomplete="off"></label>
+      <span class="rule-b">
+        <button type="button" class="icon-btn" data-act="rule-move" data-rule="${i}" data-d="-1" aria-label="Move rule ${i + 1} up" title="Move up"${i ? "" : " disabled"}>${icon("up")}</button>
+        <button type="button" class="icon-btn" data-act="rule-move" data-rule="${i}" data-d="1" aria-label="Move rule ${i + 1} down" title="Move down"${i < EXTRACTOR.length - 1 ? "" : " disabled"}>${icon("down")}</button>
+        <button type="button" class="icon-btn" data-act="rule-del" data-rule="${i}" aria-label="Remove rule ${i + 1}" title="Remove">${icon("x")}</button>
+      </span>
+      <p class="rule-err err" id="r-err-${i}"${err ? "" : " hidden"}>${icon("alert")}<span>${esc(err)}</span></p>
+    </li>`;
+};
+// The preview runs the rules on the selected pull request. j and k in the list change it.
+function preview(p) {
+  const { ids, skipped } = extract(p);
+  return `<div class="pv-h"><h3>Preview</h3><span class="key">${esc(key(p))}</span><span class="aside">Select another pull request in the list to preview it.</span></div>
+    <dl class="pv-src">${Object.entries(SRC_NAME).map(([k, v]) => `<dt>${v}</dt><dd>${k === "branch" ? `<code>${esc(p.branch)}</code>` : esc(snippet(SRC[k](p) || "", 140))}</dd>`).join("")}</dl>
+    ${ids.length ? `<ul class="pv-ids" aria-label="Task IDs found">${ids.map((t) => `<li>${taskChip(t)}</li>`).join("")}</ul>` : `<p class="none">No match.</p>`}
+    ${skipped.length ? `<p class="skip">Skipped ${skipped.map((t) => `<code>${esc(t.id)}</code> in the ${srcWord(t.src)}`).join(", ")}: the key is not in the list.</p>` : ""}`;
+}
+function renderSettings() {
+  const p = cur();
+  $("#detail").innerHTML = `
+    <header class="dh">
+      <div class="dh-meta"><button type="button" class="back m-only" data-act="back">${icon("left")}Inbox</button><span class="dh-actions"><button type="button" class="icon-btn" data-act="settings" aria-label="Close the settings" title="Close. Key: Esc">${icon("x")}</button></span></div>
+      <div class="dh-title"><h1>Settings</h1></div>
+    </header>
+    <div class="dbody" id="dbody" tabindex="-1">
+      <p class="set-stub">${esc(FORGE.name)} URL, access token, poll interval, review profiles, and the ${esc(RUNNER.name)} path stay as in M1.</p>
+      <section class="sec" aria-labelledby="h-taskids">
+        <h2 id="h-taskids">Task IDs</h2>
+        <p class="lead">Review Loop looks for task IDs in each pull request. The rules run from top to bottom. When two rules find the same ID, the first rule names its source. Keys limit the matches to your projects, so UTF-8 or SHA-256 do not count.</p>
+        <ol class="rules" aria-label="Task ID rules">${EXTRACTOR.map(ruleRow).join("")}</ol>
+        <button type="button" class="btn add-r" data-act="rule-add">${icon("plus")}Add rule</button>
+        <p class="lead">Each ID links to <code>${esc(TRACKER.issueUrl("{id}"))}</code> in ${esc(TRACKER.name)}.</p>
+        <div class="pv" id="pv" aria-live="polite">${p ? preview(p) : ""}</div>
+      </section>
+    </div>`;
+}
+function setSettings(open) {
+  S.settings = open;
+  S.brief = false;
+  if (S.log) { S.log = null; S.raw = false; renderSheet(); }
+  if (open) $("#app").dataset.mobile = "detail";
+  renderSide();
+  renderDetail();
+  (open ? $("#dbody") : $('#side [data-act="settings"]')).focus();
+}
+// Edits apply at once: the preview, the composer chips, and the inbox rows use the new rules.
+function editRule(el) {
+  const i = Number(el.dataset.rule);
+  const r = EXTRACTOR[i];
+  const f = el.dataset.f;
+  r[f] = f === "keys" ? el.value.split(/[\s,]+/).filter(Boolean) : el.value;
+  const err = ruleError(r);
+  $(`#r-pattern-${i}`).setAttribute("aria-invalid", !!err);
+  const box = $(`#r-err-${i}`);
+  box.hidden = !err;
+  box.lastElementChild.textContent = err;
+  $("#pv").innerHTML = preview(cur());
+  renderList();
+}
+// Rows render again after add, remove, or move. Focus goes to the control that keeps the place.
+function changeRules(act, i, d) {
+  if (act === "rule-add") EXTRACTOR.push({ source: "title", pattern: ID_PATTERN, keys: ["ABC"] });
+  if (act === "rule-del") EXTRACTOR.splice(i, 1);
+  if (act === "rule-move") EXTRACTOR.splice(i + d, 0, ...EXTRACTOR.splice(i, 1));
+  renderSettings();
+  renderList();
+  const n = EXTRACTOR.length;
+  if (act === "rule-add") $(`#r-pattern-${n - 1}`).focus();
+  else if (act === "rule-del") (n ? $(`[data-act="rule-del"][data-rule="${Math.min(i, n - 1)}"]`) : $('[data-act="rule-add"]')).focus();
+  else {
+    const btn = $(`[data-act="rule-move"][data-rule="${i + d}"][data-d="${d}"]`);
+    (btn.disabled ? $(`[data-act="rule-move"][data-rule="${i + d}"][data-d="${-d}"]`) : btn).focus();
+  }
 }
 
 // ---------- Events ----------
 document.addEventListener("click", (e) => {
-  if (S.menu && !e.target.closest(".split")) setMenu(false);
   const el = e.target.closest("[data-act]");
   if (!el) return;
   const act = el.dataset.act;
@@ -2284,12 +2592,20 @@ document.addEventListener("click", (e) => {
     case "file": { const t = cur().threads.find((x) => x.path === el.dataset.path); if (t) jumpThread(t.id); break; }
     case "desc": S.descOpen = !S.descOpen; renderDetail(); break;
     case "bb": toast(`Opens this place in ${FORGE.name} in a new tab.`); break;
-    case "review": startReview(el.dataset.profile || S.profile); break;
-    case "review-changes": startReview(RUNS.get(S.sel).profile, { changes: true }); break;
-    case "profiles": setMenu(!S.menu); break;
+    case "task": toast(`Opens ${el.dataset.id} in ${TRACKER.name} in a new tab.`); break;
+    case "brief": S.brief ? closeBrief() : openBrief(); break;
+    case "brief-start": startReview(pickOf(S.sel)); break;
+    case "brief-cancel": closeBrief(); break;
+    case "fetch-task": toast(`Arrives with the ${TRACKER.name} connector. It will import the summary, description, acceptance criteria, and comments.`); break;
+    case "set-ids": setSettings(true); break;
+    case "review-changes": { const run = RUNS.get(S.sel); startReview(run.profile, { changes: true, note: run.note }); break; }
     case "cancel": cancelReview(); break;
     case "log": openLog(); break;
     case "log-close": closeLog(); break;
+    case "raw": openLog(); toggleRaw(true); break;
+    case "raw-toggle": toggleRaw(); break;
+    case "raw-copy": copyRaw(); break;
+    case "rule-add": case "rule-del": case "rule-move": changeRules(act, Number(el.dataset.rule), Number(el.dataset.d)); break;
     case "from": openLog(el.dataset.agent); break;
     case "agent": {
       const run = RUNS.get(S.log);
@@ -2315,7 +2631,7 @@ document.addEventListener("click", (e) => {
     case "follow": { const id = S.sel; S.following.has(id) ? S.following.delete(id) : S.following.add(id); toast(S.following.has(id) ? "Following. Review Loop checks it for new comments." : "Not followed. Review Loop stops checking it for new comments."); renderDetail(); break; }
     case "archive": toast(`Archived ${key(cur())}. Paste its URL into the filter to follow it again.`); break;
     case "check": toast("Checked just now. Nothing new."); break;
-    case "settings": toast("Settings are unchanged from M1."); break;
+    case "settings": setSettings(!S.settings); break;
     case "theme": {
       const order = ["system", "light", "dark"];
       const t = order[(order.indexOf(document.documentElement.dataset.theme || "system") + 1) % 3];
@@ -2338,7 +2654,9 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("input", (e) => {
   if (e.target.id === "edit-ta") { S.editText = e.target.value; return; }
-  if (e.target.id === "note-ta") { S.notes.set(S.sel, e.target.value); $('[data-act="review"]').title = reviewTitle(); return; }
+  if (e.target.id === "note-ta") { S.notes.set(S.sel, e.target.value); return; }
+  if (e.target.name === "bf-prof") { S.picks.set(S.sel, e.target.value); $('[data-act="brief"]').outerHTML = reviewBtn(); return; }
+  if (e.target.dataset.f) { editRule(e.target); return; }
   if (e.target.id !== "q") return;
   S.query = e.target.value;
   const pos = e.target.selectionStart;
@@ -2361,18 +2679,22 @@ document.addEventListener("focusin", (e) => {
 });
 
 let gChord = 0;
+// Keys that act on an open pull request. The settings view ignores them.
+const PR_KEYS = new Set([..."noyaedpgrR123"]);
 document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && e.target.id === "note-ta") { e.preventDefault(); startReview(pickOf(S.sel)); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const help = $("#help");
-  const typing = e.target.matches?.("input:not([type=checkbox]), textarea, [contenteditable]");
+  const typing = e.target.matches?.("input:not([type=checkbox]), textarea, select, [contenteditable]");
   if (e.key === "Escape") {
     if (help.open) return;
-    // Esc closes the innermost layer first: the menu, an edit, the post confirm, the run log.
-    if (S.menu) { e.preventDefault(); setMenu(false, true); return; }
+    // Esc closes the innermost layer first: an edit, the brief, the post confirm, the run log, the settings.
     if (e.target.id === "edit-ta") { e.preventDefault(); cancelEdit(); return; }
     if (e.target.id === "mv-in") { e.preventDefault(); cancelMove(); return; }
+    if (S.brief && !e.target.closest?.("#sheet")) { e.preventDefault(); closeBrief(); return; }
     if (S.confirm && !S.posting) { e.preventDefault(); closeConfirm(); return; }
     if (S.log) { e.preventDefault(); closeLog(); return; }
+    if (S.settings && !typing) { e.preventDefault(); setSettings(false); return; }
     if (typing) { e.target.blur(); S.focus = "list"; return; }
     if (S.focus === "detail" || $("#app").dataset.mobile !== "list") { e.preventDefault(); S.focus = "list"; $("#app").dataset.mobile = "list"; $(`.row[data-pr="${S.sel}"]`)?.focus(); }
     return;
@@ -2381,13 +2703,7 @@ document.addEventListener("keydown", (e) => {
   if (typing) return;
   if (e.key === "?") { e.preventDefault(); help.open ? help.close() : help.showModal(); return; }
   if (help.open) return;
-  if (S.menu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-    e.preventDefault();
-    const its = $$("#profiles [role=menuitem]");
-    const i = its.indexOf(document.activeElement);
-    its[(i + (e.key === "ArrowDown" ? 1 : its.length - 1)) % its.length].focus();
-    return;
-  }
+  if (S.settings && PR_KEYS.has(e.key)) return;
   if (gChord) {
     clearTimeout(gChord);
     gChord = 0;
@@ -2423,8 +2739,8 @@ document.addEventListener("keydown", (e) => {
     case "1": e.preventDefault(); goOverview(); return;
     case "2": e.preventDefault(); goDrafts(); return;
     case "3": e.preventDefault(); openLog(); return;
-    case "r": e.preventDefault(); startReview(S.profile); return;
-    case "R": e.preventDefault(); $("#app").dataset.mobile = "detail"; setMenu(true, false, true); return;
+    case "r": e.preventDefault(); rerun(); return;
+    case "R": e.preventDefault(); openBrief(); return;
     case "a": case "e": case "d": e.preventDefault(); triageKey(e.key); return;
     case "p": e.preventDefault(); openConfirm(); return;
   }
