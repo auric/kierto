@@ -55,6 +55,29 @@ The probe ran without changes, read-only first, then with `--write`. The write r
 | PR URL forms | CONFIRMED | Project repo: `/projects/<KEY>/repos/<slug>/pull-requests/<id>`. Personal repo: `/users/<user slug>/repos/<slug>/pull-requests/<id>`, REST project key `~<USER SLUG>` (upper case), `project.type` PERSONAL. A trailing `/overview` parses. `links.self` uses the `/users/<slug>/...` form without `/overview`. |
 | Existing Bitbucket MCP tools (BRIEF 10.6) | CONFIRMED | Schemas read, tools not called. `browse_repository` (project_key, repository_slug, path, at, start, limit). `create_pull_request_comment` (project_key, repository_slug, pull_request_id, text, parent_id, anchor, is_blocker, state). `edit_pull_request_comment` (project_key, repository_slug, pull_request_id, comment_id, version, text, is_blocker, severity, state). `get_file_content` (project_key, repository_slug, path, at). `get_projects` (name, permission, start, limit). `get_pull_request_activity` (project_key, repository_slug, pull_request_id, start, limit). `get_pull_request_comments` (project_key, repository_slug, pull_request_id, path required, start, limit). `get_pull_request_diff` (project_key, repository_slug, pull_request_id, path, src_path, since_id, until_id, context_lines, whitespace, with_comments). `get_pull_request_tasks` (project_key, repository_slug, pull_request_id, start, limit). `get_pull_requests` (project_key, repository_slug, state, start, limit). `get_repositories` (project_key, start, limit). `get_repository_branches` (project_key, repository_slug, filter_text, start, limit). `list_repository_files` (project_key, repository_slug, path, at, start, limit). No delete-comment tool. Comment write tools exist, so the review deny list must name them. |
 
+## Gate v3, local
+
+Status: PENDING. The script is ready. No check has run yet.
+
+Run: `bun scripts/gate/claude-checks.ts`. One check only: `--only B3`. Several: `--only B1,B6`. Preflight with no `claude -p` call: `--dry-run`. Then sanitize: `bun scripts/gate/sanitize-claude.ts`. It writes `fixtures/claude/` and exits 1 when a real value remains.
+
+Each `claude -p` call uses `--model haiku`, `--max-turns` 4 or less, stream-json, the prompt on stdin, the scrubbed env, and a temp folder. The script checks `claude auth status` first and logs only `authMethod`. It never uses `--bare`. Raw output goes to `.gate0/v3-local/raw/` (gitignored). The result table goes to `.gate0/v3-local/results.json`.
+
+Cost limit: 14 `claude -p` calls and 0.60 USD (sum of the reported result costs). The script stops at either limit. A full run plans 14 calls. Gate 0 spent 0.0226 USD on 8 calls.
+
+| Check | Calls | Result | Evidence |
+|---|---|---|---|
+| B1. Review agent: shell, Write, Read of a sibling folder | 1 | PENDING | |
+| B2. Block `general-purpose` and a user agent: `Agent(...)` deny, `Task(...)` deny, `CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS=1`, `--agent` main thread | 4 | PENDING | |
+| B3. Agent events, `task_*` events, result events, `structured_output`; also with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` | 2 | PENDING | |
+| B4. `--no-session-persistence`: project folder, subagent output files, memory folders | 1 | PENDING | |
+| B5. Errors: max turns, auth with an empty `CLAUDE_CONFIG_DIR` | 2 | PENDING | |
+| B6. Hostile repository after the WP6 sanitize steps | 1 | PENDING | |
+| B7. Stub stdio MCP server from the main agent and a subagent | 1 | PENDING | |
+| B8. `--restricted` with stream-json, `--json-schema`, the stub MCP server, and `rl-reviewer`; second call adds `--setting-sources user` and `--settings` | 2 | PENDING | |
+| Permission modes: `--permission-mode` choices in `claude --help`, and `init.permissionMode` per call | 0 | PENDING | |
+| CLI version (runner minimum) | 0 | PENDING | |
+
 ## Impact on BRIEF.md
 
 Lines that the results confirm:
