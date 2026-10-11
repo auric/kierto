@@ -157,7 +157,11 @@ function boot() {
   const live = createLive();
   const settings = createSettings({ dir: dataDir, secrets });
   const sync = createSyncEngine({ settings, live });
-  const review = createReviewJobs({ settings, live, dataDir, runnerCommand });
+  // No e2e run reaches the documentation servers.
+  const listTools = async (): Promise<string[]> => {
+    throw new Error("offline in e2e");
+  };
+  const review = createReviewJobs({ settings, live, dataDir, runnerCommand, listTools });
   const server = startServer({
     port: APP_PORT,
     token: randomBytes(32).toString("hex"),

@@ -21,7 +21,17 @@ import { dataDir as defaultDataDir } from "../config";
 import type { Live } from "../live";
 import { log } from "../log";
 import type { Settings } from "../settings";
-import { DEFAULT_PROFILE, GIT_SERVER, mainAgent, type Profile, profileOf, REVIEWER, reviewerAgent } from "./catalog";
+import {
+  createDocServers,
+  DEFAULT_PROFILE,
+  GIT_SERVER,
+  type ListTools,
+  mainAgent,
+  type Profile,
+  profileOf,
+  REVIEWER,
+  reviewerAgent,
+} from "./catalog";
 import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude";
 import { type DiffFile, parseDiff } from "./diffmap";
 import { git, gitEnv } from "./git";
@@ -45,6 +55,8 @@ export type ReviewJobsOptions = {
   runnerCommand?: string[];
   // Absent: the forge provider. The tests pass a file remote.
   gitRemote?: (ref: PrRef) => Promise<GitRemote>;
+  // Absent: tools/list over the network. The tests pass a stub.
+  listTools?: ListTools;
   now?: () => number;
 };
 
@@ -307,8 +319,8 @@ const questionItem = (q: Question): NewItem => ({
   excerpt_json: null,
 });
 
-// Turns a runner outcome into the run end. servers: the MCP servers of the spec.
-async function judge(o: RunOutcome, ws: Workspace, profile: Profile, servers: string[]): Promise<Ending> {
+// Turns a runner outcome into the run end. servers: the MCP servers of the spec. gaps: the servers left out of the spec.
+async function judge(o: RunOutcome, ws: Workspace, profile: Profile, servers: string[], gaps: string[]): Promise<Ending> {
   const raw = rawOutput(o);
   if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
   const parsed = reviewResult.safeParse(o.result?.structured_output);
@@ -328,7 +340,7 @@ async function judge(o: RunOutcome, ws: Workspace, profile: Profile, servers: st
     const status = o.init?.mcp_servers?.find((s) => s.name === name)?.status ?? "absent";
     return status === "connected" ? [] : [`MCP server ${name}: ${status}`];
   });
-  const coverage = { ...v.coverage, unavailable: [...v.coverage.unavailable, ...down] };
+  const coverage = { ...v.coverage, unavailable: [...v.coverage.unavailable, ...gaps, ...down] };
   const incomplete = coverage.skipped.length > 0 || coverage.unavailable.length > 0;
   return {
     status: incomplete ? "incomplete" : "completed",
@@ -402,6 +414,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   const now = opts.now ?? Date.now;
   const dataDir = opts.dataDir ?? defaultDataDir();
   const runner = createClaudeRunner({ command: opts.runnerCommand });
+  const docServers = createDocServers(opts.listTools);
   const recovered = new WeakSet<Database>();
   let job: Job | null = null;
   let checked: RunnerCheck | null = null;
@@ -521,7 +534,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (j.cancelled) return cancelled();
 
     const profile = profileOf(brief.profile);
-    const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY) };
+    const docs = await docServers(profile);
+    if (j.cancelled) return cancelled();
+    const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...docs.servers };
     const prompt = buildPrompt({
       mergeBase: ws.mergeBase,
       head: ws.sourceHead,
@@ -548,7 +563,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     );
     // The runner ignores a cancel that comes after the process ended.
     if (j.cancelled) return cancelled(o);
-    return judge(o, ws, profile, Object.keys(mcpServers));
+    return judge(o, ws, profile, Object.keys(mcpServers), docs.unavailable);
   }
 
   async function forgeRemote(ref: PrRef): Promise<GitRemote> {

@@ -11,15 +11,16 @@ export const MIN_CLI_VERSION = "2.1.295";
 export const MAIN_AGENT = "rl-main";
 const READ_TOOLS = ["Read", "Grep", "Glob"];
 // Names go into comma lists of CLI flags.
-const NAME = /^[A-Za-z0-9_-]+$/;
+export const NAME = /^[A-Za-z0-9_-]+$/;
 const STDERR_TAIL = 16_384;
 const EXEC_TIMEOUT_MS = 30_000;
 const DRAIN_TIMEOUT_MS = 5_000;
 const RUN_TIMEOUT_MS = 60 * 60_000;
 
 export type AgentSpec = { description: string; prompt: string };
-// tools: the tool names the server offers, without the mcp__<server>__ prefix.
-export type McpServerSpec = { command: string; args: string[]; tools: string[] };
+// tools: the tool names the server offers, without the mcp__<server>__ prefix. A remote server gets no headers or credentials.
+export type StdioServerSpec = { command: string; args: string[]; tools: string[] };
+export type McpServerSpec = StdioServerSpec | { type: "http"; url: string; tools: string[] };
 export type RunSpec = {
   // The work folder. The runner uses its long path.
   cwd: string;
@@ -124,6 +125,8 @@ function prepare(spec: RunSpec) {
   for (const n of [...reviewers, ...servers.flatMap(([s, c]) => [s, ...c.tools])])
     if (!NAME.test(n)) throw new Error(`Invalid agent, server, or tool name: ${n}`);
   if (reviewers.includes(MAIN_AGENT)) throw new Error(`${MAIN_AGENT} cannot be a review agent.`);
+  for (const [s, c] of servers)
+    if ("url" in c && new URL(c.url).protocol !== "https:") throw new Error(`MCP server ${s} needs an https URL.`);
 
   // Gate B9: agent tool lists need full MCP tool names. --allowedTools needs mcp__<server>; a wildcard does not work.
   const mcpTools = servers.flatMap(([s, c]) => c.tools.map((t) => `mcp__${s}__${t}`));
@@ -133,7 +136,12 @@ function prepare(spec: RunSpec) {
   const mcpFile = join(spec.appDir, "mcp.json");
   writeFileSync(
     mcpFile,
-    JSON.stringify({ mcpServers: Object.fromEntries(servers.map(([s, c]) => [s, { command: c.command, args: c.args }])) }),
+    // code.claude.com/docs/en/mcp: a remote entry needs "type": "http"; without it the CLI reads the entry as stdio.
+    JSON.stringify({
+      mcpServers: Object.fromEntries(
+        servers.map(([s, c]) => [s, "url" in c ? { type: "http", url: c.url } : { command: c.command, args: c.args }]),
+      ),
+    }),
   );
   const agentsFile = join(spec.appDir, "agents.json");
   // Gate B9: without StructuredOutput in the rl-main tools, no result carries structured_output.

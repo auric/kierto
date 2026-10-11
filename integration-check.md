@@ -57,7 +57,7 @@ The probe ran without changes, read-only first, then with `--write`. The write r
 
 ## Gate v3, local
 
-Status: DONE on Claude Code 2.1.295. B1 to B3 and B5 to B7 pass. B4 fails: `--no-session-persistence` still writes files, so the runner deletes them. B8 records facts. B9 passes with the WP8 flag set below.
+Status: DONE on Claude Code 2.1.295. B1 to B3 and B5 to B7 pass. B4 fails: `--no-session-persistence` still writes files, so the runner deletes them. B8 records facts. B9 passes with the WP8 flag set below. B10 passes with the remote documentation servers.
 
 Run: `bun scripts/gate/claude-checks.ts`. One check only: `--only B3`. Several: `--only B1,B6`. Preflight with no `claude -p` call: `--dry-run`. Then sanitize: `bun scripts/gate/sanitize-claude.ts`. It writes `fixtures/claude/` and exits 1 when a real value remains. The last run printed `hits=0`.
 
@@ -77,6 +77,7 @@ Cost limit: 14 calls for B1 to B8, a separate 2 calls for B9, and 0.60 USD per s
 | B7 rerun with the WP7 git MCP server `rl-git` | 1 | PASS | `rl-git` connected. The main agent and a subagent each called `git_log`. 1 Haiku call, 0.0038 USD. |
 | B8. `--restricted` with stream-json, `--json-schema`, the stub MCP server, and `rl-reviewer`; second call adds `--setting-sources user` and `--settings` | 2 | INFO | `--restricted` accepts all flags. Without `--tools`, `init.tools` still has Edit, Write, NotebookEdit, WebSearch, and other tools, so the runner needs `--tools`. `init.tools` names the agent tool `Task`; the tool_use name is `Agent`. A Read outside the cwd is refused by `--restricted`. No hook runs, also with `--setting-sources user`. The 4-turn cap gave `error_max_turns` and then `success`. |
 | B9. WP8 flag set with a long-path cwd (see below) | 2 | PASS | See the B9 notes. |
+| B10. Remote documentation MCP servers (`learn`, `deepwiki`) with the WP8 flag set | 1 | PASS | See the B10 notes. |
 | Permission modes: `--permission-mode` choices in `claude --help`, and `init.permissionMode` per call | 0 | INFO | Choices: acceptEdits, auto, bypassPermissions, manual, dontAsk, plan. `init.permissionMode` is `default` in every call, except `auto` in the B5 auth failure run. |
 | CLI version (runner minimum) | 0 | PASS | 2.1.295. |
 
@@ -92,6 +93,16 @@ B9 notes:
 - Stub MCP tool: ran for both.
 - Exactly 1 result event, with `structured_output`.
 - Per-cwd files: `<projects>/<cwd>/<session>/subagents/agent-*.meta.json` and `%TEMP%\claude\<cwd>\<session>\tasks\<agent>.output`. After the deletion of both folders, nothing is left. The global `.claude.json` does not name the cwd.
+
+B10 notes:
+
+- Run: a scratchpad script through `createClaudeRunner`, `ANTHROPIC_MODEL=haiku` (init model `claude-haiku-5-5`), `--max-turns 6`, no review subagent. One call, 4 turns, 0.0035 USD.
+- mcp.json entries: `{"type": "http", "url": <url>}`, no headers. Source: https://code.claude.com/docs/en/mcp. An entry with `url` and no `type` is read as stdio and skipped.
+- Live `tools/list`: learn gives `microsoft_docs_search`, `microsoft_code_sample_search`, `microsoft_docs_fetch`. deepwiki gives `ask_wiki_question`, `read_wiki_contents`, `read_wiki_structure`.
+- `init.mcp_servers`: learn `connected`, deepwiki `connected`. `init.tools` holds all six tools.
+- `mcp__learn__microsoft_docs_search` ("std::mutex") and `mcp__deepwiki__ask_wiki_question` (microsoft/STL) both ran. No permission denial. `structured_output` came back.
+- `--allowedTools Read,Grep,Glob,mcp__learn,mcp__deepwiki` (by server name) is enough.
+- After the run, no per-cwd folder is left.
 
 Recommended WP8 runner command:
 

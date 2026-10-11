@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import type { McpServerSpec } from "./claude";
+import type { StdioServerSpec } from "./claude";
 import { GitError, git, gitEnv } from "./git";
 import type { Workspace } from "./workspace";
 
@@ -22,7 +22,7 @@ const NO_DIFF_HELPERS = ["--no-ext-diff", "--no-textconv"];
 type Pins = { gitDir: string; head: string; base: string; target: string };
 
 // The RunSpec.mcpServers entry for one workspace. entry is the script that main.ts runs; a compiled binary ignores it (U13).
-export function gitMcpServer(ws: Pick<Workspace, "cache" | "sourceHead" | "mergeBase" | "targetHead">, entry = Bun.main): McpServerSpec {
+export function gitMcpServer(ws: Pick<Workspace, "cache" | "sourceHead" | "mergeBase" | "targetHead">, entry = Bun.main): StdioServerSpec {
   return {
     command: process.execPath,
     args: [entry, "--git-mcp", `--git-dir=${ws.cache}`, `--head=${ws.sourceHead}`, `--base=${ws.mergeBase}`, `--target=${ws.targetHead}`],

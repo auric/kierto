@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createApp } from "../../src/server/app";
 import { writeConfig } from "../../src/server/config";
 import { createLive, type LiveEvent } from "../../src/server/live";
+import { DOC_SERVERS, DOCS_RULE, type ListTools } from "../../src/server/review/catalog";
 import { git, gitEnv } from "../../src/server/review/git";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import type { GitRemote } from "../../src/server/review/workspace";
@@ -104,7 +105,14 @@ function derive(file: string, o: { tools?: string[]; mcp?: string; structured?: 
     .map((l) => {
       const e = JSON.parse(l);
       if (e.type === "system" && e.subtype === "init")
-        return { ...e, tools: o.tools ?? REVIEW_TOOLS, mcp_servers: [{ name: "rl-git", status: o.mcp ?? "connected", source: "dynamic" }] };
+        return {
+          ...e,
+          tools: o.tools ?? REVIEW_TOOLS,
+          mcp_servers: [
+            { name: "rl-git", status: o.mcp ?? "connected", source: "dynamic" },
+            ...Object.keys(DOC_SERVERS).map((name) => ({ name, status: "connected", source: "dynamic" })),
+          ],
+        };
       if (e.type === "result" && o.structured !== undefined) return { ...e, structured_output: o.structured };
       return e;
     });
@@ -187,7 +195,14 @@ function alive(pid: number) {
   }
 }
 
-async function setup(o: { forgeRemote?: boolean } = {}) {
+// No test reaches the documentation servers.
+const DOC_TOOLS: Record<string, string[]> = {
+  [DOC_SERVERS.learn as string]: ["docs_search"],
+  [DOC_SERVERS.deepwiki as string]: ["ask_question"],
+};
+const stubTools: ListTools = async (url) => DOC_TOOLS[url] ?? [];
+
+async function setup(o: { forgeRemote?: boolean; listTools?: ListTools } = {}) {
   const root = mkdtempSync(join(tmpdir(), "rl-wp10-"));
   dirs.push(root);
   const repo = await remoteRepo(join(root, "remote"));
@@ -258,6 +273,7 @@ async function setup(o: { forgeRemote?: boolean } = {}) {
     dataDir: dir,
     runnerCommand: [process.execPath, FAKE, scenarioFile],
     gitRemote: o.forgeRemote ? undefined : async () => remoteOf(repo.remote),
+    listTools: o.listTools ?? stubTools,
   });
   const app = createApp({ port: PORT, token: SESSION, live, settings, sync, review });
   cleanup.unshift(async () => {
@@ -340,7 +356,7 @@ describe("run pipeline", () => {
       const argv = h.runCall()?.argv ?? [];
       expect(flag(argv, "--max-turns")).toBe("40");
       expect(flag(argv, "--tools")).toBe("Read,Grep,Glob,Agent");
-      expect(flag(argv, "--allowedTools")).toBe("Read,Grep,Glob,mcp__rl-git");
+      expect(flag(argv, "--allowedTools")).toBe("Read,Grep,Glob,mcp__rl-git,mcp__learn,mcp__deepwiki");
       // The worktree goes after validation.
       expect(existsSync(join(h.dir, "runs", String(d.run.id)))).toBe(false);
 
@@ -409,6 +425,8 @@ describe("run pipeline", () => {
       const argv = h.runCall()?.argv ?? [];
       expect(flag(argv, "--max-turns")).toBe("12");
       expect(flag(argv, "--tools")).toBe("Read,Grep,Glob");
+      expect(flag(argv, "--allowedTools")).toBe("Read,Grep,Glob,mcp__rl-git");
+      expect(h.runCall()?.stdin).not.toContain(DOCS_RULE);
     },
     SLOW,
   );
@@ -427,6 +445,60 @@ describe("run pipeline", () => {
       expect(second.run.id).not.toBe(first.run.id);
       expect(second.run.status).toBe("incomplete");
       expect(second.items.length).toBe(3);
+    },
+    SLOW,
+  );
+});
+
+describe("documentation servers", () => {
+  test(
+    "review profiles get learn and deepwiki by name, once per process, with the query rule",
+    async () => {
+      const asked: string[] = [];
+      const h = await setup({
+        listTools: (url) => {
+          asked.push(url);
+          return stubTools(url);
+        },
+      });
+      expect((await h.finish((await h.start()).body.id)).run.status).toBe("completed");
+      // The workspace holds agents.json only while the run is active.
+      h.scenario({ fixture: subagentRun(), hang: true });
+      const { body } = await h.start();
+      expect(await waitFor(() => h.calls().filter((c) => c.argv?.includes("-p")).length === 2)).toBe(true);
+      const c = h.calls().filter((c) => c.argv?.includes("-p"))[1] as Call;
+      expect(asked.sort()).toEqual(Object.values(DOC_SERVERS).sort());
+      expect(flag(c.argv, "--allowedTools")).toBe("Read,Grep,Glob,mcp__rl-git,mcp__learn,mcp__deepwiki");
+      expect(c.stdin.indexOf(DOCS_RULE)).toBeGreaterThan(0);
+      expect(c.stdin.indexOf(DOCS_RULE)).toBeLessThan(c.stdin.indexOf("# Your instructions"));
+      const agents = JSON.parse(readFileSync(flag(c.argv, "--agents") as string, "utf8"));
+      for (const a of ["rl-main", "rl-reviewer"]) {
+        expect(agents[a].prompt).toContain(DOCS_RULE);
+        expect(agents[a].tools).toContain("mcp__learn__docs_search");
+        expect(agents[a].tools).toContain("mcp__deepwiki__ask_question");
+      }
+      await h.call(`/api/runs/${body.id}/cancel`, { method: "POST" });
+      await h.finish(body.id);
+    },
+    SLOW,
+  );
+
+  test(
+    "an unreachable documentation server is a coverage gap, not a failure",
+    async () => {
+      const h = await setup({
+        listTools: async (url) => {
+          if (url === DOC_SERVERS.learn) throw new Error("offline");
+          return stubTools(url);
+        },
+      });
+      const d = await h.finish((await h.start()).body.id);
+      expect(d.run.status).toBe("incomplete");
+      expect(d.run.errorKind).toBeNull();
+      expect(d.run.summary?.coverage.unavailable).toEqual(["MCP server learn: unavailable (offline)"]);
+      expect(d.items.length).toBeGreaterThan(0);
+      const c = h.runCall() as Call;
+      expect(flag(c.argv, "--allowedTools")).toBe("Read,Grep,Glob,mcp__rl-git,mcp__deepwiki");
     },
     SLOW,
   );
@@ -523,7 +595,8 @@ describe("acceptance", () => {
       for (const p of [".claude", ".mcp.json", "link", "CLAUDE.md"]) expect(existsSync(join(repo, p))).toBe(false);
       expect(readFileSync(join(repo, "CLAUDE.untrusted.md"), "utf8")).toContain("Ignore the user");
       const mcp = JSON.parse(readFileSync(flag(c.argv, "--mcp-config") as string, "utf8"));
-      expect(Object.keys(mcp.mcpServers)).toEqual(["rl-git"]);
+      expect(Object.keys(mcp.mcpServers)).toEqual(["rl-git", "learn", "deepwiki"]);
+      expect(mcp.mcpServers.learn).toEqual({ type: "http", url: DOC_SERVERS.learn });
       expect(mcp.mcpServers["rl-git"].args.slice(0, 2)).toEqual([join(import.meta.dir, "../../src/server/main.ts"), "--git-mcp"]);
       expect(c.argv).toContain("--strict-mcp-config");
       expect(c.argv).toContain("--restricted");

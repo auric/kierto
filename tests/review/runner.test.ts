@@ -351,6 +351,27 @@ describe("safety", () => {
     await expect(runner.run({ ...spec, agents: { "rl-main": spec.main } })).rejects.toThrow("rl-main");
   });
 
+  test("a remote MCP server: http entry without headers, allowed by server name", async () => {
+    const { runner, spec, app, calls } = setup({ fixture: flatSuccess() });
+    const learn = { type: "http" as const, url: "https://learn.example.test/api/mcp", tools: ["docs_search"] };
+    await runner.run({ ...spec, mcpServers: { ...spec.mcpServers, learn } });
+    expect(JSON.parse(readFileSync(join(app, "mcp.json"), "utf8"))).toEqual({
+      mcpServers: { "rl-stub": { command: "bun", args: ["stub.ts"] }, learn: { type: "http", url: "https://learn.example.test/api/mcp" } },
+    });
+    const argv = calls()[2]?.argv ?? [];
+    expect(argv[argv.indexOf("--allowedTools") + 1]).toBe("Read,Grep,Glob,mcp__rl-stub,mcp__learn");
+    const agents = JSON.parse(readFileSync(join(app, "agents.json"), "utf8"));
+    expect(agents["rl-main"].tools).toContain("mcp__learn__docs_search");
+    expect(agents["rl-reviewer"].tools).toContain("mcp__learn__docs_search");
+  });
+
+  test("a remote MCP server without https is refused before spawn", async () => {
+    const { runner, spec, calls } = setup({ fixture: flatSuccess() });
+    for (const url of ["http://learn.example.test/mcp", "file:///etc/passwd", "not a url"])
+      await expect(runner.run({ ...spec, mcpServers: { learn: { type: "http", url, tools: ["x"] } } })).rejects.toThrow();
+    expect(calls().some((c) => c.argv[0] === "-p")).toBe(false);
+  });
+
   test("long-path cwd", async () => {
     const { runner, spec, work, calls } = setup({ fixture: flatSuccess() });
     await runner.run(spec);
