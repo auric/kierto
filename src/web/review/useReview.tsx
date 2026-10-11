@@ -2,6 +2,7 @@
 // and run log for one PR.
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../shared/dto";
@@ -9,7 +10,7 @@ import type { Layer } from "../keys";
 import { useMeta } from "../meta";
 import { ordered, type ThreadModel } from "../pr/threads";
 import { planKey } from "../publish/data";
-import type { Hints } from "../shell/Hint";
+import { Hint, type Hints } from "../shell/Hint";
 import { prKey } from "../shell/model";
 import { BriefComposer, ReviewButton } from "./Brief";
 import { AiSummary, type DraftCtx, Drafts, modeOf, type TriageState } from "./Drafts";
@@ -23,9 +24,22 @@ import {
   useRun,
   useRuns,
   useStartReplies,
+  useStartRereview,
   useStartReview,
 } from "./data";
-import { briefState, drafts, latestReview, plural, questions, replyCard, replyMap, replyOf, runLine, triageText } from "./model";
+import {
+  briefState,
+  drafts,
+  latestReview,
+  plural,
+  questions,
+  replyCard,
+  replyMap,
+  replyOf,
+  rereviewState,
+  runLine,
+  triageText,
+} from "./model";
 import { DraftRepliesButton, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft";
 import { RunLine } from "./RunLine";
 import { BriefLine, type LogTarget, RunLog } from "./RunLog";
@@ -35,6 +49,8 @@ export type Focus = { id: string; block: ScrollLogicalPosition; flash: boolean }
 
 export type ReviewApi = {
   rerun(): void;
+  // Key c (plan r2 UI-RR): review the commits since the newest review run.
+  rereview(): void;
   brief(): void;
   drafts(): void;
   log(): void;
@@ -68,6 +84,20 @@ const detailOf = (r: RunDto | null, d: RunDetail | undefined): RunDetail | null 
 
 const doing = (r: RunDto | null) => (r?.kind === "reply" ? "drafting replies for" : "reviewing");
 
+// Plan r2 UI-RR. It shows only when the server takes a re-review (rereviewState).
+function RereviewButton({ since, busy, onClick }: { since: string; busy: boolean; onClick: () => void }) {
+  return (
+    <Hint label={`Review only the commits after ${since}. The open drafts carry over and get a new check. Key: c`}>
+      <Button id="rereview-btn" size="sm" variant="outline" disabled={busy} aria-keyshortcuts="c" onClick={onClick}>
+        Review changes since{" "}
+        <code translate="no" className="font-mono">
+          {since}
+        </code>
+      </Button>
+    </Hint>
+  );
+}
+
 export function useReview(
   pr: PrRow,
   o: {
@@ -95,6 +125,7 @@ export function useReview(
   const active = useRuns().data?.find((r) => r.status === "running") ?? null;
   const start = useStartReview(pr.id);
   const startReplies = useStartReplies(pr.id);
+  const startRereview = useStartRereview(pr.id);
   const cancel = useCancelRun();
   const [composer, setComposer] = useState(false);
   // of: "line" follows the run of the run line. "review" stays on the newest review run, for its drafts.
@@ -136,6 +167,22 @@ export function useReview(
       },
       onError: (e) => toast.add({ title: "The review did not start", description: e.message }),
     });
+
+  const rr = rereviewState(latest, brief.data, meta.profiles);
+  const rereview = () => {
+    if ("why" in rr) {
+      toast.add({ title: rr.why });
+      return;
+    }
+    if (startRereview.isPending) return;
+    startRereview.mutate(undefined, {
+      onSuccess: (r) => {
+        if ("conflict" in r) return slotTaken(r.conflict);
+        focusAfter({ id: "runline-log", block: "nearest", flash: false });
+      },
+      onError: (e) => toast.add({ title: "The review of the new commits did not start", description: e.message }),
+    });
+  };
 
   // threads absent: every thread where it is my turn, as the server selects them (WP17).
   const draftReplies = (threads?: number[]) => {
@@ -329,6 +376,7 @@ export function useReview(
   const api: ReviewApi = {
     // The open brief can hold an unsaved note. There, Ctrl+Enter saves and starts, so r only focuses the note.
     rerun: () => (composer || state.rerun === "compose" ? openBrief() : runNow()),
+    rereview,
     brief: openBrief,
     drafts() {
       // prototype/v3 goDrafts: the first draft, else the summary with the questions.
@@ -360,6 +408,11 @@ export function useReview(
         return;
       }
       if (triage.busy.has(it.id)) return;
+      // items.ts refuses every action but discard on a finding without an anchor. Such a finding is always discarded.
+      if (it.kind === "finding" && !it.anchor) {
+        toast.add({ title: "The code of this finding is gone. It cannot come back." });
+        return;
+      }
       if (key === "accept") triageFns.act(it, it.status === "accepted" ? "restore" : "accept");
       else if (key === "discard") triageFns.act(it, it.status === "discarded" ? "restore" : "discard");
       else if (it.status !== "discarded") triageFns.edit(it);
@@ -382,7 +435,12 @@ export function useReview(
         state={state}
         open={composer}
         meta={meta}
-        extra={<DraftRepliesButton your={your} profile={state.name} onClick={() => draftReplies()} />}
+        extra={
+          <>
+            {"since" in rr && <RereviewButton since={rr.since} busy={startRereview.isPending} onClick={rereview} />}
+            <DraftRepliesButton your={your} profile={state.name} onClick={() => draftReplies()} />
+          </>
+        }
         onClick={() => (composer ? closeBrief() : openBrief())}
       />
     ),

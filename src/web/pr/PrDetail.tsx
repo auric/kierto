@@ -30,8 +30,9 @@ export type DetailApi = {
   nextNew(d: 1 | -1): void;
   nextYour(): void;
   section(id: "files" | "commits"): void;
-  // Plan v3 WP11: r, Shift+R, 2, 3, and the Esc layers of the review.
+  // Plan v3 WP11: r, Shift+R, 2, 3, and the Esc layers of the review. Plan r2 UI-RR: c.
   rerun(): void;
+  rereview(): void;
   brief(): void;
   drafts(): void;
   log(): void;

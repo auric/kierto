@@ -1,14 +1,16 @@
-// Plan v3 WP11 and replies.md WP18: the pure review UI rules. The log tree, the run line, the brief state, the Review runs view,
-// and the reply drafts.
+// Plan v3 WP11, replies.md WP18, and r2 UI-RR: the pure review UI rules. The log tree, the run line, the brief state,
+// the Review runs view, the reply drafts, and the re-review.
 import { describe, expect, test } from "bun:test";
 import type { BriefDto, ProfileDto, PrRow, ReviewItemDto, RunDetail, RunDto } from "../../src/shared/dto";
-import type { AnchoredFinding, Question, ReplyPayload } from "../../src/shared/review";
+import type { AnchoredFinding, Carried, Question, ReplyPayload } from "../../src/shared/review";
 import type { RunEvent } from "../../src/shared/run-log";
 import {
   agentInfo,
   agentPath,
   anchorNote,
   briefState,
+  carriedNote,
+  closedLabel,
   countText,
   draftExcerpt,
   latestByPr,
@@ -19,6 +21,8 @@ import {
   repliesButton,
   replyCard,
   replyMap,
+  rereviewCount,
+  rereviewState,
   runLine,
   runRows,
   runWhy,
@@ -444,5 +448,71 @@ describe("reply drafts", () => {
       disabled: true,
       hint: "26 threads wait for your reply. Draft at most 25 at a time: use Draft reply in each thread.",
     });
+  });
+});
+
+describe("re-review", () => {
+  const since = "1".repeat(40);
+  const carried = (verdict: Carried["verdict"]): Partial<AnchoredFinding> & { carried: Carried } => ({
+    carried: { from: 1, verdict, reason: "Why.", since },
+  });
+  // A finding copied by a re-review. The payload type of the DTO allows carried on every kind.
+  const copy = (id: number, verdict: Carried["verdict"], o: Partial<ReviewItemDto> = {}) => finding(id, o, carried(verdict));
+
+  test("the run line names the range and counts new, carried, and closed findings", () => {
+    const r = run({ since: { head: since, incremental: true } });
+    const items = [finding(1), copy(2, "open"), copy(3, "fixed", { status: "discarded" }), copy(4, "outdated", { status: "discarded" })];
+    expect(runLine(detail(r, [], [...items, question(5)]), PROFILES)).toMatchObject({
+      verb: "reviewed",
+      head: "a3f9e21",
+      count: "1 new, 1 carried, 2 fixed or outdated, 1 question",
+      changes: { from: "1111111", full: false },
+    });
+    // The server fell back to the full change.
+    expect(runLine(detail(run({ since: { head: since, incremental: false } })), PROFILES)).toMatchObject({
+      count: "0 new, 0 carried, 0 fixed or outdated",
+      changes: { from: "1111111", full: true },
+    });
+    expect(runLine(detail(run()), PROFILES)).toMatchObject({ changes: null, count: "No findings" });
+    expect(rereviewCount([copy(1, "open", { status: "accepted" }), copy(2, "open", { status: "discarded" })])).toBe(
+      "0 new, 2 carried, 0 fixed or outdated",
+    );
+  });
+
+  test("the button shows only when the server takes a re-review", () => {
+    const brief = (profile = "general"): BriefDto => ({ note: "", profile, updatedAt: 5 });
+    const stale = { source: true, target: false };
+    const done = run({
+      summary: { summary: "S.", risks: [], coverage: { read: [], skipped: [], unavailable: [], notChecked: [] }, dropped: [] },
+    });
+    expect(rereviewState({ ...done, stale }, brief(), PROFILES)).toEqual({ since: "a3f9e21" });
+    expect(rereviewState({ ...done, stale, status: "incomplete" }, brief(), PROFILES)).toEqual({ since: "a3f9e21" });
+    const why = (r: RunDto | null, b: BriefDto | undefined = brief()) => {
+      const s = rereviewState(r, b, PROFILES);
+      return "why" in s ? s.why : s.since;
+    };
+    expect(why(null)).toBe("No review has run on this pull request yet. Press r to start one.");
+    expect(why({ ...done, stale, status: "running", summary: null })).toBe("The review is still running.");
+    expect(why({ ...done, stale, status: "failed", summary: null })).toBe("The last review has no result. Press r to review again.");
+    // jobs.ts baseRun: COALESCE(explain, profile = 'explain') = 0.
+    expect(why({ ...done, stale, explain: true })).toBe("The last run explained the change and gave no findings. Press r to review it.");
+    expect(why({ ...done, stale, profile: "explain" })).toBe(
+      "The last run explained the change and gave no findings. Press r to review it.",
+    );
+    expect(why({ ...done, stale, profile: "explain", explain: false })).toBe("a3f9e21");
+    expect(why(done)).toBe("The source branch has no new commits since the last review.");
+    expect(why({ ...done, stale: { source: false, target: true } })).toBe("The source branch has no new commits since the last review.");
+    expect(rereviewState({ ...done, stale }, undefined, PROFILES)).toEqual({ why: "The review brief is still loading." });
+    expect(why({ ...done, stale }, brief("explain"))).toBe("The Explain profile gives no findings. Pick a review profile first.");
+  });
+
+  test("closed rows name the verdict; carried drafts say what the re-review found", () => {
+    expect(closedLabel(copy(1, "fixed", { status: "discarded" }))).toBe("Fixed in the new commits");
+    expect(closedLabel(copy(1, "outdated", { status: "discarded", anchor: null }))).toBe("Outdated");
+    expect(closedLabel(copy(1, "open", { status: "discarded" }))).toBe("Discarded");
+    expect(closedLabel(finding(1, { status: "discarded" }))).toBe("Discarded");
+    expect(carriedNote(copy(1, "open"))).toBe("Still open after the new commits.");
+    expect(carriedNote(copy(1, "fixed"))).toBe("Fixed in the new commits. You restored it.");
+    expect(carriedNote(finding(1))).toBeNull();
   });
 });

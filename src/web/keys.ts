@@ -48,6 +48,7 @@ export type Effect =
   | "drafts"
   | "log"
   | "rerun"
+  | "rereview"
   | "brief"
   | "accept"
   | "edit"
@@ -82,6 +83,7 @@ const DETAIL: Record<string, Effect> = {
   "3": "log",
   r: "rerun",
   R: "brief",
+  c: "rereview",
   a: "accept",
   e: "edit",
   d: "discard",
@@ -166,6 +168,7 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
     keys: [
       { keys: ["r"], text: "Run the brief of this pull request again. With no brief yet, open the review brief." },
       { keys: ["Shift", "R"], text: "Open the review brief: task, your note, and profile" },
+      { keys: ["c"], text: "Review only the commits since the last review. Its open drafts carry over." },
       { keys: ["Ctrl", "Enter"], text: "Start the review from the brief" },
       { keys: ["Esc"], text: "Close an edit, the review brief, the post confirm, or the run log" },
     ],

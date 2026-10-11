@@ -115,6 +115,14 @@ describe("detail keys", () => {
     for (const k of ["r", "R"]) expect(reduceKey({ ...S, selected: 20 }, k, { ...C, typing: true }).handled).toBe(false);
   });
 
+  // Plan r2 UI-RR: c starts a re-review. After g, c still opens Commits.
+  test("c reviews the new commits; g c still opens Commits; c does nothing while typing or without a PR", () => {
+    expect(reduceKey({ ...S, selected: 20 }, "c", C)).toMatchObject({ effect: "rereview", state: { focus: "detail", mobile: "detail" } });
+    expect(reduceKey(reduceKey({ ...S, selected: 20 }, "g", C).state, "c", C).effect).toBe("commits");
+    expect(reduceKey({ ...S, selected: 20 }, "c", { ...C, typing: true }).handled).toBe(false);
+    expect(reduceKey(S, "c", C).handled).toBe(false);
+  });
+
   test("Enter in the detail toggles the current thread, but not on a button", () => {
     const detail = { ...S, selected: 20, focus: "detail" as const };
     expect(reduceKey(detail, "Enter", C).effect).toBe("thread-toggle");

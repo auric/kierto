@@ -129,6 +129,22 @@ export function countText(items: ReviewItemDto[], incomplete: boolean, kind: Run
   return [f ? plural(f, "finding") : none, q ? plural(q, "question") : ""].filter(Boolean).join(", ");
 }
 
+// Plan r2 UI-RR: "N new, M carried, K fixed or outdated". The server copies each carried finding with the verdict of the run.
+export function rereviewCount(items: ReviewItemDto[]): string {
+  let fresh = 0;
+  let open = 0;
+  let closed = 0;
+  let q = 0;
+  for (const i of items) {
+    if (i.kind === "question") q++;
+    else if (i.kind !== "finding") continue;
+    else if (!i.payload.carried) fresh++;
+    else if (i.payload.carried.verdict === "open") open++;
+    else closed++;
+  }
+  return [`${fresh} new, ${open} carried, ${closed} fixed or outdated`, q ? plural(q, "question") : ""].filter(Boolean).join(", ");
+}
+
 export type RunLineState =
   | { kind: "running"; agents: number; calls: number; startedAt: number }
   | {
@@ -140,6 +156,8 @@ export type RunLineState =
       tokens: number | null;
       gaps: boolean;
       since: string | null;
+      // A re-review: from is the short head of its base run. full: the range fell back to the full change.
+      changes: { from: string; full: boolean } | null;
     }
   | { kind: "failed"; text: string; raw: boolean }
   | { kind: "limit"; text: string }
@@ -177,10 +195,11 @@ export function runLine(d: RunDetail, profiles: ProfileDto[], commits?: CommitDt
                 : "reviewed",
         head: shortHash(r.sourceHead),
         at: r.finishedAt ?? r.startedAt,
-        count: countText(d.items, gaps, r.kind),
+        count: r.since ? rereviewCount(d.items) : countText(d.items, gaps, r.kind),
         tokens: tokenTotal(r.usage),
         gaps,
         since: staleText(r, commits),
+        changes: r.since && { from: shortHash(r.since.head), full: !r.since.incremental },
       };
     }
   }
@@ -195,6 +214,25 @@ export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancel
 
 // R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, and the brief.
 export const latestReview = (runs: RunDto[] | undefined) => runs?.find((r) => r.kind === "review") ?? null;
+
+// Plan r2 UI-RR, jobs.ts rereview(): the server takes a re-review of the newest review run only when that run ended with a result,
+// was no Explain run, and the source head moved since. The stored brief must not use the Explain profile.
+// since: the short head of that run. why: the reason for the key c when no re-review is possible.
+export function rereviewState(
+  latest: RunDto | null,
+  brief: BriefDto | undefined,
+  profiles: ProfileDto[],
+): { since: string } | { why: string } {
+  if (!latest) return { why: "No review has run on this pull request yet. Press r to start one." };
+  if (latest.status === "running") return { why: "The review is still running." };
+  if (!latest.summary) return { why: "The last review has no result. Press r to review again." };
+  if (latest.explain ?? latest.profile === "explain")
+    return { why: "The last run explained the change and gave no findings. Press r to review it." };
+  if (!latest.stale?.source) return { why: "The source branch has no new commits since the last review." };
+  if (!brief) return { why: "The review brief is still loading." };
+  if (profileOf(profiles, brief.profile)?.explain) return { why: "The Explain profile gives no findings. Pick a review profile first." };
+  return { since: shortHash(latest.sourceHead) };
+}
 
 // Plan v3 section 7, Usage limit: one line with the CLI message. No automatic retry.
 export const limitText = (runner: string, text: string | null) =>
@@ -269,6 +307,19 @@ export function anchorNote(it: ReviewItemDto): string | null {
   if (a.line !== p.anchor.line || a.lineEnd !== p.anchor.lineEnd) return `You moved it from line ${lineText(p.anchor)}.`;
   if (a.state === "moved") return `Moved from line ${p.line}: the quoted code is on line ${lineText(a)}.`;
   return null;
+}
+
+// Plan r2 UI-RR: a re-review discards the carried drafts that it finds fixed or outdated. Other closed drafts are discards by you.
+export function closedLabel(it: ReviewItemDto): string {
+  const v = it.payload.carried?.verdict;
+  return v === "fixed" ? "Fixed in the new commits" : v === "outdated" ? "Outdated" : "Discarded";
+}
+
+// A draft that a re-review carried. A fixed or outdated draft that is not discarded is one that you restored.
+export function carriedNote(it: ReviewItemDto): string | null {
+  const v = it.payload.carried?.verdict;
+  if (!v) return null;
+  return v === "open" ? "Still open after the new commits." : `${closedLabel(it)}. You restored it.`;
 }
 
 // The live-region text after a triage action (WP15). The focus moves on to the next item, so the page says what happened.

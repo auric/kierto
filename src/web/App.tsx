@@ -170,6 +170,7 @@ function Shell({ stale }: { stale: boolean }) {
       else if (effect === "drafts") api?.drafts();
       else if (effect === "log") api?.log();
       else if (effect === "rerun") api?.rerun();
+      else if (effect === "rereview") api?.rereview();
       else if (effect === "brief") api?.brief();
       else if (effect === "accept" || effect === "edit" || effect === "discard") api?.triage(effect);
       else if (effect === "post") api?.post();

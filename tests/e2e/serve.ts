@@ -9,6 +9,7 @@ import { serveStatic } from "hono/bun";
 import { createLive } from "../../src/server/live";
 import { startServer } from "../../src/server/main";
 import { createOutbox } from "../../src/server/publish/outbox";
+import { git, gitEnv } from "../../src/server/review/git";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
@@ -152,9 +153,13 @@ Object.assign(B.pr.fromRef, {
 });
 const C = makePr("PROJ1", "sample-repo-3", 77, "Drop the legacy export endpoint", kenji, "APPROVED");
 // The dashboard and the PR route share the PR A object, so both report the pushed head and the description.
-const headA = () => {
+// The git remote moves the PR ref too, so a review after the push fetches the pushed head (plan r2 UI-RR).
+const headA = async () => {
   A.pr.fromRef.latestCommit = sc.push ? remote.next : remote.source;
   A.pr.description = sc.task ? `Synthetic e2e data. Implements ${JIRA_ISSUE}. See ABC-404.` : "Synthetic e2e data.";
+  await git(["--git-dir", remote.remote, "update-ref", "refs/pull-requests/1001/from", A.pr.fromRef.latestCommit], {
+    env: gitEnv(join(claudeDir, "empty.gitconfig")),
+  });
 };
 
 const base = () => S.activities("activities-nested-reply.json");
@@ -313,7 +318,7 @@ r[key("POST", "/__control/reset")] = async () => {
   secrets = createSecrets(null);
   jiraSecrets = createSecrets(null, "jira-token");
   sc = { ...INITIAL };
-  headA();
+  await headA();
   for (const p of [postsA, postsB, postsC]) p.reset();
   Object.assign(postA, { fail: null, hide: false });
   setClaude({ stream: "tree" });
@@ -343,7 +348,7 @@ r[key("POST", "/__control/state")] = async (req) => {
   const change = (await req.json()) as Partial<Scenario>;
   await app.sync.syncNow();
   Object.assign(sc, change);
-  headA();
+  await headA();
   await app.sync.syncNow();
   return ok(app.sync.status());
 };

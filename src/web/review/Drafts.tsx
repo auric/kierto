@@ -7,7 +7,18 @@ import type { AnchoredFinding, Question } from "../../shared/review";
 import { Text } from "../pr/Thread";
 import { snippet, splitExcerpt } from "../pr/threads";
 import { type Hints, HintTrigger } from "../shell/Hint";
-import { anchorNote, coverageRows, DROP_REASON, draftExcerpt, EVIDENCE, lineText, plural, SEVERITY } from "./model";
+import {
+  anchorNote,
+  carriedNote,
+  closedLabel,
+  coverageRows,
+  DROP_REASON,
+  draftExcerpt,
+  EVIDENCE,
+  lineText,
+  plural,
+  SEVERITY,
+} from "./model";
 import { Acts, Editor, Mover, RestoreButton, type TriageCtx, type TriageMode } from "./Triage";
 
 const icon = "size-[15px] shrink-0";
@@ -82,18 +93,21 @@ export const Draft = memo(function Draft({
   ctx: DraftCtx;
 }) {
   const f = it.payload as AnchoredFinding;
-  const a = it.anchor;
+  // A re-review drops the anchor of a finding whose code is gone. The row then names the place that the base run showed.
+  const a = it.anchor ?? f.anchor;
   const path = a?.path ?? f.path;
   const where = `${base(path)}:${a ? lineText(a) : f.line}`;
   const short = ctx.meta.runner.short;
+  const carried = carriedNote(it);
   if (it.status === "discarded") {
+    const closed = closedLabel(it);
     return (
       <article
         id={`d-${it.id}`}
         data-draft={it.id}
         data-item={it.id}
         tabIndex={-1}
-        aria-label={`Discarded draft. ${where}.`}
+        aria-label={closed === "Discarded" ? `Discarded draft. ${where}.` : `Draft, ${closed.toLowerCase()}. ${where}.`}
         className="scroll-mt-3 border-b"
       >
         <div className="flex min-w-0 items-center gap-2">
@@ -101,9 +115,12 @@ export const Draft = memo(function Draft({
             <span translate="no" className="shrink-0 font-mono">
               {where}
             </span>
-            <span className="min-w-0 truncate">Discarded: {snippet(it.body, 140)}</span>
+            <span className="min-w-0 truncate">
+              {closed}: {snippet(it.body, 140)}
+            </span>
           </p>
-          <RestoreButton it={it} busy={busy} ctx={ctx.triage} />
+          {/* items.ts refuses Restore for a finding without an anchor: a re-review found its code gone. */}
+          {it.anchor && <RestoreButton it={it} busy={busy} ctx={ctx.triage} />}
         </div>
       </article>
     );
@@ -120,7 +137,7 @@ export const Draft = memo(function Draft({
       data-draft={it.id}
       data-item={it.id}
       tabIndex={-1}
-      aria-label={`Draft from ${short}. ${SEVERITY[f.severity]}. ${where}.${it.status === "accepted" ? " Accepted." : ""}`}
+      aria-label={`Draft from ${short}. ${SEVERITY[f.severity]}. ${where}.${it.status === "accepted" ? " Accepted." : ""}${carried ? ` ${carried}` : ""}`}
       className="rl-enter scroll-mt-3 border-b"
     >
       <div className="flex items-center gap-0.5">
@@ -162,6 +179,7 @@ function DraftBody({ it, mode, busy, ctx }: { it: ReviewItemDto; mode: TriageMod
   const lines = a ? draftExcerpt(a) : [];
   const { head, tail } = splitExcerpt(lines);
   const note = anchorNote(it);
+  const carried = carriedNote(it);
   const outside = a?.state === "outside";
   const at = a ? `${a.path} line ${lineText(a)}` : f.path;
   const short = ctx.meta.runner.short;
@@ -198,6 +216,7 @@ function DraftBody({ it, mode, busy, ctx }: { it: ReviewItemDto; mode: TriageMod
                   text={`${EVIDENCE[f.evidenceStatus]}, ${f.confidence} confidence.${f.evidence.trim() ? ` ${f.evidence.trim()}` : ""}`}
                 />
               </div>
+              {carried && <p className="rl-indent m-0 mt-2 text-xs text-muted-foreground">{carried}</p>}
               {note && <p className="rl-indent m-0 mt-2 text-xs text-muted-foreground">{note}</p>}
               {mode === "move" ? <Mover it={it} busy={busy} ctx={ctx.triage} /> : <Acts it={it} busy={busy} ctx={ctx.triage} />}
             </>
