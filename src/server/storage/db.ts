@@ -9,6 +9,7 @@ import m007_review from "./migrations/007_review.sql" with { type: "text" };
 import m008_post from "./migrations/008_post.sql" with { type: "text" };
 import m009_reply from "./migrations/009_reply.sql" with { type: "text" };
 import m010_profiles from "./migrations/010_profiles.sql" with { type: "text" };
+import m011_run_explain from "./migrations/011_run_explain.sql" with { type: "text" };
 
 // Index i holds the SQL that raises user_version from i to i + 1. The list order, not the file number, sets the version.
 const MIGRATIONS = [
@@ -22,6 +23,7 @@ const MIGRATIONS = [
   m009_reply,
   m006_forge, // 006_forge.sql (WP4) came last, so it runs after 009_reply.sql.
   m010_profiles,
+  m011_run_explain,
 ];
 
 export function openDb(path: string): Database {

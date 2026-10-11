@@ -165,7 +165,12 @@ export function runLine(d: RunDetail, profiles: ProfileDto[], commits?: CommitDt
       const gaps = r.status === "incomplete";
       return {
         kind: "done",
-        verb: r.kind === "reply" ? "drafted replies on" : profiles.find((p) => p.id === r.profile)?.explain ? "explained" : "reviewed",
+        verb:
+          r.kind === "reply"
+            ? "drafted replies on"
+            : (r.explain ?? profiles.find((p) => p.id === r.profile)?.explain)
+              ? "explained"
+              : "reviewed",
         head: shortHash(r.sourceHead),
         at: r.finishedAt ?? r.startedAt,
         count: countText(d.items, gaps, r.kind),

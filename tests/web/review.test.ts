@@ -55,6 +55,7 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
   kind: "review",
   profile: "general",
   profileName: "General",
+  explain: null,
   note: "",
   status: "completed",
   errorKind: null,
@@ -187,6 +188,9 @@ describe("run line", () => {
       verb: "explained",
       count: "1 question",
     });
+    // The flag stored at the start wins over the current profile. null falls back to the current profile.
+    expect(runLine(detail(run({ profile: "explain", explain: false })), PROFILES)).toMatchObject({ verb: "reviewed" });
+    expect(runLine(detail(run({ profile: "gone", explain: true })), PROFILES)).toMatchObject({ verb: "explained" });
   });
 
   test("incomplete never says no issues; complete without items says no findings", () => {

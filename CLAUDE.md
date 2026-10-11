@@ -2,7 +2,7 @@
 
 Review Loop is a local-first inbox for Bitbucket Server pull requests (PRs). It runs the user's own Claude Code CLI (`claude -p`) for reviews. The app runs on localhost and keeps all data on the user's machine.
 
-Status: M2 and M3 are code complete pending the Monday smoke test with the real CLI (docs/smoke-v3.md); see docs/plans/v3.md. M1 also waits for docs/smoke-m1.md. Do not assume that a file in the planned layout exists. Check first.
+Status: M1 to M4 are code complete. Before release, the user runs docs/smoke-m1.md, docs/smoke-v3.md and docs/smoke-m4.md; see docs/plans/m4.md. Do not assume that a file in the planned layout exists. Check first.
 
 ## Document map
 
@@ -10,7 +10,8 @@ Status: M2 and M3 are code complete pending the Monday smoke test with the real 
 |---|---|
 | `BRIEF.md` | The spec and the source of truth. If another file disagrees, BRIEF.md wins. |
 | `prototype/index.html` | Visual spec for the UI: three panes, color tokens, keyboard model. Sample data only. It is also a published artifact. |
-| `docs/smoke-v3.md` | Manual smoke script for M2 and M3 with the real CLI. Its last table maps acceptance scenarios A1 to A17 to their tests. |
+| `docs/plans/` | Milestone plans: m1.md, v3.md (M2, M3), replies.md, m4.md. |
+| `docs/smoke-m1.md`, `docs/smoke-v3.md`, `docs/smoke-m4.md` | Manual smoke tests with the real server and CLI. The user runs them. The smoke-v3.md last table maps A1 to A17 to their tests. |
 | `PROJECT_BRIEF_GPT_ASTRA_6.md` | Reference for edge cases and acceptance scenarios. |
 | `IMPLEMENTATION_PROMPTS_GPT_ASTRA_6.md` | Alternative spec-kit prompt set. Prompt 0 drives Gate 0. Its two-pane and general-comments-only rules do not apply. |
 | `skills-lock.json` | Pins the installed project skills. Commit it with every skill change. |
@@ -24,13 +25,13 @@ Server:  Hono on 127.0.0.1 only. csrf(), streamSSE, zValidator, typed client hc<
 UI:      Vite, React, Tailwind CSS, shadcn/ui (Vite setup), TanStack Query. No global state library.
 Storage: bun:sqlite, prepared SQL, checked-in migrations, no ORM.
 Schema:  zod for AI output, used REST responses, and every API input. One shared AI-result schema module (src/shared/review.ts).
-Git/AI:  simple-git with argument arrays. The system `claude` CLI.
+Git/AI:  git CLI through Bun.spawn with argument arrays and an isolated config. The system `claude` CLI.
 Secrets: Bun.secrets (experimental, verify in Gate 0). Fallback: memory only.
 Tests:   bun test for logic and integration. Playwright for browser acceptance.
 Ship:    bun build --compile, one executable per OS with the UI embedded.
 ```
 
-Layout: `src/web/`, `src/server/{bitbucket,sync,inbox,storage,tasks,review,publish}/`, `src/shared/`, `fixtures/`, `tests/` exist. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
+Layout: `src/web/`, `src/server/{bitbucket,sync,inbox,storage,tasks,review,publish}/`, `src/shared/`, `fixtures/`, `tests/`, `scripts/` exist. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
 
 Commands:
 - `bun install`: install the pinned dependencies.
@@ -38,7 +39,7 @@ Commands:
 - `bun run build`: build the UI into `dist/web`.
 - `bun run start`: serve the API and the built UI on 127.0.0.1:7317. `REVIEW_LOOP_PORT` overrides the port. `REVIEW_LOOP_DATA_DIR` sets the data folder. `REVIEW_LOOP_SECRETS=memory` keeps the token out of the OS store.
 - `bun run compile`: build the UI, then one self-contained executable for this host into `dist/bin/review-loop-<os>-<arch>`. `bun run compile:all` adds windows-x64, linux-x64, linux-arm64, darwin-x64, and darwin-arm64. `tests/build/compiled.test.ts` checks the host binary and skips when it is absent.
-- `bun run typecheck`: run strict `tsc --noEmit`.
+- `bun run typecheck`: run strict `tsc --noEmit`. `bun run typecheck:5` runs it with TypeScript 5.
 - `bun run lint`: run Biome lint and format checks. `bun run format` applies the fixes.
 - `bun run demo`: serve the built UI on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. It uses a temp data folder and memory secrets.
 - `bun test`: run the tests under `tests/`. Each group ends green on typecheck, lint, and test.
@@ -73,6 +74,7 @@ Add or update a project skill:
 
 ## Testing notes
 
+- The `bunfig.toml` preload `tests/support/no-real-claude.ts` fails any test that looks up the real `claude` on PATH. Pass the fake CLI as `runnerCommand`.
 - Run e2e only through `bun run test:e2e`. A plain `npx playwright` can resolve a global Playwright of another version.
 - A parallel worktree runs e2e on its own ports, for example `E2E_FAKE_PORT=7458 E2E_APP_PORT=7459`. The `E2E code:` line of `serve.ts` shows which checkout the run serves.
 - The e2e control routes (`/__control/*`) live on the fake Bitbucket in `tests/e2e/serve.ts`, never in the app.

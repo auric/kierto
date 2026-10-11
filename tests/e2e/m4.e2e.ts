@@ -114,12 +114,14 @@ test("a renamed profile shows in the Review button and in the run labels; a run 
   await page.keyboard.press("Escape");
   await expect(runLog(page)).toBeHidden();
 
-  // The Review button follows a second rename at once. The finished run keeps its first name.
+  // The Review button follows a second rename at once. The finished run keeps its first name and its explain flag.
   await openSettings(page);
   await field(page, "Name", 1).fill("Logic");
+  await field(page, "Explain only", 1).check();
   await saveProfiles(page);
   await closeSettings(page);
   await expect(reviewButton(page)).toHaveText(/Review · Logic/);
+  await expect(runLine(page)).toContainText(/Claude reviewed [0-9a-f]{7}/);
   await page.keyboard.press("3");
   await expect(runLog(page)).toContainText("Correctness profile");
   await page.keyboard.press("Escape");

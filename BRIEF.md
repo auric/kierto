@@ -97,13 +97,13 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 ### 3.5 Review safety
 
 - `claude -p` never shows the workspace trust dialog. In an untrusted folder it still uses project hooks, the project `env` block, and `apiKeyHelper`. So never run Claude Code in a raw PR checkout.
-- The app exports the pinned PR head with `git archive` into an app-owned temp folder. It removes `.claude/`, `.mcp.json`, and symlinks. It renames CLAUDE.md files.
+- The app checks out the pinned PR head as a detached git worktree in an app-owned run folder. It removes `.claude/`, `.mcp.json`, and links. It renames CLAUDE.md, CLAUDE.local.md, and AGENTS.md files.
 - With `--setting-sources user`, project settings, hooks, `.mcp.json`, CLAUDE.md, and skills do not load (Gate 0, CLI 2.1.295). The snapshot rename and remove steps stay as defense in depth.
 - `--setting-sources user` still loads the user's own CLAUDE.md, agents, plugins, hooks, and MCP servers, including claude.ai connectors. Only `--strict-mcp-config` removes the MCP servers.
 - Never use `--bare`. It never reads OAuth credentials or the keychain, so the subscription login fails with it.
 - `ANTHROPIC_API_KEY` in the environment wins over the subscription. The app removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment.
 - Before each run, the app calls `claude auth status`. It runs only when `authMethod` is `claude.ai`. Otherwise it stops and explains. Log only `authMethod` from `claude auth status`, because its output also holds the email and organization.
-- `permissions.blockReadsOutsideWorkingDirectories: true` (Claude Code v2.1.257 or later) keeps file tools inside the snapshot. The app refuses an older CLI.
+- `--restricted` ignores the settings files and keeps the file tools inside the cwd (Gate B8). The app refuses a CLI older than 2.1.295.
 - A separate folder is not an OS sandbox. The review gets read-only tools only, no shell, and no code-host token.
 
 ### 3.6 Local server safety
@@ -111,7 +111,7 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 - Listen on 127.0.0.1 only. A random port is not authentication.
 - Check the Host and Origin headers on every request. Use Hono `csrf()` on mutations. Never enable wildcard CORS.
 - Every mutation needs a per-start session token. The server puts it into the page it serves.
-- Outbound calls go only to the configured Bitbucket instance. Check redirects against it.
+- Outbound calls go only to the configured Bitbucket instance. Check redirects against it. The one exception: a review with a Docs profile lets the CLI call the documentation MCP servers (Microsoft Learn, DeepWiki).
 - Support a corporate CA file. Never disable TLS verification.
 - The Bitbucket token lives in the OS credential store through `Bun.secrets` (experimental; verify in Gate 0). Fallback: memory only, asked again after a restart.
 - The token never goes into SQLite, localStorage, URLs, logs, or prompts. Logs are redacted. No telemetry.
@@ -137,7 +137,7 @@ Local server (Bun + Hono, TypeScript)
    +-- sync/       poll, page, reconcile, checkpoints
    +-- inbox/      attention rules, read state, notifications
    +-- review/     jobs, snapshot, auth check, CLI runner, validator
-   |     +-- git cache (bare clone) --git archive--> snapshot folder (temp)
+   |     +-- git cache (bare clone) --git worktree--> run folder (sanitized)
    |     +-- spawn: claude -p (cwd = snapshot, scrubbed env)
    |                 +-- MCP: Microsoft Learn, DeepWiki
    |                 +-- MCP (optional, read-only): Jira, CodeGraph
@@ -251,7 +251,7 @@ Stack:
 - Visual reference: prototype/index.html. Port its CSS color tokens to the shadcn theme variables. Keep its three panes and keyboard model.
 - Storage: bun:sqlite, prepared SQL, checked-in migrations. One database file in the user data folder. No ORM.
 - Validation: zod for the AI output, the REST responses that the app uses, and every API input. One shared AI-result schema module (review result and reply result) used by runner, server, and UI.
-- Git: simple-git with argument arrays, never shell strings. AI: the system claude CLI.
+- Git: the git CLI through Bun.spawn with argument arrays and an isolated config (no system or global config, no credential helper), never shell strings. AI: the system claude CLI.
 - Secrets: Bun.secrets (experimental; verify on Windows and Linux in Gate 0). Fallback: memory only for the session.
 - Tests: bun test for logic and integration, Playwright for browser acceptance.
 - Later: @pierre/diffs only when the diff viewer is built (Release 2).
@@ -305,30 +305,31 @@ Read state:
 
 Review runner:
 - Snapshot: fetch refs/pull-requests/{id}/from into one bare cache clone per repository. If the server blocks these refs, fetch the source branch by name. Gate 0: git ls-remote lists refs/pull-requests/{id}/from, and it equals the source head. No merge ref is listed. Verify the fetch of /from in M2. Pin the source, target, and merge-base commits. On Windows, set core.longpaths=true.
-- Export with git archive of the pinned head into an app-owned temp folder. Put "* -export-ignore -export-subst" into the cache's info/attributes, so the PR cannot hide or rewrite files (verify in Gate 0).
-- Extraction rejects absolute paths, ".." parts, and links. Reject link entries (tar typeflag 1 for hard links, 2 for symlinks) during extraction, not after. On Windows, use the system tar.exe or extract in-process. Do not use Git for Windows GNU tar, because it fails on drive-letter paths. Remove .claude/ folders, .mcp.json files, and symlinks. Rename every CLAUDE.md and CLAUDE.local.md to <name>.untrusted.md. No submodules. No repository scripts run.
-- The app writes context files beside the snapshot: the diff, the changed-file list, the PR text, and the existing comments. The snapshot has no .git folder, so the review uses no git commands.
-- Spawn the native claude binary (claude.exe on Windows) with the shell off. Do not spawn claude.cmd, because a .cmd file needs a shell. If only claude.cmd exists, run the CLI JavaScript entry file with bun. cwd = the run folder. Send the prompt on stdin, because Windows limits the command-line length.
-- Before spawn: require CLI v2.1.257 or later. Run claude auth status (JSON, exit 0 when logged in). Run only when authMethod is claude.ai. Values such as api_key, oauth_token, or none stop the run with an explanation.
-- Child environment: remove ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDECODE, CLAUDE_PID, and all CLAUDE_CODE_* variables. Then a run started from inside a Claude Code session behaves like a normal run.
-- Flags: -p --output-format stream-json --verbose --json-schema <findings schema> --setting-sources user --strict-mcp-config --mcp-config <app review-mcp.json> --settings <app settings JSON> --permission-mode default --tools <read-only built-ins: Read, Grep, Glob> --allowedTools <read-only list> --disallowedTools <deny list> --max-turns <cap>.
+- Check out the pinned source head with `git worktree add --detach` into `<dataDir>/runs/<id>/work/repo`. Info attributes turn off filters, text conversion, and ident, so checkout writes each blob unchanged.
+- Remove links (tree entries with mode 120000 and any link or junction on disk), .claude/ folders, and .mcp.json files. Rename every CLAUDE.md, CLAUDE.local.md, and AGENTS.md to <name>.untrusted.md. No submodules. No repository scripts run.
+- The app writes context files into `work/context`: the numbered diff, the changed-file list, and the PR text with the existing comments. The review reads history only through the read-only git MCP of the app.
+- Spawn the native claude binary (claude.exe on Windows) with the shell off. cwd = the run folder. Send the prompt on stdin, because Windows limits the command-line length.
+- Refuse a claude.cmd wrapper, because cmd.exe parses the arguments again. The runner check says "claude.cmd is not the native claude.exe." and no run starts.
+- Before spawn: require CLI v2.1.295 or later. Run claude auth status (JSON, exit 0 when logged in). Run only when authMethod is claude.ai. Values such as api_key, oauth_token, or none stop the run with an explanation.
+- Child environment: remove ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDECODE, CLAUDE_PID, all CLAUDE_CODE_* variables, BUN_BE_BUN, BUN_OPTIONS, and NODE_OPTIONS. Then set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 (Gate B3). A run started from inside a Claude Code session behaves like a normal run.
+- Flags (the Gate B command, integration-check.md): -p --output-format stream-json --verbose --restricted --strict-mcp-config --mcp-config <app file> --tools Read,Grep,Glob[,Agent] --allowedTools Read,Grep,Glob,mcp__<app server> --agents <file> --agent rl-main --json-schema <schema> --max-turns <cap> --no-session-persistence.
+- No --settings and no --permission-mode. --restricted ignores the settings files, and CLI 2.1.295 has no permission mode "default".
 - With --json-schema, --max-turns must be at least 2, because the schema answer takes one turn.
 - Never use --bare. It never reads OAuth credentials or the keychain, so the subscription login fails.
-- --settings JSON sets permissions.blockReadsOutsideWorkingDirectories: true.
-- With --setting-sources user, project settings, hooks, .mcp.json, CLAUDE.md, and skills do not load (Gate 0, CLI 2.1.295). The snapshot rename and remove steps stay as defense in depth.
-- Read-only list: Read, Grep, Glob, and the read-only MCP tools from review-mcp.json.
-- Deny list (also when user settings allow more): Bash, Edit, Write, NotebookEdit, WebFetch, WebSearch, Agent, and every code-host write tool. Name the Bitbucket MCP write tools create_pull_request_comment and edit_pull_request_comment explicitly. --strict-mcp-config already removes that MCP, so this is defense in depth. --allowedTools does not limit the tool set. Gate 0 saw the model start a subagent through the Agent tool.
-- review-mcp.json ships Microsoft Learn (https://learn.microsoft.com/api/mcp) and DeepWiki (https://mcp.deepwiki.com/mcp). Users can add Jira and CodeGraph only with a read-only tool list. If read-only cannot be enforced, leave that MCP out and give the data as context files.
+- --strict-mcp-config keeps only the app MCP servers: the read-only git MCP, and the documentation MCPs when the profile has Docs on. The Bitbucket MCP never runs in reviews.
+- Subagents: the --agents file gives each reviewer agent read-only tools, a deny list (Bash, PowerShell, Write, Edit, NotebookEdit, Agent), and omitClaudeMd. `--agent rl-main` with the tool `Agent(rl-reviewer)` refuses built-in and user agents (Gate B2, B9).
+- Init check: if the init event lists a tool outside the allowlist, the app kills the run before any tool use.
+- Documentation MCPs: Microsoft Learn (https://learn.microsoft.com/api/mcp) and DeepWiki (https://mcp.deepwiki.com/mcp).
 - Prompt: the profile prompt, the output schema, and the context files. Mark all PR text and repository files as untrusted data. Point Claude to the *.untrusted.md files as untrusted project documentation. Tell it to send only public API names to documentation MCPs.
 - Structured result: --json-schema puts the result in structured_output. With stream-json, only the result event with subtype success carries structured_output (Gate 0).
 - Recognize structured error results (is_error, subtype), not only exit codes. Map usage limit, auth error, and max turns to job states. Gate 0 did not record the error subtypes, so verify their values.
 - Cancel kills the whole process tree. On Windows use taskkill /T /F with the PID. In Gate 0, proc.kill() also ended the MCP child. The app must not rely on that.
 - For each run, store the session ID. Never resume a session from another PR.
 - Each run writes a transcript to ~/.claude/projects/<encoded cwd>/. The transcript holds the reviewed code. The app deletes that folder after each run, unless the user keeps the session for follow-up questions. --no-session-persistence exists, but Gate 0 did not test it, and it blocks --resume. Decide in M2.
-- Shipped profiles hold the full prompt text in the config. Explain asks only for the summary and questions, with a lower turn cap. A profile can say "use skill X" for users with that skill; Gate 0 confirmed that user skills load with --setting-sources user.
-- Record the Ponytail skill version when a profile uses it.
+- Profiles: four shipped profiles (General, Over-engineering, Security, Explain). The user can edit, add, remove, and reset them in Settings. Each profile has a name, a note, the prompt, Explain, Docs, and a turn cap. Explain asks only for the summary and questions, with a lower turn cap.
+- Each run stores the profile name, revision, and explain flag at its start. A later profile edit does not change an old run.
 
-Job states: queued, running, completed, incomplete, cancelled, failed. Freshness: fresh or stale. A result turns stale when the source or target head changes. One active job by default. Job start is idempotent: the key is PR, source head, target head, and profile. A second tab or a refresh gets the existing job.
+Job states: running, completed, incomplete, cancelled, failed. There is no queued state. Freshness is computed on read: a result turns stale when the source or target head changes. One run slot: a start while another run uses it gets 409 with the running run. Job start is idempotent: the running-job key is PR, source head, target head, profile ID, profile revision, and the note hash (a reply run adds its threads). A second tab or a refresh with the same key gets the existing run.
 
 Output contract (zod, schema-versioned):
 - Identity: schema version, PR identity, source and target heads, merge base, job ID, session ID, CLI version, profile and skill revision, model, context fingerprint.
@@ -340,7 +341,7 @@ Output contract (zod, schema-versioned):
 - Malformed output: at most one format-repair call, then the job fails with the raw output kept.
 
 Publication:
-- An approval record binds the exact body, destination (general, reply, or inline anchor), item revision, and reviewed commits. Any edit invalidates it.
+- A post row is the approval. It binds the exact body, the destination (general, reply, or inline anchor), the item revisions, and the reviewed commits. Its idem_key holds the item revisions, so an edited item gets a new row.
 - Preflight before send: refresh PR state, heads, and comments. Block stale items and show the reason. Flag likely duplicates against existing comments.
 - A reply post checks only that the parent comment still exists and that no newer message arrived in the thread since the user saw it. It does not check the heads.
 - Inline anchors pin fromHash and toHash to the reviewed commits. A line outside the diff goes into the general comment.
@@ -352,7 +353,7 @@ Publication:
 
 Notifications: opt-in. Deduplicate by event and comment version. Coalesce per PR. No self-events. After downtime, show one digest. Notifications work only while the service and a UI tab run.
 
-Cache: key review results by immutable inputs: repository, PR, source and target heads, merge base, profile and skill revision, model, CLI version, context fingerprint.
+No result cache. Each start runs the CLI again, except a start with the key of the running run.
 
 Data model (SQLite):
 - pull_request(instance, project, repo, pr_id, title, author, my_role, state, source_head, target_head, followed, archived_at, last_reviewed_commit)
@@ -360,18 +361,19 @@ Data model (SQLite):
 - comment(pr key, comment_id, version, parent_id, root_id, author, text, anchor_json, created_at, updated_at, tombstoned_at)
 - acknowledgement(comment key, acknowledged_version, acknowledged_at)
 - sync_checkpoint(scope, cursor_json, last_complete_at, incomplete_reason, last_error)
-- review_run(id, pr key, source_head, target_head, merge_base, profile, profile_revision, cli_version, model, context_fingerprint, status, freshness, session_id, idempotency_key, started_at, finished_at, usage_json, log_path)
-- item(id, run_id, kind: finding|question, payload_json, edited_body, status: new|accepted|edited|discarded|posted)
-- approval(id, item_id, body_hash, destination_json, reviewed_commits, approved_at, invalidated_at)
-- outbox(id, approval_id unique, state: pending|sent|unknown|failed|confirmed, request_json, remote_comment_id, remote_version, attempts, last_error, updated_at)
+- pr_brief(pr, note, profile, updated_at)
+- review_run(id, pr, kind: review|reply, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, merge_base, fetch_via, status, error_kind, error_text, session_id, cli_version, model, usage_json, summary_json, raw_output, started_at, finished_at). One running row per idem_key.
+- run_event(run, id, seq, parent, tool, target, status, note, agent, started_at, ended_at)
+- review_item(id, run, kind: finding|question|reply, payload_json, body, anchor columns, status: new|accepted|discarded|posted, revision, edited, thread)
+- post(id, pr, run, kind: inline|general|reply, idem_key unique, body, destination_json, items_json, state: pending|sent|unknown|failed|confirmed, remote_id, remote_version, attempts, last_error, created_at, updated_at). The row is the approval and the outbox entry.
 
-Config: one JSON file in the user data folder. It holds no secrets.
+Config: one JSON file in the user data folder. It holds no secrets. Fields include the Bitbucket URL, the CA file, markAi, the task rules, checkSeconds (the poll interval), and profiles (absent: the shipped profiles).
 
 Tests:
 - Sanitized fixtures from Gate 0: nested replies, edits, deletions, duplicate activities, out-of-order activities, a late message during mark-read, paging, truncation.
 - A fake claude executable that replays recorded stream-json, errors, usage limits, malformed output, and slow runs for cancel.
 - Unit tests: unread logic, checkpoint commit order, snapshot sanitizing, path traversal, finding-to-anchor mapping (renames, removed lines, lines outside the diff), validator, outbox transitions.
-- Playwright acceptance for all 15 scenarios A1 to A15.
+- Acceptance tests (bun test and Playwright) for all 17 scenarios A1 to A17. docs/smoke-v3.md maps each scenario to its tests.
 - A separately authorized smoke test on the real server, on the designated test PR only.
 - Record which tests ran on Windows and which on Linux. Never point a test at a live or shared service.
 ```
@@ -403,6 +405,7 @@ Phase 3, author mode (my own PRs):
 - Draft a PR description from the commits and the Jira issue.
 
 Phase 4, better reviews:
+- "Use skill X" in a profile. The Skill tool stays off under --restricted, so a profile cannot load a skill today.
 - Acceptance-criteria coverage: map the Jira issue's requested behavior to code, tests, and gaps.
 - Cross-repository producer and consumer checks: schema, deployment order, compatibility. Use a local context config (doc paths, entry points, related repositories, contract owners, test commands). Record related revisions. A missing repository becomes a question, not a claim.
 - Learn from discards: store rejected findings per repository and send them as "do not flag" guidance.
@@ -422,7 +425,7 @@ Phase 5, reach:
 
 1. Bitbucket version and auth? [Answered in Gate 0: Data Center 9.4.26. An HTTP access token as Bearer works for reads and writes.]
 2. Can clients fetch refs/pull-requests/*? [Partly answered in Gate 0: ls-remote lists refs/pull-requests/<id>/from, and no merge ref. Verify the fetch in M2. Fall back to a branch fetch.]
-3. Mark AI-assisted comments? [No marker. The user owns every posted comment.]
+3. Mark AI-assisted comments? [Answered: the 🤖 mark, a setting that is on by default. The user owns every posted comment.]
 4. Which local repository paths may the app read? [None at first. The app uses its own cache clones.]
 5. Which MCP servers run in reviews? [Microsoft Learn and DeepWiki. Add Jira and CodeGraph only with a read-only tool list.]
 6. The existing Bitbucket MCP: tool names, schemas, and paging? [Answered in Gate 0: names and schemas are recorded in integration-check.md. It has comment write tools and no delete tool. Sync and publish use REST either way.]

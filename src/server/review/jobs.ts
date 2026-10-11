@@ -103,6 +103,7 @@ type RunRow = {
   profile: string;
   // null for runs made before M4.
   profile_name: string | null;
+  explain: number | null;
   note: string;
   source_head: string;
   target_head: string;
@@ -178,9 +179,9 @@ const SQL = {
   brief: "SELECT note, profile, updated_at FROM pr_brief WHERE pr = $pr",
   saveBrief: `INSERT INTO pr_brief (pr, note, profile, updated_at) VALUES ($pr, $note, $profile, $now)
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
-  insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, note, idem_key, source_head, target_head, status, started_at)
-    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $note, $key, $source, $target, 'running', $now) RETURNING id`,
-  run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
+  insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, status, started_at)
+    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now) RETURNING id`,
+  run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
       p.source_head AS pr_source, p.target_head AS pr_target
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
@@ -431,6 +432,7 @@ function toRunDto(r: RunRow): RunDto {
     kind: r.kind,
     profile: r.profile,
     profileName: r.profile_name ?? SHIPPED_PROFILES.find((p) => p.id === r.profile)?.name ?? r.profile,
+    explain: r.explain === null ? null : r.explain === 1,
     note: r.note,
     status: r.status,
     errorKind: r.error_kind,
@@ -689,6 +691,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       profile: profile.id,
       profile_name: profile.name,
       profile_revision: profileRevision(profile),
+      explain: profile.explain ? 1 : 0,
       note: brief.note,
       key,
       source: pr.source_head,

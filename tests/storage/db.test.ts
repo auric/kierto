@@ -27,7 +27,7 @@ const schema = (path: string) => {
 
 test("migration runs on an empty file and creates every M1 table", () => {
   const s = schema(join(dir, "empty.sqlite"));
-  expect(s.version).toBe(10);
+  expect(s.version).toBe(11);
   expect(s.journal).toBe("wal");
   expect(s.fk).toBe(1);
   expect(s.busy).toBe(5000);
@@ -83,9 +83,9 @@ test("migration from a version-9 database keeps every run", () => {
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(10);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(11);
     expect(db.query("SELECT * FROM review_run ORDER BY id").all()).toEqual(
-      before.map((r) => ({ ...r, profile_name: null, profile_revision: null })),
+      before.map((r) => ({ ...r, profile_name: null, profile_revision: null, explain: null })),
     );
   } finally {
     db.close();

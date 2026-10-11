@@ -788,7 +788,7 @@ describe("editable profiles (M4)", () => {
       await h.brief(NOTE, "general");
       const a = await h.start();
       expect(a.status).toBe(202);
-      expect(a.body.profileName).toBe("General v2");
+      expect(a.body).toMatchObject({ profileName: "General v2", explain: false });
       expect(await waitFor(() => h.runCall() !== undefined)).toBe(true);
       const c = h.runCall() as Call;
       expect(flag(c.argv, "--max-turns")).toBe("7");
@@ -797,9 +797,12 @@ describe("editable profiles (M4)", () => {
         expect(agents[name].prompt).toContain(edited.prompt);
         expect(agents[name].prompt).not.toContain(general.prompt);
       }
-      expect(h.db.query("SELECT profile, profile_name, profile_revision FROM review_run WHERE id = $id").get({ id: a.body.id })).toEqual({
+      expect(
+        h.db.query("SELECT profile, profile_name, explain, profile_revision FROM review_run WHERE id = $id").get({ id: a.body.id }),
+      ).toEqual({
         profile: "general",
         profile_name: "General v2",
+        explain: 0,
         profile_revision: profileRevision(edited),
       });
 
@@ -851,7 +854,11 @@ describe("editable profiles (M4)", () => {
             VALUES ($pr, 'review', 'over', '', 'old', 'a', 'b', 'completed', 1) RETURNING id`,
         )
         .get({ pr: h.pr }) as { id: number };
-      expect((await h.json<RunDetail>(`/api/runs/${id}`)).body.run).toMatchObject({ profile: "over", profileName: "Over-engineering" });
+      expect((await h.json<RunDetail>(`/api/runs/${id}`)).body.run).toMatchObject({
+        profile: "over",
+        profileName: "Over-engineering",
+        explain: null,
+      });
     },
     SLOW,
   );

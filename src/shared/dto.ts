@@ -254,6 +254,8 @@ export type RunDto = {
   profile: ProfileId;
   // The profile name at the start of the run.
   profileName: string;
+  // The profile explain flag at the start of the run. null for runs made before it was stored.
+  explain: boolean | null;
   note: string;
   status: RunStatus;
   errorKind: RunErrorKind | null;
