@@ -78,6 +78,39 @@ Cost limit: 14 `claude -p` calls and 0.60 USD (sum of the reported result costs)
 | Permission modes: `--permission-mode` choices in `claude --help`, and `init.permissionMode` per call | 0 | PENDING | |
 | CLI version (runner minimum) | 0 | PENDING | |
 
+## Gate v3, Bitbucket
+
+Status: PENDING. The probe is ready. No check has run on the real server yet.
+
+Run these commands in order, on the designated test PR only:
+
+1. Check the stored URL and token: `bun scripts/gate0/set-token.ts --check`.
+2. Phase 1, read only: `bun scripts/gate0/bitbucket-probe.ts --pr ~USER/repo/1 --v3`. If every fetch attempt fails, run it again with `--ca-file <CA PEM file>`.
+3. Phase 1, write: `bun scripts/gate0/bitbucket-probe.ts --pr ~USER/repo/1 --v3 --write`. It posts 3 inline comments and 1 BLOCKER task, then resolves the task. The comments stay until step 7.
+4. Open the 2 links that phase 1 prints: the file line and the comment. Record whether each opens the right place.
+5. Manual step a: in the web UI, select two or more lines in the PR diff and add one comment on that range.
+6. Manual step b: push one commit to the PR source branch that changes the line that phase 1 names.
+7. Phase 2, read: `bun scripts/gate0/bitbucket-probe.ts --pr ~USER/repo/1 --v3 --phase 2`.
+8. Phase 2, cleanup: `bun scripts/gate0/bitbucket-probe.ts --pr ~USER/repo/1 --v3 --phase 2 --write`. It deletes every probe comment.
+9. Delete your range comment by hand. Phase 2 prints its link. Revert the step b commit if the test branch needs it.
+10. Sanitize: `bun scripts/gate0/sanitize-fixtures.ts`. It writes the v3 fixtures to `fixtures/bitbucket/` and must print `hits=0 structure diffs=0`.
+
+Raw responses go to `.gate0/raw/v3-p<phase>-<step>.json` (gitignored). The phase state is `.gate0/raw/v3-state.txt`. Phase 1 with `--write` refuses to run while probe comments from an earlier run exist. The fetch uses a temp bare repository with `GIT_CONFIG_NOSYSTEM=1`, an empty global config, no credential helper, and `GIT_TERMINAL_PROMPT=0`. The token goes only into `http.extraHeader` through `GIT_CONFIG_*`. The probe tries the TLS settings in order (`isolated`, `schannel`, `ca-file`, `schannel+ca-file`) and stops at the first that works.
+
+| Item | Status | Evidence |
+|---|---|---|
+| U1. Jira integration endpoint `GET /rest/jira/1.0/projects/{p}/repos/{r}/pull-requests/{id}/issues`: status, shape (key, URL), answer when the integration is off | PENDING | |
+| U2. Range comment (manual step a): the anchor field for the range start | PENDING | |
+| U3. COMMIT anchor with fromHash = merge base, toHash = source head: accepted, shown in the PR diff | PENDING | |
+| U4. Inline comment on a CONTEXT line 3 lines from a change | PENDING | |
+| Inline comment on a REMOVED line (lineType REMOVED, fileType FROM) | PENDING | |
+| U5. File link `<repo browse link>/<path>?at=<hash>#<line>` and comment link `<PR link>/overview?commentId=<id>` open the right place. Repository and PR `links` | PENDING | |
+| U6. Fetch of `refs/pull-requests/<id>/from` and the target branch with the token env: exit code, head hash, merge base, TLS setting that worked | PENDING | |
+| U12. Orphaned comment after manual step b: `orphaned: true`, the diff hunk kept, the RESCOPED activity | PENDING | |
+| U14. BLOCKER task: severity and state in the comment and in the activities, before and after resolve | PENDING | |
+| U15. PR commits endpoint: fields, paging, order | PENDING | |
+| APPROVED and REVIEWED activities | PENDING | Needs a second reviewer. Otherwise NOT TRIED. |
+
 ## Impact on BRIEF.md
 
 Lines that the results confirm:

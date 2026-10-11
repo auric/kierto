@@ -2,7 +2,7 @@
 // Usage: bun scripts/gate0/sanitize-fixtures.ts
 // Every sensitive string and number comes from .gate0/raw/ at run time. This file holds no real values.
 // Output is counts only. Exit code 1 when a scan hit or a structure difference exists.
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "../..");
@@ -10,6 +10,7 @@ const RAW = join(ROOT, ".gate0/raw");
 const OUT = join(ROOT, "fixtures/bitbucket");
 const SCAN_TARGETS = [OUT, join(ROOT, "integration-check.md")];
 const FAKE_HOST = "bitbucket.example.test";
+const FAKE_TRACKER_HOST = "jira.example.test";
 const FAKE_SSH_PORT = "7999";
 
 // Raw probe step -> fixture file.
@@ -30,7 +31,20 @@ const FILES: Record<string, string> = {
   "26-delete-0.json": "comment-delete-204.json",
   "27-post-delete-0.json": "comment-get-after-delete-404.json",
   "28-trace-delete.json": "activities-after-delete.json",
+  // Gate v3. These files exist only after the v3 probe ran. A missing v3 file is skipped.
+  "v3-p1-commits-p0.json": "pull-request-commits-page.json",
+  "v3-p1-jira-issues.json": "jira-issues.json",
+  "v3-p1-repository.json": "repository.json",
+  "v3-p1-post-removed.json": "comment-inline-removed-response.json",
+  "v3-p1-post-context.json": "comment-inline-context-response.json",
+  "v3-p1-post-merge-base.json": "comment-inline-merge-base-response.json",
+  "v3-p1-post-blocker.json": "comment-blocker-task-response.json",
+  "v3-p1-resolve-blocker.json": "comment-blocker-resolved-response.json",
+  "v3-p1-activities-after-write-p0.json": "activities-v3-after-write.json",
+  "v3-p2-activities-p0.json": "activities-rescoped-orphaned-range.json",
+  "v3-p2-commits-p0.json": "pull-request-commits-after-push.json",
 };
+for (const src of Object.keys(FILES)) if (src.startsWith("v3-") && !existsSync(join(RAW, src))) delete FILES[src];
 
 const readJson = (p: string) => JSON.parse(readFileSync(p, "utf8"));
 const raw = readdirSync(RAW).filter((f) => f.endsWith(".json")).sort().map((f) => readJson(join(RAW, f)));
@@ -58,6 +72,11 @@ const idMap = new Map<number, number>();
 const hosts = new Set<string>();
 const sshPorts = new Set<string>();
 const freeText = new Set<string>();
+const commitMessages = new Set<string>();
+const trackerHosts = new Set<string>();
+// Jira issue key: a project key (upper-case letter, then upper-case letters, digits, or "_"), "-", and a number.
+const ISSUE_KEY = /(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]*-\d+(?![0-9])/g;
+const issueKeys = new Set<string>();
 
 const USERS = ["jdoe", "asmith", "bwong", "cmiller", "dlee", "egarcia", "fkhan", "gnovak"];
 const NAMES = ["Jane Doe", "Alex Smith", "Ben Wong", "Chris Miller", "Dana Lee", "Eva Garcia", "Farid Khan", "Gita Novak"];
@@ -74,15 +93,32 @@ for (const r of raw) {
         hosts.add(u.hostname.toLowerCase());
         if (u.port) sshPorts.add(u.port);
       }
+      // Issue links from the Jira integration use the key "url".
+      if (k === "url" && /^https?:\/\//i.test(v)) trackerHosts.add(new URL(v).hostname.toLowerCase());
+      if (["key", "jira-key", "message", "title", "description", "displayId", "url"].includes(k)) for (const m of v.match(ISSUE_KEY) ?? []) issueKeys.add(m);
       if (["title", "description", "text", "line"].includes(k) && v.length >= 6 && !v.includes("review-loop gate0 probe")) freeText.add(v.toLowerCase());
     }
     if (!v || typeof v !== "object" || Array.isArray(v)) return;
+    // A commit: 40-hex id, short displayId, message.
+    if (typeof v.id === "string" && /^[0-9a-f]{40}$/.test(v.id)) {
+      if (!hashMap.has(v.id)) hashMap.set(v.id, hex(`h${hashMap.size}`));
+      if (typeof v.displayId === "string" && v.displayId.length >= 7 && v.id.startsWith(v.displayId)) strMap.set(v.displayId, hashMap.get(v.id)!.slice(0, v.displayId.length));
+      if (typeof v.message === "string") {
+        commitMessages.add(v.message);
+        if (v.message.length >= 6) freeText.add(v.message.toLowerCase());
+      }
+    }
     if ("emailAddress" in v || (["NORMAL", "SERVICE"].includes(v.type) && "slug" in v)) {
       const key = String(v.slug ?? v.name).toLowerCase();
       if (!strMap.has(key)) {
         const i = users++;
         const u = USERS[i] ?? `user${i}`;
         for (const x of [v.slug, v.name]) if (x) strMap.set(x.toLowerCase(), u);
+        // A commit author without a Bitbucket account has only the git name and email.
+        if (!v.slug && typeof v.name === "string" && /\s/.test(v.name)) {
+          strMap.set(v.name.toLowerCase(), NAMES[i] ?? `User ${i}`);
+          for (const p of v.name.split(/\s+/)) if (p.length >= 3) scanOnly.add(p.toLowerCase());
+        }
         if (v.displayName) {
           strMap.set(v.displayName.toLowerCase(), NAMES[i] ?? `User ${i}`);
           for (const p of v.displayName.split(/\s+/)) if (p.length >= 3) scanOnly.add(p.toLowerCase());
@@ -115,6 +151,12 @@ for (const h of hosts) {
   strMap.set(h, FAKE_HOST);
   for (const p of h.split(".")) if (p.length >= 4) scanOnly.add(p);
 }
+for (const h of trackerHosts) {
+  if (hosts.has(h)) continue;
+  strMap.set(h, FAKE_TRACKER_HOST);
+  for (const p of h.split(".")) if (p.length >= 4) scanOnly.add(p);
+}
+[...issueKeys].sort().forEach((k, i) => strMap.set(k.toLowerCase(), `ABC-${i + 1}`));
 
 // Fake IDs keep the digit count. They never reuse a real ID value.
 {
@@ -147,12 +189,13 @@ function fixStr(s: string, k: string): string {
   if (k === "title") return "Sample pull request";
   if (k === "description") return "Sample description.";
   if (k === "line") return `sample line ${++textN}`;
+  if (k === "message" && commitMessages.has(s)) return `Sample commit ${++textN}.`;
   if (k === "text") {
     const m = s.match(/^(\[review-loop gate0 probe, safe to ignore\]) (.*)$/);
     return m ? `${m[1]} ${m[2]}` : `Sample comment ${++textN}.`;
   }
   let out = s.replace(/[0-9a-f]{40}/g, (h) => hashMap.get(h) ?? h).replace(tokenRe, (m) => keepCase(m, strMap.get(m.toLowerCase())!));
-  if (k === "href") {
+  if (k === "href" || (k === "url" && /^https?:\/\//i.test(out))) {
     const u = new URL(out);
     if (u.port) out = out.replace(`${u.hostname}:${u.port}`, `${u.hostname}:${FAKE_SSH_PORT}`);
     out = out.replace(/\/pull-requests\/(\d+)/, (_, n) => `/pull-requests/${mapId(Number(n))}`);
@@ -210,7 +253,7 @@ const files = (p: string): string[] => {
     return [p];
   }
 };
-const strTokens = [...new Set([...strMap.keys(), ...scanOnly, ...hashMap.keys()])].filter((t) => t.length >= 3 && strMap.get(t)?.toLowerCase() !== t && t !== "bitbucket");
+const strTokens = [...new Set([...strMap.keys(), ...scanOnly, ...hashMap.keys()])].filter((t) => t.length >= 3 && strMap.get(t)?.toLowerCase() !== t && t !== "bitbucket" && t !== "jira");
 const idTokens = [...idMap.keys()];
 let hits = 0;
 let checked = 0;
