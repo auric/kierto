@@ -37,6 +37,7 @@ const FILES: Record<string, string> = {
   "v3-p1-repository.json": "repository.json",
   "v3-p1-post-removed.json": "comment-inline-removed-response.json",
   "v3-p1-post-context.json": "comment-inline-context-response.json",
+  "v3-p1-post-inline-reply.json": "comment-inline-reply-response.json",
   "v3-p1-post-merge-base.json": "comment-inline-merge-base-response.json",
   "v3-p1-post-blocker.json": "comment-blocker-task-response.json",
   "v3-p1-resolve-blocker.json": "comment-blocker-resolved-response.json",

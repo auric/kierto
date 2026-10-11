@@ -545,6 +545,14 @@ async function runV3() {
     else console.log("  removed: not tried, the diff has no REMOVED line");
     const ctx = A.context ? await post("context", inline(A.context, "CONTEXT", "TO", A.context.fromHash, A.context.toHash)) : null;
     if (!A.context) console.log("  context: not tried, no CONTEXT line 3 lines from a change");
+    // U16: a reply to an anchored parent, then a reply to that reply. Cleanup runs in reverse order, so the deepest reply goes first.
+    const reply = ctx ? await post("inline-reply", { parent: { id: ctx.id } }) : null;
+    const reply2 = reply ? await post("inline-reply2", { parent: { id: reply.id } }) : null;
+    if (!ctx) console.log("  inline-reply: not tried, no CONTEXT inline comment");
+    else {
+      const has = (c: any) => (c ? String("anchor" in c) : "not created");
+      console.log(`  replies to the inline comment: reply has anchor=${has(reply)}; reply to reply has anchor=${has(reply2)}`);
+    }
     const mb = A.added && state.mergeBase ? await post("merge-base", inline(A.added, "ADDED", "TO", state.mergeBase, state.head)) : null;
     if (!A.added || !state.mergeBase) console.log("  merge-base: not tried, no ADDED line or no merge base");
     else console.log(`  merge-base anchor: merge base equals target head=${state.mergeBase === PR.toRef?.latestCommit} (true repeats the Gate 0 case)`);

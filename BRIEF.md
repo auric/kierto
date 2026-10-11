@@ -55,7 +55,7 @@ Build order (each milestone is useful alone):
 - M0. Gate 0: integration check on a designated test PR. Record the Bitbucket version, auth route, current user ID, paging, nested replies, real edit, delete, and reply payloads, and inline anchors. Record Claude Code and Ponytail versions, the `claude auth status` route, the `structured_output` shape with stream-json, and the Windows checks (section 7). Missing production access does not block fixture work.
 - M1. Inbox, sync, read state, notifications, and minimal settings: URL and token (US1 to US4, part of US9).
 - M2. Review runner with the snapshot and all safety checks, live log, and Explain (US5, US6).
-- M3. Triage, publish outbox, and replies (US7, US8).
+- M3. Triage, publish outbox, replies, and AI reply drafts (US7, US8).
 - M4. Full settings and profiles (US9).
 
 Release 2: read-only diff viewer, changes since my review, targeted re-review of earlier findings.
@@ -207,11 +207,11 @@ US6 Review transparency (P1). As a reviewer, I watch a running review live: each
 US7 Triage, approval, and posting (P1). As a reviewer, I accept, edit, or discard each finding and each question. Before posting, I see the exact text and the destination of each comment and confirm them. Findings go as comments on the exact line of the reviewed commit. Questions go as one general comment. Items that cannot attach to a line also go into the general comment. Before posting, the tool checks the pull request again. It blocks stale items and shows why. It warns when a colleague already raised the same point. I see which items were posted, with links. Replies to posted comments come back into the discussion view.
 Acceptance: discarded items are never posted. Editing an approved text removes its approval. A second post action does not create duplicates. If the tool cannot tell whether a post arrived, it says so and checks before any new attempt.
 
-US8 Replies (P1). As a reviewer or author, I write a reply to any thread in the tool. I see a preview and confirm before it is sent. The same posting rules as US7 apply.
+US8 Replies (P1). As a reviewer or author, I write a reply to any thread in the tool. I see a preview and confirm before it is sent. I can ask the AI to draft replies for all threads that wait for me, or for one thread. An AI draft is a draft only: I accept, edit, or discard it like a finding. I can copy the raw Markdown of any message. The same posting rules as US7 apply.
 
 US9 Settings (P2). As a user, I set the code-host URL, my access token, the check interval, notifications, and the review profiles. A profile has a name and a prompt. The tool ships with four profiles: general review, over-engineering review, security review, and Explain. The token is kept safely and is never shown again after entry.
 
-User experience: the tool looks clean and modern, like a good email client. It has three panes, as in the prototype. The sidebar holds the views: Needs you, Reviewing, My PRs, Review runs, Ready to post. It also holds the repositories with unread counts, the check status, the theme switch, and settings. The list pane shows the view name, the count, a repository chip, and a filter field. The detail pane shows the title, a Review button with a profile menu, Open in Bitbucket, and three tabs: Activity, Review, Run log. The Review tab holds the item list and the detail of the selected item. On a narrow screen, one pane shows at a time. Keyboard: j and k move in the focused pane; Enter or → goes into the detail pane; Esc or ← goes back; 1, 2, 3 select Activity, Review, Run log; r starts a review; a, d, e accept, discard, or edit the selected item; p posts the accepted items after confirmation; n jumps to the next unread message; / filters the list; ? shows all keys. Status is never shown by color alone; an icon or text always goes with it. The scroll position stays when new events arrive. Focus is always visible. The tool supports light and dark themes.
+User experience: the tool looks clean and modern, like a good email client. It has three panes, as in the prototype. The sidebar holds the views: Needs you, Reviewing, My PRs, Review runs, Ready to post. It also holds the repositories with unread counts, the check status, the theme switch, and settings. The list pane shows the view name, the count, a repository chip, and a filter field. The detail pane shows the title, a Review button with a profile menu, Open in Bitbucket, and three tabs: Activity, Review, Run log. The Review tab holds the item list and the detail of the selected item. On a narrow screen, one pane shows at a time. Keyboard: j and k move in the focused pane; Enter or → goes into the detail pane; Esc or ← goes back; 1, 2, 3 select Activity, Review, Run log; r starts a review; a, d, e accept, discard, or edit the selected item; p posts the accepted items after confirmation; n jumps to the next unread message; / filters the list; ? shows all keys. Each message has a copy button that copies its raw Markdown. Status is never shown by color alone; an icon or text always goes with it. The scroll position stays when new events arrive. Focus is always visible. The tool supports light and dark themes.
 
 Required UI states (each one is a designed screen state, not a generic error message): empty, loading, offline, permission denied, usage limit reached, cancelled, incomplete review, stale review, uncertain publication.
 
@@ -233,6 +233,8 @@ Acceptance scenarios:
 | A13 | The pull request contains files that try to run commands or change the AI tool's settings. | None of them runs. Nothing is written to the code host. |
 | A14 | I refresh the page, or use two windows, and click Review or Post in both. | Only one review job and one post happen. |
 | A15 | A pull request merges while I still have unread replies. | The replies stay unread. I keep following the pull request until I archive it. |
+| A16 | I ask the AI to draft replies, then accept one draft and post it. | Exactly one reply appears, under the correct parent message. |
+| A17 | A comment tells the AI to ignore its instructions or to answer another thread. | The AI treats the comment as data. No reply goes to a thread that I did not select. |
 
 Edge cases: the code host is unreachable (show the last known state, mark it offline, and retry); the token expires or lacks permission (show a clear message); the pull request changes during a review (label the result with the reviewed commits and mark it stale); a finding points to a line outside the diff (post it in the general comment); the AI returns unreadable output (mark the review failed and keep the raw output; at most one repair attempt); the AI usage limit is reached (show the message from the AI tool and do not retry automatically).
 
@@ -248,7 +250,7 @@ Stack:
 - UI: Vite, React, Tailwind CSS, shadcn/ui (Vite setup), TanStack Query for server state. No extra global state library. Notifications use the browser Notification API. The tab title shows the unread count.
 - Visual reference: prototype/index.html. Port its CSS color tokens to the shadcn theme variables. Keep its three panes and keyboard model.
 - Storage: bun:sqlite, prepared SQL, checked-in migrations. One database file in the user data folder. No ORM.
-- Validation: zod for the AI output, the REST responses that the app uses, and every API input. One review-result schema shared by runner, server, and UI.
+- Validation: zod for the AI output, the REST responses that the app uses, and every API input. One shared AI-result schema module (review result and reply result) used by runner, server, and UI.
 - Git: simple-git with argument arrays, never shell strings. AI: the system claude CLI.
 - Secrets: Bun.secrets (experimental; verify on Windows and Linux in Gate 0). Fallback: memory only for the session.
 - Tests: bun test for logic and integration, Playwright for browser acceptance.
@@ -340,6 +342,7 @@ Output contract (zod, schema-versioned):
 Publication:
 - An approval record binds the exact body, destination (general, reply, or inline anchor), item revision, and reviewed commits. Any edit invalidates it.
 - Preflight before send: refresh PR state, heads, and comments. Block stale items and show the reason. Flag likely duplicates against existing comments.
+- A reply post checks only that the parent comment still exists and that no newer message arrived in the thread since the user saw it. It does not check the heads.
 - Inline anchors pin fromHash and toHash to the reviewed commits. A line outside the diff goes into the general comment.
 - Durable outbox states: pending, sent, unknown, failed, confirmed. Save the remote comment ID and version on success.
 - A timeout after send sets unknown. Reconcile against remote comments before any retry. If still unclear, the user decides.
@@ -387,7 +390,6 @@ The tracking half needs code. Until M1 exists, ask Claude Code "Which of my open
 ## 9. Backlog: more workflows
 
 Phase 2, close the loop:
-- Explain a colleague's reply and draft an answer. I edit it, preview it, and confirm it.
 - Ask the PR: a chat box that resumes the same PR's review session for follow-up questions.
 - Approve and Needs work buttons.
 - A "My open threads" view across all PRs, with unresolved tasks.

@@ -44,7 +44,7 @@ The probe ran without changes, read-only first, then with `--write`. The write r
 | Dashboard | CONFIRMED | `role=REVIEWER` and `role=AUTHOR` with `state=OPEN` return PR objects. The dashboard PR has a `properties` key that the single-PR GET does not have. |
 | Activity `action` values | CONFIRMED | Seen: `OPENED`, `COMMENTED`. Activity keys: id, createdDate, user, action, plus commentAction, comment for COMMENTED, plus commentAnchor, diff for an inline comment. |
 | Activity `commentAction` values | DIFFERENT FROM BRIEF | Only `ADDED` was seen. Post, edit, and reply produce no `EDITED`, `REPLIED`, or `DELETED` activity. |
-| Nested reply shape | CONFIRMED | A reply (POST with `parent: {id}`) gets no own activity. It appears in the parent's `comment.comments[]` in the activity and in `GET .../comments/{id}`. The reply has the same keys as a root comment and no `parent` field. |
+| Nested reply shape | CONFIRMED | A reply (POST with `parent: {id}`) to a general comment returns HTTP 201. It gets no own activity. It appears in the parent's `comment.comments[]` in the activity and in `GET .../comments/{id}`. The reply has the same keys as a root comment and no `parent` field. |
 | Comment `version` on edit | CONFIRMED | Post returns `version: 0`. `PUT .../comments/{id}` with `version: 0` returns 200 and `version: 1`, and `updatedDate` changes. The existing activity changes in place: new text, `version: 1`, `commentAction` stays `ADDED`. A PUT with the stale version returns 409 `CommentOutOfDateException`. |
 | Delete call and deleted-comment shape | DIFFERENT FROM BRIEF | `DELETE .../comments/{id}?version=<current>` returns 204 with an empty body. Replies were deleted before their parent. After the delete, `GET .../comments/{id}` returns 404 with `errors[].message` only, no `exceptionName`. The comment activity disappears from activities. No tombstone and no `DELETED` activity exist. |
 | Inline anchor, diffType COMMIT | CONFIRMED | `POST .../comments` with anchor {path, line, lineType: ADDED, fileType: TO, diffType: COMMIT, fromHash, toHash}: HTTP 201. fromHash and toHash came from the PR diff endpoint: fromHash = target head (`toRef.latestCommit`), toHash = source head. The response anchor adds `orphaned: false`. The activity has `commentAnchor` and a `diff` (destination, hunks, truncated, properties). |
@@ -121,7 +121,7 @@ Run these commands in order, on the designated test PR only:
 
 1. Check the stored URL and token: `bun scripts/gate0/set-token.ts --check`.
 2. Phase 1, read only: `bun scripts/gate0/bitbucket-probe.ts --pr ~USER/repo/1 --v3`. If every fetch attempt fails, run it again with `--ca-file <CA PEM file>`.
-3. Phase 1, write: `bun scripts/gate0/bitbucket-probe.ts --pr ~USER/repo/1 --v3 --write`. It posts 3 inline comments and 1 BLOCKER task, then resolves the task. The comments stay until step 7.
+3. Phase 1, write: `bun scripts/gate0/bitbucket-probe.ts --pr ~USER/repo/1 --v3 --write`. It posts 3 inline comments, a reply to the CONTEXT comment, a reply to that reply, and 1 BLOCKER task, then resolves the task. The comments stay until step 7.
 4. Open the 2 links that phase 1 prints: the file line and the comment. Record whether each opens the right place.
 5. Manual step a: in the web UI, select two or more lines in the PR diff and add one comment on that range.
 6. Manual step b: push one commit to the PR source branch that changes the line that phase 1 names.
@@ -139,6 +139,7 @@ Raw responses go to `.gate0/raw/v3-p<phase>-<step>.json` (gitignored). The phase
 | U3. COMMIT anchor with fromHash = merge base, toHash = source head: accepted, shown in the PR diff | PENDING | |
 | U4. Inline comment on a CONTEXT line 3 lines from a change | PENDING | |
 | Inline comment on a REMOVED line (lineType REMOVED, fileType FROM) | PENDING | |
+| U16. Reply to the CONTEXT inline comment, and a reply to that reply: status, and whether each response has `anchor` | PENDING | |
 | U5. File link `<repo browse link>/<path>?at=<hash>#<line>` and comment link `<PR link>/overview?commentId=<id>` open the right place. Repository and PR `links` | PENDING | |
 | U6. Fetch of `refs/pull-requests/<id>/from` and the target branch with the token env: exit code, head hash, merge base, TLS setting that worked | PENDING | |
 | U12. Orphaned comment after manual step b: `orphaned: true`, the diff hunk kept, the RESCOPED activity | PENDING | |

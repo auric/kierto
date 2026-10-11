@@ -22,7 +22,7 @@ Runtime: Bun 1.x, strict TypeScript. Fallback: Node + @hono/node-server if Bun f
 Server:  Hono on 127.0.0.1 only. csrf(), streamSSE, zValidator, typed client hc<AppType>(). One process serves API and built UI.
 UI:      Vite, React, Tailwind CSS, shadcn/ui (Vite setup), TanStack Query. No global state library.
 Storage: bun:sqlite, prepared SQL, checked-in migrations, no ORM.
-Schema:  zod for AI output, used REST responses, and every API input. One shared review-result schema.
+Schema:  zod for AI output, used REST responses, and every API input. One shared AI-result schema module (src/shared/review.ts).
 Git/AI:  simple-git with argument arrays. The system `claude` CLI.
 Secrets: Bun.secrets (experimental, verify in Gate 0). Fallback: memory only.
 Tests:   bun test for logic and integration. Playwright for browser acceptance.
