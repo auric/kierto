@@ -14,7 +14,7 @@ const kbd = "border border-rule-strong bg-transparent font-mono text-[11px] text
 const groupHead = "m-0 flex items-center gap-2 border-b bg-pane-2 px-4 pt-[9px] pb-1.5 text-xs font-semibold text-ink-2";
 
 // The relative times in the rows change once a minute.
-function useMinute() {
+export function useMinute() {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);

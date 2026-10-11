@@ -86,6 +86,14 @@
   --fs-xs: 11.75px;
   --fs-title: 21px;
   --row-y: 10px;
+  --add: #e4f2e7;
+  --del: #f9e4e4;
+  --hit: #dde2e8;
+  /* Avatar lightness and chroma (prototype/v3:6-9). One hue per person names the person, never a state. */
+  --av-bl: 0.92;
+  --av-bc: 0.035;
+  --av-fl: 0.42;
+  --av-fc: 0.075;
 }
 
 .dark {
@@ -106,6 +114,13 @@
   --destructive: #ff8b7e;
   --ok: #63c483;
   --warn: #e89c48;
+  --add: #15291b;
+  --del: #34191b;
+  --hit: #2f3640;
+  --av-bl: 0.36;
+  --av-bc: 0.04;
+  --av-fl: 0.88;
+  --av-fc: 0.05;
 }
 
 :root[data-density="compact"] {
@@ -200,6 +215,7 @@
 .rl-chev {
   transition: transform 150ms var(--ease-out);
 }
+[aria-expanded="true"] > .rl-chev,
 details[open] > summary .rl-chev {
   transform: rotate(90deg);
 }
@@ -286,31 +302,232 @@ details[open] > summary .rl-chev {
   }
 }
 
-/* Detail tabs (prototype/index.html:160). */
-.rl-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 10px;
-  margin-bottom: -1px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: none;
+/* Detail pane (prototype/v3:162-435). The narrow rules follow the pane width, not the window. */
+.rl-detail {
+  container: detail / inline-size;
+}
+/* Summary line: parts joined by a dot that screen readers skip. */
+.rl-sum > * + *::before {
+  content: "·" / "";
+  margin-right: 8px;
   color: var(--muted-foreground);
-  white-space: nowrap;
-  cursor: pointer;
 }
-.rl-tab:not([aria-disabled="true"]):hover {
-  color: var(--foreground);
+@container detail (max-width: 559px) {
+  .rl-wide-pane {
+    display: none;
+  }
 }
-.rl-tab[aria-selected="true"] {
+
+/* Excerpt of an inline thread: head up to the commented line, then the discussion, then the tail. */
+.rl-code {
+  border-radius: 6px;
+  background: var(--sunken);
+  overflow: hidden;
+}
+.rl-code.rl-head {
+  border-radius: 6px 6px 0 0;
+}
+.rl-code.rl-tail {
+  border-radius: 0 0 6px 6px;
+}
+.rl-pre {
+  margin: 0;
+  padding: 6px 0;
+  overflow-x: auto;
+  font-size: 12.25px;
+  line-height: 1.6;
+}
+.rl-head > .rl-pre {
+  padding-bottom: 0;
+}
+.rl-tail > .rl-pre {
+  padding-top: 0;
+}
+.rl-cl {
+  display: grid;
+  grid-template-columns: 4.2ch 2ch max-content;
+  padding-right: 12px;
+}
+.rl-no,
+.rl-sg {
+  color: var(--muted-foreground);
+  user-select: none;
+}
+.rl-no {
+  text-align: right;
+}
+.rl-sg {
+  text-align: center;
+}
+.rl-cl[data-k="add"] {
+  background: var(--add);
+}
+.rl-cl[data-k="del"] {
+  background: var(--del);
+}
+.rl-cl[data-hit] {
+  background: var(--hit);
+}
+.rl-cl[data-hit] > .rl-no {
   color: var(--foreground);
-  border-bottom-color: var(--pen);
   font-weight: 600;
 }
-.rl-tab[aria-disabled="true"] {
-  opacity: 0.55;
-  cursor: default;
+
+/* Reply tree (prototype/v3:340-390): whitespace and one thin neutral line from each avatar to its replies. */
+.rl-disc {
+  --av: 20px;
+  --step: 28px;
+  --pt: 14px;
+  --ln: var(--rule-strong);
+  padding: 4px 0 2px;
+}
+.rl-disc.rl-anchored {
+  padding: 14px 0 16px 10px;
+}
+@container detail (max-width: 559px) {
+  .rl-disc {
+    --av: 18px;
+    --step: 20px;
+    --pt: 12px;
+  }
+  .rl-disc.rl-anchored {
+    padding-left: 8px;
+  }
+}
+.rl-tree,
+.rl-tree ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rl-tree ol {
+  padding-left: var(--step);
+}
+.rl-tree li {
+  position: relative;
+}
+.rl-tree ol > li {
+  padding-top: var(--pt);
+}
+.rl-tree ol > li::before,
+.rl-foot::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: calc(var(--av) / 2 - var(--step) - 0.5px);
+  width: calc(var(--step) - var(--av) / 2 - 2px);
+  height: calc(var(--pt) + var(--av) / 2);
+  border: 0 solid var(--ln);
+  border-width: 0 0 1px 1px;
+  border-bottom-left-radius: 7px;
+}
+.rl-tree ol > li:not(:last-child)::after,
+.rl-tree .rl-has-foot > ol > li:last-child::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--av) / 2 - var(--step) - 0.5px);
+  border-left: 1px solid var(--ln);
+}
+.rl-anchored > .rl-tree > li::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--av) / 2 - 0.5px);
+  top: -14px;
+  height: 14px;
+  border-left: 1px solid var(--ln);
+}
+.rl-tree .rl-kids > .rl-msg::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--av) + 2px);
+  bottom: 0;
+  left: calc(var(--av) / 2 - 0.5px);
+  border-left: 1px solid var(--ln);
+}
+.rl-foot {
+  position: relative;
+  margin: 0 0 0 var(--step);
+  padding-top: var(--pt);
+  font-size: var(--fs-s);
+}
+.rl-msg {
+  position: relative;
+  scroll-margin-top: 12px;
+  border-radius: 4px;
+}
+.rl-indent {
+  margin-left: calc(var(--av) + 8px);
+}
+.rl-opened > .rl-fold-b {
+  margin-bottom: 10px;
+}
+.rl-opened > .rl-fold-b::after {
+  content: "";
+  position: absolute;
+  top: var(--av);
+  height: 10px;
+  left: calc(var(--av) / 2 - 0.5px);
+  border-left: 1px solid var(--ln);
+}
+
+/* Avatar: initials in one of 8 muted hues (prototype/v3:359-362). "You" stays neutral. */
+.rl-av {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--av, 20px);
+  height: var(--av, 20px);
+  border-radius: 50%;
+  font-size: calc(var(--av, 20px) * 0.44);
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  background: oklch(var(--av-bl) var(--av-bc) var(--h));
+  color: oklch(var(--av-fl) var(--av-fc) var(--h));
+  user-select: none;
+}
+.rl-av[data-h="0"] {
+  --h: 110;
+}
+.rl-av[data-h="1"] {
+  --h: 145;
+}
+.rl-av[data-h="2"] {
+  --h: 180;
+}
+.rl-av[data-h="3"] {
+  --h: 215;
+}
+.rl-av[data-h="4"] {
+  --h: 245;
+}
+.rl-av[data-h="5"] {
+  --h: 275;
+}
+.rl-av[data-h="6"] {
+  --h: 305;
+}
+.rl-av[data-h="7"] {
+  --h: 340;
+}
+.rl-av[data-me] {
+  background: var(--pane);
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+}
+.rl-stack .rl-av {
+  --av: 18px;
+  box-shadow: 0 0 0 2px var(--pane);
+}
+.rl-stack .rl-av[data-me] {
+  box-shadow:
+    inset 0 0 0 1px var(--rule-strong),
+    0 0 0 2px var(--pane);
+}
+.rl-stack .rl-av + .rl-av {
+  margin-left: -4px;
 }
 
 /* Comment Markdown. */

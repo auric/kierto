@@ -117,6 +117,8 @@ test("A1: a reply is one unread event in the right thread and stays unread after
   await expect(detailTitle(page)).toHaveText(TITLE.a);
   await expect(reply).toHaveAttribute("data-new", "true");
   await expect(page.locator("li", { has: page.locator("#c-1000003") }).locator("#c-1000010")).toHaveCount(1);
+  // v3 (WP5): the first row was on screen after the import, so the header names that visit.
+  await expect(page.getByRole("button", { name: /^1 new since (today|yesterday) \d\d:\d\d$/ })).toBeVisible();
   await expect.poll(() => unreadIds(request, TITLE.a)).toEqual([]);
 });
 
@@ -199,7 +201,8 @@ test("A3, A4, A5: duplicates, edit, delete after the 404, multi-page data, and a
 
   // Absent from the activities, but Bitbucket still has it: a gap, not a delete (A5).
   await control("state", { reply: "absent" });
-  const panel = page.locator("#panel-activity");
+  // v3 (WP5): the tabs are gone. The banner sits in the Overview section.
+  const panel = page.locator("#s-overview");
   await expect(panel.getByText("Last check incomplete", { exact: true })).toBeVisible();
   await expect(panel.getByText("a comment is missing from the activities")).toBeVisible();
   // v3 (WP3): the row says "Last check incomplete", as in prototype/v3 row().
@@ -220,6 +223,8 @@ test("A6: Bitbucket goes down mid-page: offline state, nothing deleted, then rec
   await nav(page, "Reviewing").click();
   for (const t of Object.values(TITLE)) await expect(row(page, t)).toBeVisible();
   await row(page, TITLE.a).click();
+  // v3 (WP5, plan I1): a read thread that waits on others is collapsed and renders no message. Open it first.
+  await page.locator("#th-1000003").click();
   await expect(page.locator("#c-1000003")).toHaveCount(1);
   await expect(page.getByText("Deleted on Bitbucket")).toHaveCount(0);
 
@@ -312,22 +317,28 @@ test.describe("denied notifications", () => {
   });
 });
 
-test("keys j, k, Enter, Esc, /, n, and ? work", async ({ page }) => {
+test("keys j, k, Enter, Esc, /, n, N, o, g f, and ? work", async ({ page }) => {
   await connect(page, false);
   await nav(page, "Reviewing").click();
   const rows = page.locator("[data-row]");
   await expect(rows).toHaveCount(3);
   const ids = await rows.evaluateAll((els) => els.map((e) => e.id));
   const current = page.locator("[data-row][aria-current='true']");
+  const details = page.locator("section[aria-label='Details']");
 
+  // v3 (WP5, prototype/v3 row click): a click opens the PR in the detail, as Enter does. Esc goes back to the row.
   await rows.nth(0).click();
+  await expect(details).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(current).toBeFocused();
   await page.keyboard.press("j");
   await expect(current).toHaveId(String(ids[1]));
   await page.keyboard.press("k");
   await expect(current).toHaveId(String(ids[0]));
 
+  // No thread needs me in this PR, so Enter focuses the pane.
   await page.keyboard.press("Enter");
-  await expect(page.locator("section[aria-label='Details']")).toBeFocused();
+  await expect(details).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(current).toBeFocused();
 
@@ -343,15 +354,40 @@ test("keys j, k, Enter, Esc, /, n, and ? work", async ({ page }) => {
 
   // The selection is PR 77 now, so PR 210 opens with all 4 new messages.
   await control("state", { tall: 3 });
+  // The cause comes with the sync, so the click waits for the new messages on the row.
+  await expect(row(page, TITLE.b)).toContainText("4 new");
   await row(page, TITLE.b).click();
   await expect(page.locator("[data-new]")).toHaveCount(4);
-  await page.keyboard.press("n");
+  // v3 (WP5): the click opens the PR at its cause, the first new message. n and N follow the thread order.
   await expect(page.locator("#c-2000000")).toBeFocused();
   await page.keyboard.press("n");
   await expect(page.locator("#c-2000001")).toBeFocused();
+  await page.keyboard.press("n");
+  await expect(page.locator("#c-2000002")).toBeFocused();
+  await page.keyboard.press("N");
+  await expect(page.locator("#c-2000001")).toBeFocused();
+
+  // v3 (WP5, plan I14): j and k move between threads. The thread that waits on others comes first.
+  await page.keyboard.press("k");
+  await expect(page.locator("#t-1000003")).toBeFocused();
+  await page.keyboard.press("j");
+  await expect(page.locator("#t-2000000")).toBeFocused();
+  // o closes the current thread. A closed thread renders no message.
+  await page.keyboard.press("o");
+  await expect(page.locator("#th-2000000")).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("[data-new]")).toHaveCount(0);
+  await page.keyboard.press("o");
+  await expect(page.locator("#th-2000000")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("[data-new]")).toHaveCount(4);
+  // The e2e data has no file list yet (WP4).
+  await page.keyboard.press("g");
+  await page.keyboard.press("f");
+  await expect(page.getByText("No file list for this pull request yet.")).toBeVisible();
 
   await page.keyboard.press("?");
-  await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // The toast of g f is a dialog too, so the check names the sheet.
+  await expect(help).toHaveCount(0);
 });

@@ -77,8 +77,8 @@ describe("inbox groups", () => {
     const groups = groupRows(list);
     expect(navIds(groups, false)).toEqual([1, 2, 3, 4]);
     expect(navIds(groups, true)).toEqual([1, 2, 3, 4, 5, 6]);
-    const ctx = { ids: navIds(groups, false), typing: false, onButton: false, settingsLocked: false };
-    const s = { focus: "list" as const, mobile: "list" as const, selected: 4, help: false, settings: false };
+    const ctx = { ids: navIds(groups, false), typing: false, onButton: false, settingsLocked: false, now: 0 };
+    const s = { focus: "list" as const, mobile: "list" as const, selected: 4, help: false, settings: false, chord: null };
     // At the last open row, j stays. k from a folded row restarts at the top.
     expect(reduceKey(s, "j", ctx).state.selected).toBe(4);
     expect(reduceKey({ ...s, selected: 5 }, "k", ctx).state.selected).toBe(1);

@@ -1,4 +1,4 @@
-// Pure key handling for the M1 keys (prototype/index.html keyboard model). The shell performs the returned effect.
+// Pure key handling (prototype/v3 keyboard model). The shell performs the returned effect.
 
 export type Pane = "list" | "detail";
 export type MobilePane = "side" | "list" | "detail";
@@ -10,6 +10,8 @@ export type KeyState = {
   selected: number | null;
   help: boolean;
   settings: boolean;
+  // ms: the time of a "g" press that waits for its second key.
+  chord: number | null;
 };
 
 export type KeyContext = {
@@ -21,21 +23,31 @@ export type KeyContext = {
   onButton: boolean;
   // Settings must stay open: no config, or the memory-mode token is missing.
   settingsLocked: boolean;
+  // ms.
+  now: number;
 };
 
 export type Effect =
   | "focus-filter"
   | "focus-list"
-  | "focus-detail"
-  | "scroll-down"
-  | "scroll-up"
+  | "open-cause"
+  | "thread-next"
+  | "thread-prev"
+  | "thread-toggle"
   | "next-new"
-  | "tab-1"
+  | "prev-new"
+  | "next-your"
+  | "files"
+  | "commits"
+  | "overview"
   | "tab-2"
   | "tab-3"
   | null;
 
 export type KeyResult = { state: KeyState; effect: Effect; handled: boolean };
+
+// prototype/v3: the second key of a chord counts within 1.2 s.
+const CHORD_MS = 1200;
 
 const ignore = (state: KeyState): KeyResult => ({ state, effect: null, handled: false });
 
@@ -45,8 +57,24 @@ function back(s: KeyState, ctx: KeyContext): KeyResult {
   return { state: { ...s, focus: "list", mobile: "list", settings }, effect: "focus-list", handled: true };
 }
 
-export function reduceKey(s: KeyState, key: string, ctx: KeyContext): KeyResult {
-  const done = (state: KeyState, effect: Effect = null): KeyResult => ({ state, effect, handled: true });
+// Keys that act on the PR in the detail pane. They move focus there.
+const DETAIL: Record<string, Effect> = {
+  n: "next-new",
+  N: "prev-new",
+  y: "next-your",
+  o: "thread-toggle",
+  "1": "overview",
+  "2": "tab-2",
+  "3": "tab-3",
+};
+const CHORD: Record<string, Effect> = { f: "files", c: "commits" };
+
+export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyResult {
+  const done = (next: KeyState, effect: Effect = null): KeyResult => ({ state: next, effect, handled: true });
+  const chord = state.chord !== null && ctx.now - state.chord < CHORD_MS;
+  const s = state.chord === null ? state : { ...state, chord: null };
+  const hasPr = s.selected !== null && ctx.ids.includes(s.selected) && !(s.settings && ctx.settingsLocked);
+  const inDetail = { ...s, focus: "detail" as const, mobile: "detail" as const, settings: false };
 
   if (key === "Escape") {
     if (s.help) return done({ ...s, help: false });
@@ -57,6 +85,9 @@ export function reduceKey(s: KeyState, key: string, ctx: KeyContext): KeyResult 
   if (ctx.typing) return ignore(s);
   if (key === "?") return done({ ...s, help: !s.help });
   if (s.help) return ignore(s);
+  // The second key of "g f" or "g c". Any other key ends the chord.
+  if (chord) return hasPr && CHORD[key] ? done(inDetail, CHORD[key]) : done(s);
+  if (key === "Enter" && s.focus === "detail") return ctx.onButton || !hasPr ? ignore(s) : done(s, "thread-toggle");
 
   switch (key) {
     case "/":
@@ -64,7 +95,8 @@ export function reduceKey(s: KeyState, key: string, ctx: KeyContext): KeyResult 
     case "j":
     case "k": {
       const d = key === "j" ? 1 : -1;
-      if (s.focus === "detail") return done(s, d > 0 ? "scroll-down" : "scroll-up");
+      // plan v3 I14: the detail moves between threads.
+      if (s.focus === "detail") return done(s, d > 0 ? "thread-next" : "thread-prev");
       if (!ctx.ids.length) return done(s);
       const i = s.selected === null ? -1 : ctx.ids.indexOf(s.selected);
       const next = i < 0 ? 0 : Math.max(0, Math.min(ctx.ids.length - 1, i + d));
@@ -73,31 +105,40 @@ export function reduceKey(s: KeyState, key: string, ctx: KeyContext): KeyResult 
     case "Enter":
     case "ArrowRight":
       if ((key === "Enter" && ctx.onButton) || s.focus !== "list" || s.selected === null || !ctx.ids.includes(s.selected)) return ignore(s);
-      return done({ ...s, focus: "detail", mobile: "detail", settings: ctx.settingsLocked && s.settings }, "focus-detail");
+      // prototype/v3: a row opens at the thread that put it in the inbox.
+      return done({ ...s, focus: "detail", mobile: "detail", settings: ctx.settingsLocked && s.settings }, "open-cause");
     case "ArrowLeft":
       return back(s, ctx);
-    case "n":
-    case "1":
-    case "2":
-    case "3": {
-      // Detail keys. They need a PR in the detail pane.
-      if (s.selected === null || !ctx.ids.includes(s.selected) || (s.settings && ctx.settingsLocked)) return ignore(s);
-      const state = { ...s, focus: "detail" as const, mobile: "detail" as const, settings: false };
-      return done(state, key === "n" ? "next-new" : `tab-${key}`);
+    case "g":
+      return hasPr ? done({ ...s, chord: ctx.now }) : ignore(s);
+    default: {
+      const effect = DETAIL[key];
+      return effect && hasPr ? done(inDetail, effect) : ignore(s);
     }
-    default:
-      return ignore(s);
   }
 }
 
-// Only the keys that work in M1.
-export const HELP_KEYS: { keys: string[]; text: string }[] = [
-  { keys: ["j", "k"], text: "Next / previous in the focused pane" },
-  { keys: ["Enter", "→"], text: "Go into the detail pane" },
-  { keys: ["Esc", "←"], text: "Back to the list" },
-  { keys: ["/"], text: "Filter the list" },
-  { keys: ["n"], text: "Next new message in the detail pane" },
-  { keys: ["1"], text: "Activity tab" },
-  { keys: ["2", "3"], text: "Review and Run log tabs. They arrive in M2." },
-  { keys: ["?"], text: "Show or hide this sheet" },
+// Only the keys that work now. The AI review keys come in M2.
+export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string[]; text: string }[] }[] = [
+  {
+    group: "Move",
+    keys: [
+      { keys: ["j", "k"], text: "Next or previous pull request in the list, or thread in the detail" },
+      { keys: ["Enter", "→"], text: "Open the pull request at the thread that put it in the inbox" },
+      { keys: ["Esc", "←"], text: "Back to the list" },
+      { keys: ["/"], text: "Filter the list" },
+    ],
+  },
+  {
+    group: "Pull request",
+    keys: [
+      { keys: ["n", "N"], text: "Next or previous new message" },
+      { keys: ["y"], text: "Next thread where it is your turn" },
+      { keys: ["o"], text: "Open or close the current thread" },
+      { keys: ["g"], second: ["f", "c"], text: "Open and go to Files or Commits" },
+      { keys: ["1"], text: "Go to the overview" },
+      { keys: ["2", "3"], text: "Drafts and run log. They arrive in M2." },
+      { keys: ["?"], text: "Show or hide this list" },
+    ],
+  },
 ];

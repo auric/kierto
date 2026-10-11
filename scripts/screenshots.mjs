@@ -24,12 +24,13 @@ try {
       await shot("inbox");
       const detail = async (title, what) => {
         await page.locator("[data-row]", { hasText: title }).click();
-        await page.locator("#panel-activity :is(article, details)").first().waitFor();
+        await page.locator("#s-threads").waitFor();
         await shot(what);
         if (size.name === "phone") await page.getByRole("button", { name: "Back to the list" }).first().click();
       };
-      // The first pass acknowledges the new messages, so only it shows the divider.
-      await detail("Add retry budget", "detail");
+      // The first pass acknowledges the new messages, so only it shows the new marks.
+      await detail("Take the cache lock", "detail");
+      await detail("Add retry budget", "detail-other");
       await detail("Paginate the audit log", "detail-incomplete");
       await page.keyboard.press("/");
       await page.keyboard.type("no such pull request");

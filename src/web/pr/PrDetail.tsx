@@ -1,374 +1,286 @@
-// PR detail (plan G7): header, tabs, and the Activity timeline.
-import { ExternalLink } from "lucide-react";
-import { lazy, type MouseEvent, Suspense, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+// PR detail (plan v3 WP5): header, then one column of Overview, Threads, Files, and Commits (prototype/v3 renderDetail).
+import { useMutation } from "@tanstack/react-query";
+import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
-import type { CommentDto, PrDetail as Detail, PrRow } from "../../shared/dto";
-import { isMe } from "../../shared/me";
+import { toast } from "@/components/ui/toast";
+import type { CommentDto, PrRow } from "../../shared/dto";
 import { useForge } from "../meta";
-import { ApiError, useArchive, useFollow, usePr } from "../shell/data";
-import { ago, initials, prKey } from "../shell/model";
-import { Calm, CheckBanner } from "../states";
-import { anchorOf, buildThreads, type Msg, mergeHighlights, openThreads } from "./threads";
+import { ApiError, sendSeen, usePr } from "../shell/data";
+import { createHints, SharedHint } from "../shell/Hint";
+import { useMinute } from "../shell/ListPane";
+import { Calm } from "../states";
+import { Header, webLink } from "./Header";
+import { CommitsFold, FilesFold, Overview } from "./Sections";
+import type { ThreadCtx } from "./Thread";
+import { Threads } from "./ThreadList";
+import { buildThreads, mergeHighlights, newMessages, ordered, passes, reveal, shownThreads, summary } from "./threads";
 import { useAck } from "./useAck";
 
-// The Markdown renderer loads on first use, so the main chunk stays small. Plain text shows until then.
-const Markdown = lazy(() => import("./Markdown").then((m) => ({ default: m.Markdown })));
+// The shell calls these for the detail keys (keys.ts effects).
+export type DetailApi = {
+  // Opens the thread that put the PR in the inbox and focuses its message. Waits for the data when it is not loaded yet.
+  cause(): void;
+  step(d: 1 | -1): void;
+  toggle(): void;
+  nextNew(d: 1 | -1): void;
+  nextYour(): void;
+  section(id: "files" | "commits"): void;
+};
 
-function Text({ text }: { text: string }) {
-  return (
-    <Suspense fallback={<p className="m-0 whitespace-pre-wrap">{text}</p>}>
-      <Markdown text={text} />
-    </Suspense>
-  );
+const NO_COMMENTS: CommentDto[] = [];
+const NONE: ReadonlySet<number> = new Set();
+
+const toggled = <T,>(s: ReadonlySet<T>, v: T) => {
+  const out = new Set(s);
+  if (!out.delete(v)) out.add(v);
+  return out;
+};
+
+// A jump target shows a short highlight. Reduced motion keeps only the focus ring.
+function flash(el: HTMLElement) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const css = getComputedStyle(el);
+  const from = css.getPropertyValue("--sel").trim();
+  el.animate([{ backgroundColor: from }, { backgroundColor: "transparent" }], {
+    duration: 900,
+    easing: css.getPropertyValue("--ease-out").trim(),
+  });
 }
 
-const STATUS_TEXT: Record<string, string> = { APPROVED: "Approved", NEEDS_WORK: "Needs work", UNAPPROVED: "Not reviewed" };
-
-// Only http(s) links from the server reach an href.
-function webLink(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    return /^https?:$/.test(new URL(url).protocol) ? url.replace(/\/+$/, "") : null;
-  } catch {
-    return null;
-  }
-}
+type Focus = { id: string; block: ScrollLogicalPosition; flash: boolean };
 
 // onLeave: the shell moves the selection away before the PR leaves the list.
-export function PrDetail({ pr: row, me, onLeave }: { pr: PrRow; me: string | null; onLeave: () => void }) {
+export function PrDetail({ pr: row, me, onLeave, ref }: { pr: PrRow; me: string | null; onLeave: () => void; ref: Ref<DetailApi | null> }) {
   const q = usePr(row.id);
-  const pr = q.data?.pr ?? row;
+  const data = q.data;
+  const pr = data?.pr ?? row;
+  const comments = data?.comments ?? NO_COMMENTS;
+  const forge = useForge();
+  const now = useMinute();
+  const [hints] = useState(createHints);
+  // The last visit before this one. The POST below moves the stored value to now.
+  const [since] = useState(row.seenAt);
+  const { mutate: markSeen } = useMutation({ mutationFn: () => sendSeen(row.id) });
+  useEffect(() => markSeen(), [markSeen]);
+
+  // Highlights keep the messages that were new at open, so they stay marked after the read.
+  const [hl, setHl] = useState(NONE);
+  const next = mergeHighlights(hl, comments);
+  if (next !== hl) setHl(next);
+  const { role, authorSlug, authorName } = pr;
+  const threads = useMemo(
+    () => buildThreads(comments, next, me, { role, authorSlug, authorName }),
+    [comments, next, me, role, authorSlug, authorName],
+  );
+  const latest = useRef(threads);
+  latest.current = threads;
+  const ackRef = useAck(row.id, comments);
+
+  const [open, setOpen] = useState<ReadonlyMap<number, boolean>>(new Map());
+  const [spines, setSpines] = useState(NONE);
+  const [branches, setBranches] = useState(NONE);
+  const [needMe, setNeedMe] = useState(false);
+  const [showResolved, setShowResolved] = useState(false);
+  const [cur, setCur] = useState<number | null>(null);
+  const [secs, setSecs] = useState<ReadonlySet<string>>(new Set());
+
+  // Focus moves after the render that shows its target.
+  const focus = useRef<Focus | null>(null);
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+  const focusAfter = useCallback((f: Focus) => {
+    focus.current = f;
+    rerender();
+  }, []);
+  useLayoutEffect(() => {
+    const f = focus.current;
+    focus.current = null;
+    const el = f && document.getElementById(f.id);
+    if (!f || !el) return;
+    el.scrollIntoView({ block: f.block });
+    el.focus({ preventScroll: true });
+    if (f.flash) flash(el);
+  });
+
+  const jump = useCallback(
+    (tid: number, msg?: number) => {
+      const t = latest.current.find((x) => x.id === tid);
+      if (!t) return;
+      const m = msg === undefined ? undefined : t.msgs.find((x) => x.id === msg)?.id;
+      setNeedMe((on) => on && passes(t, true));
+      if (t.turn === "resolved") setShowResolved(true);
+      if (m !== undefined) {
+        const r = reveal(t, m);
+        if (r.spine) setSpines((s) => new Set(s).add(tid));
+        if (r.branches.length) setBranches((b) => new Set([...b, ...r.branches]));
+      }
+      setOpen((o) => new Map(o).set(tid, true));
+      setCur(tid);
+      focusAfter({ id: m === undefined ? `t-${tid}` : `c-${m}`, block: "start", flash: m !== undefined });
+    },
+    [focusAfter],
+  );
+
+  const ctx = useMemo<ThreadCtx>(
+    () => ({
+      hints,
+      now,
+      forge,
+      ackRef,
+      onToggle: (tid) => {
+        const t = latest.current.find((x) => x.id === tid);
+        if (t) setOpen((o) => new Map(o).set(tid, !(o.get(tid) ?? t.open)));
+        setCur(tid);
+      },
+      onFold: (tid, fold) => {
+        if (fold.kind === "spine") setSpines((s) => toggled(s, tid));
+        else setBranches((b) => toggled(b, fold.at));
+        setCur(tid);
+        // An opened fold row moves above its first message, so the button mounts again.
+        focusAfter({ id: `fold-${fold.at}`, block: "nearest", flash: false });
+      },
+      onQuote: jump,
+    }),
+    [hints, now, forge, ackRef, focusAfter, jump],
+  );
+
+  const isOpen = (t: { id: number; open: boolean }) => open.get(t.id) ?? t.open;
+  // The cause waits for the data. Cached data from an earlier visit can miss it, so the first fetch after mount must end too.
+  const wantCause = useRef(false);
+  const settled = q.isFetchedAfterMount || !q.isFetching;
+  useLayoutEffect(() => {
+    if (!wantCause.current || !data || !settled) return;
+    wantCause.current = false;
+    const c = data.pr.cause;
+    if (c) jump(c.thread, c.msg);
+  });
+
+  // n and N wrap around. They start after the focused message.
+  const nextNew = (d: 1 | -1) => {
+    const list = newMessages(ordered(threads, needMe));
+    if (!list.length) {
+      toast.add({ title: "No new message is left in this view." });
+      return;
+    }
+    const at = document.activeElement?.closest("[data-id]")?.getAttribute("data-id");
+    const i = list.findIndex(([, id]) => String(id) === at);
+    const hit = list[i < 0 ? (d > 0 ? 0 : list.length - 1) : (i + d + list.length) % list.length];
+    if (hit) jump(hit[0], hit[1]);
+  };
+  const nextYour = () => {
+    const ids = ordered(threads, needMe)
+      .filter((t) => t.turn === "your")
+      .map((t) => t.id);
+    const id = ids[(cur === null ? 0 : ids.indexOf(cur) + 1) % ids.length];
+    if (id === undefined) toast.add({ title: "No thread waits on you." });
+    else jump(id);
+  };
+
+  useImperativeHandle(ref, () => ({
+    cause() {
+      wantCause.current = true;
+      rerender();
+    },
+    step(d) {
+      const ids = shownThreads(threads, needMe, showResolved).map((t) => t.id);
+      const i = cur === null ? -1 : ids.indexOf(cur);
+      const id = ids[i < 0 ? (d > 0 ? 0 : ids.length - 1) : Math.max(0, Math.min(ids.length - 1, i + d))];
+      if (id === undefined) return;
+      setCur(id);
+      focusAfter({ id: `t-${id}`, block: "nearest", flash: false });
+    },
+    toggle() {
+      const at = document.activeElement?.closest("[data-thread]")?.getAttribute("data-thread");
+      const id = cur ?? (at ? Number(at) : null);
+      if (id === null) return;
+      ctx.onToggle(id);
+      focusAfter({ id: `th-${id}`, block: "nearest", flash: false });
+    },
+    nextNew,
+    nextYour,
+    section(id) {
+      if (!(id === "files" ? data?.files : data?.commits)?.length) {
+        toast.add({ title: id === "files" ? "No file list for this pull request yet." : "No commit list for this pull request yet." });
+        return;
+      }
+      setSecs((s) => new Set(s).add(id));
+      focusAfter({ id: `s-${id}-sum`, block: "start", flash: false });
+    },
+  }));
+
+  const openSec = (id: string) => (on: boolean) => setSecs((s) => (on === s.has(id) ? s : toggled(s, id)));
+  const fresh = comments.filter((c) => next.has(c.id) && !c.deleted).length;
+  const notFound = q.error instanceof ApiError && q.error.status === 404;
   return (
     <>
-      <Header pr={pr} me={me} onLeave={onLeave} />
-      <div className="flex items-center gap-0.5 overflow-x-auto border-b px-6 max-[759px]:px-3" role="tablist" aria-label="Pull request">
-        <button type="button" role="tab" id="tab-activity" aria-selected="true" aria-controls="panel-activity" className="rl-tab">
-          Activity
-        </button>
-        {["Review", "Run log"].map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected="false"
-            aria-disabled="true"
-            aria-describedby="tabs-note"
-            className="rl-tab"
-          >
-            {t}
-          </button>
-        ))}
-        <span id="tabs-note" className="ml-auto pl-4 text-[11.5px] whitespace-nowrap text-muted-foreground">
-          Review and Run log arrive in M2<span className="rl-wide-only"> · n next new · ? all keys</span>
-        </span>
-      </div>
-      <div id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" className="grid gap-4 px-6 pt-[18px] pb-6 max-[759px]:px-4">
-        <CheckBanner checkpoint={pr.checkpoint} />
-        {q.data ? (
-          <Activity key={pr.id} detail={q.data} me={me} />
+      <Header
+        pr={pr}
+        since={since}
+        now={now}
+        fresh={fresh}
+        sum={summary(threads)}
+        onNextNew={() => nextNew(1)}
+        onNextYour={nextYour}
+        onLeave={onLeave}
+      />
+      <div className="px-6 pb-16 max-[759px]:px-4">
+        {data ? (
+          <>
+            <Overview detail={data} me={me} forge={forge} diffLink={!data.files?.length} />
+            <Threads
+              threads={threads}
+              needMe={needMe}
+              showResolved={showResolved}
+              isOpen={isOpen}
+              cur={cur}
+              spines={spines}
+              branches={branches}
+              ctx={ctx}
+              onNeedMe={setNeedMe}
+              onShowResolved={() => {
+                setShowResolved(true);
+                const first = threads.find((t) => t.turn === "resolved");
+                if (first) focusAfter({ id: `t-${first.id}`, block: "nearest", flash: false });
+              }}
+            />
+            {data.files?.length ? (
+              <FilesFold
+                files={data.files}
+                threads={threads}
+                open={secs.has("files")}
+                onOpen={openSec("files")}
+                onFile={(path) => {
+                  const t = ordered(threads, false).find((x) => x.anchor?.path === path);
+                  if (t) jump(t.id);
+                }}
+                web={webLink(pr.webUrl)}
+                forge={forge}
+                hints={hints}
+              />
+            ) : null}
+            {data.commits?.length ? (
+              <CommitsFold
+                commits={data.commits}
+                detail={data}
+                me={me}
+                open={secs.has("commits")}
+                onOpen={openSec("commits")}
+                now={now}
+                hints={hints}
+              />
+            ) : null}
+          </>
         ) : q.error ? (
-          <Calm
-            title={
-              q.error instanceof ApiError && q.error.status === 404 ? "This pull request left the inbox" : "Cannot load this pull request"
-            }
-          >
-            <p className="m-0">
-              {q.error instanceof ApiError && q.error.status === 404
-                ? "It was archived or is no longer on your dashboard."
-                : q.error.message}
-            </p>
+          <Calm title={notFound ? "This pull request left the inbox" : "Cannot load this pull request"}>
+            <p className="m-0">{notFound ? "It was archived or is no longer on your dashboard." : q.error.message}</p>
           </Calm>
         ) : (
-          <div role="status" aria-busy="true" aria-label="Loading activity" className="grid max-w-[760px] gap-3">
+          <div role="status" aria-busy="true" aria-label="Loading the pull request" className="grid max-w-[86ch] gap-3 pt-6">
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
           </div>
         )}
       </div>
+      <SharedHint hints={hints} />
     </>
   );
 }
-
-function Header({ pr, me, onLeave }: { pr: PrRow; me: string | null; onLeave: () => void }) {
-  const follow = useFollow();
-  const archive = useArchive();
-  const key = prKey(pr);
-  const web = webLink(pr.webUrl);
-  const forge = useForge();
-
-  const onArchive = () => {
-    onLeave();
-    archive.mutate({ id: pr.id, label: key });
-  };
-
-  return (
-    <header className="grid gap-2 border-b px-6 pt-4 pb-3 max-[759px]:px-4">
-      <div className="flex flex-wrap items-start gap-3">
-        <h1 className="m-0 min-w-0 flex-1 text-[19px] leading-snug font-bold tracking-tight text-balance">{pr.title ?? key}</h1>
-        <div className="flex items-center gap-2">
-          <span id="review-note" className="text-[11.5px] text-muted-foreground">
-            Arrives in M2
-          </span>
-          <Button size="sm" disabled aria-describedby="review-note">
-            Review
-          </Button>
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-[12.5px] text-muted-foreground">
-        <span translate="no" className="font-mono text-[11.5px] [overflow-wrap:anywhere]">
-          {key}
-        </span>
-        {pr.sourceBranch && (
-          <span translate="no" className="font-mono text-[11.5px] [overflow-wrap:anywhere]">
-            {pr.sourceBranch} → {pr.targetBranch ?? "?"}
-          </span>
-        )}
-        {web && (
-          <>
-            <a className="inline-flex items-center gap-1 text-pen hover:underline" href={web} target="_blank" rel="noopener noreferrer">
-              Open in {forge}
-              <ExternalLink aria-hidden className="size-3.5" />
-            </a>
-            <a
-              className="inline-flex items-center gap-1 text-pen hover:underline"
-              href={`${web}/diff`}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Diff
-              <ExternalLink aria-hidden className="size-3.5" />
-            </a>
-          </>
-        )}
-      </div>
-      <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[12.5px] text-muted-foreground">
-        {pr.authorSlug && (
-          <span className="inline-flex items-center gap-1.5">
-            <Avatar name={pr.authorName ?? pr.authorSlug} />
-            {pr.authorName ?? pr.authorSlug}, author
-          </span>
-        )}
-        {pr.reviewers.length > 0 && (
-          <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-            Reviewers
-            {pr.reviewers.map((r) => (
-              <span key={r.slug} className="inline-flex items-center gap-1.5">
-                <Avatar name={r.name} ring={RING[r.status]} />
-                <span>
-                  {isMe(r, me) ? "You" : r.name}, {(STATUS_TEXT[r.status] ?? r.status).toLowerCase()}
-                </span>
-              </span>
-            ))}
-          </span>
-        )}
-        {!pr.followed && <span>Not followed</span>}
-        <span className="ml-auto flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={follow.isPending}
-            onClick={() => follow.mutate({ id: pr.id, followed: !pr.followed })}
-          >
-            {pr.followed ? "Unfollow" : "Follow"}
-          </Button>
-          <Button size="sm" variant="outline" disabled={archive.isPending} onClick={onArchive}>
-            Archive
-          </Button>
-        </span>
-      </div>
-    </header>
-  );
-}
-
-// The ring repeats the status text in color (prototype/index.html:139).
-const RING: Record<string, string> = { APPROVED: "ring-ok", NEEDS_WORK: "ring-warn" };
-
-function Avatar({ name, ring }: { name: string; ring?: string | undefined }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "inline-grid size-5 shrink-0 place-items-center rounded-full bg-muted text-[9.5px] font-semibold text-foreground",
-        ring && "ring-2 ring-offset-1 ring-offset-pane",
-        ring,
-      )}
-    >
-      {initials(name)}
-    </span>
-  );
-}
-
-// Opens a collapsed thread, then scrolls to the message and focuses it.
-export function jumpTo(el: HTMLElement) {
-  const details = el.closest("details");
-  if (details) details.open = true;
-  el.scrollIntoView({ block: "center" });
-  el.focus({ preventScroll: true });
-}
-
-function Activity({ detail, me }: { detail: Detail; me: string | null }) {
-  const { comments } = detail;
-  const [hl, setHl] = useState(() => mergeHighlights(new Set(), comments));
-  const [atOpen] = useState(hl);
-  const next = mergeHighlights(hl, comments);
-  if (next !== hl) setHl(next);
-  const threads = buildThreads(comments, next, atOpen);
-  const mine = openThreads(comments, me);
-  const ackRef = useAck(detail.pr.id, comments);
-  const forge = useForge();
-  const now = Date.now();
-
-  const jump = (e: MouseEvent<HTMLAnchorElement>, id: number) => {
-    const el = document.getElementById(`c-${id}`);
-    if (!el) return;
-    e.preventDefault();
-    jumpTo(el);
-  };
-
-  return (
-    <>
-      {!detail.pr.followed && (
-        <p className="m-0 text-muted-foreground">Not followed. Review Loop does not check this pull request for new comments.</p>
-      )}
-      {detail.description && (
-        <section aria-label="Description" className="max-w-[760px] rounded-md border bg-card px-3 py-2.5 [overflow-wrap:anywhere]">
-          <Text text={detail.description} />
-        </section>
-      )}
-      {mine.length > 0 && (
-        <section aria-labelledby="mine-title" className="grid max-w-[760px] gap-1.5">
-          <h2 id="mine-title" className="m-0 text-[12.5px] font-semibold text-muted-foreground">
-            Your open threads
-          </h2>
-          <ul className="m-0 grid list-none gap-1 p-0">
-            {mine.map((c) => (
-              <li key={c.id} className="min-w-0 truncate">
-                <a href={`#c-${c.id}`} onClick={(e) => jump(e, c.id)} className="text-pen hover:underline">
-                  {where(c) ?? firstLine(c.text)}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {threads.length ? (
-        <ol className="m-0 max-w-[760px] list-none border-l p-0">
-          {threads.map((t) => (
-            <ThreadItem
-              key={t.root.id}
-              root={t.root}
-              open={t.highlighted}
-              divider={t.divider}
-              hl={next}
-              ackRef={ackRef}
-              now={now}
-              forge={forge}
-            />
-          ))}
-        </ol>
-      ) : (
-        <p className="m-0 text-muted-foreground">No comments yet.</p>
-      )}
-    </>
-  );
-}
-
-type Shared = { hl: ReadonlySet<number>; ackRef: (el: HTMLElement | null) => (() => void) | undefined; now: number; forge: string };
-
-function ThreadItem({ root, open, divider, ...shared }: { root: Msg; open: boolean; divider: boolean } & Shared) {
-  const count = countReplies(root);
-  return (
-    <>
-      {divider && (
-        <li className="mb-4 ml-3.5 flex items-center gap-2 text-[12px] font-semibold text-primary after:h-px after:flex-1 after:bg-primary">
-          New since you last looked
-        </li>
-      )}
-      <li className="relative pb-4 pl-[18px] before:absolute before:top-1.5 before:-left-1 before:size-[7px] before:rounded-full before:bg-border">
-        {open ? (
-          <Tree m={root} {...shared} />
-        ) : (
-          <details className="group">
-            <summary className="cursor-pointer text-[12.5px] text-muted-foreground marker:text-border">
-              <b className="font-semibold text-foreground">{who(root)}</b>{" "}
-              {firstLine(root.deleted ? `Deleted on ${shared.forge}` : root.text)}
-              {count > 0 && ` · ${count} ${count === 1 ? "reply" : "replies"}`}
-            </summary>
-            <div className="mt-1.5">
-              <Tree m={root} {...shared} />
-            </div>
-          </details>
-        )}
-      </li>
-    </>
-  );
-}
-
-function Tree({ m, ...shared }: { m: Msg } & Shared) {
-  return (
-    <>
-      <Message m={m} {...shared} />
-      {m.replies.length > 0 && (
-        <div className="mt-2 ml-3 grid gap-2 border-l-2 pl-3">
-          {m.replies.map((r) => (
-            <Tree key={r.id} m={r} {...shared} />
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-function Message({ m, hl, ackRef, now, forge }: { m: Msg } & Shared) {
-  const isNew = hl.has(m.id);
-  const anchor = anchorOf(m);
-  return (
-    <article
-      id={`c-${m.id}`}
-      data-id={m.id}
-      data-new={isNew || undefined}
-      tabIndex={-1}
-      ref={m.unread ? ackRef : undefined}
-      aria-label={`${who(m)}${isNew ? ", new" : ""}`}
-      className="scroll-my-6 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12.5px] text-muted-foreground">
-        <b className="font-semibold text-foreground">{who(m)}</b>
-        {m.parentId === null ? (anchor ? "commented on" : "commented") : "replied"}
-        {m.parentId === null && anchor && (
-          <span translate="no" className="font-mono text-[11.5px] [overflow-wrap:anywhere]">
-            {where(m)}
-          </span>
-        )}
-        <span title={new Date(m.createdAt).toLocaleString()}>· {ago(m.createdAt, now)}</span>
-        {isNew && <Badge variant="soft">New</Badge>}
-        {anchor?.orphaned && <Badge variant="quiet">outdated</Badge>}
-      </div>
-      <div
-        className={cn(
-          "mt-1.5 min-w-0 rounded-md border px-[11px] py-2 [overflow-wrap:anywhere]",
-          isNew ? "border-transparent bg-accent" : "bg-card",
-        )}
-      >
-        {m.deleted || m.text === null ? <p className="m-0 text-muted-foreground italic">Deleted on {forge}</p> : <Text text={m.text} />}
-      </div>
-    </article>
-  );
-}
-
-const who = (c: CommentDto) => c.authorName ?? c.authorSlug;
-
-function where(c: CommentDto): string | null {
-  const a = anchorOf(c);
-  return a ? (a.line === undefined ? a.path : `${a.path}:${a.line}`) : null;
-}
-
-function firstLine(text: string | null): string {
-  const line = (text ?? "").split("\n").find((l) => l.trim()) ?? "";
-  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
-}
-
-const countReplies = (m: Msg): number => m.replies.reduce((n, r) => n + 1 + countReplies(r), 0);

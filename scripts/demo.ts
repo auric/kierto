@@ -288,7 +288,16 @@ const activities = new Map<Pr, () => S.Activity[]>([
       t = thread(t, 1110, maria, 280, "Typo in the comment above trim().", { path: "src/cache/trim.ts", line: 8, resolved: true });
       t = reply(t, 1110, 1111, alex, 270, "Fixed.");
       t = thread(t, 1120, maria, 260, "Can the eviction policy own the budget?");
+      // A read side branch of 3 messages folds to one row.
+      t = reply(t, 1120, 1130, kenji, 258, "The budget also feeds the stats page.");
+      t = reply(t, 1130, 1131, maria, 257, "Then the stats page reads it from the policy.");
+      t = reply(t, 1131, 1132, kenji, 256, "Fine with me.");
+      // A main line deeper than 4 levels: the middle folds, and replies below level 4 quote their parent.
       t = reply(t, 1120, 1121, alex, 250, "Yes. That comes in the next pull request.");
+      t = reply(t, 1121, 1122, me, 240, "Then keep the budget field private until then.");
+      t = reply(t, 1122, 1123, alex, 230, "It is private now. The config reads it through a getter.");
+      t = reply(t, 1123, 1124, maria, 220, "The getter copies the struct on every call.");
+      t = reply(t, 1124, 1125, alex, 210, "It returns a const reference now.");
       return phase === 1 ? t : reply(t, 1100, 1101, alex, 8, "It takes the cache lock itself now. Callers must not lock.");
     },
   ],

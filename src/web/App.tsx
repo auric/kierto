@@ -12,7 +12,7 @@ import { type Effect, type KeyState, reduceKey } from "./keys";
 import { useLive } from "./live";
 import { useMeta } from "./meta";
 import { useClaims } from "./notify";
-import { jumpTo, PrDetail } from "./pr/PrDetail";
+import { type DetailApi, PrDetail } from "./pr/PrDetail";
 import { Settings } from "./settings/Settings";
 import {
   claimEvents,
@@ -65,7 +65,7 @@ export function App() {
   );
 }
 
-const INITIAL: KeyState = { focus: "list", mobile: "list", selected: null, help: false, settings: false };
+const INITIAL: KeyState = { focus: "list", mobile: "list", selected: null, help: false, settings: false, chord: null };
 
 const EMPTY: Record<View, string> = {
   needs: "Nothing needs you. New replies and review requests show here.",
@@ -73,8 +73,6 @@ const EMPTY: Record<View, string> = {
   mine: "You have no open pull requests.",
   following: "You follow no pull requests. Paste a pull request URL into the filter to follow it.",
 };
-
-const phone = () => matchMedia("(max-width: 759px)").matches;
 
 function Shell({ stale }: { stale: boolean }) {
   const meta = useMeta();
@@ -90,6 +88,7 @@ function Shell({ stale }: { stale: boolean }) {
   const [ks, setKs] = useState<KeyState>(INITIAL);
   const filterRef = useRef<HTMLInputElement>(null);
   const detailRef = useRef<HTMLElement>(null);
+  const detailApi = useRef<DetailApi | null>(null);
   const pending = useRef<Effect>(null);
 
   const s = settings.data;
@@ -118,7 +117,7 @@ function Shell({ stale }: { stale: boolean }) {
     setView(v);
     setRepo(null);
     setQuery("");
-    if (pr) go({ selected: pr.id, settings: locked, focus: "detail", mobile: "detail" }, "focus-detail");
+    if (pr) go({ selected: pr.id, settings: locked, focus: "detail", mobile: "detail" }, "open-cause");
     else go({ settings: locked, focus: "list", mobile: "list" }, "focus-list");
   });
 
@@ -135,31 +134,32 @@ function Shell({ stale }: { stale: boolean }) {
       const row = selected === null ? null : document.getElementById(`row-${selected}`);
       (row ?? document.getElementById("rows"))?.focus({ preventScroll: true });
       row?.scrollIntoView({ block: "nearest" });
-    } else if (effect === "focus-detail") detailRef.current?.focus({ preventScroll: true });
-    else if (effect === "scroll-down" || effect === "scroll-up") {
-      detailRef.current?.querySelector("[data-scroll]")?.scrollBy({ top: effect === "scroll-down" ? 80 : -80 });
-    } else if (effect === "next-new") {
-      const marks = [...(detailRef.current?.querySelectorAll<HTMLElement>("[data-new]") ?? [])];
-      const at = document.activeElement;
-      const next = marks.find(
-        (el) => at instanceof Node && at !== el && !!(at.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING),
-      );
-      if (next) jumpTo(next);
-      else {
-        detailRef.current?.focus({ preventScroll: true });
-        toast.add({ title: "No unread message left." });
-      }
-    } else if (effect === "tab-1") document.getElementById("tab-activity")?.focus();
-    else if (effect === "tab-2" || effect === "tab-3") toast.add({ title: `${effect === "tab-2" ? "Review" : "Run log"} arrives in M2.` });
+    } else if (effect === "tab-2" || effect === "tab-3")
+      toast.add({ title: `${effect === "tab-2" ? "Review" : "Run log"} arrives in M2.` });
+    else if (effect) {
+      // Detail effects. Focus outside the pane moves into it, so a key without a target still leaves focus in the detail.
+      // Focus inside the pane stays: n, j, and o start from it.
+      if (!detailRef.current?.contains(document.activeElement)) detailRef.current?.focus({ preventScroll: true });
+      const api = detailApi.current;
+      if (effect === "overview") detailRef.current?.querySelector("[data-scroll]")?.scrollTo({ top: 0 });
+      else if (effect === "open-cause") api?.cause();
+      else if (effect === "thread-next" || effect === "thread-prev") api?.step(effect === "thread-next" ? 1 : -1);
+      else if (effect === "thread-toggle") api?.toggle();
+      else if (effect === "next-new" || effect === "prev-new") api?.nextNew(effect === "next-new" ? 1 : -1);
+      else if (effect === "next-your") api?.nextYour();
+      else if (effect === "files" || effect === "commits") api?.section(effect);
+    }
   });
 
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
   onKey.current = (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement;
-    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
-    const onButton = (t.tagName === "BUTTON" && !t.hasAttribute("data-row")) || t.tagName === "A" || t.tagName === "SUMMARY";
-    const r = reduceKey(state, e.key, { ids, typing, onButton, settingsLocked: locked });
+    // A checkbox takes keys like a button, so the detail keys work after the thread filter.
+    const box = t instanceof HTMLInputElement && (t.type === "checkbox" || t.type === "radio");
+    const typing = (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !box) || t.isContentEditable;
+    const onButton = (t.tagName === "BUTTON" && !t.hasAttribute("data-row")) || t.tagName === "A" || t.tagName === "SUMMARY" || box;
+    const r = reduceKey(state, e.key, { ids, typing, onButton, settingsLocked: locked, now: Date.now() });
     if (!r.handled) return;
     e.preventDefault();
     if (e.key === "Escape" && typing) t.blur();
@@ -178,16 +178,10 @@ function Shell({ stale }: { stale: boolean }) {
   };
 
   // Stable, so the memo rows render again only when their own data changes.
-  const onSelect = useCallback(
-    (id: number) => {
-      pending.current = null;
-      setKs((k) => ({ ...k, selected: id, settings: locked, focus: "list", mobile: phone() ? "detail" : k.mobile }));
-    },
-    [locked],
-  );
+  // prototype/v3: a click and Enter open the PR at the thread that put it in the inbox.
   const onOpen = useCallback(
     (id: number) => {
-      pending.current = "focus-detail";
+      pending.current = "open-cause";
       setKs((k) => ({ ...k, selected: id, settings: locked, focus: "detail", mobile: "detail" }));
     },
     [locked],
@@ -250,7 +244,7 @@ function Shell({ stale }: { stale: boolean }) {
         }}
         onRepo={setRepo}
         onDoneOpen={setDoneOpen}
-        onSelect={onSelect}
+        onSelect={onOpen}
         onOpen={onOpen}
         onFollow={() =>
           follow.mutate(query.trim(), {
@@ -288,6 +282,7 @@ function Shell({ stale }: { stale: boolean }) {
             <div data-scroll className="relative flex-1 overflow-auto overscroll-contain">
               <PrDetail
                 key={current.id}
+                ref={detailApi}
                 pr={current}
                 me={s?.user ?? null}
                 onLeave={() => {

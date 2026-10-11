@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { type KeyContext, type KeyState, reduceKey } from "../../src/web/keys";
 
-const S: KeyState = { focus: "list", mobile: "list", selected: null, help: false, settings: false };
-const C: KeyContext = { ids: [10, 20, 30], typing: false, onButton: false, settingsLocked: false };
+const S: KeyState = { focus: "list", mobile: "list", selected: null, help: false, settings: false, chord: null };
+const C: KeyContext = { ids: [10, 20, 30], typing: false, onButton: false, settingsLocked: false, now: 10_000 };
 const press = (keys: string[], s: KeyState = S, c: KeyContext = C) => keys.reduce((st, k) => reduceKey(st, k, c).state, s);
 
 describe("list keys", () => {
@@ -18,17 +18,19 @@ describe("list keys", () => {
     expect(press(["j"], { ...S, selected: 99 }).selected).toBe(10);
   });
 
-  test("j and k scroll the detail pane when it has focus", () => {
+  // v3 (WP5, plan I14): j and k move between threads in the detail. M1 scrolled the pane.
+  test("j and k move between threads when the detail has focus", () => {
     const r = reduceKey({ ...S, focus: "detail", selected: 20 }, "j", C);
     expect(r.state.selected).toBe(20);
-    expect(r.effect).toBe("scroll-down");
-    expect(reduceKey({ ...S, focus: "detail" }, "k", C).effect).toBe("scroll-up");
+    expect(r.effect).toBe("thread-next");
+    expect(reduceKey({ ...S, focus: "detail" }, "k", C).effect).toBe("thread-prev");
   });
 
-  test("Enter and → open the selection, Esc and ← go back", () => {
+  // v3 (WP5): Enter opens the PR at its cause thread. M1 focused the pane.
+  test("Enter and → open the selection at its cause, Esc and ← go back", () => {
     const open = reduceKey({ ...S, selected: 20 }, "Enter", C);
     expect(open.state).toMatchObject({ focus: "detail", mobile: "detail" });
-    expect(open.effect).toBe("focus-detail");
+    expect(open.effect).toBe("open-cause");
     expect(reduceKey({ ...S, selected: 20 }, "ArrowRight", C).state.focus).toBe("detail");
     for (const k of ["Escape", "ArrowLeft"]) {
       const r = reduceKey(open.state, k, C);
@@ -83,12 +85,29 @@ describe("typing, help, and settings", () => {
 });
 
 describe("detail keys", () => {
-  test("n and 1 to 3 move focus to the detail and name their effect", () => {
+  test("n, N, y, o, and 1 to 3 move focus to the detail and name their effect", () => {
     const r = reduceKey({ ...S, selected: 20 }, "n", C);
     expect(r.state).toMatchObject({ focus: "detail", mobile: "detail" });
     expect(r.effect).toBe("next-new");
-    expect(reduceKey({ ...S, selected: 20, focus: "detail" }, "1", C).effect).toBe("tab-1");
-    expect(reduceKey({ ...S, selected: 20 }, "3", C).effect).toBe("tab-3");
+    const effect = (key: string) => reduceKey({ ...S, selected: 20 }, key, C).effect;
+    expect(["N", "y", "o", "1", "3"].map(effect)).toEqual(["prev-new", "next-your", "thread-toggle", "overview", "tab-3"]);
+  });
+
+  test("Enter in the detail toggles the current thread, but not on a button", () => {
+    const detail = { ...S, selected: 20, focus: "detail" as const };
+    expect(reduceKey(detail, "Enter", C).effect).toBe("thread-toggle");
+    expect(reduceKey(detail, "Enter", { ...C, onButton: true }).handled).toBe(false);
+  });
+
+  test("g then f or c opens Files or Commits; the chord ends after 1.2 s or on another key", () => {
+    const pr = { ...S, selected: 20 };
+    const g = reduceKey(pr, "g", C);
+    expect(g).toMatchObject({ handled: true, effect: null });
+    expect(reduceKey(g.state, "f", C)).toMatchObject({ effect: "files", state: { focus: "detail", chord: null } });
+    expect(reduceKey(g.state, "c", C).effect).toBe("commits");
+    expect(reduceKey(g.state, "x", C)).toMatchObject({ handled: true, effect: null, state: { chord: null } });
+    expect(reduceKey(g.state, "f", { ...C, now: C.now + 1300 }).handled).toBe(false);
+    expect(reduceKey(S, "g", C).handled).toBe(false);
   });
 
   test("detail keys do nothing without a PR or while typing", () => {

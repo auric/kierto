@@ -118,6 +118,14 @@ export type PrRow = {
   checkpoint: CheckpointDto | null;
 };
 
+// WP4 fills the optional forge fields below. The detail renders each part only when its field is present.
+// hit: the commented line. kind: an added, removed, or context line of the diff.
+export type ExcerptLine = { n: number; kind: "add" | "del" | "ctx"; text: string; hit: boolean };
+// type: the change type from the forge, for example ADD, MODIFY, DELETE, MOVE.
+export type ChangedFile = { path: string; type: string };
+// author: the display name. at: ms. Newest first.
+export type CommitDto = { hash: string; message: string; author: string; at: number };
+
 // A deleted comment (D8) has text null and is never unread.
 export type CommentDto = {
   id: number;
@@ -135,9 +143,12 @@ export type CommentDto = {
   updatedAt: number;
   unread: boolean;
   deleted: boolean;
+  // Root comments of inline threads only.
+  excerpt?: ExcerptLine[];
+  task?: "open" | "done";
 };
 
-export type PrDetail = { pr: PrRow; description: string | null; comments: CommentDto[] };
+export type PrDetail = { pr: PrRow; description: string | null; comments: CommentDto[]; files?: ChangedFile[]; commits?: CommitDto[] };
 
 export type FollowState = { id: number; followed: boolean; archivedAt: number | null };
 

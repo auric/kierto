@@ -51,6 +51,10 @@ export const usePr = (id: number, enabled = true) =>
     queryFn: async () => read<PrDetail>(await api.api.prs[":id"].$get({ param: { id: String(id) } })),
   });
 
+// plan v3 section 2: the last visit. The detail keeps the previous value for "N new since".
+export const sendSeen = async (id: number) =>
+  read<{ id: number; seenAt: number }>(await api.api.prs[":id"].seen.$post({ param: { id: String(id) } }));
+
 export const claimEvents = async () => read<ClaimedEvent[]>(await api.api.notifications.claim.$post());
 
 // keepalive: the request also completes when the page closes.
