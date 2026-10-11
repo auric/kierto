@@ -5,6 +5,7 @@ import { allowedOrigins, type GuardOptions, guard } from "./guard";
 import { createInboxRoutes } from "./inbox/routes";
 import type { Live } from "./live";
 import { createMeta } from "./meta";
+import { createPublishRoutes } from "./publish/routes";
 import { createReviewJobs, type ReviewJobs } from "./review/jobs";
 import { createReviewRoutes } from "./review/routes";
 import { createSettings, type Settings } from "./settings";
@@ -53,7 +54,8 @@ export function createApp(opts: AppOptions) {
       return c.json(sync.status(), 202);
     })
     .route("/api", createInboxRoutes({ settings, sync, live: opts.live }))
-    .route("/api", createReviewRoutes({ review, live: opts.live }));
+    .route("/api", createReviewRoutes({ review, live: opts.live }))
+    .route("/api", createPublishRoutes({ review, settings }));
 
   if (opts.assets) app.use("/assets/*", opts.assets);
   if (page !== undefined) {

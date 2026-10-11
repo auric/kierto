@@ -240,6 +240,36 @@ export type ReviewItemDto = {
   edited: boolean;
 };
 
+// POST /api/items/:id. revision: the item revision on screen. A mismatch gives 409 with ItemConflict.
+// Every change raises the revision. edit also accepts the item. move takes a line of moveChoices(excerpt, side).
+export const itemActionInput = z.discriminatedUnion("action", [
+  z.object({ action: z.enum(["accept", "discard", "restore"]), revision: version }),
+  z.object({ action: z.literal("edit"), revision: version, body: z.string().trim().min(1).max(MAX_NOTE) }),
+  z.object({ action: z.literal("move"), revision: version, line: positiveInt }),
+]);
+export type ItemActionInput = z.infer<typeof itemActionInput>;
+// item: the current item, for a reload.
+export type ItemConflict = ApiError & { item: ReviewItemDto };
+
+// GET /api/prs/:id/post-plan (plan v3 WP12). Confirm (WP13) posts these bodies byte for byte.
+// lineType: the diff kind of the line. Old-side and outside findings post in the general comment (D3).
+export type PostDestination =
+  | { kind: "inline"; path: string; srcPath: string | null; line: number; lineEnd: number; lineType: "add" | "ctx" }
+  | { kind: "general" };
+export type PlannedPost = {
+  run: number;
+  sourceHead: string;
+  targetHead: string;
+  mergeBase: string | null;
+  destination: PostDestination;
+  body: string;
+  items: { id: number; revision: number }[];
+  // A live root comment by another user on the same path and line.
+  duplicate: { commentId: number; author: string } | null;
+};
+// posts: per run in run order, the inline comments in item order, then the general comment.
+export type PostPlanDto = { pr: number; posts: PlannedPost[] };
+
 // GET /api/runs/:id. events: the run log in seq order.
 export type RunDetail = { run: RunDto; events: RunEvent[]; items: ReviewItemDto[] };
 
@@ -250,7 +280,8 @@ export type RunConflict = ApiError & { running: { run: number; pr: number } };
 export type MetaDto = {
   forge: { name: string };
   // check: the cached runner check. null before the first check. Each run refreshes it.
-  runner: { name: string; short: string; initials: string; check: RunnerCheckDto | null };
+  // login: the command that signs the runner in with the subscription.
+  runner: { name: string; short: string; initials: string; login: string; check: RunnerCheckDto | null };
   // Run log labels, keyed by RunEvent.tool.
   tools: Record<string, string>;
   profiles: ProfileDto[];

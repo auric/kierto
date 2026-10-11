@@ -737,7 +737,13 @@ describe("brief and meta", () => {
   test("meta gives the runner, tool labels, the four profiles, and no context source", async () => {
     const h = await setup();
     const meta = (await h.json<MetaDto>("/api/meta")).body;
-    expect(meta.runner).toEqual({ name: "Claude Code", short: "Claude", initials: "AI", check: null });
+    expect(meta.runner).toEqual({
+      name: "Claude Code",
+      short: "Claude",
+      initials: "AI",
+      login: "claude auth login --claudeai",
+      check: null,
+    });
     expect(meta.profiles.map((p) => [p.id, p.name, p.explain, p.maxTurns])).toEqual([
       ["general", "General", false, 40],
       ["over", "Over-engineering", false, 40],

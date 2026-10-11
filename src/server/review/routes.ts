@@ -1,8 +1,9 @@
-// Review API (plan v3 WP10): brief, start, cancel, run, raw output. Every mutation broadcasts `changed`.
+// Review API (plan v3 WP10, WP12): brief, start, cancel, run, raw output, item triage. Every mutation broadcasts `changed`.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import { type ApiError, briefInput } from "../../shared/dto";
+import { type ApiError, briefInput, itemActionInput } from "../../shared/dto";
 import type { Live } from "../live";
+import { triage } from "./items";
 import type { ReviewJobs } from "./jobs";
 
 const positiveId = (what: string) =>
@@ -12,6 +13,7 @@ const positiveId = (what: string) =>
   });
 const prParam = positiveId("pull request");
 const runParam = positiveId("run");
+const itemParam = positiveId("item");
 
 const unconfigured = { error: "Configure the Bitbucket URL and token first." } satisfies ApiError;
 const notFound = (what: string) => ({ error: `${what} not found.` }) satisfies ApiError;
@@ -69,6 +71,24 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       c.header("Cache-Control", "no-store");
       return c.text(raw, 200);
     })
+    .post(
+      "/items/:id",
+      itemParam,
+      validator("json", (v, c) => {
+        const r = itemActionInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid item change." }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const r = triage(db, c.req.valid("param").id, c.req.valid("json"));
+        if (r.status === 404) return c.json(notFound("Item"), 404);
+        if (r.status === 400) return c.json({ error: r.error }, 400);
+        if (r.status === 409) return c.json(r.conflict, 409);
+        live.broadcast("changed", { prs: [r.pr], runs: [r.item.run] });
+        return c.json(r.item, 200);
+      },
+    )
     .post("/runs/:id/cancel", runParam, (c) => {
       const db = review.open();
       if (!db) return c.json(unconfigured, 409);

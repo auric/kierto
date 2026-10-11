@@ -103,7 +103,7 @@ type RunRow = {
   pr_target: string | null;
 };
 
-type ItemRow = {
+export type ItemRow = {
   id: number;
   run: number;
   kind: "finding" | "question";
@@ -382,7 +382,7 @@ function toRunDto(r: RunRow): RunDto {
   };
 }
 
-function toItemDto(r: ItemRow): ReviewItemDto {
+export function toItemDto(r: ItemRow): ReviewItemDto {
   const payload = JSON.parse(r.payload_json) as AnchoredFinding | Question;
   const anchor =
     r.kind === "finding" && r.path !== null && r.side !== null && r.line !== null && r.line_end !== null && r.anchor_state !== null

@@ -103,7 +103,8 @@ function excerpt(t: Text, file: DiffFile | undefined, side: Side, s: number, e: 
   for (let k = ws; k <= we; k++) {
     for (let r = extra[j]; r && at(r) === k; r = extra[++j])
       out.push({ n: side === "new" ? r.old : r.new, kind: other, text: clip(r.text) });
-    out.push({ n: k, kind: kinds?.get(k) ?? "ctx", text: clip(t.lines[k - 1] as string) });
+    const kind = kinds?.get(k);
+    out.push({ n: k, kind: kind ?? "ctx", text: clip(t.lines[k - 1] as string), ...(kind === "ctx" ? { hunk: true as const } : {}) });
   }
   return out;
 }

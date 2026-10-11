@@ -199,14 +199,14 @@ describe("anchor", () => {
       line: 10,
       lineEnd: 10,
       excerpt: [
-        { n: 7, kind: "ctx", text: "const a7 = 7;" },
-        { n: 8, kind: "ctx", text: "const a8 = 8;" },
-        { n: 9, kind: "ctx", text: "const a9 = 9;" },
+        { n: 7, kind: "ctx", text: "const a7 = 7;", hunk: true },
+        { n: 8, kind: "ctx", text: "const a8 = 8;", hunk: true },
+        { n: 9, kind: "ctx", text: "const a9 = 9;", hunk: true },
         { n: 10, kind: "del", text: "const a10 = 10;" },
         { n: 10, kind: "add", text: "const a10 = 100;" },
         { n: 11, kind: "add", text: "const a10b = 101;" },
-        { n: 12, kind: "ctx", text: "const a11 = 11;" },
-        { n: 13, kind: "ctx", text: "const a12 = 12;" },
+        { n: 12, kind: "ctx", text: "const a11 = 11;", hunk: true },
+        { n: 13, kind: "ctx", text: "const a12 = 12;", hunk: true },
       ],
     });
     if (typeof a === "object") expect(moveChoices(a.excerpt, "new")).toEqual([7, 8, 9, 10, 11, 12, 13]);
@@ -236,6 +236,8 @@ describe("anchor", () => {
     const a = one({ path: "src/same.ts", line: 2, anchorText: "two();" });
     expect(a).toMatchObject({ state: "outside", line: 2, oldPath: null });
     if (typeof a === "object") expect(a.excerpt.map((l) => [l.n, l.kind])).toEqual([1, 2, 3, 4].map((n) => [n, "ctx"]));
+    // The diff does not show these lines.
+    if (typeof a === "object") expect(a.excerpt.some((l) => l.hunk)).toBe(false);
     expect(at({ path: "src/same.ts", side: "old", line: 3, anchorText: "three();" })).toEqual(["outside", 3, 3]);
   });
 

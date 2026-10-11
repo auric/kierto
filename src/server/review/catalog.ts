@@ -4,7 +4,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { ProfileDto, ProfileId } from "../../shared/dto";
 import { type AgentSpec, type McpServerSpec, NAME } from "./claude";
 
-export const RUNNER = { name: "Claude Code", short: "Claude", initials: "AI" };
+// login: `claude auth login --help` (CLI 2.1.295) names --claudeai for the subscription.
+export const RUNNER = { name: "Claude Code", short: "Claude", initials: "AI", login: "claude auth login --claudeai" };
 export const GIT_SERVER = "rl-git";
 export const REVIEWER = "rl-reviewer";
 // Plan v3 D10: remote documentation servers. They get no credentials.

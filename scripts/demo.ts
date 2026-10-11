@@ -1,4 +1,5 @@
 // Demo: the app on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. No real server, data folder, or credential store.
+// Reviews run the fake Claude Code CLI against a temp git remote. No real CLI and no network.
 // The data covers every inbox group and every thread turn. Task IDs use the fictional key ABC.
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -9,16 +10,25 @@ import { writeConfig } from "../src/server/config";
 import { setFollowed } from "../src/server/inbox/queries";
 import { createLive } from "../src/server/live";
 import { startServer } from "../src/server/main";
+import { createReviewJobs } from "../src/server/review/jobs";
 import { createSecrets } from "../src/server/secrets";
 import { createSettings } from "../src/server/settings";
 import { createSyncEngine } from "../src/server/sync/engine";
 import { FAKE_TOKEN, FAKE_USER, key, startFakeBitbucket } from "../tests/support/fake-bitbucket";
+import { claudeStream, fakeRunner, REVIEW_RESULT, reviewRemote, stubListTools } from "../tests/support/review-fixture";
 import * as S from "../tests/support/scenarios";
 
 // No import reads these at load time. Every call below also gets the folder and the memory store explicitly.
 const dataDir = mkdtempSync(join(tmpdir(), "review-loop-demo-"));
 process.env.REVIEW_LOOP_DATA_DIR = dataDir;
 process.env.REVIEW_LOOP_SECRETS = "memory";
+
+// The fake CLI, its stream, and the git remote. PR 81 has new commits, so its head is the "next" commit.
+const claudeDir = mkdtempSync(join(tmpdir(), "review-loop-demo-claude-"));
+const runner = fakeRunner(claudeDir);
+runner.write({ fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT) });
+const SOURCE_PRS = [1001, 1002, 31, 210, 212, 77, 74, 33, 215, 9, 5, 2];
+const remote = await reviewRemote(claudeDir, { ...Object.fromEntries(SOURCE_PRS.map((id) => [id, "source" as const])), 81: "next" });
 
 const PORT = 7399;
 const WEB_DIR = resolve(import.meta.dir, "../dist/web");
@@ -80,12 +90,13 @@ function makePr(o: Spec): Pr {
     links: { self: [{ href: `${fake.url}/projects/${o.project}/repos/${o.repo}/pull-requests/${o.id}` }] },
   });
   pr.fromRef.latestCommit = o.head;
+  (pr.toRef as { latestCommit: string }).latestCommit = remote.target;
   (refs[0] as { displayId: string }).displayId = o.branch;
   return pr;
 }
 
-const HEAD_A = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
-const HEAD_B = "b2c3d4e5f60718293a4b5c6d7e8f901234567890";
+const HEAD_A = remote.source;
+const HEAD_B = remote.next;
 // I review with this status. A last reviewed commit equal to the head means no new commits.
 const reviewing = (user: User, status = "UNAPPROVED", lastReviewedCommit?: string) => [
   { user: me, status, lastReviewedCommit },
@@ -234,6 +245,8 @@ const own = Object.assign(S.ownPr() as Pr, {
   reviewers: [{ user: alex, role: "REVIEWER", approved: false, status: "NEEDS_WORK" }],
   links: { self: [{ href: `${fake.url}/users/${FAKE_USER}/repos/sample-repo-1/pull-requests/2` }] },
 });
+own.fromRef.latestCommit = remote.source;
+(own.toRef as { latestCommit: string }).latestCommit = remote.target;
 // Not on the dashboard. Paste its URL into the filter to follow it.
 const extra = makePr({
   project: "PROJ3",
@@ -405,6 +418,14 @@ await secrets.set(FAKE_TOKEN);
 const settings = createSettings({ dir: dataDir, secrets });
 const live = createLive();
 const sync = createSyncEngine({ settings, live });
+const review = createReviewJobs({
+  settings,
+  live,
+  dataDir,
+  runnerCommand: runner.command,
+  listTools: stubListTools,
+  gitRemote: remote.gitRemote,
+});
 
 await sync.syncNow();
 const db = settings.db();
@@ -419,23 +440,27 @@ const server = startServer({
   live,
   settings,
   sync,
+  review,
   indexHtml: readFileSync(index, "utf8"),
   assets: serveStatic({ root: WEB_DIR }),
 });
 sync.start();
+void review.start();
 
 console.log(`Review Loop demo: http://127.0.0.1:${server.port}/ (pid ${process.pid})`);
 console.log(`Fake Bitbucket: ${fake.url}. Data: ${dataDir}`);
 console.log(`Follow by URL: paste ${fake.url}/projects/PROJ3/repos/tools/pull-requests/5 into the filter.`);
 
-function stop() {
+async function stop() {
   sync.stop();
+  await review.stop();
   server.stop(true);
   fake.stop();
   db?.close();
-  try {
-    rmSync(dataDir, { recursive: true, force: true });
-  } catch {}
+  for (const dir of [dataDir, claudeDir])
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {}
   process.exit(0);
 }
 process.on("SIGINT", stop);

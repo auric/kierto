@@ -54,7 +54,8 @@ export const reviewJsonSchema = (): Record<string, unknown> => z.toJSONSchema(re
 export type DiffKind = "add" | "del" | "ctx";
 
 // n: the line number on the side of its kind. ctx lines use the number on the finding's side.
-export type ExcerptLine = { n: number; kind: DiffKind; text: string };
+// hunk: a ctx line that the diff hunks show. Other ctx lines are outside the diff.
+export type ExcerptLine = { n: number; kind: DiffKind; text: string; hunk?: true };
 
 // exact: the reported range holds the quote. moved: another range holds it. outside: a line of the range is not in the diff.
 export type AnchorState = "exact" | "moved" | "outside";
@@ -81,3 +82,7 @@ export type ValidatedResult = Omit<ReviewResult, "findings"> & { findings: Ancho
 // A user move may pick only these lines: the excerpt lines that exist on the finding's side.
 export const moveChoices = (excerpt: ExcerptLine[], side: Side): number[] =>
   excerpt.filter((l) => l.kind !== (side === "new" ? "del" : "add")).map((l) => l.n);
+
+// The excerpt line n of the finding's side, if the diff shows it. Excerpts stored without the hunk flag count ctx lines as outside.
+export const diffLine = (excerpt: ExcerptLine[], side: Side, n: number): ExcerptLine | undefined =>
+  excerpt.find((l) => l.n === n && (l.kind === (side === "new" ? "add" : "del") || (l.kind === "ctx" && l.hunk === true)));
