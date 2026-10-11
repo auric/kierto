@@ -98,7 +98,8 @@ async function cachedHeads(dataDir: string, pr: Pr): Promise<Cache | null> {
   if (!existsSync(dataDir)) return null;
   const dir = realpathSync.native(dataDir);
   const cache = cachePath(dir, pr.ref);
-  if (!existsSync(join(cache, "HEAD"))) return null;
+  // syncCache writes info/attributes after the last config write of a new cache.
+  if (!existsSync(join(cache, "info", "attributes"))) return null;
   const { env } = gitSetup(dir);
   const g = async (args: string[]) => (await git([`--git-dir=${cache}`, ...args], { env })).trim();
   const base = `refs/rl/${pr.ref.id}`;

@@ -102,8 +102,9 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 
 - `claude -p` never shows the workspace trust dialog. In an untrusted folder it still uses project hooks, the project `env` block, and `apiKeyHelper`. So never run Claude Code in a raw PR checkout.
 - The app checks out the pinned PR head as a detached git worktree in an app-owned run folder. It removes `.claude/`, `.mcp.json`, and links. It renames CLAUDE.md, CLAUDE.local.md, and AGENTS.md files.
-- With `--setting-sources user`, project settings, hooks, `.mcp.json`, CLAUDE.md, and skills do not load (Gate 0, CLI 2.1.295). The snapshot rename and remove steps stay as defense in depth.
-- `--setting-sources user` still loads the user's own CLAUDE.md, agents, plugins, hooks, and MCP servers, including claude.ai connectors. Only `--strict-mcp-config` removes the MCP servers.
+- The runner passes `--restricted`, not `--setting-sources user`. With `--restricted`, no hook runs, also with `--setting-sources user` added (Gate B8, CLI 2.1.295).
+- Gate 0 checked project CLAUDE.md and skills only with `--setting-sources user`. The snapshot rename and remove steps cover them under `--restricted`.
+- `--strict-mcp-config` removes the user's MCP servers, including claude.ai connectors. `--agent rl-main` refuses the user's agents (Gate B9). Gate 0 did not check the user's own CLAUDE.md under `--restricted`.
 - Never use `--bare`. It never reads OAuth credentials or the keychain, so the subscription login fails with it.
 - `ANTHROPIC_API_KEY` in the environment wins over the subscription. The app removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment.
 - Before each run, the app calls `claude auth status`. It runs only when `authMethod` is `claude.ai`. Otherwise it stops and explains. Log only `authMethod` from `claude auth status`, because its output also holds the email and organization.
@@ -169,7 +170,7 @@ Review Loop principles:
 1. Human gate: nothing goes to the code host without an explicit user action. Approval binds the exact text and destination. Editing the text removes the approval.
 2. Untrusted input: PR titles, descriptions, code, comments, and repository files are hostile. They can contain prompt injection or executable configuration. Review runs use a sanitized snapshot, read-only tools, and no code-host write access. The app posts, not the AI.
 3. Credentials: the app never reads, stores, or forwards AI-provider credentials. It starts the user's own official Claude Code CLI with the subscription login. It never falls back to paid API use. Code-host tokens stay in the OS credential store or in memory.
-4. Zero-token tracking: polling, unread state, notifications, and publication never call an LLM. Only reviews, explanations, and drafts use tokens.
+4. Zero-token tracking: polling, unread state, notifications, and publication never call an LLM. Only reviews, explanations, drafts, and Ask answers use tokens.
 5. One review runs at a time by default. Each run shows the usage that the CLI reports. No automatic retry after a usage limit.
 6. Revision-pinned evidence: every result names the commits it reviewed. A result for older commits shows as stale.
 7. Honest coverage: every result lists what it read, skipped, and could not reach. An incomplete run never reports "no issues".
@@ -244,7 +245,7 @@ Acceptance scenarios:
 
 Edge cases: the code host is unreachable (show the last known state, mark it offline, and retry); the token expires or lacks permission (show a clear message); the pull request changes during a review (label the result with the reviewed commits and mark it stale); a finding points to a line outside the diff (post it in the general comment); the AI returns unreadable output (mark the review failed and keep the raw output; at most one repair attempt); the AI usage limit is reached (show the message from the AI tool and do not retry automatically).
 
-Out of scope now: a diff viewer, automatic reviews, approvals and merges from the tool, team dashboards, other code hosts, mobile.
+Out of scope now: automatic reviews, approvals and merges from the tool, team dashboards, other code hosts, mobile.
 ```
 
 ## 7. Paste into /speckit-plan
@@ -340,7 +341,7 @@ Review runner:
 - Recognize structured error results (is_error, subtype), not only exit codes. Map usage limit, auth error, and max turns to job states. Gate 0 did not record the error subtypes, so verify their values.
 - Cancel kills the whole process tree. On Windows use taskkill /T /F with the PID. In Gate 0, proc.kill() also ended the MCP child. The app must not rely on that.
 - For each run, store the session ID. Never resume a session from another PR.
-- Each run writes a transcript to ~/.claude/projects/<encoded cwd>/. The transcript holds the reviewed code. The app deletes that folder after each run, unless the user keeps the session for follow-up questions. --no-session-persistence exists, but Gate 0 did not test it, and it blocks --resume. Decide in M2.
+- Each run writes a transcript to ~/.claude/projects/<encoded cwd>/. The transcript holds the reviewed code. --no-session-persistence still writes the per-cwd folders (Gate B4), so the app deletes them after each run. No run resumes a session. Ask is one-shot.
 - Profiles: four shipped profiles (General, Over-engineering, Security, Explain). The user can edit, add, remove, and reset them in Settings. Each profile has a name, a note, the prompt, Explain, Docs, and a turn cap. Explain asks only for the summary and questions, with a lower turn cap.
 - Each run stores the profile name, revision, and explain flag at its start. A later profile edit does not change an old run.
 - Run kinds: review, reply, and ask (Release 2). A re-review is kind review with since_head set. Ask runs without the Agent tool, writes no items, and shares the one run slot.
@@ -457,7 +458,7 @@ Phase 5, reach:
 ## 11. Sources (checked 2026-10-09)
 
 - Claude Code headless mode: https://code.claude.com/docs/en/headless (stream-json needs --verbose; --json-schema result in structured_output; --bare skips OAuth and the keychain).
-- Claude Code CLI reference: https://code.claude.com/docs/en/cli-reference (--setting-sources, --strict-mcp-config, --settings, claude auth status).
+- Claude Code CLI reference: https://code.claude.com/docs/en/cli-reference (--strict-mcp-config, --agents, --agent, --no-session-persistence, claude auth status). The page does not list --restricted (checked 2026-10-11). Gate B8 records its behavior.
 - Claude Code permissions: https://code.claude.com/docs/en/permissions (blockReadsOutsideWorkingDirectories; trust dialog not shown in -p).
 - Claude Code IAM and auth precedence: https://code.claude.com/docs/en/iam (ANTHROPIC_API_KEY wins over the subscription).
 - Claude Code hooks and settings: https://code.claude.com/docs/en/hooks and https://code.claude.com/docs/en/settings

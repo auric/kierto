@@ -45,6 +45,7 @@ export function createApp(opts: AppOptions) {
       secureHeaders({
         contentSecurityPolicy: {
           defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
           imgSrc: ["'self'", "data:"],
           connectSrc: ["'self'"],
           frameAncestors: ["'none'"],

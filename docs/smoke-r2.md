@@ -25,10 +25,10 @@ This test checks the Release 2 features against a real Bitbucket Server, a real 
 ## A. Re-review after a push
 
 1. Open the test pull request. Press r and start a General review. Wait for the end of the run. Expect "Claude reviewed <hash>" and at least one finding. If it has no finding, add a small defect in step 3 instead.
-2. Accept one finding. Leave one finding new. Discard one, if the run has three.
-3. Push one commit to the source branch. Let it fix the code of the new finding and leave the accepted finding untouched.
+2. Accept one finding. Leave one finding new. Discard one, if the run has three. Expect the "Accepted" mark on the first and one muted line with Restore for the discarded one.
+3. Push one commit to the source branch. Let it fix the code of the new finding and leave the accepted finding untouched. Expect no change in the app before the next check.
 4. Click "Check now". Expect the run line to show the review as stale on the source side. Expect the button "Review changes since <hash>".
-5. Press c. Wait for the end of the run. Expect the run line "Reviewed changes <a>→<b> · N new, M carried, K fixed or outdated". Expect `<a>` to be the old head and `<b>` the new head.
+5. Press c. While the run runs, open the Files fold and click "Get the code from Bitbucket". Expect the git file list, not an error. Wait for the end of the run. Expect the run line "Reviewed changes <a>→<b> · N new, M carried, K fixed or outdated". Expect `<a>` to be the old head and `<b>` the new head.
 6. Open the Review tab. Expect the accepted finding as a carried row with "Still open after the new commits." and its accepted state. Expect the fixed finding as a closed row "Fixed in the new commits: …". Expect no row for the discarded finding.
 7. Press 3. Expect a Read of `context/changes.patch` and `context/findings.md`. Expect `changes.patch` to hold only the new commit's files.
 8. Press p. Expect the confirm to show each accepted item once, on the new heads. Cancel. Do not post.
@@ -36,7 +36,7 @@ This test checks the Release 2 features against a real Bitbucket Server, a real 
 ## B. Ask the PR
 
 1. Press q. Expect the "Ask <runner>" fold to open with the focus in the box.
-2. Type a question about the pull request, for example "Which callers of the changed function are not updated?". Press Ctrl+Enter.
+2. Type a question about the pull request, for example "Which callers of the changed function are not updated?". Press Ctrl+Enter. Expect the box to clear when the run starts.
 3. Expect a running answer with a Cancel button. Wait for the end. Expect a Markdown answer with status, time, and tokens.
 4. Click Log. Expect the run log sheet of that ask run. Expect no Agent tool in the init line and no write tool call. Close the sheet.
 5. Expect no new item in the Review tab and no change in the Ready to post view. Check the pull request in Bitbucket. Expect no new comment.
@@ -49,7 +49,7 @@ This test checks the Release 2 features against a real Bitbucket Server, a real 
 3. Open the test pull request. Expect a chip for each Jira key that the pull request names. Click Fetch on one key. Expect the summary and the fetch time. Open the imported fold. Expect plain text, closed by default.
 4. Click Fetch on a key that does not exist or that you may not view, if the pull request names one. Expect the fixed "not found" text and no stored row.
 5. Start a General review. Wait for the end. Press 3. Expect a Read of `context/task.md`. Expect the AI summary Context row to list the fetched task and its fetch time.
-6. Record the payload shapes: the keys and types of the `myself` response, the issue `fields.summary`, `fields.description`, `fields.status`, and the comment page (`startAt`, `maxResults`, `total`, `comments[]` and each comment's `author`, `created`, `body`). Record whether `description` was null, plain text, or wiki markup. Record any redirect, with its status only.
+6. Record the payload shapes: the keys and types of the `myself` response, the issue `fields.summary`, `fields.description`, `fields.status`, and the comment page (`startAt`, `maxResults`, `total`, `comments[]` and each comment's `author`, `created`, `body`). Record whether `description` was null, plain text, or wiki markup. Record any redirect, with its status only. Expect no token, host name, or issue text in the record.
 7. Click Remove on the chip. Expect the chip to return to Fetch.
 
 ## D. Diff viewer

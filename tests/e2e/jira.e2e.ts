@@ -17,6 +17,10 @@ const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
       context.on("request", (r) => seen.urls.push(r.url()));
       context.on("console", (m) => seen.logs.push(m.text()));
       context.on("weberror", (e) => seen.logs.push(e.error().message));
+      // Chrome logs no console line for some blocked evals. The event reports every violation.
+      await context.addInitScript(() =>
+        document.addEventListener("securitypolicyviolation", (e) => console.error(`Content Security Policy: ${e.violatedDirective}`)),
+      );
       await control("reset");
       await use(seen);
       // Only the local app gets requests. Jira gets them from the server only.

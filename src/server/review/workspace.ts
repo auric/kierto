@@ -1,6 +1,6 @@
 // The sanitized, pinned work folder of one review run (plan v3 WP6). The layout matches claude.ts:
 // <dataDir>/runs/<id>/work/{repo,context} is the CLI cwd, <dataDir>/runs/<id>/app holds the app files.
-import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { type Comment, commentLine, type ExcerptLine, type PrRef, type PullRequest } from "../../shared/types";
 import { log } from "../log";
@@ -15,6 +15,12 @@ const REF = /^refs\/[^\p{Cc}\s:*?[\\^~]+$/u;
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 // Highest attribute precedence (gitattributes(5)). Checkout writes each blob unchanged, and no tree attribute hides a diff.
 const ATTRIBUTES = "* -text -ident -filter -working-tree-encoding !diff\n";
+// Lowercase keys: `git config --list` prints them so.
+const CONFIG: [string, string][] = [
+  ["core.symlinks", "false"],
+  ["core.longpaths", "true"],
+  ["core.autocrlf", "false"],
+];
 const REMOVE = new Set([".claude", ".mcp.json"]);
 const RENAME = new Set(["claude.md", "claude.local.md", "agents.md"]);
 // Names of the extra context files. pr.md, changes.patch, and files.txt belong to the workspace.
@@ -340,16 +346,21 @@ export async function syncCache(input: {
   return locked(cache, async () => {
     const { empty, env } = gitSetup(dataDir);
     const g = (args: string[]) => git([`--git-dir=${cache}`, ...args], { env });
-    mkdirSync(cache, { recursive: true });
-    await git(["init", "-q", "--bare", "--template=", cache], { env });
-    const config: [string, string][] = [
-      ["core.symlinks", "false"],
-      ["core.longpaths", "true"],
-      ["core.autocrlf", "false"],
-    ];
-    for (const [k, v] of config) await g(["config", k, v]);
-    mkdirSync(join(cache, "info"), { recursive: true });
-    writeFileSync(join(cache, "info", "attributes"), ATTRIBUTES);
+    // git init and git config replace <cache>/config. On Windows, a parallel reader of the cache then fails
+    // with "unable to access '<cache>/config': Permission denied". So each write runs only when its value is missing.
+    // diff.ts reads the cache only after info/attributes exists, so this file is written last.
+    const local = await g(["config", "--local", "--list"]).catch(() => null);
+    if (local === null) {
+      mkdirSync(cache, { recursive: true });
+      await git(["init", "-q", "--bare", "--template=", cache], { env });
+    }
+    const set = new Set(local?.split("\n"));
+    for (const [k, v] of CONFIG) if (!set.has(`${k}=${v}`)) await g(["config", k, v]);
+    const attributes = join(cache, "info", "attributes");
+    if (!existsSync(attributes) || readFileSync(attributes, "utf8") !== ATTRIBUTES) {
+      mkdirSync(join(cache, "info"), { recursive: true });
+      writeFileSync(attributes, ATTRIBUTES);
+    }
 
     const via = await fetchHeads(cache, empty, pr.ref.id, remote);
     const pinned = async (side: "source" | "target", want: string) => {

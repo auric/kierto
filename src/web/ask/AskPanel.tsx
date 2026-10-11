@@ -202,18 +202,18 @@ function Answer(props: {
     </button>
   );
   let status: ReactNode;
+  // Outside the live region: a screen reader reads the region again on each tick of a clock in it.
+  let times: ReactNode = null;
   let actions: ReactNode;
   switch (v.kind) {
     case "running":
       status = (
-        <>
-          <span className="inline-flex items-center gap-1.5 text-foreground">
-            <LoaderCircle aria-hidden className={cn(icon, "animate-spin motion-reduce:animate-none")} />
-            Answering…
-          </span>
-          <Elapsed from={v.startedAt} />
-        </>
+        <span className="inline-flex items-center gap-1.5 text-foreground">
+          <LoaderCircle aria-hidden className={cn(icon, "animate-spin motion-reduce:animate-none")} />
+          Answering…
+        </span>
       );
+      times = <Elapsed from={v.startedAt} />;
       actions = (
         <>
           {log}
@@ -225,13 +225,15 @@ function Answer(props: {
       break;
     case "answered":
       status = (
+        <span className="text-foreground">
+          {meta.runner.short} answered on{" "}
+          <code translate="no" className="font-mono text-[0.95em]">
+            {shortHash(a.run.sourceHead)}
+          </code>
+        </span>
+      );
+      times = (
         <>
-          <span className="text-foreground">
-            {meta.runner.short} answered on{" "}
-            <code translate="no" className="font-mono text-[0.95em]">
-              {shortHash(a.run.sourceHead)}
-            </code>
-          </span>
           <Hint label={fullTime(v.at)}>
             <time dateTime={new Date(v.at).toISOString()}>{agoLong(v.at, props.now)}</time>
           </Hint>
@@ -287,6 +289,7 @@ function Answer(props: {
         <span role="status" className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
           {status}
         </span>
+        {times}
         <span className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1">{actions}</span>
       </div>
       {v.kind === "answered" && v.answer !== null && (

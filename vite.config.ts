@@ -19,9 +19,17 @@ export default defineConfig({
   build: {
     outDir: "dist/web",
     emptyOutDir: true,
-    // React DOM goes to its own chunk, so the app chunk stays under the 500 kB warning.
+    // React DOM and the other start-up libraries get their own chunks, so each chunk stays under the 500 kB warning.
+    // "vendor" names only packages of the first page. A wider test would move the Markdown libraries into the first load.
     rolldownOptions: {
-      output: { codeSplitting: { groups: [{ name: "react", test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ }] } },
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "react", test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+            { name: "vendor", test: /node_modules[\\/](@base-ui|@floating-ui|@tanstack|zod|cn|lucide-react|hono)[\\/]/ },
+          ],
+        },
+      },
     },
   },
   server: {

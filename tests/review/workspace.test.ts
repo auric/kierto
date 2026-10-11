@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -575,6 +576,26 @@ describe("workspace", () => {
       const [ws, again] = await Promise.all([prepare(s, "1"), sync()]);
       expect([ws.cache, ws.mergeBase, ws.rangeBase, again.mergeBase]).toEqual([cache, s.base, s.base, s.base]);
       await ws.remove();
+    },
+    SLOW,
+  );
+
+  // On Windows, a reader of the cache fails while git replaces <cache>/config. The file ID and the mtime show a replace.
+  test(
+    "a repeated syncCache leaves the cache config and attributes untouched",
+    async () => {
+      const s = await scenario("same", { "src/new.ts": "new\n" });
+      const sync = () => syncCache({ dataDir: s.dataDir, pr: prOf(s.source, s.target), remote: remoteOf(s.remote) });
+      const { cache } = await sync();
+      const files = [join(cache, "config"), join(cache, "info", "attributes")];
+      const ids = () =>
+        files.map((f) => {
+          const { ino, mtimeNs, size } = statSync(f, { bigint: true });
+          return { f, ino, mtimeNs, size };
+        });
+      const before = ids();
+      await sync();
+      expect(ids()).toEqual(before);
     },
     SLOW,
   );

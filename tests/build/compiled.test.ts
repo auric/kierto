@@ -1,9 +1,10 @@
 // Checks the binary of `bun run compile` for this host. It skips when the binary is absent.
+// It fails when an input of the compile is newer than the binary.
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { binPath, HOST } from "../../scripts/compile";
@@ -14,9 +15,23 @@ import { FAKE_TOKEN, key, startFakeBitbucket } from "../support/fake-bitbucket";
 import { DASHBOARD_PATH, onePage } from "../support/scenarios";
 
 const BIN = binPath(HOST);
-const WEB = join(import.meta.dir, "../../dist/web");
+const ROOT = join(import.meta.dir, "../..");
+const WEB = join(ROOT, "dist/web");
+// `bun run compile` builds dist/web from these and embeds it. A dist/web rebuild from the same inputs gives the same assets.
+const INPUTS = ["src", "index.html", "vite.config.ts", "tsconfig.json", "package.json", "bun.lock", "scripts/compile.ts"];
 const START_MS = 20_000;
 const ID = String.raw`[A-Z][A-Z0-9]+-\d+`;
+
+// The first input path that is newer than the binary, or null.
+function newerInput(): string | null {
+  const built = statSync(BIN).mtimeMs;
+  for (const i of INPUTS) {
+    const p = join(ROOT, i);
+    const files = statSync(p).isDirectory() ? readdirSync(p, { recursive: true }).map((f) => join(p, String(f))) : [p];
+    for (const f of files) if (statSync(f).mtimeMs > built) return relative(ROOT, f);
+  }
+  return null;
+}
 
 describe.skipIf(!existsSync(BIN))("compiled binary", () => {
   let root = "";
@@ -26,6 +41,8 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
   let session = "";
 
   beforeAll(async () => {
+    const stale = newerInput();
+    if (stale) throw new Error(`The binary is older than ${stale}: rebuild with bun run compile.`);
     root = mkdtempSync(join(tmpdir(), "rl-bin-"));
     fake = startFakeBitbucket({ routes: { [key("GET", DASHBOARD_PATH)]: { status: 200, body: onePage([]) } } });
     // An empty PATH keeps the real claude CLI out of the start-up runner check. Windows spells the name "Path".
