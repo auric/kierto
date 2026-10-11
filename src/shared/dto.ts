@@ -148,6 +148,8 @@ export type CommentDto = {
   // Root comments of inline threads only.
   excerpt?: ExcerptLine[];
   task?: "open" | "done";
+  // The app posted this comment: "run" from review drafts, "reply" from the reply composer.
+  posted?: "run" | "reply";
 };
 
 export type PrDetail = { pr: PrRow; description: string | null; comments: CommentDto[]; files?: ChangedFile[]; commits?: CommitDto[] };
@@ -253,9 +255,11 @@ export type ItemConflict = ApiError & { item: ReviewItemDto };
 
 // GET /api/prs/:id/post-plan (plan v3 WP12). Confirm (WP13) posts these bodies byte for byte.
 // lineType: the diff kind of the line. Old-side and outside findings post in the general comment (D3).
+// reply: parentId is the comment that the reply answers.
 export type PostDestination =
   | { kind: "inline"; path: string; srcPath: string | null; line: number; lineEnd: number; lineType: "add" | "ctx" }
-  | { kind: "general" };
+  | { kind: "general" }
+  | { kind: "reply"; parentId: number };
 export type PlannedPost = {
   run: number;
   sourceHead: string;
@@ -269,6 +273,55 @@ export type PlannedPost = {
 };
 // posts: per run in run order, the inline comments in item order, then the general comment.
 export type PostPlanDto = { pr: number; posts: PlannedPost[] };
+
+// ---------- Outbox (plan v3 WP13a) ----------
+
+// POST /api/prs/:id/confirm. items: every item of the confirmed posts, with the revisions on screen.
+// A planned post is sent only when all of its items are here. Any other mismatch gives 409.
+export const confirmInput = z.object({
+  items: z
+    .array(z.object({ id: positiveInt, revision: version }))
+    .min(1)
+    .max(1000),
+});
+export type ConfirmInput = z.infer<typeof confirmInput>;
+
+// POST /api/prs/:id/replies. seen: the newest live message of the thread on screen, else 409 with ReplyConflict.
+// key: a UUID made when the composer opens. The same key never sends twice.
+export const replyPostInput = z.object({
+  parentId: positiveInt,
+  body: z.string().trim().min(1).max(MAX_NOTE),
+  seen: positiveInt,
+  key: z.uuid(),
+});
+export type ReplyPostInput = z.infer<typeof replyPostInput>;
+export type ReplyConflict = ApiError & { newest: number };
+
+// pending: not sent yet. sent: the request is out. unknown: no clear answer; the app checks the remote comments, then the user decides.
+export type PostState = "pending" | "sent" | "unknown" | "failed" | "confirmed";
+
+// One comment to send. The row binds the body, the destination, and the item revisions. run: null for a manual reply.
+export type PostDto = {
+  id: number;
+  pr: number;
+  run: number | null;
+  destination: PostDestination;
+  body: string;
+  items: { id: number; revision: number }[];
+  state: PostState;
+  // The remote comment, set when the state is confirmed.
+  remoteId: number | null;
+  remoteVersion: number | null;
+  attempts: number;
+  lastError: string | null;
+  // An unknown post that the app checks against the remote comments now.
+  checking: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+// warning: the target branch moved after the review (D2). The comments stay on the reviewed commits.
+export type ConfirmDto = { posts: PostDto[]; warning: string | null };
 
 // GET /api/runs/:id. events: the run log in seq order.
 export type RunDetail = { run: RunDto; events: RunEvent[]; items: ReviewItemDto[] };

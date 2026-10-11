@@ -1,9 +1,10 @@
-// Publish API (plan v3 WP12): the post plan. WP13 adds confirm and the outbox.
+// Publish API (plan v3 WP12, WP13a): the post plan, confirm, replies, and the outbox rows. Nothing posts without confirm or a reply call.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import type { ApiError, PostPlanDto } from "../../shared/dto";
+import { type ApiError, type ConfirmDto, confirmInput, type PostPlanDto, replyPostInput } from "../../shared/dto";
 import { type ItemRow, type ReviewJobs, toItemDto } from "../review/jobs";
 import type { Settings } from "../settings";
+import { type Outbox, selectPosts } from "./outbox";
 import { buildPlan, type PlanComment, type PlanInput, type PlanRun } from "./plan";
 
 const SQL = {
@@ -23,7 +24,7 @@ const parse = (s: string): unknown => {
   }
 };
 
-// The plan input of a PR, or null for an unknown PR. WP13 confirm builds the same input.
+// The plan input of a PR, or null for an unknown PR. Confirm builds the same input.
 export function planInput(review: ReviewJobs, settings: Settings, pr: number): PlanInput | null {
   const db = review.open();
   if (!db?.query(SQL.pr).get({ pr })) return null;
@@ -36,19 +37,104 @@ export function planInput(review: ReviewJobs, settings: Settings, pr: number): P
   };
 }
 
-export function createPublishRoutes(opts: { review: ReviewJobs; settings: Settings }) {
-  return new Hono().get(
-    "/prs/:id/post-plan",
-    validator("param", (v: Record<string, string>, c) => {
-      const id = Number(v.id);
-      return Number.isSafeInteger(id) && id > 0 ? { id } : c.json<ApiError>({ error: "Invalid pull request ID." }, 400);
-    }),
-    (c) => {
+const positiveId = (what: string) =>
+  validator("param", (v: Record<string, string>, c) => {
+    const id = Number(v.id);
+    return Number.isSafeInteger(id) && id > 0 ? { id } : c.json<ApiError>({ error: `Invalid ${what} ID.` }, 400);
+  });
+const prParam = positiveId("pull request");
+const postParam = positiveId("post");
+
+const unconfigured = { error: "Configure the Bitbucket URL and token first." } satisfies ApiError;
+const notFound = { error: "Pull request not found." } satisfies ApiError;
+const planChanged = { error: "The post plan changed. Check it again." } satisfies ApiError;
+
+export function createPublishRoutes(opts: { review: ReviewJobs; settings: Settings; outbox: Outbox }) {
+  const { review, settings, outbox } = opts;
+  return new Hono()
+    .get("/prs/:id/post-plan", prParam, (c) => {
       const pr = c.req.valid("param").id;
-      const input = planInput(opts.review, opts.settings, pr);
-      if (!input) return c.json<ApiError>({ error: "Pull request not found." }, 404);
+      const input = planInput(review, settings, pr);
+      if (!input) return c.json(notFound, 404);
       c.header("Cache-Control", "no-store");
       return c.json({ pr, posts: buildPlan(input) } satisfies PostPlanDto, 200);
-    },
-  );
+    })
+    .post(
+      "/prs/:id/confirm",
+      prParam,
+      validator("json", (v, c) => {
+        const r = confirmInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid confirm." }, 400);
+      }),
+      async (c) => {
+        const db = outbox.open();
+        if (!db) return c.json(unconfigured, 409);
+        const pr = c.req.valid("param").id;
+        const { items } = c.req.valid("json");
+        const want = new Map(items.map((i) => [i.id, i.revision]));
+        if (want.size !== items.length) return c.json<ApiError>({ error: "Each item can appear once." }, 400);
+        const input = planInput(review, settings, pr);
+        if (!input) return c.json(notFound, 404);
+        const done = outbox.existing(db, pr, want);
+        if (done) return c.json({ posts: done, warning: null } satisfies ConfirmDto, 200);
+        const chosen = selectPosts(buildPlan(input), want);
+        if (!chosen) return c.json(planChanged, 409);
+        const heads = await outbox.headCheck(db, pr, [...new Set(chosen.map((p) => p.run))]);
+        if ("error" in heads) return heads.status === 409 ? c.json({ error: heads.error }, 409) : c.json({ error: heads.error }, 502);
+        const out = outbox.enqueue(db, pr, chosen, want);
+        if (!out) return c.json(planChanged, 409);
+        if (out.existing) return c.json({ posts: out.rows, warning: null } satisfies ConfirmDto, 200);
+        return c.json({ posts: out.rows, warning: heads.warning } satisfies ConfirmDto, 202);
+      },
+    )
+    .post(
+      "/prs/:id/replies",
+      prParam,
+      validator("json", (v, c) => {
+        const r = replyPostInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid reply." }, 400);
+      }),
+      (c) => {
+        const db = outbox.open();
+        if (!db) return c.json(unconfigured, 409);
+        const r = outbox.reply(db, c.req.valid("param").id, c.req.valid("json"));
+        if ("post" in r) return r.status === 202 ? c.json(r.post, 202) : c.json(r.post, 200);
+        if ("conflict" in r) return c.json(r.conflict, 409);
+        return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
+      },
+    )
+    .get("/prs/:id/posts", prParam, (c) => {
+      const db = outbox.open();
+      const posts = db && outbox.posts(db, c.req.valid("param").id);
+      if (!posts) return c.json(notFound, 404);
+      c.header("Cache-Control", "no-store");
+      return c.json(posts, 200);
+    })
+    .post("/posts/:id/retry", postParam, async (c) => {
+      const db = outbox.open();
+      if (!db) return c.json(unconfigured, 409);
+      const r = await outbox.retry(db, c.req.valid("param").id);
+      if ("post" in r) return r.status === 202 ? c.json(r.post, 202) : c.json(r.post, 200);
+      if (r.status === 404) return c.json({ error: r.error }, 404);
+      return r.status === 409 ? c.json({ error: r.error }, 409) : c.json({ error: r.error }, 502);
+    })
+    .post(
+      "/posts/:id/drop",
+      postParam,
+      validator("json", (v, c) => {
+        // An empty body drops the post. general: true moves the findings of a failed inline post to the general comment.
+        const general = (v as { general?: unknown } | null)?.general;
+        return general === undefined || typeof general === "boolean"
+          ? { general: general === true }
+          : c.json<ApiError>({ error: "Invalid drop." }, 400);
+      }),
+      (c) => {
+        const db = outbox.open();
+        if (!db) return c.json(unconfigured, 409);
+        const r = outbox.drop(db, c.req.valid("param").id, c.req.valid("json").general);
+        if (r.status === 200) return c.json({ items: r.items }, 200);
+        if (r.status === 404) return c.json({ error: r.error }, 404);
+        return r.status === 409 ? c.json({ error: r.error }, 409) : c.json({ error: r.error }, 400);
+      },
+    );
 }

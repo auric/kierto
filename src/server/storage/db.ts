@@ -4,10 +4,16 @@ import { join } from "node:path";
 
 // Index i holds the SQL that raises user_version from i to i + 1.
 // ponytail: read from disk; `bun build --compile` (M4) must embed these files.
-// The list order, not the file number, sets the version. 006_forge.sql (WP4) goes after 007_review.sql.
-const MIGRATIONS = ["001_m1.sql", "002_reviewers.sql", "003_author_login.sql", "004_v3.sql", "005_tasks.sql", "007_review.sql"].map((f) =>
-  readFileSync(join(import.meta.dir, "migrations", f), "utf8"),
-);
+// The list order, not the file number, sets the version. 006_forge.sql (WP4) goes after the last file in the list.
+const MIGRATIONS = [
+  "001_m1.sql",
+  "002_reviewers.sql",
+  "003_author_login.sql",
+  "004_v3.sql",
+  "005_tasks.sql",
+  "007_review.sql",
+  "008_post.sql",
+].map((f) => readFileSync(join(import.meta.dir, "migrations", f), "utf8"));
 
 export function openDb(path: string): Database {
   const db = new Database(path, { create: true, strict: true });

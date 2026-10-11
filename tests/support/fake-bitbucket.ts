@@ -20,6 +20,7 @@ export type Route = Reply | ((req: Request) => Reply | Promise<Reply>);
 export type FakeOptions = { routes?: Record<string, Route>; https?: boolean; port?: number };
 
 // A route key is "METHOD /path" or "METHOD /path start=N". The start form wins.
+// "METHOD /dir/*" matches any last path segment when no exact key matches.
 export const key = (method: string, path: string, start?: number) => `${method} ${path}${start === undefined ? "" : ` start=${start}`}`;
 
 export function startFakeBitbucket(opts: FakeOptions = {}) {
@@ -56,7 +57,10 @@ export function startFakeBitbucket(opts: FakeOptions = {}) {
         if (req.headers.get("authorization") !== `Bearer ${state.token}`) {
           return Response.json({ errors: [{ message: "Authentication failed." }] }, { status: 401 });
         }
-        const route = (start !== null ? routes[`${base} start=${start}`] : undefined) ?? routes[base];
+        const route =
+          (start !== null ? routes[`${base} start=${start}`] : undefined) ??
+          routes[base] ??
+          routes[key(req.method, url.pathname.replace(/\/[^/]*$/, "/*"))];
         const reply: Reply =
           typeof route === "function" ? await route(req) : (route ?? { status: 404, body: { errors: [{ message: "Not found." }] } });
         if ("hang" in reply) {

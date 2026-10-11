@@ -59,17 +59,28 @@ export function createClient(opts: ClientOptions) {
     }
   }
 
-  // GET a path under the base URL. Any status other than 2xx throws a ForgeError.
-  async function get<T extends z.ZodType>(path: string, schema: T): Promise<{ data: z.infer<T>; headers: Headers }> {
+  // One request to a path under the base URL. No retry. Any status other than 2xx throws a ForgeError.
+  async function request<T extends z.ZodType>(
+    method: "GET" | "POST",
+    path: string,
+    schema: T,
+    body?: unknown,
+  ): Promise<{ data: z.infer<T>; headers: Headers }> {
     const endpoint = path.split("?")[0] ?? path;
     return withSlot(async () => {
       let res: Response;
       let text: string;
       try {
         res = await fetch(base + path, {
+          method,
           redirect: "manual",
           signal: AbortSignal.timeout(timeoutMs),
-          headers: { Authorization: `Bearer ${opts.token}`, Accept: "application/json" },
+          headers: {
+            Authorization: `Bearer ${opts.token}`,
+            Accept: "application/json",
+            ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
           tls: ca ? { ca } : undefined,
         });
         text = await res.text();
@@ -99,6 +110,12 @@ export function createClient(opts: ClientOptions) {
     });
   }
 
+  const get = <T extends z.ZodType>(path: string, schema: T) => request("GET", path, schema);
+
+  // A POST is never repeated. A timeout, a network error, a 5xx, or a 2xx with a bad body can follow an accepted write.
+  const post = async <T extends z.ZodType>(path: string, body: unknown, schema: T): Promise<z.infer<T>> =>
+    (await request("POST", path, schema, body)).data;
+
   // Reads every page. An error, a bad cursor, or the page cap gives an incomplete result with the items read so far.
   async function list<T extends z.ZodType>(path: string, item: T): Promise<ListResult<z.infer<T>>> {
     const items: z.infer<T>[] = [];
@@ -121,5 +138,5 @@ export function createClient(opts: ClientOptions) {
     return { items, complete: false, reason: "page_limit" };
   }
 
-  return { get, list };
+  return { get, post, list };
 }

@@ -1,6 +1,8 @@
 // Shared by serve.ts (Bun) and the Playwright files (Node). Keep it free of Bun APIs.
-export const APP_PORT = 7399;
-export const FAKE_URL = "http://127.0.0.1:7398";
+// E2E_APP_PORT and E2E_FAKE_PORT move the servers, so that two checkouts can run e2e at the same time.
+// Playwright passes its environment to the web server command.
+export const APP_PORT = Number(process.env.E2E_APP_PORT || 7399);
+export const FAKE_URL = `http://127.0.0.1:${Number(process.env.E2E_FAKE_PORT || 7398)}`;
 // The fake Bitbucket accepts only this token. serve.ts sets it on the fake.
 export const E2E_TOKEN = "e2e-token-7f3a9c1d5b2e8f40";
 

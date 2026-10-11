@@ -60,6 +60,9 @@ export const comment: z.ZodType<RawComment> = z.object({
   comments: z.array(z.lazy(() => comment)).optional(),
 });
 
+// POST .../comments returns the new comment with HTTP 201 (Gate 0). The outbox keeps only its ID and version.
+export const postedComment = z.object({ id: z.number(), version: z.number() });
+
 export const activity = z.object({
   id: z.number(),
   action: z.string(),

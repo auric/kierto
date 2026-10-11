@@ -5,6 +5,7 @@ import { allowedOrigins, type GuardOptions, guard } from "./guard";
 import { createInboxRoutes } from "./inbox/routes";
 import type { Live } from "./live";
 import { createMeta } from "./meta";
+import { createOutbox, type Outbox } from "./publish/outbox";
 import { createPublishRoutes } from "./publish/routes";
 import { createReviewJobs, type ReviewJobs } from "./review/jobs";
 import { createReviewRoutes } from "./review/routes";
@@ -21,6 +22,8 @@ export type AppOptions = GuardOptions & {
   sync?: SyncEngine;
   // Absent: jobs that run claude from PATH, with no start-up recovery. main.ts and serve.ts pass their own.
   review?: ReviewJobs;
+  // Absent: an outbox that resumes on the first use of the database. main.ts and serve.ts pass their own and start it.
+  outbox?: Outbox;
   // The built index.html. Absent in dev, where Vite serves the page.
   indexHtml?: string;
   // Middleware for the built assets. Absent in dev and in tests.
@@ -32,6 +35,7 @@ export function createApp(opts: AppOptions) {
   const settings = opts.settings ?? createSettings();
   const sync = opts.sync ?? createSyncEngine({ settings, live: opts.live });
   const review = opts.review ?? createReviewJobs({ settings, live: opts.live });
+  const outbox = opts.outbox ?? createOutbox({ settings, live: opts.live });
 
   const app = new Hono()
     .use(guard(opts))
@@ -55,7 +59,7 @@ export function createApp(opts: AppOptions) {
     })
     .route("/api", createInboxRoutes({ settings, sync, live: opts.live }))
     .route("/api", createReviewRoutes({ review, live: opts.live }))
-    .route("/api", createPublishRoutes({ review, settings }));
+    .route("/api", createPublishRoutes({ review, settings, outbox }));
 
   if (opts.assets) app.use("/assets/*", opts.assets);
   if (page !== undefined) {
