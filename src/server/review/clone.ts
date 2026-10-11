@@ -228,10 +228,16 @@ export async function buildPatch(
   }
 }
 
+// `apply --index` and `reset --keep` trust the stat data in the index file. `status --no-optional-locks` does not write it, and
+// a git with another core.autocrlf can smudge a racily clean entry. The refresh records the stat data of unchanged files.
+const refreshIndex = (path: string) => inClone(path, ["update-index", "-q", "--refresh"]);
+
 // git-apply(1): all or nothing. --index needs the index to equal the worktree for each touched path.
 // The check runs alone first, so the caller can record the apply. Untracked files that collide fail the check.
-export const applyCheck = (path: string, patch: string, reverse = false) =>
-  succeeds(inClone(path, ["apply", "--index", "--whitespace=nowarn", "--check", ...(reverse ? ["-R"] : [])], patch));
+export async function applyCheck(path: string, patch: string, reverse = false) {
+  await refreshIndex(path);
+  return succeeds(inClone(path, ["apply", "--index", "--whitespace=nowarn", "--check", ...(reverse ? ["-R"] : [])], patch));
+}
 export const applyIndex = (path: string, patch: string, reverse = false) =>
   inClone(path, ["apply", "--index", "--whitespace=nowarn", ...(reverse ? ["-R"] : [])], patch);
 
@@ -307,7 +313,10 @@ export async function cloneHead(path: string): Promise<{ head: string | null; br
   return { head: head || null, branch: ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : null };
 }
 
-export const resetKeep = (path: string, to: string) => inClone(path, ["reset", "-q", "--keep", to]);
+export async function resetKeep(path: string, to: string) {
+  await refreshIndex(path);
+  await inClone(path, ["reset", "-q", "--keep", to]);
+}
 
 export type FixCommitRow = {
   id: number;

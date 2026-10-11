@@ -3,7 +3,7 @@
 // Runs against serve.ts only: the fake Bitbucket with the author PR 1004, a temp git remote with temp clones, and the fake CLI.
 // The CLI echoes the reply judgements valid, partly, invalid, question, null per thread (tests/support/fake-claude.ts echoReplies).
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
 import { APP_PORT, cloneState, control, E2E_TOKEN, FAKE_URL, makeClone, pushClone, writes } from "./control";
@@ -197,9 +197,9 @@ test("a dirty clone keeps Apply disabled; a clean one commits; Undo resets the c
   // The validator drops the edit of the thread that the run did not ask for.
   await expect(fixCard(page, LOOP)).toHaveCount(0);
 
-  // The patch does not touch README.md, so its new file time cannot fail `git apply --index`.
+  // The patch file itself: after the revert it has a new file time and the same content.
   const path = await makeClone(1004);
-  const file = join(path, "README.md");
+  const file = join(path, "src", "cache", "flush.ts");
   const clean = readFileSync(file, "utf8");
   writeFileSync(file, `${clean}// local change\n`);
   const before = (await cloneState(path)).head;
@@ -271,12 +271,16 @@ test("a failing pre-commit hook leaves the edits staged; the dialog shows its st
   await expect(fixCard(page, LOCK)).toContainText("Proposed fix, 1 edit", { timeout: RUN_MS });
 
   // The hook of the clone itself. A local core.hooksPath wins over any hook folder in the user config.
-  // A local core.autocrlf keeps the staged index check free of the user config.
+  // A core.autocrlf=true clone: the checkout gives CRLF files.
   const path = await makeClone(1004);
   const hooks = join(path, ".git", "hooks");
   writeFileSync(join(hooks, "pre-commit"), "#!/bin/sh\necho 'lint: missing semicolon in flush.ts' >&2\nexit 1\n", { mode: 0o755 });
   git(path, ["config", "core.hooksPath", hooks.replaceAll("\\", "/")]);
-  git(path, ["config", "core.autocrlf", "false"]);
+  git(path, ["config", "core.autocrlf", "true"]);
+  // read-tree drops the stat data, so checkout-index writes every file again.
+  git(path, ["read-tree", "HEAD"]);
+  git(path, ["checkout-index", "-f", "-a"]);
+  expect(readFileSync(join(path, "src", "cache", "flush.ts"), "utf8")).toContain("\r\n");
   const before = (await cloneState(path)).head;
 
   await page.locator("[data-fixbar]").getByRole("button", { name: "Apply 1 edit from 1 comment" }).click();
@@ -290,6 +294,12 @@ test("a failing pre-commit hook leaves the edits staged; the dialog shows its st
   await expect(alert).toContainText("lint: missing semicolon in flush.ts");
   expect((await cloneState(path)).head).toBe(before);
   expect(git(path, ["diff", "--cached", "--name-only"])).toBe("src/cache/flush.ts");
+  // Another git without autocrlf, such as a WSL git, smudges the racily clean entry of the CRLF file. An older index file makes
+  // every entry racy.
+  const { atime, mtime } = statSync(join(path, "src", "cache", "flush.ts"));
+  utimesSync(join(path, ".git", "index"), atime, new Date(mtime.getTime() - 10_000));
+  git(path, ["-c", "core.autocrlf=false", "status", "--porcelain"]);
+  expect(git(path, ["ls-files", "--debug", "src/cache/flush.ts"])).toContain("size: 0");
   // The card shows the staged state behind the dialog. Apply waits for the Undo.
   await expect(fixCard(page, LOCK)).toContainText("The edits are staged in your clone, but the commit did not finish.");
   await expect(box.getByRole("button", { name: "Apply and commit" })).toHaveAttribute("aria-disabled", "true");

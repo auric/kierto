@@ -2,7 +2,18 @@
 // The fake Bitbucket on 127.0.0.1 serves the PR. Git in the clone reads a temp HOME, so no user config of this machine applies.
 import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
@@ -466,6 +477,28 @@ describe("apply and commit", () => {
   );
 
   test(
+    "a patch file with a new time and the same content applies, and Undo resets over it",
+    async () => {
+      const s = await setup();
+      const clone = await makeClone();
+      expect((await s.setClone(clone)).status).toBe(200);
+      const file = join(clone, "src/flush.ts");
+      const old = new Date("2020-01-01T00:00:00Z");
+      utimesSync(file, old, old);
+      const r = await s.apply([s.ids[0] as number]);
+      expect(r.status).toBe(201);
+      expect(await cg(clone, ["rev-parse", "HEAD^"])).toBe(heads.source);
+      // `reset --keep` refuses a file that is "not uptodate" in the index file.
+      utimesSync(file, old, old);
+      const u = await s.undo(r.body.id);
+      expect([u.status, u.body.state]).toEqual([200, "undone"]);
+      expect(await cg(clone, ["rev-parse", "HEAD"])).toBe(heads.source);
+      expect(await cg(clone, ["status", "--porcelain"])).toBe("");
+    },
+    SLOW,
+  );
+
+  test(
     "GIT_DIR and GIT_WORK_TREE in the app env change nothing",
     async () => {
       const s = await setup();
@@ -536,6 +569,32 @@ describe("hooks", () => {
       expect(await cg(clone, ["status", "--porcelain"])).toBe("");
       expect(existsSync(join(clone, "docs/flush.md"))).toBe(false);
       expect(readFileSync(join(clone, "src/flush.ts"), "utf8")).toBe(FLUSH);
+    },
+    SLOW,
+  );
+
+  test(
+    "core.autocrlf=true: a status by a git without autocrlf smudges the staged entries; Undo still restores the index and the files",
+    async () => {
+      const s = await setup();
+      const clone = await makeClone({ autocrlf: true });
+      hook(clone, "pre-commit", "exit 1");
+      expect((await s.setClone(clone)).status).toBe(200);
+      expect((await s.apply(s.ids)).status).toBe(409);
+      // The entries are racily clean when the index file is not newer than the files.
+      const file = join(clone, "src/flush.ts");
+      const { atime, mtime } = statSync(file);
+      utimesSync(join(clone, ".git", "index"), atime, new Date(mtime.getTime() - 10_000));
+      // Without the CRLF conversion the CRLF files differ from the LF blobs, so this status writes size 0 into their entries.
+      await cg(clone, ["-c", "core.autocrlf=false", "status", "--porcelain"]);
+      expect(await cg(clone, ["ls-files", "--debug", "src/flush.ts"])).toContain("size: 0");
+      const fix = (s.db.query("SELECT id FROM fix_commit").get() as { id: number }).id;
+      const u = await s.undo(fix);
+      expect([u.status, u.body.error ?? "", u.body.state]).toEqual([200, "", "undone"]);
+      expect(await cg(clone, ["rev-parse", "HEAD"])).toBe(heads.source);
+      expect(await cg(clone, ["status", "--porcelain"])).toBe("");
+      expect(existsSync(join(clone, "docs/flush.md"))).toBe(false);
+      expect(readFileSync(file, "utf8")).toBe(FLUSH.replaceAll("\n", "\r\n"));
     },
     SLOW,
   );
