@@ -246,3 +246,23 @@ Sources:
 | Redirects (SSO, login page, http to https) | UNVERIFIED | The docs do not describe them. The client treats any 3xx as an error and follows none. |
 | `git merge-tree --write-tree --no-messages` | CONFIRMED (Windows git 2.56.0.windows.1) | A run in a temp repository printed a tree ID with exit 0. The docs give exit 0 for a clean merge and 1 for a conflict. Other codes are errors. The 2.38.0 page is the first that documents `--write-tree`. Linux and macOS git are not checked. |
 | Real CLI accepts `rereviewJsonSchema()` and `askJsonSchema()` with `--json-schema` | NOT RUN | Only the fake CLI ran. On a rejection, the run fails and keeps the raw output. |
+
+## Release 3 (not run)
+
+Status: NOT RUN, 2026-10-11. No check ran against a real Jira server, a real user clone, or the real `claude` CLI. The rows below come from the Release 3 plan, public docs, and upstream source. Code may depend on them only with the fallback in docs/plans/r3.md. docs/smoke-r3.md, B11, and B12 record the real results.
+
+Run: `bun scripts/gate/claude-checks.ts --only B11,B12`, then `bun scripts/gate/sanitize-claude.ts`.
+
+| Fact | Result | Evidence |
+|---|---|---|
+| U21. The real CLI accepts `fixJsonSchema()` and the new `replyJsonSchema()` with a nullable `judgement` enum | UNVERIFIED | Only the fake CLI ran. On a rejection, the run fails and keeps the raw output. B11 checks it. |
+| U22. `structured_output` carries `new` strings of 20 KB | UNVERIFIED | B11 sends a 2 KB string only. The 20 KB case needs a real fix run (smoke A). |
+| U23. Read returns image content for PNG and JPEG files in the cwd under `--restricted` | UNVERIFIED | B12 checks PNG only. Fallback: images are listed in task.md only. |
+| U24. The Read image size limit is 5 MB or more | UNVERIFIED | The app includes images of 5 MB or less (`RUN_IMAGE_BYTES`). |
+| U25. Jira returns `renderedFields` on the issue and `renderedBody` on comments with `expand` | UNVERIFIED | Smoke E records the rendered tag names only. A missing rendered field falls back to the raw wiki text in a fenced block. |
+| U26. Shape of the Jira `attachment` field: `id`, `filename`, `mimeType`, `size`, `created` | UNVERIFIED | The zod schema is lenient. `id` can be a string or a number. Smoke F records the shape. |
+| U27. The Jira PAT works on `GET <base>/secure/attachment/<id>/<filename>` | UNVERIFIED | Smoke F downloads an image, a log, and a dump. |
+| U28. Redirect status of an attachment download, if any | UNVERIFIED | The client follows same-origin 3xx only, at most 3 hops. A cross-origin 3xx is error "redirect". |
+| U29. The downloaded byte count equals the reported `size` | UNVERIFIED | A mismatch is error "shape", and nothing is stored. This rule catches an SSO login page with status 200. |
+| B11. Real CLI with `--json-schema replyJsonSchema()` and `fixJsonSchema()` and the WP8 flag set: `structured_output` parses with zod, including a null judgement and a 2 KB `new` string | NOT RUN | One Haiku run per schema. |
+| B12. Read of a generated one-color PNG at `context/attachments/1.png` under `--restricted` | NOT RUN | PASS when the run has a Read `tool_result` for the file without `is_error`. The color answer is INFO only. |

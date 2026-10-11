@@ -1,6 +1,6 @@
 # Review Loop: Project Brief
 
-Status: draft 2, 2026-10-09. Scope: a production-quality personal tool for Bitbucket Server pull request (PR) review with Claude Code. Edge-case reference: PROJECT_BRIEF_GPT_ASTRA_6.md.
+Status: draft 3, 2026-10-11. Scope: a production-quality personal tool for Bitbucket Server pull request (PR) review with Claude Code. Edge-case reference: PROJECT_BRIEF_GPT_ASTRA_6.md.
 
 ## 0. How to use this file
 
@@ -48,6 +48,7 @@ Release 1 goals:
 Non-goals for Release 1:
 - No diff viewer. Links open the diff in Bitbucket.
 - No automatic review without a click. No automatic approval, merge, thread resolution, or code edit.
+- Release 3 changes code only after an explicit Apply click. The app never pushes.
 - No team features, no hosted server, no multi-user mode, no desktop shell.
 - No Bitbucket Cloud, GitHub, or GitLab. Code-host access stays behind one boundary (ForgeProvider).
 
@@ -63,6 +64,13 @@ Release 2 (plan: docs/plans/r2.md):
 - Jira context: fetch the text of the PR's Jira issues on a click. The review reads it as untrusted data.
 - Ask the PR: a one-shot question about the PR. The answer is text only. Nothing can post.
 - Read-only diff viewer: the changed files with threads and drafts on their lines. Links still open the diff in Bitbucket.
+
+Release 3 (plan: docs/plans/r3.md):
+- Fix it (author side): on my own PR, each AI reply draft gets a judgement. The values are valid, partly, invalid, question, or none. For valid and partly comments, a read-only fix run proposes exact edits. I review each edit, then click Apply. The app commits in my clone, or on an app branch that I fetch. I push by hand.
+- Copy prompt for Claude Code: a prompt with the comment as untrusted data. I paste it into interactive Claude Code in my clone.
+- Jira attachments: the brief lists the attachments of a fetched issue. I download each one on a click, save it, or open its folder. Inclusion in runs is an opt-in per file.
+- Jira Markdown: the brief shows the Jira text as Markdown. The server converts it from the rendered HTML.
+- Tasks for every run kind: reply drafts, Ask, and fix runs show the same task chips as the brief. Each run records the tasks it used.
 
 ## 3. Decisions
 
@@ -110,6 +118,8 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 - Before each run, the app calls `claude auth status`. It runs only when `authMethod` is `claude.ai`. Otherwise it stops and explains. Log only `authMethod` from `claude auth status`, because its output also holds the email and organization.
 - `--restricted` ignores the settings files and keeps the file tools inside the cwd (Gate B8). The app refuses a CLI older than 2.1.295.
 - A separate folder is not an OS sandbox. The review gets read-only tools only, no shell, and no code-host token.
+- Fix runs (Release 3) are read-only, like reviews. They get no Edit, Write, or Agent tool. They return exact text replacements in `structured_output`. The app checks each edit. It applies the edits only after the user clicks Apply.
+- The app never runs `claude` in the user's clone. A fix run uses the same sanitized snapshot as a review.
 
 ### 3.6 Local server safety
 
@@ -118,6 +128,9 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 - Every mutation needs a per-start session token. The server puts it into the page it serves.
 - Outbound calls go only to the configured Bitbucket instance. Check redirects against it. The one exception: a review with a Docs profile lets the CLI call the documentation MCP servers (Microsoft Learn, DeepWiki).
 - Release 2: outbound calls can also go to the configured Jira origin. They occur only on a Settings save or a Fetch click, never during polling. The Jira client sends GET only, follows no redirect, and calls no other origin.
+- Release 3: a Download click also calls Jira. The attachment download follows same-origin redirects only, at most 3 hops. It checks the origin and the base path on each hop. A cross-origin redirect is an error, so the token never leaves the Jira origin.
+- Release 3: the app runs git in the user's clone only on a clone check, Apply, and Undo. It runs no git network command there. Apply and the confirm of a post call Bitbucket once for the live PR state.
+- Attachment files are served as downloads (`Content-Disposition: attachment`, `application/octet-stream`, `nosniff`, `Content-Security-Policy: sandbox`). Inline display is for raster images only: PNG, JPEG, GIF, and WebP by magic bytes. SVG and HTML are never served inline. No browser request goes to Jira.
 - Support a corporate CA file. Never disable TLS verification.
 - The Bitbucket token lives in the OS credential store through `Bun.secrets` (experimental; verify in Gate 0). Fallback: memory only, asked again after a restart. The Jira personal access token (Release 2) uses the same store under its own name.
 - The tokens never go into SQLite, localStorage, URLs, logs, or prompts. Logs are redacted. No telemetry.
@@ -142,12 +155,14 @@ Local server (Bun + Hono, TypeScript)
    +-- bitbucket/  ForgeProvider: REST client --> Bitbucket Server (read, post)
    +-- sync/       poll, page, reconcile, checkpoints
    +-- inbox/      attention rules, read state, notifications
-   +-- review/     jobs, snapshot, auth check, CLI runner, validator
+   +-- review/     jobs, snapshot, auth check, CLI runner, validator, fix edits
+   |     +-- clone.ts: checks, apply, commit, undo in the user's clone (Release 3)
    |     +-- git cache (bare clone) --git worktree--> run folder (sanitized)
    |     +-- spawn: claude -p (cwd = snapshot, scrubbed env)
    |                 +-- MCP: Microsoft Learn, DeepWiki
    |                 +-- MCP (optional, read-only): CodeGraph
    +-- context/    ContextSource: Jira REST client --> Jira (read, on a click)
+   |     +-- attachments: download, store, serve (Release 3)
    +-- publish/    approvals, durable outbox, reconcile
    +-- storage/    SQLite, migrations
 ```
@@ -170,7 +185,7 @@ Review Loop principles:
 1. Human gate: nothing goes to the code host without an explicit user action. Approval binds the exact text and destination. Editing the text removes the approval.
 2. Untrusted input: PR titles, descriptions, code, comments, and repository files are hostile. They can contain prompt injection or executable configuration. Review runs use a sanitized snapshot, read-only tools, and no code-host write access. The app posts, not the AI.
 3. Credentials: the app never reads, stores, or forwards AI-provider credentials. It starts the user's own official Claude Code CLI with the subscription login. It never falls back to paid API use. Code-host tokens stay in the OS credential store or in memory.
-4. Zero-token tracking: polling, unread state, notifications, and publication never call an LLM. Only reviews, explanations, drafts, and Ask answers use tokens.
+4. Zero-token tracking: polling, unread state, notifications, and publication never call an LLM. Only reviews, explanations, drafts, fix proposals, and Ask answers use tokens.
 5. One review runs at a time by default. Each run shows the usage that the CLI reports. No automatic retry after a usage limit.
 6. Revision-pinned evidence: every result names the commits it reviewed. A result for older commits shows as stale.
 7. Honest coverage: every result lists what it read, skipped, and could not reach. An incomplete run never reports "no issues".
@@ -261,7 +276,8 @@ Stack:
 - Git: the git CLI through Bun.spawn with argument arrays and an isolated config (no system or global config, no credential helper), never shell strings. AI: the system claude CLI.
 - Secrets: Bun.secrets (experimental; verify on Windows and Linux in Gate 0). Fallback: memory only for the session.
 - Tests: bun test for logic and integration, Playwright for browser acceptance.
-- Diff viewer (Release 2): no diff library. It uses the parsed git diff rows and the existing excerpt styles.
+- Diff viewer (Release 2): no diff library. It uses the parsed git diff rows and the existing excerpt styles. Release 3 fix edits use the same rows. There is still no diff library.
+- Jira Markdown (Release 3): turndown 7.2.4 (exact pin) converts the rendered Jira HTML on the server. Tables use an own rule, not a plugin.
 - Distribution: bun build --compile makes one executable for Windows and one for Linux, with the UI embedded. Users need no runtime install.
 - Windows checks first (Gate 0): start claude.exe, send the prompt on stdin, cancel a run, read and write Bun.secrets. Cancel must stop the whole process tree, including MCP servers (taskkill /T /F on Windows). If Bun fails one check, switch to Node. Keep the code on web-standard APIs plus a thin spawn, SQLite, and secrets layer. Gate 0 passed all Windows checks on Bun 1.4.2; the Node fallback stays for Linux and future regressions.
 
@@ -271,12 +287,12 @@ Boundaries (build each only when its milestone needs it):
 - ContextSource: the single-repository snapshot (M2). Release 2 adds one issue source behind this boundary: Jira (id "jira", check(), fetchIssue(key)) and a fake Jira for tests. Related repositories come later (backlog).
 
 Layout:
-- src/web/ (inbox, PR detail, shared UI)
+- src/web/ (inbox, PR detail, shared UI; Release 3: fix/ for the fix UI and the Claude Code prompt)
 - src/server/bitbucket/ (REST transport, mapping, capabilities)
 - src/server/sync/ (polling, paging, reconciliation, checkpoints)
 - src/server/inbox/ (attention rules, read state, notifications)
-- src/server/review/ (jobs, snapshot, auth check, CLI, context, validator, diff viewer data)
-- src/server/context/ (Release 2: ContextSource, Jira REST client, task.md)
+- src/server/review/ (jobs, snapshot, auth check, CLI, context, validator, diff viewer data; Release 3: edits.ts, fix.ts, clone.ts, fix-routes.ts)
+- src/server/context/ (Release 2: ContextSource, Jira REST client, task.md; Release 3: markdown.ts, attachments.ts)
 - src/server/publish/ (approvals, durable outbox, reconcile)
 - src/server/storage/ (SQLite, migrations)
 - src/shared/ (IDs, DTOs, zod schemas)
@@ -295,10 +311,14 @@ Bitbucket Server REST 1.0, auth with an HTTP access token as Bearer (Gate 0: Dat
 Jira Server REST 2 (Release 2, from the Jira 9.12 docs; not verified on a real server):
 - Auth: a personal access token as Authorization: Bearer.
 - Settings save: GET /rest/api/2/myself.
-- Fetch click: GET /rest/api/2/issue/{key}?fields=summary,description,status, then GET /rest/api/2/issue/{key}/comment?startAt=&maxResults=100, at most 5 pages.
-- GET only. Redirects are errors. 30 s timeout. https only; http only on loopback. Errors keep the kind, the status, and the endpoint, never the body or the headers.
+- Fetch click: GET /rest/api/2/issue/{key}?fields=summary,description,status,attachment&expand=renderedFields, then GET /rest/api/2/issue/{key}/comment?startAt=&maxResults=100&expand=renderedBody, at most 5 pages. Release 3 adds `attachment` and both `expand` values. One response body is at most 10 MB.
+- GET only. Redirects are errors, except same-origin redirects of an attachment download. 30 s timeout. https only; http only on loopback. Errors keep the kind, the status, and the endpoint, never the body or the headers.
 - Caps: description 20,000 characters, each comment 5,000, 500 comments, 200 KB in total. Over a cap, the result is marked truncated.
 - Only a key that the PR names (pr_task) can be fetched. The issue text goes to the review only as context/task.md under the untrusted banner.
+- Markdown (Release 3): turndown converts the rendered HTML. It removes script, style, iframe, object, embed, form, input, button, select, textarea, noscript, template, svg, math, video, audio, canvas, link, meta, and base. A link stays a link only for http(s). A Jira attachment image becomes `![name](attachment:<id>)`. The caps apply after conversion. A missing rendered field, or HTML over 1 MB, uses the raw wiki text in a fenced block. Old rows without `format: "markdown"` stay plain text.
+- Attachments (Release 3): the fetch stores metadata only, at most 200 entries. A Download click gets one file from `<base>/secure/attachment/<id>/<encoded filename>`. The app never uses the `content` URL from the server. The file streams to `<name>.part` with a byte cap. The byte count must equal the reported size. Caps: 100 MB per file, 500 MB per PR. The app never extracts archives.
+- Attachment files live in `<dataDir>/attachments/<db stem>/<pr row id>/<KEY>/<attId>-<safe name>`. A safe name is an NFC basename with at most 100 characters. It has no control characters, no `<>:"/\|?*`, no trailing dots or spaces, and no bare Windows device name. Start-up deletes `.part` files, folders without rows, and the files of PRs archived for over 30 days.
+- Run inclusion is a per-file opt-in, off by default. Its confirm dialog names the company AI policy. Included images (5 MB or less, at most 20) go to `context/attachments/`. Included text files (256 KB each, 1 MB in total) go there with the untrusted banner. task.md lists all other files by name, size, and type only.
 
 Sync rules:
 - Poll followed active PRs about every 60 s. At most 2 concurrent requests. Add jitter. Back off on errors. No source or full diff downloads during polling.
@@ -344,7 +364,21 @@ Review runner:
 - Each run writes a transcript to ~/.claude/projects/<encoded cwd>/. The transcript holds the reviewed code. --no-session-persistence still writes the per-cwd folders (Gate B4), so the app deletes them after each run. No run resumes a session. Ask is one-shot.
 - Profiles: four shipped profiles (General, Over-engineering, Security, Explain). The user can edit, add, remove, and reset them in Settings. Each profile has a name, a note, the prompt, Explain, Docs, and a turn cap. Explain asks only for the summary and questions, with a lower turn cap.
 - Each run stores the profile name, revision, and explain flag at its start. A later profile edit does not change an old run.
-- Run kinds: review, reply, and ask (Release 2). A re-review is kind review with since_head set. Ask runs without the Agent tool, writes no items, and shares the one run slot.
+- Run kinds: review, reply, ask (Release 2), and fix (Release 3). A re-review is kind review with since_head set. Ask and fix run without the Agent tool and share the one run slot. Ask writes no items.
+- Tasks: every run kind gets context/task.md with all fetched tasks of the PR. The PR has one task set and no per-run picker. Each run stores its task keys and fetch times at its start. Its run line shows them.
+- Judgement (Release 3): each reply draft carries a judgement: valid, partly, invalid, question, or null. Null means that the newest message asks for no change and no answer. Only valid and partly offer Fix, and only on PRs where I am the author.
+- Fix run (Release 3): only on author PRs, not with the Explain profile, for 1 to 25 threads. The output is `{summary, threads, edits, coverage}`. Each edit is `{thread, path, old, new}`. A run has at most 50 edits and 20,000 characters per string.
+- Edit rules: `old` matches exactly once in the file at the run's source head S. Edits do not overlap. An empty `old` creates a file that is absent at S. For a CRLF file and an `old` without CR, the app converts "\n" to "\r\n" in `old` and `new`. UTF-8 decodes fatally and keeps the BOM. The app refuses binary files, invalid UTF-8, LFS pointers, links, and submodules. An edit that fails a rule goes to coverage as skipped.
+- Denied paths: any path outside the repository, any `.claude` or `.git` segment, `.mcp.json`, CLAUDE.md, CLAUDE.local.md, AGENTS.md, and `.gitmodules`. Hook sources are also denied: `.githooks` and `.husky` segments, `.pre-commit-config.yaml`, lefthook files, lint-staged and commitlint configs, and the `core.hooksPath` folder of the clone. Names compare without case.
+- Patch: the app writes the new blobs into the cache and builds tree T from S with a temp index. The patch is `git diff S T`, with the isolated config, `core.autocrlf=false`, and no text conversion.
+- Clone: one path per repository in SQLite, set by the user. The path is the absolute top folder of an existing non-bare work tree, outside the data folder. The clone matches by commits, not by remote URL.
+- Clone checks before Apply: the branch is the PR source branch and HEAD is not detached. S and the live source head are ancestors of HEAD, else the clone is "behind" or "diverged". No tracked or staged change exists. No merge, rebase, cherry-pick, revert, or bisect is in progress. `user.name` and `user.email` are set. The app refuses a dirty clone. Untracked files and local commits that are not pushed are allowed.
+- Apply: `git apply --index --check`, then `git apply --index`, without `--3way`. Then `git commit -F -` with the user's environment: no GIT_* variables, `GIT_TERMINAL_PROMPT=0`, and a 120 s timeout. The commit uses the user's identity, config, signing, and hooks. Hooks run. A hook or commit failure leaves the change staged and shows the stderr tail.
+- Commit message: the user edits it in the Apply dialog, 1 to 5,000 characters. Default: "Fix review comment <id> on PR <n>", with one body line per thread.
+- App branch fallback: `commit-tree T -p S` in the cache, under `refs/rl/<pr>/fix/<fixId>`. The UI shows the `git fetch` and `git merge --ff-only FETCH_HEAD` commands to copy.
+- Undo: only for a committed row when HEAD equals its commit, the branch is unchanged, the tree is clean, and the PR commits do not list it. Undo runs `git reset --keep <before>`. A staged row resets only its patch paths, and only when the index still equals the patch.
+- Apply, commit, and undo do not use the run slot. They run under a per-clone lock. A repeat request with the same run, mode, and edits returns the same row.
+- Copy prompt for Claude Code: a pure client function. The prompt holds the PR identity, the branch, the path, the line, and a rule: judge first, never commit or push. The comments go in an indented block. The app starts no terminal and builds no shell command.
 - Re-review range (Release 2): T = git merge-tree --write-tree --no-messages <since> <new merge base>. If T equals the tree of <since>, the range base is <since>. Else the range base is git commit-tree T -p <since> -p <new merge base> with a fixed identity and date. A conflict, a missing object, or a git error falls back to the full range from the merge base. The context diff shows range base..head. The validator diff and post anchors stay on merge base..head.
 - Re-review carry-over: the base run's new and accepted items carry over. The prompt lists only their IDs; their text goes in context/findings.md. A missing verdict makes the run incomplete.
 
@@ -368,6 +402,7 @@ Publication:
 - A timeout after send sets unknown. Reconcile against remote comments before any retry. If still unclear, the user decides.
 - Publish is idempotent on the server side: one outbox row per approval. A second tab or a refresh never sends twice.
 - The backend posts. Claude never posts.
+- "Fixed in" reply (Release 3): after a fix commit, the app supersedes the thread's open reply drafts. It adds a reply item "Fixed in <short hash>.". The item posts only when the PR commits list the commit and were fetched for the current heads. Else confirm returns 409 "Commit <short> is not on the PR source branch yet. Push it. The next sync finds it." A rebased fix stays blocked, and the user writes a manual reply.
 - AI mark (setting, on by default): the post plan puts "🤖 " once at the start of each post built from an AI item (finding, question, reply draft, edited or not). A manual reply never gets it. The outbox keeps the marked text, so confirm, send, and reconcile use the same bytes.
 
 Notifications: opt-in. Deduplicate by event and comment version. Coalesce per PR. No self-events. After downtime, show one digest. Notifications work only while the service and a UI tab run.
@@ -381,13 +416,24 @@ Data model (SQLite):
 - acknowledgement(comment key, acknowledged_version, acknowledged_at)
 - sync_checkpoint(scope, cursor_json, last_complete_at, incomplete_reason, last_error)
 - pr_brief(pr, note, profile, updated_at)
-- review_run(id, pr, kind: review|reply|ask, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, merge_base, fetch_via, status, error_kind, error_text, session_id, cli_version, model, usage_json, summary_json, raw_output, started_at, finished_at, since_head, range_base, question, answer). One running row per idem_key. Release 2 adds kind ask and the last four columns.
+- review_run(id, pr, kind: review|reply|ask, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, merge_base, fetch_via, status, error_kind, error_text, session_id, cli_version, model, usage_json, summary_json, raw_output, started_at, finished_at, since_head, range_base, question, answer). One running row per idem_key. Release 2 adds kind ask and the last four columns. Release 3 adds kind fix, fix_json (the thread notes of a fix run), and tasks_json (the task keys and fetch times of the run).
 - task_context(pr, key, source: jira, json, fetched_at). Release 2. One row per PR and issue key.
+- task_attachment(pr, key, att_id, filename, mime, size, file, sha256, image, text, include, downloaded_at). Release 3. A task_context delete removes its rows.
+- repo_clone(project, repo, path, updated_at). Release 3. One clone path per repository.
+- fix_edit(id, run, ord, thread, path, old, new, start, rows_json). Release 3. The checked edits of a fix run.
+- fix_commit(id, pr, run, idem_key, edits_json, mode: clone|cache, clone_path, branch, before_head, commit_hash, short_hash, state: committed|staged|undone, message, created_at, updated_at). Release 3. idem_key is unique while the state is not undone.
 - run_event(run, id, seq, parent, tool, target, status, note, agent, started_at, ended_at)
-- review_item(id, run, kind: finding|question|reply, payload_json, body, anchor columns, status: new|accepted|discarded|posted, revision, edited, thread)
+- review_item(id, run, kind: finding|question|reply, payload_json (Release 3: a reply adds judgement, and a "Fixed in" reply adds fix {id, commit}), body, anchor columns, status: new|accepted|discarded|posted, revision, edited, thread)
 - post(id, pr, run, kind: inline|general|reply, idem_key unique, body, destination_json, items_json, state: pending|sent|unknown|failed|confirmed, remote_id, remote_version, attempts, last_error, created_at, updated_at). The row is the approval and the outbox entry.
 
 Config: one JSON file in the user data folder. It holds no secrets. Fields include the Bitbucket URL, the CA file, markAi, the task rules, checkSeconds (the poll interval), and profiles (absent: the shipped profiles). Release 2 adds jira: {baseUrl, caFile?}. An empty baseUrl disconnects Jira and clears its token.
+
+Release 3 routes (zod input on each):
+- POST /api/prs/:id/fix-run; GET /api/prs/:id/fixes.
+- GET, PUT, and DELETE /api/prs/:id/clone. GET runs git in the clone with no network.
+- POST /api/fix-runs/:run/commit (409 with the clone problems); POST /api/fix-commits/:id/undo.
+- POST, GET, PUT, and DELETE /api/prs/:id/task-context/:key/files/:att; GET .../files/:att/image; POST /api/prs/:id/task-context/:key/open-folder. `:att` is 1 to 18 digits.
+- Open folder starts the platform file manager with the folder path, never a file. Without an opener, the route returns 501 with the path.
 
 Tests:
 - Sanitized fixtures from Gate 0: nested replies, edits, deletions, duplicate activities, out-of-order activities, a late message during mark-read, paging, truncation.
@@ -422,7 +468,7 @@ Phase 2, close the loop:
 Phase 3, author mode (my own PRs):
 - Self-review before I open a PR.
 - A digest of incoming feedback, grouped by topic.
-- Draft fixes in a worktree for accepted feedback. I review and push.
+- Draft fixes for accepted feedback: moved to Release 3 as Fix it (section 2). I review, apply, and push.
 - Draft a PR description from the commits and the Jira issue.
 
 Phase 4, better reviews:
@@ -447,7 +493,7 @@ Phase 5, reach:
 1. Bitbucket version and auth? [Answered in Gate 0: Data Center 9.4.26. An HTTP access token as Bearer works for reads and writes.]
 2. Can clients fetch refs/pull-requests/*? [Partly answered in Gate 0: ls-remote lists refs/pull-requests/<id>/from, and no merge ref. Verify the fetch in M2. Fall back to a branch fetch.]
 3. Mark AI-assisted comments? [Answered: the 🤖 mark, a setting that is on by default. The user owns every posted comment.]
-4. Which local repository paths may the app read? [None at first. The app uses its own cache clones.]
+4. Which local repository paths may the app read? [Release 3: one clone path per repository, set by the user. The app runs git there only for clone checks, Apply, and Undo. Reviews and fix runs use the app's own cache clones.]
 5. Which MCP servers run in reviews? [Microsoft Learn and DeepWiki. Add CodeGraph only with a read-only tool list. Jira is no MCP server: Release 2 fetches the issue text through the app's Jira REST client and gives it to the review as a file.]
 6. The existing Bitbucket MCP: tool names, schemas, and paging? [Answered in Gate 0: names and schemas are recorded in integration-check.md. It has comment write tools and no delete tool. Sync and publish use REST either way.]
 7. The colleague's app: source and license? [Inspect it when available. Reuse working modules. Not a blocker for fixture work.]
@@ -471,5 +517,11 @@ Phase 5, reach:
 - Jira Server platform REST API 9.12.0 (checked 2026-10-11): https://docs.atlassian.com/software/jira/docs/api/REST/9.12.0/ (anchors api/2/myself-getUser, api/2/issue-getIssue, api/2/issue-getComments).
 - Atlassian Data Center personal access tokens (checked 2026-10-11): https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html (Authorization: Bearer; Jira 8.14 and later).
 - git merge-tree (checked 2026-10-11): https://git-scm.com/docs/git-merge-tree (--write-tree, --no-messages; exit 0 clean, 1 conflict). The 2.38.0 page is the first that documents --write-tree.
+- turndown 7.2.4: https://github.com/mixmark-io/turndown (HTML to Markdown, rules, remove()).
+- git apply: https://git-scm.com/docs/git-apply (--index, --check; all or nothing without --3way).
+- githooks: https://git-scm.com/docs/githooks (core.hooksPath; the hooks that `git commit` runs).
+- Git LFS pointer spec: https://github.com/git-lfs/git-lfs/blob/main/docs/spec.md (first line `version https://git-lfs.github.com/spec/v1`).
+- WHATWG Encoding: https://encoding.spec.whatwg.org/ (TextDecoder fatal and ignoreBOM).
+- Jira Server platform REST API 9.12.0, Release 3 use: the same docs, anchors api/2/issue-getIssue (`expand=renderedFields`, field `attachment`), api/2/issue-getComments (`expand=renderedBody`), and api/2/attachment. Not verified on a real server.
 - spec-kit: https://github.com/github/spec-kit (command prefix /speckit-, init flag --integration).
 - Edge-case reference: PROJECT_BRIEF_GPT_ASTRA_6.md (state semantics, acceptance scenarios, publication reliability). Alternative prompts: IMPLEMENTATION_PROMPTS_GPT_ASTRA_6.md.

@@ -2,7 +2,7 @@
 
 Review Loop is a local-first inbox for Bitbucket Server pull requests (PRs). It runs the user's own Claude Code CLI (`claude -p`) for reviews. The app runs on localhost and keeps all data on the user's machine.
 
-Status: Release 1 and Release 2 are code complete. The user runs docs/smoke-m1.md, smoke-v3.md, smoke-m4.md, and smoke-r2.md; see docs/plans/r2.md. Do not assume that a file in the planned layout exists. Check first.
+Status: Release 1 and Release 2 are code complete. The user runs docs/smoke-m1.md, smoke-v3.md, smoke-m4.md, and smoke-r2.md; see docs/plans/r2.md. Release 3 (Fix it, Jira attachments and Markdown) is in progress; see docs/plans/r3.md. Do not assume that a file in the planned layout exists. Check first.
 
 ## Document map
 
@@ -10,7 +10,7 @@ Status: Release 1 and Release 2 are code complete. The user runs docs/smoke-m1.m
 |---|---|
 | `BRIEF.md` | The spec and the source of truth. If another file disagrees, BRIEF.md wins. |
 | `prototype/index.html` | Visual spec for the UI: three panes, color tokens, keyboard model. Sample data only. It is also a published artifact. |
-| `docs/plans/` | Milestone plans: m1.md, v3.md (M2, M3), replies.md, m4.md, r2.md (Release 2). |
+| `docs/plans/` | Milestone plans: m1.md, v3.md (M2, M3), replies.md, m4.md, r2.md (Release 2), r3.md (Release 3). |
 | `docs/smoke-m1.md`, `docs/smoke-v3.md`, `docs/smoke-m4.md`, `docs/smoke-r2.md` | Manual smoke tests with the real server and CLI. The user runs them. The smoke-v3.md last table maps A1 to A17 to their tests. |
 | `PROJECT_BRIEF_GPT_ASTRA_6.md` | Reference for edge cases and acceptance scenarios. |
 | `IMPLEMENTATION_PROMPTS_GPT_ASTRA_6.md` | Alternative spec-kit prompt set. Prompt 0 drives Gate 0. Its two-pane and general-comments-only rules do not apply. |
@@ -31,7 +31,7 @@ Tests:   bun test for logic and integration. Playwright for browser acceptance.
 Ship:    bun build --compile, one executable per OS with the UI embedded.
 ```
 
-Layout: `src/web/` (with `ask/` and `diff/`), `src/server/{bitbucket,sync,inbox,storage,tasks,review,publish,context}/`, `src/shared/`, `fixtures/`, `tests/`, `scripts/` exist. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
+Layout: `src/web/` (with `ask/` and `diff/`), `src/server/{bitbucket,sync,inbox,storage,tasks,review,publish,context}/`, `src/shared/`, `fixtures/`, `tests/`, `scripts/` exist. Release 3 adds `src/web/fix/`. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
 
 Commands:
 - `bun install`: install the pinned dependencies.
@@ -92,6 +92,7 @@ Add or update a project skill:
 - Tests never touch the live Bitbucket server. Use sanitized fixtures and a fake `claude` executable. Real-server tests need separate authorization.
 - The Bitbucket token never goes into SQLite, localStorage, logs, URLs, or prompts.
 - Nothing goes to Bitbucket without an explicit user action. The app posts, not the AI.
+- The app never runs claude in the user's clone and never pushes.
 - No company names, hosts, or secrets in code, docs, or fixtures. The project may become open source.
 - Build a boundary (ForgeProvider, ReviewRunner, ContextSource) only when its milestone needs it.
 
