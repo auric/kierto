@@ -784,11 +784,14 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     },
 
     // pr: the runs of one PR. null: the runs of all PRs. Newest first.
+    // R14: the list of one PR also keeps its newest review run when newer reply runs fill the limit.
     runs(db: Database, pr: number | null, limit: number): RunDto[] {
-      const where = pr === null ? "" : "WHERE r.pr = $pr";
-      return (db.query(`${SQL.run} ${where} ORDER BY r.id DESC LIMIT $limit`).all(pr === null ? { limit } : { pr, limit }) as RunRow[]).map(
-        toRunDto,
-      );
+      const sql =
+        pr === null
+          ? `${SQL.run} ORDER BY r.id DESC LIMIT $limit`
+          : `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE pr = $pr ORDER BY id DESC LIMIT $limit)
+              OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review') ORDER BY r.id DESC`;
+      return (db.query(sql).all(pr === null ? { limit } : { pr, limit }) as RunRow[]).map(toRunDto);
     },
 
     run(db: Database, id: number): RunDetail | null {

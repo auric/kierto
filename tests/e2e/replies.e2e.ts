@@ -72,6 +72,10 @@ test("Draft replies: three your-turn threads get inline drafts, one needs no rep
   await btn.click();
   await expect(runline(page)).toContainText(/Claude drafted replies on [0-9a-f]{7}/, { timeout: RUN_MS });
   await expect(runline(page)).toContainText("2 reply drafts, 1 thread needs no reply");
+  // Key 2 with no review drafts goes to the first reply draft.
+  await page.keyboard.press("2");
+  await expect(page.locator(":focus")).toHaveAttribute("id", /^rd-/);
+  await expect(page.locator(":focus")).toContainText("Reply draft to Alex Smith");
 
   for (const [t, msg] of [
     [1000101, 1000201],
@@ -128,6 +132,15 @@ test("review drafts stay after a reply run (R14), and a per-thread draft replace
   await expect(page.locator("#ai-sum-head")).toContainText("Claude's summary");
   await expect(page.locator("#review-btn")).toHaveText(/Review · General/);
   await expect(card(page, 1000103)).toContainText("No reply needed");
+  // Key 2 goes to the review drafts, then on to the reply drafts, then back.
+  const focused = page.locator(":focus");
+  await page.keyboard.press("2");
+  await expect(focused).toHaveAttribute("id", /^d-/);
+  await page.keyboard.press("2");
+  await expect(focused).toHaveAttribute("id", /^rd-/);
+  await expect(focused).toContainText("Reply draft to Alex Smith");
+  await page.keyboard.press("2");
+  await expect(focused).toHaveAttribute("id", /^d-/);
   const kept = await card(page, 1000101).getAttribute("id");
 
   await thread(page, 1000103).getByRole("button", { name: "Draft reply" }).click();

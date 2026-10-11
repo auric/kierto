@@ -200,7 +200,7 @@ export function PrDetail({
     [row.id, hints, now, forge, runner, mine, ackRef, focusAfter, jump, announce, onReply, outbox.ctx],
   );
 
-  const review = useReview(pr, { commits: data?.commits, threads, hints, now, focusAfter, announce, onSettings });
+  const review = useReview(pr, { commits: data?.commits, threads, hints, now, focusAfter, reveal: jump, announce, onSettings });
   draftReply.current = review.api.draftReply;
   const bar = usePostBar(pr, {
     comments,

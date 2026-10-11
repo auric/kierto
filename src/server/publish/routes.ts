@@ -79,7 +79,12 @@ export function createPublishRoutes(opts: { review: ReviewJobs; settings: Settin
         if (done) return c.json({ posts: done, warning: null } satisfies ConfirmDto, 200);
         const chosen = selectPosts(buildPlan(input), want);
         if (!chosen) return c.json(planChanged, 409);
-        const heads = await outbox.headCheck(db, pr, [...new Set(chosen.map((p) => p.run))]);
+        // D14: a reply post checks its parent and the newest message, never the heads.
+        const parents = chosen.flatMap((p) => (p.destination.kind === "reply" ? [p.destination.parentId] : []));
+        const stale = outbox.replyCheck(db, pr, parents);
+        if (stale) return c.json({ error: stale }, 409);
+        const runs = [...new Set(chosen.filter((p) => p.destination.kind !== "reply").map((p) => p.run))];
+        const heads = runs.length ? await outbox.headCheck(db, pr, runs) : { warning: null };
         if ("error" in heads) return heads.status === 409 ? c.json({ error: heads.error }, 409) : c.json({ error: heads.error }, 502);
         const out = outbox.enqueue(db, pr, chosen, want);
         if (!out) return c.json(planChanged, 409);

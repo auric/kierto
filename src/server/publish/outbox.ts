@@ -306,6 +306,17 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     };
   }
 
+  // D14: each reply parent is a live comment and the newest live message of its thread. Returns an error, else null.
+  function replyCheck(db: Database, pr: number, parents: number[]): string | null {
+    for (const id of parents) {
+      const parent = db.query(SQL.parent).get({ pr, id }) as { root_id: number; tombstoned_at: number | null } | null;
+      if (!parent || parent.tombstoned_at !== null) return "The comment was deleted. Discard the reply draft.";
+      if (newestLive(db.query(SQL.thread).all({ pr, root: parent.root_id }) as TurnMsg[])?.id !== id)
+        return "New messages arrived in the thread. Read them and draft the reply again.";
+    }
+    return null;
+  }
+
   // The rows of an earlier confirm with exactly these items and revisions (A14), else null.
   function existing(db: Database, pr: number, want: Map<number, number>): PostDto[] | null {
     const rows = (db.query(SQL.runPosts).all({ pr }) as PostRow[]).filter((r) => {
@@ -331,6 +342,7 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     // Resolves when the sender is idle.
     wait: () => busy ?? Promise.resolve(),
     headCheck,
+    replyCheck,
     existing,
 
     posts(db: Database, pr: number): PostDto[] | null {

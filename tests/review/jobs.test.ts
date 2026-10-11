@@ -734,6 +734,24 @@ describe("brief and meta", () => {
     expect((await h.json<RunDto[]>(`/api/prs/${h.pr}/runs`)).body).toEqual([]);
   });
 
+  test("R14: the runs of a PR keep the newest review run after more than 20 reply runs", async () => {
+    const h = await setup();
+    const add = (kind: string, k: string) =>
+      (
+        h.db
+          .query(
+            `INSERT INTO review_run (pr, profile, note, idem_key, source_head, target_head, status, started_at, kind)
+            VALUES ($pr, 'general', '', $k, 'a', 'b', 'completed', 1, $kind) RETURNING id`,
+          )
+          .get({ pr: h.pr, k, kind }) as { id: number }
+      ).id;
+    add("review", "old");
+    const review = add("review", "new");
+    const replies = Array.from({ length: 21 }, (_, i) => add("reply", `r${i}`)).reverse();
+    const list = (await h.json<RunDto[]>(`/api/prs/${h.pr}/runs`)).body;
+    expect(list.map((r) => r.id)).toEqual([...replies.slice(0, 20), review]);
+  });
+
   test("meta gives the runner, tool labels, the four profiles, and no context source", async () => {
     const h = await setup();
     const meta = (await h.json<MetaDto>("/api/meta")).body;

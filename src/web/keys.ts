@@ -157,7 +157,7 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
       { keys: ["y"], text: "Next thread where it is your turn" },
       { keys: ["o"], text: "Open or close the current thread" },
       { keys: ["g"], second: ["f", "c"], text: "Open and go to Files or Commits" },
-      { keys: ["1", "2", "3"], text: "Go to the overview, go to the drafts, open the run log" },
+      { keys: ["1", "2", "3"], text: "Go to the overview, go to the drafts and then the reply drafts, open the run log" },
       { keys: ["?"], text: "Show or hide this list" },
     ],
   },

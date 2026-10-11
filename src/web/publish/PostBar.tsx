@@ -16,7 +16,7 @@ import { destLabel, destText, mergePosts, planItems } from "./model";
 
 type Open = { plan: PostPlanDto | null; posting: boolean; error: string | null };
 
-const NOTHING = "Nothing is accepted yet. Accept drafts or questions first.";
+const NOTHING = "Nothing is accepted yet. Accept drafts, questions, or replies first.";
 
 export type PostBarApi = { open(): void; close(): void; isOpen: boolean };
 
@@ -99,16 +99,20 @@ export function usePostBar(
     }
   };
 
-  // The preflight line: the reviewed commits, and what the newest run data says about them.
+  // The preflight line: the reviewed commits, and what the newest run data says about them. Replies have no commits (D14).
   const shown = c?.plan?.posts ?? posts;
   const note = (() => {
     if (!shown.length) return "Reading the comments to post…";
-    const heads = [...new Set(shown.map((p) => p.sourceHead))];
-    const stale = runs?.find((r) => r.id === shown[0]?.run)?.stale;
-    const at = heads.map(shortHash).join(", ");
-    if (stale?.source) return `The source branch has new commits since ${at}. ${o.forge} gets nothing until you review again.`;
-    const moved = stale?.target ? " The target branch moved since the review." : "";
-    return `Inline comments attach to the reviewed commit ${at}.${moved} The app checks the source branch again when you post.`;
+    const review = shown.filter((p) => p.destination.kind !== "reply");
+    const replies = review.length < shown.length;
+    if (!review.length) return "Each reply goes under the message it answers. The app checks for newer messages when you post.";
+    const at = [...new Set(review.map((p) => p.sourceHead))].map(shortHash).join(", ");
+    const reviewed = runs?.filter((r) => review.some((p) => p.run === r.id)) ?? [];
+    if (reviewed.some((r) => r.stale?.source))
+      return `The source branch has new commits since ${at}. ${o.forge} gets nothing until you review again.`;
+    const moved = reviewed.some((r) => r.stale?.target) ? " The target branch moved since the review." : "";
+    const also = replies ? " Replies go under the messages they answer." : "";
+    return `Review comments attach to the reviewed commit ${at}.${moved} The app checks the source branch again when you post.${also}`;
   })();
 
   const api: PostBarApi = { open, close, isOpen: c !== null && !c.posting };

@@ -199,6 +199,24 @@ function seedRun(s: S, heads = { source: SOURCE, target: TARGET }) {
   return { run, item };
 }
 
+// A completed reply run with one reply draft to the given message.
+function seedReply(s: S, replyTo: number) {
+  const { id: run } = s.db
+    .query(
+      `INSERT INTO review_run (pr, profile, note, idem_key, source_head, target_head, merge_base, status, started_at, finished_at, kind)
+      VALUES ($pr, 'general', '', $k, $s, $t, $t, 'completed', 1, 2, 'reply') RETURNING id`,
+    )
+    .get({ pr: s.pr, k: `r${replyTo}`, s: SOURCE, t: TARGET }) as { id: number };
+  const payload = { thread: ROOT, action: "reply", body: "Reply text.", reason: "R.", evidenceStatus: "code", replyTo };
+  return (
+    s.db
+      .query(
+        `INSERT INTO review_item (run, kind, payload_json, body, thread) VALUES ($run, 'reply', $payload, 'Reply text.', $thread) RETURNING id`,
+      )
+      .get({ run, payload: JSON.stringify(payload), thread: ROOT }) as { id: number }
+  ).id;
+}
+
 async function accept(s: S, ...ids: number[]) {
   for (const id of ids) expect((await s.call<ReviewItemDto>(`/api/items/${id}`, { action: "accept", revision: 0 })).status).toBe(200);
 }
@@ -473,6 +491,48 @@ describe("confirm", () => {
     // The anchor stays on the reviewed commits.
     expect(s.posts.bodies[0]?.anchor).toMatchObject({ fromHash: TARGET, toHash: SOURCE });
     expect(s.sent()).toBe(1);
+  });
+
+  test("D14: a reply item ignores a new source head; an inline item in the same confirm still gets the head error", async () => {
+    const s = await setup();
+    const { item } = seedRun(s);
+    const inline = item("Inline text.", 3);
+    const reply = seedReply(s, THEIRS);
+    await accept(s, inline, reply);
+    s.world.pr.fromRef.latestCommit = "f".repeat(40);
+    const both = await s.call<{ error: string }>(`/api/prs/${s.pr}/confirm`, {
+      items: [
+        { id: inline, revision: 1 },
+        { id: reply, revision: 1 },
+      ],
+    });
+    expect(both.status).toBe(409);
+    expect(both.body.error).toContain("new commits");
+    expect([itemRow(s, inline).status, itemRow(s, reply).status]).toEqual(["accepted", "accepted"]);
+
+    const items = [{ id: reply, revision: 1 }];
+    const r = await s.call<ConfirmDto>(`/api/prs/${s.pr}/confirm`, { items });
+    expect(r.status).toBe(202);
+    expect(r.body.posts.map((p) => p.destination)).toEqual([{ kind: "reply", parentId: THEIRS }]);
+    expect((await s.call(`/api/prs/${s.pr}/confirm`, { items })).status).toBe(200);
+    await s.settle();
+    expect(s.sent()).toBe(1);
+    expect(s.posts.bodies[0]).toMatchObject({ text: "Reply text.", parent: { id: THEIRS } });
+  });
+
+  test("D14: a reply item to an older message or a deleted parent gives 409 and sends nothing", async () => {
+    const s = await setup();
+    const older = seedReply(s, ROOT);
+    const gone = seedReply(s, 999);
+    await accept(s, older, gone);
+    const stale = await s.call<{ error: string }>(`/api/prs/${s.pr}/confirm`, { items: [{ id: older, revision: 1 }] });
+    expect(stale.status).toBe(409);
+    expect(stale.body.error).toContain("New messages arrived");
+    const deleted = await s.call<{ error: string }>(`/api/prs/${s.pr}/confirm`, { items: [{ id: gone, revision: 1 }] });
+    expect(deleted.status).toBe(409);
+    expect(deleted.body.error).toContain("deleted");
+    expect(await s.list()).toEqual([]);
+    expect(s.sent()).toBe(0);
   });
 
   test("a confirm that differs from the plan gives 409 and sends nothing", async () => {

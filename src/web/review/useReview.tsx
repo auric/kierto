@@ -7,7 +7,7 @@ import { toast } from "@/components/ui/toast";
 import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../shared/dto";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
-import type { ThreadModel } from "../pr/threads";
+import { ordered, type ThreadModel } from "../pr/threads";
 import { planKey } from "../publish/data";
 import type { Hints } from "../shell/Hint";
 import { prKey } from "../shell/model";
@@ -75,6 +75,8 @@ export function useReview(
     hints: Hints;
     now: number;
     focusAfter: (f: Focus) => void;
+    // Opens and shows a thread, so its reply draft card mounts.
+    reveal: (thread: number) => void;
     announce: (text: string) => void;
     onSettings: () => void;
   },
@@ -327,11 +329,23 @@ export function useReview(
     brief: openBrief,
     drafts() {
       // prototype/v3 goDrafts: the first draft, else the summary with the questions.
+      // The reply drafts come next, in screen order. A press in the review drafts goes on to them.
       const first = ds.find((i) => i.status !== "discarded") ?? ds[0];
-      if (first) {
+      const sum = !!detail?.run.summary || questions(items).length > 0;
+      const rs = ordered(o.threads, false).flatMap((t) => {
+        const it = byThread.get(t.id);
+        return it ? [{ thread: t.id, it }] : [];
+      });
+      const reply = rs.find((r) => r.it.status !== "discarded") ?? rs[0];
+      const at = document.activeElement;
+      const inReview = !!at?.closest("#g-drafts") || at?.id === "ai-sum-head";
+      if (reply && (inReview || (!first && !sum))) {
+        o.reveal(reply.thread);
+        focusAfter({ id: `rd-${reply.it.id}`, block: "start", flash: true });
+      } else if (first) {
         setOpenDrafts((m) => new Map(m).set(first.id, true));
         focusAfter({ id: `d-${first.id}`, block: "start", flash: true });
-      } else if (detail?.run.summary || questions(items).length) openSummary();
+      } else if (sum) openSummary();
       else toast.add({ title: `No drafts. Press r to start a review with ${meta.runner.name}.` });
     },
     log: () => openLog(null),
