@@ -36,7 +36,7 @@ const STREAMS: Record<ClaudeScenario["stream"], string> = {
   limit: claudeStream(claudeDir, "limit", "claude-synthetic/usage-limit.jsonl"),
 };
 function setClaude(c: ClaudeScenario) {
-  runner.write({ fixture: STREAMS[c.stream], exitCode: c.stream === "limit" ? 1 : 0, hang: c.hang });
+  runner.write({ fixture: STREAMS[c.stream], exitCode: c.stream === "limit" ? 1 : 0, hang: c.hang, replies: c.replies });
 }
 setClaude({ stream: "tree" });
 

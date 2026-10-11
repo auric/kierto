@@ -45,6 +45,7 @@ const PROFILES: ProfileDto[] = [
 const run = (o: Partial<RunDto> = {}): RunDto => ({
   id: 1,
   pr: 7,
+  kind: "review",
   profile: "general",
   note: "",
   status: "completed",

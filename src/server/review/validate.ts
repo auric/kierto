@@ -1,6 +1,19 @@
-// Anchor validator (plan v3 WP9). Pure: the caller passes the file contents, the diff, and the run's agent names.
-import type { Anchor, DropReason, ExcerptLine, Finding, ReviewResult, Side, ValidatedResult } from "../../shared/review";
+// Anchor validator (plan v3 WP9) and reply validator (replies.md WP17). Pure: the caller passes the file contents, the diff, and the run's agent names.
+import { MAX_NOTE } from "../../shared/dto";
+import type {
+  Anchor,
+  Coverage,
+  DropReason,
+  ExcerptLine,
+  Finding,
+  ReplyPayload,
+  ReplyResult,
+  ReviewResult,
+  Side,
+  ValidatedResult,
+} from "../../shared/review";
 import { type DiffFile, parseDiff } from "./diffmap";
+import type { ReplyThread } from "./prompt";
 
 export const CONTEXT_LINES = 3;
 // ponytail: fixed caps that bound the scan per finding and the excerpt size. Raise them if real reviews hit them.
@@ -170,4 +183,39 @@ export function validate(input: ValidateInput): ValidatedResult {
     else out.findings.push({ ...f, anchor: a });
   }
   return out;
+}
+
+// ---------- Reply drafts (plan replies.md WP17) ----------
+
+export type ValidatedReply = { payload: ReplyPayload; status: "new" | "discarded" };
+export type ValidatedReplies = { summary: string; coverage: Coverage; replies: ValidatedReply[] };
+
+// Plan replies.md R11: only requested threads pass. Every drop and every unanswered thread goes to coverage.skipped.
+export function validateReplies(result: ReplyResult, requested: readonly ReplyThread[]): ValidatedReplies {
+  const replyTo = new Map(requested.map((r) => [r.thread, r.replyTo]));
+  const answered = new Set<number>();
+  const skipped = [...result.coverage.skipped];
+  const replies: ValidatedReply[] = [];
+  for (const r of result.replies) {
+    const to = replyTo.get(r.thread);
+    const body = r.action === "none" ? "" : r.body.trim();
+    const why =
+      to === undefined
+        ? "the thread was not requested"
+        : answered.has(r.thread)
+          ? "a second reply for the thread"
+          : r.action === "reply" && !body
+            ? "the body is empty"
+            : body.length > MAX_NOTE
+              ? `the body is longer than ${MAX_NOTE} characters`
+              : null;
+    if (to !== undefined) answered.add(r.thread);
+    if (to === undefined || why !== null) {
+      skipped.push(`Reply for thread ${r.thread} dropped: ${why}.`);
+      continue;
+    }
+    replies.push({ payload: { ...r, body, replyTo: to }, status: r.action === "none" ? "discarded" : "new" });
+  }
+  for (const r of requested) if (!answered.has(r.thread)) skipped.push(`Thread ${r.thread} has no reply.`);
+  return { summary: result.summary, coverage: { ...result.coverage, skipped }, replies };
 }

@@ -1,7 +1,7 @@
 // Publish plan (plan v3 WP12). Pure: the exact comments that a confirm posts for the accepted items.
 import type { PlannedPost, ReviewItemDto } from "../../shared/dto";
 import { isMe } from "../../shared/me";
-import type { AnchoredFinding, Question } from "../../shared/review";
+import type { AnchoredFinding, Question, ReplyPayload } from "../../shared/review";
 
 export type PlanRun = { id: number; sourceHead: string; targetHead: string; mergeBase: string | null };
 // A live root comment. anchor: the stored forge anchor, absent for a general comment.
@@ -48,6 +48,12 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
     for (const it of items) {
       const ref = { id: it.id, revision: it.revision };
       const a = it.anchor;
+      // R15: a reply item has no anchor, but it never joins the general comment.
+      if (it.kind === "reply") {
+        const parentId = (it.payload as ReplyPayload).replyTo;
+        out.push({ ...heads, destination: { kind: "reply", parentId }, body: it.body, items: [ref], duplicate: null });
+        continue;
+      }
       if (it.kind === "question" || !a) {
         questions.push({ body: it.body, why: (it.payload as Question).why });
         generalItems.push(ref);

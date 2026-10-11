@@ -1,4 +1,4 @@
-// Review result (plan v3 WP9). zod parses the CLI output. reviewJsonSchema() feeds --json-schema.
+// Review and reply results (plan v3 WP9, replies.md WP17). zod parses the CLI output. reviewJsonSchema() and replyJsonSchema() feed --json-schema.
 import { z } from "zod";
 
 export const severities = ["blocker", "major", "minor", "nit"] as const;
@@ -48,6 +48,32 @@ export type ReviewResult = z.infer<typeof reviewResult>;
 
 // The CLI checks the schema with a default Ajv instance, which knows draft-07 only. A 2020-12 $schema fails every run.
 export const reviewJsonSchema = (): Record<string, unknown> => z.toJSONSchema(reviewResult, { target: "draft-07" });
+
+// ---------- Reply drafts (plan replies.md WP17) ----------
+
+export const replyActions = ["reply", "none"] as const;
+export const MAX_REPLY_THREADS = 25;
+
+export const replyDraft = z.object({
+  thread: lineNo.describe("A thread number from the Threads line."),
+  action: z.enum(replyActions).describe("reply: the user should answer. none: the thread needs no answer from the user."),
+  body: z.string().describe("The reply as short Markdown in the user's voice. Empty for none."),
+  reason: z.string().describe("One line: why this reply, or why no reply."),
+  evidenceStatus: z.enum(evidenceStatuses),
+});
+
+export const replyResult = z.object({
+  summary: z.string().describe("One line."),
+  replies: z.array(replyDraft).max(MAX_REPLY_THREADS),
+  coverage,
+});
+
+export type ReplyDraft = z.infer<typeof replyDraft>;
+export type ReplyResult = z.infer<typeof replyResult>;
+// replyTo: the message that the reply answers. The post uses it as the parent.
+export type ReplyPayload = ReplyDraft & { replyTo: number };
+
+export const replyJsonSchema = (): Record<string, unknown> => z.toJSONSchema(replyResult, { target: "draft-07" });
 
 // ---------- Validator output ----------
 

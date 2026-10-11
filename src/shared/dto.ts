@@ -1,6 +1,14 @@
 // API request and response shapes shared by server and UI.
 import { z } from "zod";
-import type { Anchor, AnchoredFinding, Question, Side, ValidatedResult } from "./review";
+import {
+  type Anchor,
+  type AnchoredFinding,
+  MAX_REPLY_THREADS,
+  type Question,
+  type ReplyPayload,
+  type Side,
+  type ValidatedResult,
+} from "./review";
 import type { RunErrorKind, RunEvent, RunStatus } from "./run-log";
 import type { IncompleteReason, Reviewer, Role } from "./types";
 
@@ -199,9 +207,12 @@ export type RunUsage = { costUsd: number; turns: number; durationMs: number; tok
 // dropped: findings that the validator could not anchor. They show as coverage only.
 export type RunSummary = Pick<ValidatedResult, "summary" | "risks" | "coverage" | "dropped">;
 
+export type RunKind = "review" | "reply";
+
 export type RunDto = {
   id: number;
   pr: number;
+  kind: RunKind;
   profile: ProfileId;
   note: string;
   status: RunStatus;
@@ -229,10 +240,10 @@ export type ItemStatus = "new" | "accepted" | "discarded" | "posted";
 export type ReviewItemDto = {
   id: number;
   run: number;
-  kind: "finding" | "question";
+  kind: "finding" | "question" | "reply";
   body: string;
-  // finding: the AnchoredFinding as validated. question: the Question.
-  payload: AnchoredFinding | Question;
+  // finding: the AnchoredFinding as validated. question: the Question. reply: the ReplyPayload; body is empty for action none.
+  payload: AnchoredFinding | Question | ReplyPayload;
   // Findings only: the current anchor.
   anchor: (Anchor & { side: Side }) | null;
   status: ItemStatus;
@@ -255,7 +266,8 @@ export type ItemConflict = ApiError & { item: ReviewItemDto };
 // lineType: the diff kind of the line. Old-side and outside findings post in the general comment (D3).
 export type PostDestination =
   | { kind: "inline"; path: string; srcPath: string | null; line: number; lineEnd: number; lineType: "add" | "ctx" }
-  | { kind: "general" };
+  | { kind: "general" }
+  | { kind: "reply"; parentId: number };
 export type PlannedPost = {
   run: number;
   sourceHead: string;
@@ -267,8 +279,11 @@ export type PlannedPost = {
   // A live root comment by another user on the same path and line.
   duplicate: { commentId: number; author: string } | null;
 };
-// posts: per run in run order, the inline comments in item order, then the general comment.
+// posts: per run in run order, the inline comments and the replies in item order, then the general comment.
 export type PostPlanDto = { pr: number; posts: PlannedPost[] };
+
+// POST /api/prs/:id/reply-run. Absent threads: every thread where it is my turn. A thread is the ID of its root comment.
+export const replyRunInput = z.object({ threads: z.array(positiveInt).min(1).max(MAX_REPLY_THREADS).optional() });
 
 // GET /api/runs/:id. events: the run log in seq order.
 export type RunDetail = { run: RunDto; events: RunEvent[]; items: ReviewItemDto[] };
