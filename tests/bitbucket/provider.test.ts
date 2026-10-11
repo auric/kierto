@@ -215,6 +215,32 @@ describe("pull requests", () => {
     expect((await p.getPullRequest(PR_REF)).webUrl).toBe(`${fake.url}/users/jdoe/repos/sample-repo-1/pull-requests/2`);
   });
 
+  type CloneRepo = { links: { clone: { href: string; name: string }[] } };
+  const httpLink = (r: CloneRepo) => r.links.clone.find((l) => l.name === "http") as { href: string };
+
+  test("gitRemote takes the http clone links of the base origin, without user info", async () => {
+    const body = clone(fixture<{ fromRef: { repository: CloneRepo }; toRef: { repository: CloneRepo } }>("pull-request.json"));
+    const p = setup({ [key("GET", PR_PATH)]: body });
+    httpLink(body.body.toRef.repository).href = `${fake.url.replace("//", "//jdoe:pw@")}/scm/~jdoe/sample-repo-1.git`;
+    httpLink(body.body.fromRef.repository).href = `${fake.url}/scm/~jdoe/fork-1.git`;
+    expect(await p.gitRemote(PR_REF)).toEqual({
+      url: `${fake.url}/scm/~jdoe/sample-repo-1.git`,
+      sourceUrl: `${fake.url}/scm/~jdoe/fork-1.git`,
+      sourceRef: "refs/heads/topic/sample-1",
+      targetRef: "refs/heads/topic/sample-2",
+      fetchConfig: [["http.extraHeader", `Authorization: Bearer ${FAKE_TOKEN}`]],
+    });
+  });
+
+  test("gitRemote refuses a clone link of another origin", async () => {
+    const body = clone(fixture<{ fromRef: { repository: CloneRepo } }>("pull-request.json"));
+    const p = setup({ [key("GET", PR_PATH)]: body });
+    await expect(p.gitRemote(PR_REF)).rejects.toThrow(/clone link/);
+    // Only the target link is foreign now.
+    httpLink(body.body.fromRef.repository).href = `${fake.url}/scm/~jdoe/sample-repo-1.git`;
+    await expect(p.gitRemote(PR_REF)).rejects.toThrow(/clone link/);
+  });
+
   test("dashboard maps reviewers with lastReviewedCommit", async () => {
     const r = await setup({ [key("GET", DASHBOARD_PATH)]: fixture("dashboard-reviewer-page.json") }).listDashboard("REVIEWER");
     expect(r.complete).toBe(true);

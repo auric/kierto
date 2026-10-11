@@ -11,6 +11,12 @@ const prPath = (ref: PrRef) =>
   `${API}/projects/${encodeURIComponent(ref.project)}/repos/${encodeURIComponent(ref.repo)}/pull-requests/${ref.id}`;
 const toUser = (u: z.infer<typeof user>) => ({ slug: u.slug, name: u.displayName, login: u.name });
 
+const cloneRepo = z.object({
+  links: z.object({ clone: z.array(z.object({ href: z.string(), name: z.string() })).optional() }).optional(),
+});
+const remoteRef = z.object({ id: z.string(), repository: cloneRepo });
+const remoteRefs = z.object({ fromRef: remoteRef, toRef: remoteRef });
+
 export function createBitbucketProvider(opts: ClientOptions) {
   const client = createClient(opts);
   const origin = new URL(opts.baseUrl).origin;
@@ -38,6 +44,18 @@ export function createBitbucketProvider(opts: ClientOptions) {
     };
   }
 
+  // The http clone link without user info. Only a link with the configured origin gets the token.
+  function httpClone(repo: z.infer<typeof cloneRepo>): string | undefined {
+    try {
+      const u = new URL(repo.links?.clone?.find((l) => l.name === "http")?.href ?? "");
+      u.username = "";
+      u.password = "";
+      return u.origin === origin ? u.href : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   return {
     // The username of the token owner, from the X-AUSERNAME header. It can differ from the slug.
     async currentUser(): Promise<string> {
@@ -54,6 +72,18 @@ export function createBitbucketProvider(opts: ClientOptions) {
 
     async getPullRequest(ref: PrRef): Promise<PullRequest> {
       return toPr((await client.get(prPath(ref), pullRequest)).data);
+    },
+
+    // The git remote for the review workspace (src/server/review/workspace.ts). The PR refs live in the target repository.
+    // Only git fetch gets fetchConfig. It holds the token as an http.extraHeader value (Gate 0 ls-remote).
+    async gitRemote(ref: PrRef) {
+      const { data } = await client.get(prPath(ref), remoteRefs);
+      const url = httpClone(data.toRef.repository);
+      const sourceUrl = httpClone(data.fromRef.repository);
+      if (!url || !sourceUrl) throw new Error("The pull request has no http clone link on the configured server.");
+      const fetchConfig: [string, string][] = [["http.extraHeader", `Authorization: Bearer ${opts.token}`]];
+      if (opts.caFile) fetchConfig.push(["http.sslCAInfo", opts.caFile]);
+      return { url, sourceUrl, sourceRef: data.fromRef.id, targetRef: data.toRef.id, fetchConfig };
     },
 
     // Replies have no activity of their own. They are nested in comment.comments[] of the root comment.
