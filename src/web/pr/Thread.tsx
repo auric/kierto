@@ -1,6 +1,9 @@
 // One thread of the detail pane (prototype/v3 thread, threadBody, tree, msg). A collapsed thread renders no message, so it acks nothing.
-import { ChevronRight, CornerDownRight, History, Hourglass, MessageSquare, Reply, Square, SquareCheckBig } from "lucide-react";
-import { lazy, memo, type ReactNode, Suspense } from "react";
+import { Check, ChevronRight, Copy, CornerDownRight, History, Hourglass, MessageSquare, Reply, Square, SquareCheckBig } from "lucide-react";
+import { lazy, memo, type ReactNode, Suspense, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/toast";
+import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { ExcerptLine } from "../../shared/dto";
 import type { Hints } from "../shell/Hint";
@@ -41,6 +44,7 @@ export type ThreadCtx = {
   onToggle: (thread: number) => void;
   onFold: (thread: number, row: FoldRow) => void;
   onQuote: (thread: number, msg: number) => void;
+  announce: (text: string) => void;
 };
 
 export const fullTime = (ms: number) =>
@@ -302,6 +306,36 @@ function FoldButton({ row, tid, ctx }: { row: FoldRow; tid: number; ctx: ThreadC
   );
 }
 
+function CopyButton({ text, ctx }: { text: string; ctx: ThreadCtx }) {
+  // A count, so a second copy within 1.5 s starts the time again.
+  const [copied, setCopied] = useState(0);
+  useEffect(() => {
+    if (!copied) return;
+    const h = setTimeout(() => setCopied(0), 1500);
+    return () => clearTimeout(h);
+  }, [copied]);
+  const label = copied ? "Copied" : "Copy Markdown";
+  const copy = () =>
+    copyText(text).then((ok) => {
+      if (!ok) return toast.add({ title: "The clipboard is blocked here. Select the text and press Ctrl+C." });
+      setCopied((n) => n + 1);
+      ctx.announce("Copied");
+    });
+  return (
+    <HintTrigger hints={ctx.hints} label={label}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={label}
+        onClick={copy}
+        className="-my-1 ml-auto text-muted-foreground hover:bg-hover hover:text-foreground"
+      >
+        {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+      </Button>
+    </HintTrigger>
+  );
+}
+
 const Message = memo(function Message({ m, quote, tid, ctx }: { m: Node; quote: boolean; tid: number; ctx: ThreadCtx }) {
   const p = m.parent;
   const name = m.who.me ? "You" : m.who.name;
@@ -323,6 +357,7 @@ const Message = memo(function Message({ m, quote, tid, ctx }: { m: Node; quote: 
         </HintTrigger>
         {m.task && <TaskMark hints={ctx.hints} task={m.task} />}
         {m.isNew && <NewMark text="new" />}
+        {!m.deleted && m.text !== null && <CopyButton text={m.text} ctx={ctx} />}
       </div>
       {quote && p && (
         <button

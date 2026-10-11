@@ -278,6 +278,50 @@ test("A15: a merge leaves Reviewing, stays in Needs you on my turn, and stays fo
   await expect(needs).toContainText("Merged.");
 });
 
+test("copy: a message copies as raw Markdown without a toast; a deleted message has no Copy", async ({ page, context, request }) => {
+  // U19: headless Chromium reads the clipboard after this grant (m2 raw output test).
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: APP });
+  const md = "Check the **flush order** again, then `flush()`.";
+  // The e2e data has no Markdown. The detail response gets it for the new reply.
+  await page.route(/\/api\/prs\/\d+$/, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const res = await route.fetch();
+    const body = (await res.json()) as { comments: { id: number; text: string | null }[] };
+    for (const c of body.comments) if (c.id === 1000010 && c.text !== null) c.text = md;
+    await route.fulfill({ response: res, json: body });
+  });
+  await connect(page, false);
+  await park(page);
+  await control("state", { reply: "new" });
+  await expect(row(page, TITLE.a)).toContainText("1 new");
+  await row(page, TITLE.a).click();
+  const msg = page.locator("#c-1000010");
+  await expect(msg.locator("strong")).toHaveText("flush order");
+  await expect.poll(() => unreadIds(request, TITLE.a)).toEqual([]);
+
+  const copy = msg.getByRole("button", { name: "Copy Markdown" });
+  await copy.click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(md);
+  await expect(msg.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Copied" })).toHaveCount(1);
+  await expect(page.locator("[data-slot='toast']")).toHaveCount(0);
+  // The label goes back after 1.5 s. The copy changes no read state.
+  await expect(copy).toBeVisible();
+  await expect(msg).toHaveAttribute("data-new", "true");
+  expect(await unreadIds(request, TITLE.a)).toEqual([]);
+
+  await page.evaluate(() => Object.defineProperty(navigator.clipboard, "writeText", { value: () => Promise.reject(new Error("blocked")) }));
+  await copy.click();
+  await expect(page.locator("[data-slot='toast']")).toHaveCount(1);
+  await expect(page.locator("[data-slot='toast']")).toContainText("The clipboard is blocked here.");
+  await expect(copy).toBeVisible();
+
+  await control("state", { reply: "deleted" });
+  await expect(msg).toContainText("Deleted on Bitbucket");
+  await expect(msg.getByRole("button", { name: /^Cop/ })).toHaveCount(0);
+  await expect(page.locator("#c-1000003").getByRole("button", { name: "Copy Markdown" })).toBeVisible();
+});
+
 test("task rules: a live preview, a syntax error, and the saved rule on the rows", async ({ page }) => {
   await connect(page, false);
   await nav(page, "Reviewing").click();

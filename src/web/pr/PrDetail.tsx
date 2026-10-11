@@ -102,6 +102,8 @@ export function PrDetail({
   const [showResolved, setShowResolved] = useState(false);
   const [cur, setCur] = useState<number | null>(null);
   const [secs, setSecs] = useState<ReadonlySet<string>>(new Set());
+  // n gives each text a new node, so a screen reader reads the same text again.
+  const [said, setSaid] = useState({ text: "", n: 0 });
 
   // Focus moves after the render that shows its target.
   const focus = useRef<Focus | null>(null);
@@ -158,6 +160,7 @@ export function PrDetail({
         focusAfter({ id: `fold-${fold.at}`, block: "nearest", flash: false });
       },
       onQuote: jump,
+      announce: (text) => setSaid((s) => ({ text, n: s.n + 1 })),
     }),
     [hints, now, forge, ackRef, focusAfter, jump],
   );
@@ -307,6 +310,9 @@ export function PrDetail({
         )}
       </div>
       <SharedHint hints={hints} />
+      <p role="status" className="sr-only">
+        <span key={said.n}>{said.text}</span>
+      </p>
       {review.sheet}
     </>
   );

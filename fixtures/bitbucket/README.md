@@ -36,6 +36,7 @@ The v3 probe (`bitbucket-probe.ts --v3`) writes these files. They do not exist u
 | `repository.json` | v3-p1-repository | Pending Gate A |
 | `comment-inline-removed-response.json` | v3-p1-post-removed | Pending Gate A |
 | `comment-inline-context-response.json` | v3-p1-post-context | Pending Gate A |
+| `comment-inline-reply-response.json` | v3-p1-post-inline-reply | Pending Gate A |
 | `comment-inline-merge-base-response.json` | v3-p1-post-merge-base | Pending Gate A |
 | `comment-blocker-task-response.json` | v3-p1-post-blocker | Pending Gate A |
 | `comment-blocker-resolved-response.json` | v3-p1-resolve-blocker | Pending Gate A |

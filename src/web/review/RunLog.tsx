@@ -4,6 +4,7 @@ import { Fragment, type ReactNode, useLayoutEffect, useRef, useState } from "rea
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
+import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { MetaDto, PrTask, RunDetail } from "../../shared/dto";
 import type { RunEvent, RunEventStatus } from "../../shared/run-log";
@@ -338,7 +339,7 @@ const toolCallsText = (d: RunDetail) => {
   return `${n} tool ${n === 1 ? "call" : "calls"}`;
 };
 
-// The copy starts inside the click handler, so the browser counts it as a user action. A blocked clipboard leaves the text selected.
+// A blocked clipboard leaves the text selected.
 function RawOutput({ id }: { id: number }) {
   const q = useRaw(id, true);
   const pre = useRef<HTMLPreElement>(null);
@@ -355,8 +356,7 @@ function RawOutput({ id }: { id: number }) {
   const copy = () => {
     const text = q.data;
     if (text === undefined) return;
-    if (!navigator.clipboard?.writeText) return selectAll();
-    navigator.clipboard.writeText(text).then(() => toast.add({ title: "Copied the raw output." }), selectAll);
+    copyText(text).then((ok) => (ok ? toast.add({ title: "Copied the raw output." }) : selectAll()));
   };
   return (
     <section id="raw" aria-labelledby="raw-title" className="grid max-h-[58dvh] grid-rows-[auto_minmax(0,1fr)] border-t">
