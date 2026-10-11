@@ -52,6 +52,7 @@ Load the skill before you start the task. Read its SKILL.md for details.
 | Write or review React components, data fetching, TanStack Query use, bundle size. | `vercel-react-best-practices` | This is a Vite SPA. Ignore the Next.js-only rules (RSC, server actions, next/*). |
 | Review UI code for accessibility and UX. | `web-design-guidelines` | Run it before a milestone ends. |
 | Server routes, middleware (`csrf`, validator), SSE streaming, typed client. | `hono` | Keep BRIEF 3.6 server safety rules. |
+| Build or change an MCP server. | `anthropic-skills:mcp-builder` | TypeScript MCP SDK over stdio. Tools are read-only with zod inputs. |
 | Browser acceptance tests. | none | Use TypeScript `@playwright/test` with files named `*.e2e.ts`, run by Node. Point tests only at fixture data. See Testing notes. |
 | Ad-hoc browser checks and screenshots of the running app. | `webapp-testing` | Its helper scripts need Python. Point it only at fixture data. |
 | Add or change motion: transitions, enter and exit, feedback. | `animate` | Prefer CSS, then the Web Animations API. Add no motion library for simple effects. Respect `prefers-reduced-motion`. |

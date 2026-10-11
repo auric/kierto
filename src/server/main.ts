@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
 import { type AppOptions, createApp } from "./app";
 import { createLive } from "./live";
+import { runGitMcp } from "./review/git-mcp";
 import { createSettings } from "./settings";
 import { createSyncEngine } from "./sync/engine";
 
@@ -24,7 +25,11 @@ export function startServer(opts: Omit<AppOptions, "port"> & { port: number }) {
   return server;
 }
 
-if (import.meta.main) {
+// A compiled binary puts extra entries before --git-mcp in argv (U13), so the flag position varies.
+const gitMcpAt = process.argv.indexOf("--git-mcp");
+if (import.meta.main && gitMcpAt >= 0) {
+  await runGitMcp(process.argv.slice(gitMcpAt + 1));
+} else if (import.meta.main) {
   const port = Number(process.env.REVIEW_LOOP_PORT ?? DEFAULT_PORT);
   const devOrigin = process.env.REVIEW_LOOP_DEV_ORIGIN;
   const token = process.env.REVIEW_LOOP_SESSION ?? randomBytes(32).toString("hex");
