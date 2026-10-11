@@ -1,5 +1,6 @@
 // Detail header (prototype/v3 renderDetail .dh): key, branches, task IDs, actions, title, and the summary lines.
 import { Archive, ExternalLink, Reply, Star } from "lucide-react";
+import type { ReactNode } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { PrRow } from "../../shared/dto";
@@ -23,6 +24,7 @@ export function webLink(url: string | null): string | null {
 const iconBtn = "text-ink-2 hover:bg-hover hover:text-foreground";
 
 // since: the last visit before this one. fresh: the new messages. sum: the counts of the summary line.
+// action, brief, run: the Review button, the review brief under the title, and the run line (plan v3 WP11).
 export function Header(props: {
   pr: PrRow;
   since: number | null;
@@ -32,6 +34,9 @@ export function Header(props: {
   onNextNew: () => void;
   onNextYour: () => void;
   onLeave: () => void;
+  action: ReactNode;
+  brief: ReactNode;
+  run: ReactNode;
 }) {
   const { pr, sum } = props;
   const follow = useFollow();
@@ -125,15 +130,9 @@ export function Header(props: {
         <h1 className="m-0 min-w-0 flex-[1_1_24ch] text-(length:--fs-title) leading-tight font-bold tracking-[-0.015em] text-balance [overflow-wrap:anywhere]">
           {pr.title ?? key}
         </h1>
-        <div className="mt-px flex items-center gap-2">
-          <span id="review-note" className="text-xs text-muted-foreground">
-            Arrives in M2
-          </span>
-          <Button size="sm" disabled aria-describedby="review-note">
-            Review
-          </Button>
-        </div>
+        {props.action}
       </div>
+      {props.brief}
       {(sum.your > 0 || sum.unresolved > 0 || sum.tasks > 0) && (
         <p className="rl-sum m-0 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-2">
           {sum.your > 0 && (
@@ -167,6 +166,7 @@ export function Header(props: {
           </Hint>
         </p>
       )}
+      {props.run}
     </header>
   );
 }

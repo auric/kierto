@@ -7,6 +7,8 @@ import { join, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
 import { createLive } from "../../src/server/live";
 import { startServer } from "../../src/server/main";
+import { DOC_SERVERS } from "../../src/server/review/catalog";
+import { git, gitEnv } from "../../src/server/review/git";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
@@ -14,23 +16,179 @@ import { createSyncEngine } from "../../src/server/sync/engine";
 import { FAKE_USER, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
 import type { FakeScenario } from "../support/fake-claude";
 import * as S from "../support/scenarios";
-import { APP_PORT, E2E_TOKEN, FAKE_URL, type Scenario } from "./control";
+import { APP_PORT, type ClaudeScenario, E2E_TOKEN, FAKE_URL, type Scenario } from "./control";
 
 const dataDir = mkdtempSync(join(tmpdir(), "review-loop-e2e-"));
 process.env.REVIEW_LOOP_DATA_DIR = dataDir;
 process.env.REVIEW_LOOP_SECRETS = "memory";
 
-// The fake Claude Code CLI. Its folder stays outside the data folder, so a reset keeps it.
+// The fake Claude Code CLI and the git remote of the reviews. Their folder stays outside the data folder, so a reset keeps them.
 const claudeDir = mkdtempSync(join(tmpdir(), "review-loop-e2e-claude-"));
 const claudeScenario = join(claudeDir, "scenario.json");
-writeFileSync(
-  claudeScenario,
-  JSON.stringify({
-    record: join(claudeDir, "calls.jsonl"),
-    auth: { loggedIn: true, authMethod: "claude.ai", projectsDirectory: join(claudeDir, "projects") },
-  } satisfies FakeScenario),
-);
 const runnerCommand = [process.execPath, resolve(import.meta.dir, "../support/fake-claude.ts"), claudeScenario];
+
+// ---------- Review data (plan v3 WP11) ----------
+// A bare remote. Every e2e PR has its source head at refs/pull-requests/<id>/from and its target head at main.
+const FLUSH_BASE = [
+  "export function flush(cache: Cache) {",
+  "  const lock = cache.lock();",
+  "  for (const entry of cache.dirty()) {",
+  "    write(entry);",
+  "  }",
+  "  lock.release();",
+  "}",
+  "",
+].join("\n");
+const FLUSH_HEAD = [
+  "export function flush(cache: Cache) {",
+  "  for (const entry of cache.dirty()) {",
+  "    const lock = cache.lock();",
+  "    write(entry);",
+  "    lock.release();",
+  "  }",
+  "}",
+  "",
+].join("\n");
+const PR_IDS = [1001, 210, 77];
+
+async function reviewRemote(root: string) {
+  const empty = join(root, "empty.gitconfig");
+  writeFileSync(empty, "");
+  const remote = join(root, "remote.git");
+  const env = {
+    ...gitEnv(empty),
+    GIT_AUTHOR_NAME: "e2e",
+    GIT_AUTHOR_EMAIL: "e2e@example.invalid",
+    GIT_COMMITTER_NAME: "e2e",
+    GIT_COMMITTER_EMAIL: "e2e@example.invalid",
+    GIT_INDEX_FILE: join(root, "e2e.index"),
+  };
+  const g = async (args: string[], stdin?: string) => (await git(["--git-dir", remote, ...args], { env, stdin })).trim();
+  await git(["init", "-q", "--bare", "--template=", remote], { env });
+  let n = 0;
+  async function commit(parent: string | null, files: Record<string, string>, msg: string) {
+    await g(parent ? ["read-tree", parent] : ["read-tree", "--empty"]);
+    const entries = Object.entries(files);
+    const blobs = entries.map(([, text]) => {
+      const f = join(root, `blob-${n++}`);
+      writeFileSync(f, text);
+      return f;
+    });
+    const shas = (await g(["hash-object", "-w", "--no-filters", "--stdin-paths"], `${blobs.join("\n")}\n`)).split("\n");
+    await g(["update-index", "--index-info"], `${entries.map(([path], i) => `100644 ${shas[i]}\t${path}`).join("\n")}\n`);
+    return g(["commit-tree", await g(["write-tree"]), ...(parent ? ["-p", parent] : []), "-m", msg]);
+  }
+  const base = await commit(null, { "src/cache/flush.ts": FLUSH_BASE, "README.md": "# Sample\n" }, "base");
+  const target = await commit(base, { "docs/main.md": "main\n" }, "main moves");
+  const source = await commit(base, { "src/cache/flush.ts": FLUSH_HEAD }, "Lock each entry");
+  await g(["update-ref", "refs/heads/main", target]);
+  await g(["update-ref", "refs/heads/feature", source]);
+  for (const id of PR_IDS) await g(["update-ref", `refs/pull-requests/${id}/from`, source]);
+  return { remote, source, target };
+}
+const remote = await reviewRemote(claudeDir);
+
+// The structured result of a review: an exact, a moved, and an outside finding, one dropped finding, and one question.
+const finding = (o: Record<string, unknown>) => ({
+  path: "src/cache/flush.ts",
+  side: "new",
+  lineEnd: null,
+  category: "Concurrency",
+  evidenceStatus: "code",
+  confidence: "high",
+  agent: null,
+  evidence: "",
+  ...o,
+});
+const RESULT = {
+  summary: "The lock moves into the loop. A reader can see a partly flushed batch.",
+  risks: ["Lock scope in `flush()`.", "Readers of the cache during a flush."],
+  questions: [
+    { text: "Must `flush()` stay atomic for readers?", why: "The description does not say if a reader may see a partial batch." },
+  ],
+  coverage: {
+    read: ["src/cache/flush.ts"],
+    skipped: [],
+    unavailable: [],
+    notChecked: ["Tests did not run, because the review has read-only tools."],
+  },
+  findings: [
+    finding({
+      line: 3,
+      anchorText: "const lock = cache.lock();",
+      severity: "blocker",
+      body: "The lock now covers one entry at a time. Another writer can run between two entries. Take the lock once, before the loop.",
+      evidence: "`write()` reads `cache.version` without the lock.",
+      agent: "rl-reviewer",
+    }),
+    finding({
+      line: 6,
+      anchorText: "lock.release();",
+      severity: "minor",
+      category: "Error handling",
+      body: "`lock.release()` does not run when `write()` throws. Release the lock in a `finally` block.",
+      confidence: "medium",
+    }),
+    finding({
+      path: "README.md",
+      line: 1,
+      anchorText: "# Sample",
+      severity: "nit",
+      category: "Documentation",
+      body: "The README does not name the flush order.",
+    }),
+    finding({
+      path: "src/cache/gone.ts",
+      line: 4,
+      anchorText: "evict()",
+      severity: "major",
+      body: "A file that the snapshot does not have.",
+    }),
+  ],
+};
+
+// Real Gate B streams with the init tools and MCP servers of a review run, and the given structured output.
+const GIT_TOOLS = ["git_log", "git_blame", "git_show", "git_diff"].map((t) => `mcp__rl-git__${t}`);
+const REVIEW_TOOLS = ["Task", "Read", "Grep", "Glob", ...GIT_TOOLS, "StructuredOutput"];
+const FIXTURES = resolve(import.meta.dir, "../../fixtures");
+function derive(name: string, file: string, structured?: unknown) {
+  const lines = readFileSync(join(FIXTURES, file), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => {
+      const e = JSON.parse(l);
+      if (e.type === "system" && e.subtype === "init")
+        return {
+          ...e,
+          tools: REVIEW_TOOLS,
+          mcp_servers: ["rl-git", ...Object.keys(DOC_SERVERS)].map((s) => ({ name: s, status: "connected", source: "dynamic" })),
+        };
+      return e.type === "result" && structured !== undefined ? { ...e, structured_output: structured } : e;
+    });
+  const out = join(claudeDir, `${name}.jsonl`);
+  writeFileSync(out, `${lines.map((e) => JSON.stringify(e)).join("\n")}\n`);
+  return out;
+}
+const STREAMS: Record<ClaudeScenario["stream"], string> = {
+  // b9: the main agent, two refused agents, and one rl-reviewer subagent with three calls.
+  tree: derive("tree", "claude/b9-wp8-flags.jsonl", RESULT),
+  schema: derive("schema", "claude/b9-wp8-flags.jsonl", { summary: "SCHEMA-CANARY", findings: "none" }),
+  limit: derive("limit", "claude-synthetic/usage-limit.jsonl"),
+};
+function setClaude(c: ClaudeScenario) {
+  writeFileSync(
+    claudeScenario,
+    JSON.stringify({
+      record: join(claudeDir, "calls.jsonl"),
+      auth: { loggedIn: true, authMethod: "claude.ai", projectsDirectory: join(claudeDir, "projects") },
+      fixture: STREAMS[c.stream],
+      exitCode: c.stream === "limit" ? 1 : 0,
+      hang: c.hang,
+      delayMs: 5,
+    } satisfies FakeScenario),
+  );
+}
+setClaude({ stream: "tree" });
 
 const WEB_DIR = resolve(import.meta.dir, "../../dist/web");
 const index = join(WEB_DIR, "index.html");
@@ -60,8 +218,13 @@ const me = person(FAKE_USER, "Jordan Doe");
 const API = "/rest/api/1.0";
 
 function makePr(project: string, repo: string, id: number, title: string, author: unknown, myStatus: string) {
-  const pr = S.reviewPr() as S.RawPr & { fromRef: { repository: Repo }; toRef: { repository: Repo } };
+  const pr = S.reviewPr() as S.RawPr & {
+    fromRef: { repository: Repo; latestCommit: string };
+    toRef: { repository: Repo; latestCommit: string };
+  };
   for (const r of [pr.fromRef, pr.toRef]) Object.assign(r.repository, { slug: repo, project: { ...r.repository.project, key: project } });
+  pr.fromRef.latestCommit = remote.source;
+  pr.toRef.latestCommit = remote.target;
   Object.assign(pr, {
     id,
     title,
@@ -157,11 +320,16 @@ function boot() {
   const live = createLive();
   const settings = createSettings({ dir: dataDir, secrets });
   const sync = createSyncEngine({ settings, live });
-  // No e2e run reaches the documentation servers.
-  const listTools = async (): Promise<string[]> => {
-    throw new Error("offline in e2e");
-  };
-  const review = createReviewJobs({ settings, live, dataDir, runnerCommand, listTools });
+  // No e2e run reaches the documentation servers. The stub names one tool per server.
+  const listTools = async (url: string): Promise<string[]> => [url === DOC_SERVERS.learn ? "docs_search" : "ask_question"];
+  const gitRemote = async () => ({
+    url: remote.remote,
+    sourceUrl: remote.remote,
+    sourceRef: "refs/heads/feature",
+    targetRef: "refs/heads/main",
+    fetchConfig: [] as [string, string][],
+  });
+  const review = createReviewJobs({ settings, live, dataDir, runnerCommand, listTools, gitRemote });
   const server = startServer({
     port: APP_PORT,
     token: randomBytes(32).toString("hex"),
@@ -193,7 +361,13 @@ r[key("POST", "/__control/reset")] = async () => {
   mkdirSync(dataDir);
   secrets = createSecrets(null);
   sc = { ...INITIAL };
+  setClaude({ stream: "tree" });
   app = boot();
+  return NO_CONTENT;
+};
+// The stream and the mode of the next fake CLI run.
+r[key("POST", "/__control/claude")] = async (req) => {
+  setClaude((await req.json()) as ClaudeScenario);
   return NO_CONTENT;
 };
 r[key("POST", "/__control/restart")] = async () => {

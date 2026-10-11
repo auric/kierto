@@ -89,6 +89,7 @@
   --add: #e4f2e7;
   --del: #f9e4e4;
   --hit: #dde2e8;
+  --shade: rgba(22, 26, 33, 0.14);
   /* Avatar lightness and chroma (prototype/v3:6-9). One hue per person names the person, never a state. */
   --av-bl: 0.92;
   --av-bc: 0.035;
@@ -117,6 +118,7 @@
   --add: #15291b;
   --del: #34191b;
   --hit: #2f3640;
+  --shade: rgba(0, 0, 0, 0.5);
   --av-bl: 0.36;
   --av-bc: 0.04;
   --av-fl: 0.88;
@@ -311,6 +313,13 @@ details[open] > summary .rl-chev {
   content: "·" / "";
   margin-right: 8px;
   color: var(--muted-foreground);
+}
+/* A long part, such as a run error, takes its own line. The part after it starts the next line without a dot. */
+.rl-sum > .rl-full {
+  flex-basis: 100%;
+}
+.rl-sum > .rl-full + *::before {
+  content: none;
 }
 @container detail (max-width: 559px) {
   .rl-wide-pane {
@@ -528,6 +537,168 @@ details[open] > summary .rl-chev {
 }
 .rl-stack .rl-av + .rl-av {
   margin-left: -4px;
+}
+/* The runner avatar is neutral: it names no person (prototype/v3:393). */
+.rl-av[data-ai] {
+  background: var(--sel);
+  color: var(--ink-2);
+}
+
+/* Review brief (prototype/v3:183-212): the note and the profiles side by side in a wide pane. */
+@container detail (min-width: 640px) {
+  .rl-bf-main {
+    grid-template-columns: minmax(0, 1fr) minmax(200px, 250px);
+  }
+}
+/* Review button: the chevron points down, and up while the brief is open. */
+.rl-chev-d {
+  transition: transform 150ms var(--ease-out);
+}
+[aria-expanded="true"] > .rl-chev-d {
+  transform: rotate(180deg);
+}
+
+/* Run log sheet (prototype/v3:460-500). The detail pane is the containing block of a fixed box, because its container query applies layout containment. */
+.rl-sheet {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  width: min(520px, 100%);
+  box-shadow: -12px 0 32px var(--shade);
+}
+/* Subagent calls nest with the thin neutral line of the reply tree. The fold chevron hangs in a gutter left of the status column. */
+.rl-log {
+  --g: 16px;
+  --step: 20px;
+  --mid: 12px;
+  --ln: var(--rule-strong);
+  list-style: none;
+  margin: 0;
+  padding: 8px 16px 8px calc(16px - var(--g));
+  overflow: auto;
+  font: 12px / 1.55 var(--font-mono);
+}
+.rl-lsub {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--step);
+}
+.rl-lr {
+  position: relative;
+}
+.rl-ll {
+  position: relative;
+  display: grid;
+  grid-template-columns: 5ch 10ch minmax(0, 1fr) 6ch;
+  gap: 0 10px;
+  width: 100%;
+  padding: 3px 0 3px var(--g);
+  border-radius: 4px;
+  text-align: left;
+}
+.rl-lchev {
+  position: absolute;
+  left: 1px;
+  top: calc(var(--mid) - 7px);
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+  transition: transform 150ms var(--ease-out);
+}
+[aria-expanded="true"] > .rl-lchev {
+  transform: rotate(90deg);
+}
+button.rl-ll:hover {
+  background: var(--hover);
+}
+.rl-lsub > .rl-lr::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: calc(var(--g) / 2 - var(--step) - 0.5px);
+  width: calc(var(--step) + var(--g) / 2 - 4px);
+  height: var(--mid);
+  border: 0 solid var(--ln);
+  border-width: 0 0 1px 1px;
+  border-bottom-left-radius: 7px;
+}
+.rl-lsub > .rl-ag::before {
+  width: calc(var(--step) - var(--g) / 2 - 1px);
+}
+.rl-lsub > .rl-lr:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--g) / 2 - var(--step) - 0.5px);
+  border-left: 1px solid var(--ln);
+}
+.rl-ag.rl-kids > .rl-ll::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--mid) + 8px);
+  bottom: 0;
+  left: calc(var(--g) / 2 - 0.5px);
+  border-left: 1px solid var(--ln);
+}
+/* Below the indent cap, rows keep the indent of the cap level and drop the line. */
+.rl-lsub.rl-cap {
+  padding-left: 0;
+}
+.rl-cap > .rl-lr::before,
+.rl-cap > .rl-lr::after,
+.rl-ag.rl-kids:has(> .rl-cap) > .rl-ll::after {
+  display: none;
+}
+.rl-ls,
+.rl-ld,
+.rl-lnote {
+  color: var(--muted-foreground);
+}
+.rl-ld {
+  text-align: right;
+  white-space: nowrap;
+}
+.rl-lt,
+.rl-lg {
+  overflow-wrap: anywhere;
+}
+.rl-lg {
+  color: var(--ink-2);
+}
+.rl-lg b {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.rl-lnote {
+  display: block;
+}
+.rl-ll[data-st="error"] .rl-lnote,
+.rl-ll[data-st="error"] .rl-ls {
+  color: var(--destructive);
+}
+@media (max-width: 759px) {
+  .rl-log {
+    --step: 14px;
+    padding-right: 12px;
+  }
+  .rl-ll {
+    gap: 0 6px;
+  }
+}
+/* A jump target shows a short highlight. Reduced motion removes it and keeps the focus ring. */
+.rl-flash {
+  animation: rl-flash 900ms var(--ease-out) 1;
+}
+@keyframes rl-flash {
+  from {
+    background: var(--sel);
+  }
+  to {
+    background: transparent;
+  }
 }
 
 /* Comment Markdown. */

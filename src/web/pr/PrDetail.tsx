@@ -4,7 +4,9 @@ import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect,
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommentDto, PrRow } from "../../shared/dto";
+import type { Layer } from "../keys";
 import { useForge } from "../meta";
+import { type Focus, useReview } from "../review/useReview";
 import { ApiError, sendSeen, usePr } from "../shell/data";
 import { createHints, SharedHint } from "../shell/Hint";
 import { useMinute } from "../shell/ListPane";
@@ -25,6 +27,13 @@ export type DetailApi = {
   nextNew(d: 1 | -1): void;
   nextYour(): void;
   section(id: "files" | "commits"): void;
+  // Plan v3 WP11: r, Shift+R, 2, 3, and the Esc layers of the review.
+  rerun(): void;
+  brief(): void;
+  drafts(): void;
+  log(): void;
+  layer(target: EventTarget | null): Layer;
+  close(layer: Exclude<Layer, null>): void;
 };
 
 const NO_COMMENTS: CommentDto[] = [];
@@ -47,10 +56,20 @@ function flash(el: HTMLElement) {
   });
 }
 
-type Focus = { id: string; block: ScrollLogicalPosition; flash: boolean };
-
-// onLeave: the shell moves the selection away before the PR leaves the list.
-export function PrDetail({ pr: row, me, onLeave, ref }: { pr: PrRow; me: string | null; onLeave: () => void; ref: Ref<DetailApi | null> }) {
+// onLeave: the shell moves the selection away before the PR leaves the list. onSettings: the brief links to the task ID rules.
+export function PrDetail({
+  pr: row,
+  me,
+  onLeave,
+  onSettings,
+  ref,
+}: {
+  pr: PrRow;
+  me: string | null;
+  onLeave: () => void;
+  onSettings: () => void;
+  ref: Ref<DetailApi | null>;
+}) {
   const q = usePr(row.id);
   const data = q.data;
   const pr = data?.pr ?? row;
@@ -143,6 +162,8 @@ export function PrDetail({ pr: row, me, onLeave, ref }: { pr: PrRow; me: string 
     [hints, now, forge, ackRef, focusAfter, jump],
   );
 
+  const review = useReview(pr, { commits: data?.commits, hints, now, focusAfter, onSettings });
+
   const isOpen = (t: { id: number; open: boolean }) => open.get(t.id) ?? t.open;
   // The cause waits for the data. Cached data from an earlier visit can miss it, so the first fetch after mount must end too.
   const wantCause = useRef(false);
@@ -205,6 +226,7 @@ export function PrDetail({ pr: row, me, onLeave, ref }: { pr: PrRow; me: string 
       setSecs((s) => new Set(s).add(id));
       focusAfter({ id: `s-${id}-sum`, block: "start", flash: false });
     },
+    ...review.api,
   }));
 
   const openSec = (id: string) => (on: boolean) => setSecs((s) => (on === s.has(id) ? s : toggled(s, id)));
@@ -221,11 +243,14 @@ export function PrDetail({ pr: row, me, onLeave, ref }: { pr: PrRow; me: string 
         onNextNew={() => nextNew(1)}
         onNextYour={nextYour}
         onLeave={onLeave}
+        action={review.action}
+        brief={review.brief}
+        run={review.run}
       />
       <div className="px-6 pb-16 max-[759px]:px-4">
         {data ? (
           <>
-            <Overview detail={data} me={me} forge={forge} diffLink={!data.files?.length} />
+            <Overview detail={data} me={me} forge={forge} diffLink={!data.files?.length} summary={review.summary} />
             <Threads
               threads={threads}
               needMe={needMe}
@@ -235,6 +260,7 @@ export function PrDetail({ pr: row, me, onLeave, ref }: { pr: PrRow; me: string 
               spines={spines}
               branches={branches}
               ctx={ctx}
+              drafts={review.drafts}
               onNeedMe={setNeedMe}
               onShowResolved={() => {
                 setShowResolved(true);
@@ -281,6 +307,7 @@ export function PrDetail({ pr: row, me, onLeave, ref }: { pr: PrRow; me: string 
         )}
       </div>
       <SharedHint hints={hints} />
+      {review.sheet}
     </>
   );
 }

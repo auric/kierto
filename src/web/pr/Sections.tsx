@@ -16,7 +16,20 @@ export const STATUS_TEXT: Record<string, string> = { APPROVED: "Approved", NEEDS
 const h2 = "m-0 flex items-baseline gap-2 text-[15px] font-bold tracking-[-0.005em]";
 const linkish = "inline-flex w-fit items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
 
-export function Overview({ detail, me, forge, diffLink }: { detail: PrDetail; me: string | null; forge: string; diffLink: boolean }) {
+// summary: the runner's summary of the newest review (plan v3 WP11).
+export function Overview({
+  detail,
+  me,
+  forge,
+  diffLink,
+  summary,
+}: {
+  detail: PrDetail;
+  me: string | null;
+  forge: string;
+  diffLink: boolean;
+  summary?: ReactNode;
+}) {
   const { pr, description } = detail;
   const [more, setMore] = useState(false);
   const text = description?.trim() ?? "";
@@ -30,6 +43,7 @@ export function Overview({ detail, me, forge, diffLink }: { detail: PrDetail; me
         Overview
         {opener && <span className="ml-auto text-xs font-normal text-muted-foreground">Opened by {opener}</span>}
       </h2>
+      {summary}
       {!pr.followed && (
         <p className="m-0 text-muted-foreground">Not followed. Review Loop does not check this pull request for new comments.</p>
       )}

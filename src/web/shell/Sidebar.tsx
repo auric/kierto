@@ -1,4 +1,4 @@
-// Sidebar (prototype/v3 renderSide): inbox views, repositories, check status, theme, density, and settings.
+// Sidebar (prototype/v3 renderSide): inbox views, the AI review view, repositories, check status, theme, density, and settings.
 import {
   Bell,
   Circle,
@@ -17,6 +17,7 @@ import {
   Settings2,
   Star,
   Sun,
+  Terminal,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
@@ -51,14 +52,16 @@ const current = "bg-pane font-semibold text-foreground shadow-[inset_0_0_0_1px_v
 const heading = "rl-lbl m-0 px-2 py-1 text-xs font-semibold text-muted-foreground";
 
 export function Sidebar(props: {
-  // null: a repository or the settings take the list or the detail.
-  view: View | null;
+  // null: a repository or the settings take the list or the detail. "runs": the Review runs view.
+  view: View | "runs" | null;
   counts: Record<View, number>;
+  // The PRs with a review run, and whether a review runs now.
+  runs: { count: number; running: boolean };
   repos: ProjectRepos[];
   repo: string | null;
   status: StatusInfo | null;
   checking: boolean;
-  onView: (v: View) => void;
+  onView: (v: View | "runs") => void;
   onRepo: (r: string | null) => void;
   onCheck: () => void;
   onSettings: () => void;
@@ -109,6 +112,10 @@ export function Sidebar(props: {
               </Hint>
             );
           })}
+        </div>
+        <div className="grid gap-px">
+          <h2 className={heading}>AI review</h2>
+          <RunsItem {...props.runs} rail={rail} current={props.view === "runs"} onClick={() => props.onView("runs")} />
         </div>
         {props.repos.length > 0 && (
           <div className="rl-repos grid gap-px">
@@ -174,6 +181,28 @@ export function Sidebar(props: {
         </div>
       </div>
     </nav>
+  );
+}
+
+// prototype/v3 navBtn for AIVIEWS.runs: a spinner replaces the icon while a review runs.
+function RunsItem(props: { count: number; running: boolean; rail: boolean; current: boolean; onClick: () => void }) {
+  const label = `Review runs: ${props.count}${props.running ? ", 1 running" : ""}`;
+  const Icon = props.running ? LoaderCircle : Terminal;
+  return (
+    <Hint label={label} disabled={!props.rail} side="right">
+      <button
+        type="button"
+        id="nav-runs"
+        className={cn(navItem, props.current && current)}
+        aria-current={props.current ? "page" : undefined}
+        aria-label={label}
+        onClick={props.onClick}
+      >
+        <Icon aria-hidden className={cn("size-[15px] shrink-0", props.running && "animate-spin")} />
+        <span className="rl-lbl truncate">Review runs</span>
+        <span className="rl-lbl ml-auto text-xs font-medium text-muted-foreground">{props.count || ""}</span>
+      </button>
+    </Hint>
   );
 }
 

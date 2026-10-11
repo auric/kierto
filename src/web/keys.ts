@@ -25,7 +25,11 @@ export type KeyContext = {
   settingsLocked: boolean;
   // ms.
   now: number;
+  // The open layer of the detail that Esc closes first: the review brief, or the run log (prototype/v3 Esc order).
+  layer?: Layer;
 };
+
+export type Layer = "brief" | "log" | null;
 
 export type Effect =
   | "focus-filter"
@@ -40,8 +44,12 @@ export type Effect =
   | "files"
   | "commits"
   | "overview"
-  | "tab-2"
-  | "tab-3"
+  | "drafts"
+  | "log"
+  | "rerun"
+  | "brief"
+  | "close-brief"
+  | "close-log"
   | null;
 
 export type KeyResult = { state: KeyState; effect: Effect; handled: boolean };
@@ -64,8 +72,10 @@ const DETAIL: Record<string, Effect> = {
   y: "next-your",
   o: "thread-toggle",
   "1": "overview",
-  "2": "tab-2",
-  "3": "tab-3",
+  "2": "drafts",
+  "3": "log",
+  r: "rerun",
+  R: "brief",
 };
 const CHORD: Record<string, Effect> = { f: "files", c: "commits" };
 
@@ -78,6 +88,7 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
 
   if (key === "Escape") {
     if (s.help) return done({ ...s, help: false });
+    if (ctx.layer) return done(s, ctx.layer === "brief" ? "close-brief" : "close-log");
     if (ctx.typing) return done({ ...s, focus: "list" }, "focus-list");
     if (s.mobile === "side") return done({ ...s, mobile: "list", focus: "list" }, "focus-list");
     return back(s, ctx);
@@ -118,7 +129,7 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
   }
 }
 
-// Only the keys that work now. The AI review keys come in M2.
+// Only the keys that work now. Triage and post keys come in M3.
 export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string[]; text: string }[] }[] = [
   {
     group: "Move",
@@ -136,9 +147,17 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
       { keys: ["y"], text: "Next thread where it is your turn" },
       { keys: ["o"], text: "Open or close the current thread" },
       { keys: ["g"], second: ["f", "c"], text: "Open and go to Files or Commits" },
-      { keys: ["1"], text: "Go to the overview" },
-      { keys: ["2", "3"], text: "Drafts and run log. They arrive in M2." },
+      { keys: ["1", "2", "3"], text: "Go to the overview, go to the drafts, open the run log" },
       { keys: ["?"], text: "Show or hide this list" },
+    ],
+  },
+  {
+    group: "AI review",
+    keys: [
+      { keys: ["r"], text: "Run the brief of this pull request again. With no brief yet, open the review brief." },
+      { keys: ["Shift", "R"], text: "Open the review brief: task, your note, and profile" },
+      { keys: ["Ctrl", "Enter"], text: "Start the review from the brief" },
+      { keys: ["Esc"], text: "Close the review brief or the run log" },
     ],
   },
 ];

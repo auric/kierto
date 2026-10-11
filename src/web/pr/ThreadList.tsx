@@ -1,5 +1,6 @@
-// Threads section (prototype/v3 threadsSec): the filter, then your turn, waiting, others, and resolved threads.
+// Threads section (prototype/v3 threadsSec): the filter, the drafts of the newest review, then your turn, waiting, others, and resolved threads.
 import { CircleCheck, Hourglass, Reply, Users } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { Turn } from "../../shared/turn";
 import { Thread, type ThreadCtx } from "./Thread";
@@ -21,6 +22,7 @@ export function Threads(props: {
   spines: ReadonlySet<number>;
   branches: ReadonlySet<number>;
   ctx: ThreadCtx;
+  drafts?: ReactNode;
   onNeedMe: (on: boolean) => void;
   onShowResolved: () => void;
 }) {
@@ -46,6 +48,7 @@ export function Threads(props: {
           </label>
         )}
       </div>
+      {props.drafts}
       {groups.length ? (
         groups.map(({ k, ts }) => {
           if (k === "resolved" && !props.showResolved && !needMe) {

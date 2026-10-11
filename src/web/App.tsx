@@ -1,10 +1,10 @@
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Toaster, toast } from "@/components/ui/toast";
+import { Toaster } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { VIEW_LABEL, VIEWS, type View } from "../shared/views";
@@ -13,6 +13,8 @@ import { useLive } from "./live";
 import { useMeta } from "./meta";
 import { useClaims } from "./notify";
 import { type DetailApi, PrDetail } from "./pr/PrDetail";
+import { useRuns } from "./review/data";
+import { latestByPr, runRows } from "./review/model";
 import { Settings } from "./settings/Settings";
 import {
   claimEvents,
@@ -67,11 +69,15 @@ export function App() {
 
 const INITIAL: KeyState = { focus: "list", mobile: "list", selected: null, help: false, settings: false, chord: null };
 
-const EMPTY: Record<View, string> = {
+// "runs": the Review runs view of the AI review group (prototype/v3 AIVIEWS).
+type ListView = View | "runs";
+
+const EMPTY: Record<ListView, string> = {
   needs: "Nothing needs you. New replies and review requests show here.",
   reviewing: "No open pull requests to review.",
   mine: "You have no open pull requests.",
   following: "You follow no pull requests. Paste a pull request URL into the filter to follow it.",
+  runs: "No review has run yet. Open a pull request and press r to start one.",
 };
 
 function Shell({ stale }: { stale: boolean }) {
@@ -81,7 +87,7 @@ function Shell({ stale }: { stale: boolean }) {
   const settings = useSettings();
   const checkNow = useCheckNow();
   const follow = useFollowUrl();
-  const [view, setView] = useState<View>("needs");
+  const [view, setView] = useState<ListView>("needs");
   const [repo, setRepo] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [doneOpen, setDoneOpen] = useState(false);
@@ -96,8 +102,13 @@ function Shell({ stale }: { stale: boolean }) {
   const showSettings = locked || ks.settings;
   const all = prs.data ?? [];
   const forge = meta.data?.forge.name ?? "";
-  const rows = filterRows(all, view, repo, query);
-  const groups = groupRows(rows);
+  const runs = useRuns().data;
+  const latest = useMemo(() => latestByPr(runs ?? []), [runs]);
+  const running = runs?.some((r) => r.status === "running") ?? false;
+  // A repository replaces the view (prototype/v3 aiMode), so filterRows then ignores the view argument.
+  const aiView = view === "runs" && !repo;
+  const rows = aiView ? runRows(all, latest, query) : filterRows(all, view === "runs" ? "following" : view, repo, query);
+  const groups = aiView ? (rows.length ? [{ id: "runs" as const, label: "", rows }] : []) : groupRows(rows);
   const ids = navIds(groups, doneOpen);
   // The first open row is the default. A row of the folded Done group stays selected only after a click.
   const selected = rows.some((p) => p.id === ks.selected) ? ks.selected : (ids[0] ?? null);
@@ -134,9 +145,7 @@ function Shell({ stale }: { stale: boolean }) {
       const row = selected === null ? null : document.getElementById(`row-${selected}`);
       (row ?? document.getElementById("rows"))?.focus({ preventScroll: true });
       row?.scrollIntoView({ block: "nearest" });
-    } else if (effect === "tab-2" || effect === "tab-3")
-      toast.add({ title: `${effect === "tab-2" ? "Review" : "Run log"} arrives in M2.` });
-    else if (effect) {
+    } else if (effect) {
       // Detail effects. Focus outside the pane moves into it, so a key without a target still leaves focus in the detail.
       // Focus inside the pane stays: n, j, and o start from it.
       if (!detailRef.current?.contains(document.activeElement)) detailRef.current?.focus({ preventScroll: true });
@@ -148,6 +157,11 @@ function Shell({ stale }: { stale: boolean }) {
       else if (effect === "next-new" || effect === "prev-new") api?.nextNew(effect === "next-new" ? 1 : -1);
       else if (effect === "next-your") api?.nextYour();
       else if (effect === "files" || effect === "commits") api?.section(effect);
+      else if (effect === "drafts") api?.drafts();
+      else if (effect === "log") api?.log();
+      else if (effect === "rerun") api?.rerun();
+      else if (effect === "brief") api?.brief();
+      else if (effect === "close-brief" || effect === "close-log") api?.close(effect === "close-brief" ? "brief" : "log");
     }
   });
 
@@ -157,9 +171,12 @@ function Shell({ stale }: { stale: boolean }) {
     const t = e.target as HTMLElement;
     // A checkbox takes keys like a button, so the detail keys work after the thread filter.
     const box = t instanceof HTMLInputElement && (t.type === "checkbox" || t.type === "radio");
+    // The arrow keys move between the profile radios of the review brief.
+    if (box && t.type === "radio" && e.key.startsWith("Arrow")) return;
     const typing = (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !box) || t.isContentEditable;
     const onButton = (t.tagName === "BUTTON" && !t.hasAttribute("data-row")) || t.tagName === "A" || t.tagName === "SUMMARY" || box;
-    const r = reduceKey(state, e.key, { ids, typing, onButton, settingsLocked: locked, now: Date.now() });
+    const layer = detailApi.current?.layer(e.target) ?? null;
+    const r = reduceKey(state, e.key, { ids, typing, onButton, settingsLocked: locked, now: Date.now(), layer });
     if (!r.handled) return;
     e.preventDefault();
     if (e.key === "Escape" && typing) t.blur();
@@ -202,6 +219,7 @@ function Shell({ stale }: { stale: boolean }) {
       <Sidebar
         view={showSettings || repo ? null : view}
         counts={viewCounts(all)}
+        runs={{ count: all.filter((p) => latest.has(p.id)).length, running }}
         repos={repoTree(all)}
         repo={repo}
         status={info}
@@ -220,7 +238,7 @@ function Shell({ stale }: { stale: boolean }) {
         settingsOpen={showSettings}
       />
       <ListPane
-        title={repo ?? VIEW_LABEL[view]}
+        title={repo ?? (view === "runs" ? "Review runs" : VIEW_LABEL[view])}
         count={rows.length}
         groups={groups}
         loading={prs.isPending}
@@ -231,6 +249,8 @@ function Shell({ stale }: { stale: boolean }) {
         focused={ks.focus === "list" && !showSettings}
         doneOpen={doneOpen}
         forge={forge}
+        runs={aiView ? latest : null}
+        profiles={meta.data.profiles}
         candidate={candidate}
         following={follow.isPending}
         followError={follow.error && !isStale(follow.error) ? follow.error.message : null}
@@ -285,6 +305,7 @@ function Shell({ stale }: { stale: boolean }) {
                 ref={detailApi}
                 pr={current}
                 me={s?.user ?? null}
+                onSettings={() => go({ settings: true, mobile: "detail", focus: "detail" })}
                 onLeave={() => {
                   const i = ids.indexOf(current.id);
                   setKs((k) => ({ ...k, selected: ids[i + 1] ?? ids[i - 1] ?? null }));

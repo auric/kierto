@@ -85,12 +85,34 @@ describe("typing, help, and settings", () => {
 });
 
 describe("detail keys", () => {
-  test("n, N, y, o, and 1 to 3 move focus to the detail and name their effect", () => {
+  test("n, N, y, o, 1 to 3, r, and R move focus to the detail and name their effect", () => {
     const r = reduceKey({ ...S, selected: 20 }, "n", C);
     expect(r.state).toMatchObject({ focus: "detail", mobile: "detail" });
     expect(r.effect).toBe("next-new");
     const effect = (key: string) => reduceKey({ ...S, selected: 20 }, key, C).effect;
-    expect(["N", "y", "o", "1", "3"].map(effect)).toEqual(["prev-new", "next-your", "thread-toggle", "overview", "tab-3"]);
+    expect(["N", "y", "o", "1", "2", "3", "r", "R"].map(effect)).toEqual([
+      "prev-new",
+      "next-your",
+      "thread-toggle",
+      "overview",
+      "drafts",
+      "log",
+      "rerun",
+      "brief",
+    ]);
+  });
+
+  // Plan v3 WP11, prototype/v3 Esc order: help, then the review brief or the run log, then the field, then the pane.
+  test("Esc closes the open layer of the detail first, also while typing in the note", () => {
+    const detail = { ...S, selected: 20, focus: "detail" as const, mobile: "detail" as const };
+    expect(reduceKey(detail, "Escape", { ...C, layer: "brief", typing: true })).toMatchObject({ effect: "close-brief", state: detail });
+    expect(reduceKey(detail, "Escape", { ...C, layer: "log" })).toMatchObject({ effect: "close-log", state: detail });
+    expect(reduceKey({ ...detail, help: true }, "Escape", { ...C, layer: "log" })).toMatchObject({ effect: null, state: { help: false } });
+    expect(reduceKey(detail, "Escape", { ...C, layer: null }).effect).toBe("focus-list");
+  });
+
+  test("r and R do nothing while typing", () => {
+    for (const k of ["r", "R"]) expect(reduceKey({ ...S, selected: 20 }, k, { ...C, typing: true }).handled).toBe(false);
   });
 
   test("Enter in the detail toggles the current thread, but not on a button", () => {

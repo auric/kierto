@@ -1,11 +1,12 @@
-// List pane (prototype/v3 renderList): Needs you, Waiting on others, and a folded Done group.
+// List pane (prototype/v3 renderList): Needs you, Waiting on others, and a folded Done group. The Review runs view is one flat list.
 import { BellOff, ChevronRight, CircleAlert, Hourglass, Menu, Plus, Reply, Search, User, X } from "lucide-react";
 import { memo, type Ref, useEffect, useState } from "react";
 import { Kbd } from "@/components/ui/kbd";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import type { PrRow } from "../../shared/dto";
+import type { ProfileDto, PrRow, RunDto } from "../../shared/dto";
 import type { PrRef } from "../../shared/types";
+import { runWhy } from "../review/model";
 import { createHints, Hint, type Hints, HintTrigger, SharedHint } from "./Hint";
 import { ago, incompleteText, type ListGroup, prKey, taskHint, why } from "./model";
 
@@ -35,6 +36,9 @@ export function ListPane(props: {
   focused: boolean;
   doneOpen: boolean;
   forge: string;
+  // The Review runs view: the newest run of each row. Its why-line names the run, not the inbox reason.
+  runs: ReadonlyMap<number, RunDto> | null;
+  profiles: ProfileDto[];
   candidate: PrRef | null;
   following: boolean;
   followError: string | null;
@@ -60,6 +64,8 @@ export function ListPane(props: {
           now={now}
           forge={props.forge}
           hints={hints}
+          run={props.runs?.get(p.id)}
+          profile={props.profiles.find((x) => x.id === props.runs?.get(p.id)?.profile)?.name ?? ""}
           selected={p.id === props.selected}
           onSelect={props.onSelect}
           onOpen={props.onOpen}
@@ -154,7 +160,9 @@ export function ListPane(props: {
           <SkeletonRows />
         ) : props.groups.length ? (
           props.groups.map((g) =>
-            g.id === "done" ? (
+            !g.label ? (
+              <div key={g.id}>{rows(g)}</div>
+            ) : g.id === "done" ? (
               <details key={g.id} open={props.doneOpen} onToggle={(e) => props.onDoneOpen(e.currentTarget.open)}>
                 <summary className="sticky top-0 z-[1] focus-visible:outline-offset-[-2px] [&:hover_h3]:bg-hover">
                   <h3 id={`g-${g.id}`} className={groupHead}>
@@ -221,6 +229,8 @@ const Row = memo(function Row({
   now,
   forge,
   hints,
+  run,
+  profile,
   selected,
   onSelect,
   onOpen,
@@ -229,11 +239,14 @@ const Row = memo(function Row({
   now: number;
   forge: string;
   hints: Hints;
+  run: RunDto | undefined;
+  profile: string;
   selected: boolean;
   onSelect: (id: number) => void;
   onOpen: (id: number) => void;
 }) {
   const w = why(p, now);
+  const time = run ? (run.finishedAt ?? run.startedAt) : p.lastActivity;
   const task = p.tasks[0];
   const incomplete = incompleteText(p.checkpoint, forge);
   return (
@@ -271,9 +284,9 @@ const Row = memo(function Row({
               </span>
             </HintTrigger>
           )}
-          <HintTrigger hints={hints} label={fullTime(p.lastActivity)}>
-            <time dateTime={new Date(p.lastActivity).toISOString()} className="ml-auto shrink-0 whitespace-nowrap">
-              {ago(p.lastActivity, now)}
+          <HintTrigger hints={hints} label={fullTime(time)}>
+            <time dateTime={new Date(time).toISOString()} className="ml-auto shrink-0 whitespace-nowrap">
+              {ago(time, now)}
             </time>
           </HintTrigger>
         </span>
@@ -282,37 +295,61 @@ const Row = memo(function Row({
         ) : (
           <span className="min-w-0 truncate font-semibold">{p.title}</span>
         )}
-        <span className="flex min-w-0 items-baseline gap-2 text-sm text-ink-2">
-          {w.closed && <b className="shrink-0 font-semibold text-foreground">{w.closed}</b>}
-          {w.turn?.kind === "your" && (
-            <span className="inline-flex shrink-0 items-center gap-1.5 self-center font-semibold whitespace-nowrap text-turn">
-              <Reply aria-hidden className="size-[15px]" />
-              {w.turn.text}
-            </span>
-          )}
-          {w.turn?.kind === "wait" && (
-            <span className="inline-flex self-center">
-              <IconHint hints={hints} label={w.turn.text} icon={Hourglass} />
-            </span>
-          )}
-          {(w.lead || w.text) && (
-            <span className="min-w-0 truncate">
-              {w.lead && <b className="font-semibold text-foreground">{w.lead}</b>}
-              {w.lead && w.text && " "}
-              {w.text}
-            </span>
-          )}
-          {p.unread > 0 && (
-            <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 self-center text-xs font-semibold whitespace-nowrap text-foreground">
-              <span aria-hidden className="size-[7px] rounded-full bg-foreground" />
-              {p.unread} new
-            </span>
-          )}
-        </span>
+        {run ? (
+          <RunWhyLine run={run} profile={profile} />
+        ) : (
+          <span className="flex min-w-0 items-baseline gap-2 text-sm text-ink-2">
+            {w.closed && <b className="shrink-0 font-semibold text-foreground">{w.closed}</b>}
+            {w.turn?.kind === "your" && (
+              <span className="inline-flex shrink-0 items-center gap-1.5 self-center font-semibold whitespace-nowrap text-turn">
+                <Reply aria-hidden className="size-[15px]" />
+                {w.turn.text}
+              </span>
+            )}
+            {w.turn?.kind === "wait" && (
+              <span className="inline-flex self-center">
+                <IconHint hints={hints} label={w.turn.text} icon={Hourglass} />
+              </span>
+            )}
+            {(w.lead || w.text) && (
+              <span className="min-w-0 truncate">
+                {w.lead && <b className="font-semibold text-foreground">{w.lead}</b>}
+                {w.lead && w.text && " "}
+                {w.text}
+              </span>
+            )}
+            {p.unread > 0 && (
+              <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 self-center text-xs font-semibold whitespace-nowrap text-foreground">
+                <span aria-hidden className="size-[7px] rounded-full bg-foreground" />
+                {p.unread} new
+              </span>
+            )}
+          </span>
+        )}
       </button>
     </li>
   );
 });
+
+// prototype/v3 whyRun: the profile and the outcome of the newest run. An error carries an icon and a word, not only the hue.
+function RunWhyLine({ run, profile }: { run: RunDto; profile: string }) {
+  const w = runWhy(run, profile);
+  return (
+    <span className="flex min-w-0 items-baseline gap-2 text-sm text-ink-2">
+      {w.error && (
+        <span className="inline-flex shrink-0 items-center gap-[5px] self-center font-semibold whitespace-nowrap text-destructive">
+          <CircleAlert aria-hidden className="size-[15px]" />
+          {w.error}
+        </span>
+      )}
+      <span className="min-w-0 truncate">
+        {w.lead && <b className="font-semibold text-foreground">{w.lead}</b>}
+        {w.lead && w.text && " "}
+        {w.text}
+      </span>
+    </span>
+  );
+}
 
 function SkeletonRows() {
   return (

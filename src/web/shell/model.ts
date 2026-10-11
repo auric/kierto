@@ -58,18 +58,21 @@ export function repoTree(prs: PrRow[]): ProjectRepos[] {
 
 export const unreadTotal = (prs: PrRow[]) => prs.reduce((n, p) => n + p.unread, 0);
 
-// prototype/v3 listRows(): a repository replaces the view. The filter text also matches task IDs.
-export function filterRows(prs: PrRow[], view: View, repo: string | null, q: string): PrRow[] {
+// The filter text also matches task IDs.
+export function matches(p: PrRow, q: string): boolean {
   const needle = q.trim().toLowerCase();
-  return prs.filter(
-    (p) =>
-      (repo ? repoOf(p) === repo : VIEWS[view](p)) &&
-      (!needle ||
-        [p.title, prKey(p), p.authorName, p.authorSlug, ...p.tasks.map((t) => t.key)].some((s) => s?.toLowerCase().includes(needle))),
+  return (
+    !needle || [p.title, prKey(p), p.authorName, p.authorSlug, ...p.tasks.map((t) => t.key)].some((s) => s?.toLowerCase().includes(needle))
   );
 }
 
-export type ListGroup = { id: (typeof GROUPS)[number][0]; label: string; rows: PrRow[] };
+// prototype/v3 listRows(): a repository replaces the view.
+export function filterRows(prs: PrRow[], view: View, repo: string | null, q: string): PrRow[] {
+  return prs.filter((p) => (repo ? repoOf(p) === repo : VIEWS[view](p)) && matches(p, q));
+}
+
+// "runs": the flat list of the Review runs view. Its label is empty, so the list shows no group head.
+export type ListGroup = { id: (typeof GROUPS)[number][0] | "runs"; label: string; rows: PrRow[] };
 
 // prototype/v3 grouped(): the three inbox groups, without empty ones. Rows keep the server order.
 export function groupRows(rows: PrRow[]): ListGroup[] {

@@ -15,10 +15,15 @@ export type Scenario = {
   down: boolean;
 };
 
+// The next fake Claude Code run. tree: a subagent run with drafts. schema: a result that fails the schema. limit: a usage limit.
+// hang: the CLI stops before its result and waits for a cancel.
+export type ClaudeScenario = { stream: "tree" | "schema" | "limit"; hang?: boolean };
+
 // Test-only control routes on the fake Bitbucket. The app has no such route.
 export async function control(action: "reset" | "restart" | "shutdown"): Promise<void>;
 export async function control(action: "state", change: Partial<Scenario>): Promise<void>;
-export async function control(action: string, change?: Partial<Scenario>) {
+export async function control(action: "claude", change: ClaudeScenario): Promise<void>;
+export async function control(action: string, change?: Partial<Scenario> | ClaudeScenario) {
   const res = await fetch(`${FAKE_URL}/__control/${action}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${E2E_TOKEN}`, "Content-Type": "application/json" },
