@@ -13,11 +13,12 @@ import { createReviewJobs } from "../../src/server/review/jobs";
 import type { GitRemote } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
-import type { ApiError, FixDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
-import { type FixEdit, type FixResult, fixJsonSchema, MAX_FIX_BYTES } from "../../src/shared/review";
-import { FAKE_TOKEN, FAKE_USER } from "../support/fake-bitbucket";
+import type { ApiError, CloneDto, FixCommitDto, FixDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
+import { type FixEdit, type FixResult, fixJsonSchema, MAX_FIX_BYTES, type ReplyPayload } from "../../src/shared/review";
+import { FAKE_TOKEN, FAKE_USER, key, startFakeBitbucket } from "../support/fake-bitbucket";
 import type { FakeScenario } from "../support/fake-claude";
 import { claudeStream, fakeRunner, stubListTools } from "../support/review-fixture";
+import { ownPr } from "../support/scenarios";
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
 const SLOW = 120_000;
@@ -118,7 +119,8 @@ async function waitFor(pred: () => boolean, ms = 30_000) {
 }
 
 // me = FAKE_USER is the PR author. ALEX writes the review threads 101 to 901. Thread 101 has two replies; 103 is its newest message.
-async function setup() {
+// baseUrl: the forge URL. The default port refuses every request.
+async function setup(o: { baseUrl?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), "rl-fix-"));
   dirs.push(root);
   const remote = await fixRemote(join(root, "remote"));
@@ -128,7 +130,7 @@ async function setup() {
   scenario();
 
   const dir = join(root, "data");
-  writeConfig(dir, { baseUrl: "http://127.0.0.1:9", userSlug: FAKE_USER, notifications: false, markAi: false });
+  writeConfig(dir, { baseUrl: o.baseUrl ?? "http://127.0.0.1:9", userSlug: FAKE_USER, notifications: false, markAi: false });
   const secrets = createSecrets(null);
   await secrets.set(FAKE_TOKEN);
   const settings = createSettings({ dir, secrets });
@@ -379,6 +381,92 @@ describe("injection guard and runner flags", () => {
   );
 });
 
+describe("fix run to commit", () => {
+  test(
+    "a fix run edit commits in the clone, writes a Fixed in draft, shows in GET fixes, and tells open UIs",
+    async () => {
+      for (const m of ["jobs", "fix-routes", "clone"])
+        console.log(`S-FIX integration imports ${Bun.resolveSync(`../../src/server/review/${m}`, import.meta.dir)}`);
+      const pr = ownPr() as ReturnType<typeof ownPr> & { fromRef: { id: string; displayId: string; latestCommit: string } };
+      const fake = startFakeBitbucket({
+        routes: { [key("GET", "/rest/api/1.0/projects/PROJ/repos/repo/pull-requests/2")]: () => ({ status: 200, body: pr }) },
+      });
+      cleanup.push(() => fake.stop());
+      const h = await setup({ baseUrl: fake.url });
+      Object.assign(pr.fromRef, { id: "refs/heads/feature", displayId: "feature", latestCommit: h.remote.source });
+      // Git in the clone reads $HOME/.gitconfig. A temp HOME keeps the user config of this machine out.
+      const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+      process.env.HOME = join(h.root, "home");
+      process.env.XDG_CONFIG_HOME = join(h.root, "home", ".config");
+      mkdirSync(process.env.HOME);
+      cleanup.push(() => {
+        for (const [k, v] of Object.entries(saved)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      });
+      const clone = join(h.root, "clone");
+      // remote.env sets GIT_INDEX_FILE for the setup commits. The clone keeps its own index.
+      const { GIT_INDEX_FILE: _, ...env } = h.remote.env;
+      await git(["-c", "core.autocrlf=false", "clone", "-q", "--branch", "feature", h.remote.remote, clone], { env });
+      for (const [k, v] of [
+        ["user.name", "Clone User"],
+        ["user.email", "clone@example.test"],
+        ["core.autocrlf", "false"],
+        ["commit.gpgsign", "false"],
+      ] as const)
+        await git(["-C", clone, "config", k, v], { env });
+
+      h.scenario({
+        fix: {
+          summary: "One fix.",
+          threads: [note(101)],
+          edits: [edit(101, "src/app.ts", "const a = 1;", "const a = 10;")],
+          coverage: emptyCoverage,
+        },
+      });
+      const d = await h.finish((await h.start([101])).body.id);
+      expect(d.run).toMatchObject({ kind: "fix", status: "completed" });
+      const [f] = await h.fixes();
+      expect(f?.edits.map((e) => [e.thread, e.path, e.added, e.removed])).toEqual([[101, "src/app.ts", 1, 1]]);
+      const editId = f?.edits[0]?.id as number;
+
+      const set = await h.json<CloneDto>(`/api/prs/${h.pr}/clone`, { method: "PUT", body: { path: clone } });
+      expect(set.status).toBe(200);
+      expect(set.body.problems).toEqual([]);
+      const sent: unknown[] = [];
+      const broadcast = h.options.live.broadcast;
+      h.options.live.broadcast = (event, data) => {
+        sent.push([event, data]);
+        broadcast(event, data);
+      };
+      const c = await h.json<FixCommitDto>(`/api/fix-runs/${d.run.id}/commit`, {
+        body: { edits: [editId], message: "Fix review comment 101 on PR 2", mode: "clone" },
+      });
+      expect(c.status).toBe(201);
+      const head = (await git(["-C", clone, "rev-parse", "HEAD"], { env })).trim();
+      expect((await git(["-C", clone, "rev-parse", "HEAD^"], { env })).trim()).toBe(h.remote.source);
+      expect(readFileSync(join(clone, "src/app.ts"), "utf8")).toStartWith("const a = 10;\n");
+      expect(c.body).toMatchObject({ mode: "clone", state: "committed", branch: "feature", commit: head, edits: [editId], fetch: null });
+      expect(sent).toEqual([["changed", { prs: [h.pr], runs: [d.run.id] }]]);
+
+      const fixed = h.db
+        .query("SELECT body, status, thread, payload_json FROM review_item WHERE kind = 'reply' AND run = $run")
+        .all({ run: d.run.id }) as { body: string; status: string; thread: number; payload_json: string }[];
+      expect(fixed.map((r) => [r.body, r.status, r.thread])).toEqual([[`Fixed in ${c.body.short}.`, "new", 101]]);
+      expect(JSON.parse(fixed[0]?.payload_json ?? "{}") as ReplyPayload).toMatchObject({
+        replyTo: 103,
+        fix: { id: c.body.id, commit: head },
+      });
+
+      const [after] = await h.fixes();
+      expect(after?.commits).toEqual([c.body]);
+      expect(after?.commits[0]).toMatchObject({ state: "committed", commit: head });
+    },
+    SLOW,
+  );
+});
+
 describe("edits through a full run", () => {
   test(
     "the edit rules keep four edits, list every drop, keep the head in refs/rl/2/fix/<run>, and GET fixes shows them",
@@ -491,7 +579,7 @@ describe("edits through a full run", () => {
         before: h.remote.source,
         state: "committed",
       });
-      expect(commit?.fetch).toEqual({ cache: cache.replaceAll("\\", "/"), ref: `refs/rl/2/fix/${commit?.id}` });
+      expect(commit?.fetch).toEqual({ cache: cache.replaceAll("\\", "/"), ref: `refs/rl/2/fix-commit/${commit?.id}` });
       expect((await h.json(`/api/prs/999/fixes`)).status).toBe(404);
     },
     SLOW,
@@ -610,6 +698,9 @@ describe("validateFix", () => {
       "lefthook.yml",
       ".lintstagedrc.json",
       "commitlint.config.js",
+      ".huskyrc.json",
+      "husky.config.js",
+      ".overcommit.yml",
       ".gitmodules",
       "AGENTS.md",
     ];

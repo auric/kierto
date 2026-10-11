@@ -64,7 +64,7 @@ export function createApp(opts: AppOptions) {
     .route("/api", createInboxRoutes({ settings, sync, live: opts.live }))
     .route("/api", createReviewRoutes({ review, live: opts.live }))
     .route("/api", createDiffRoutes({ review }))
-    .route("/api", createFixRoutes({ review, settings }))
+    .route("/api", createFixRoutes({ review, settings, live: opts.live }))
     .route("/api", createContextRoutes({ settings, review, live: opts.live }))
     .route("/api", createPublishRoutes({ review, settings, outbox }));
 

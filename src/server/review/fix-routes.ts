@@ -16,6 +16,7 @@ import {
 import type { ReplyPayload } from "../../shared/review";
 import { newestLive, type TurnMsg } from "../../shared/turn";
 import type { PullRequest } from "../../shared/types";
+import type { Live } from "../live";
 import type { Settings } from "../settings";
 import {
   applyCheck,
@@ -93,8 +94,8 @@ const UNDO_BLOCKS: CloneProblem[] = ["missing", "not_repo", "detached", "branch"
 type Out = { status: 200 | 201; dto: FixCommitDto } | { status: 404 | 409 | 502; body: ApiError | FixConflict };
 const conflict = (error: string, problems: FixConflict["problems"] = []): Out => ({ status: 409, body: { error, problems } });
 
-export function createFixRoutes(opts: { review: ReviewJobs; settings: Settings }) {
-  const { review, settings } = opts;
+export function createFixRoutes(opts: { review: ReviewJobs; settings: Settings; live: Live }) {
+  const { review, settings, live } = opts;
   // syncCache keys the cache and its lock by the long path of the data folder.
   const dataDir = () => {
     try {
@@ -114,6 +115,9 @@ export function createFixRoutes(opts: { review: ReviewJobs; settings: Settings }
     const r = commitRow(db, id) as CommitRow;
     return toFixCommitDto(r, cacheOf(r));
   };
+  // A commit or an undo changes the fix commits and the reply drafts of the PR.
+  const changed = (db: Database, dto: FixCommitDto) =>
+    live.broadcast("changed", { prs: [(commitRow(db, dto.id) as CommitRow).pr], runs: [dto.run] });
   // GET and PUT: no network. The synced source head stands for the live head.
   const cloneState = (db: Database, pr: PrRow): Promise<CloneDto> =>
     checkClone(cloneOf(db, pr), { branch: pr.source_branch ?? "", ...(pr.source_head ? { live: pr.source_head } : {}) });
@@ -359,7 +363,10 @@ export function createFixRoutes(opts: { review: ReviewJobs; settings: Settings }
         const db = review.open();
         if (!db) return c.json(unconfigured, 409);
         const r = await guarded(() => commit(db, c.req.valid("param").id, c.req.valid("json")));
-        if ("dto" in r) return r.status === 201 ? c.json(r.dto, 201) : c.json(r.dto, 200);
+        if ("dto" in r) {
+          changed(db, r.dto);
+          return r.status === 201 ? c.json(r.dto, 201) : c.json(r.dto, 200);
+        }
         if (r.status === 404) return c.json(r.body, 404);
         return r.status === 502 ? c.json(r.body, 502) : c.json(r.body, 409);
       },
@@ -368,7 +375,10 @@ export function createFixRoutes(opts: { review: ReviewJobs; settings: Settings }
       const db = review.open();
       if (!db) return c.json(unconfigured, 409);
       const r = await guarded(() => undo(db, c.req.valid("param").id));
-      if ("dto" in r) return c.json(r.dto, 200);
+      if ("dto" in r) {
+        changed(db, r.dto);
+        return c.json(r.dto, 200);
+      }
       if (r.status === 404) return c.json(r.body, 404);
       return r.status === 502 ? c.json(r.body, 502) : c.json(r.body, 409);
     });

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { CloneDto, CloneProblem, FixCommitDto, FixCommitState, FixMode } from "../../shared/dto";
-import { applyEdits, deniedPath, type Located, locate, prepareFile } from "./edits";
+import { applyEdits, deniedPath, fold, type Located, locate, prepareFile } from "./edits";
 import { GitError, git, userGitEnv } from "./git";
 import { repoPath } from "./validate";
 import { diffArgs } from "./workspace";
@@ -105,18 +105,6 @@ export async function checkClone(path: string | null, want: CloneWant): Promise<
   return out;
 }
 
-// One name as a file system compares it, as edits.ts deniedPath() folds it.
-const hfsIgnored = (c: number) =>
-  (c >= 0x200c && c <= 0x200f) || (c >= 0x202a && c <= 0x202e) || (c >= 0x206a && c <= 0x206f) || c === 0xfeff;
-const fold = (name: string) =>
-  (
-    [...name]
-      .filter((ch) => !hfsIgnored(ch.charCodeAt(0)))
-      .join("")
-      .split(":")[0] as string
-  )
-    .replace(/[. ]+$/, "")
-    .toLowerCase();
 const parts = (p: string) =>
   p
     .split("/")

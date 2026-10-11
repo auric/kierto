@@ -21,12 +21,15 @@ const DENIED = new Set([
   ".husky",
   ".git",
   ".pre-commit-config.yaml",
+  // overcommit README: the repository config.
+  ".overcommit.yml",
   // lefthook.dev/configuration: the main and the -local config in each format, with or without the dot, also in .config/.
   ...["lefthook", ".lefthook", "lefthook-local", ".lefthook-local"].flatMap((n) =>
     ["yml", "yaml", "toml", "json", "jsonc"].map((e) => `${n}.${e}`),
   ),
 ]);
-const DENIED_PREFIX = [".lintstagedrc", "lint-staged.config.", "commitlint.config.", ".commitlintrc"];
+// husky v4 README: .huskyrc, .huskyrc.json, .huskyrc.js, husky.config.js.
+const DENIED_PREFIX = [".lintstagedrc", "lint-staged.config.", "commitlint.config.", ".commitlintrc", ".huskyrc", "husky.config."];
 // git utf8.c next_hfs_char(): HFS+ ignores these code points in a name.
 const hfsIgnored = (c: number) =>
   (c >= 0x200c && c <= 0x200f) || (c >= 0x202a && c <= 0x202e) || (c >= 0x206a && c <= 0x206f) || c === 0xfeff;
@@ -130,7 +133,7 @@ export function editRows(text: string, e: Located, context = 3): DiffRowDto[] {
 }
 
 // One name as a file system compares it: no case, no HFS+ ignorable code point, no NTFS stream suffix, no trailing dots or spaces (Win32).
-const fold = (name: string) =>
+export const fold = (name: string) =>
   (
     [...name]
       .filter((ch) => !hfsIgnored(ch.charCodeAt(0)))

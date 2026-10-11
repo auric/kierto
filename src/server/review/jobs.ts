@@ -8,7 +8,6 @@ import type {
   BriefDto,
   BriefInput,
   DiffRowDto,
-  FixCommitDto,
   FixDto,
   PrTask,
   ReviewItemDto,
@@ -65,6 +64,7 @@ import {
   SHIPPED_PROFILES,
 } from "./catalog";
 import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude";
+import { type FixCommitRow, toFixCommitDto } from "./clone";
 import { type DiffFile, parseDiff } from "./diffmap";
 import { type FixFile, type ValidEdit, validateFix } from "./fix";
 import { git, gitEnv } from "./git";
@@ -246,8 +246,7 @@ const SQL = {
     WHERE id = $id AND status = 'running'`,
   fixEdit: `INSERT INTO fix_edit (run, ord, thread, path, old, new, start, rows_json) VALUES ($run, $ord, $thread, $path, $old, $new, $start, $rows)`,
   fixEdits: "SELECT id, thread, path, rows_json FROM fix_edit WHERE run = $run ORDER BY ord",
-  fixCommits: `SELECT id, run, mode, edits_json, branch, before_head, commit_hash, short_hash, state, created_at FROM fix_commit
-    WHERE run = $run ORDER BY id`,
+  fixCommits: "SELECT c.*, p.pr_id FROM fix_commit c JOIN pull_request p ON p.id = c.pr WHERE c.run = $run ORDER BY c.id",
   fixes: "WHERE r.pr = $pr AND r.kind = 'fix' ORDER BY r.id DESC LIMIT 10",
   // A run that was running at the last stop has no process now.
   recover: `UPDATE review_run SET status = 'failed', error_kind = 'restart', error_text = $text, raw_output = COALESCE(raw_output, $text),
@@ -693,40 +692,11 @@ async function judgeFix(o: RunOutcome, ws: Workspace, threads: ReplyThread[], se
 }
 
 type FixEditRow = { id: number; thread: number; path: string; rows_json: string };
-type FixCommitRow = {
-  id: number;
-  run: number;
-  mode: FixCommitDto["mode"];
-  edits_json: string;
-  branch: string | null;
-  before_head: string;
-  commit_hash: string | null;
-  short_hash: string | null;
-  state: FixCommitDto["state"];
-  created_at: number;
-};
 
 function toFixEditDto(r: FixEditRow) {
   const rows = JSON.parse(r.rows_json) as DiffRowDto[];
   const count = (kind: DiffRowDto["kind"]) => rows.filter((x) => x.kind === kind).length;
   return { id: r.id, thread: r.thread, path: r.path, added: count("add"), removed: count("del"), rows };
-}
-
-// cache: the cache clone path with "/" separators. Plan r3: cache mode points refs/rl/<PR ID>/fix/<fix ID> at the commit.
-function toFixCommitDto(r: FixCommitRow, cache: () => string, prId: number): FixCommitDto {
-  return {
-    id: r.id,
-    run: r.run,
-    mode: r.mode,
-    edits: JSON.parse(r.edits_json) as number[],
-    branch: r.branch,
-    before: r.before_head,
-    commit: r.commit_hash,
-    short: r.short_hash,
-    state: r.state,
-    fetch: r.mode === "cache" ? { cache: cache(), ref: `refs/rl/${prId}/fix/${r.id}` } : null,
-    createdAt: r.created_at,
-  };
 }
 
 function toRunDto(r: RunRow): RunDto {
@@ -1277,12 +1247,12 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     fixes(db: Database, id: number): FixDto[] | null {
       const pr = prRow(db, id);
       if (!pr) return null;
-      const cache = () => cachePath(dataDir, { project: pr.project, repo: pr.repo, id: pr.pr_id }).replaceAll("\\", "/");
+      const cache = cachePath(dataDir, { project: pr.project, repo: pr.repo, id: pr.pr_id });
       return (db.query(`${SQL.run} ${SQL.fixes}`).all({ pr: id }) as RunRow[]).map((r) => ({
         run: toRunDto(r),
         threads: r.fix_json ? (JSON.parse(r.fix_json) as FixThread[]) : [],
         edits: (db.query(SQL.fixEdits).all({ run: r.id }) as FixEditRow[]).map(toFixEditDto),
-        commits: (db.query(SQL.fixCommits).all({ run: r.id }) as FixCommitRow[]).map((c) => toFixCommitDto(c, cache, pr.pr_id)),
+        commits: (db.query(SQL.fixCommits).all({ run: r.id }) as FixCommitRow[]).map((c) => toFixCommitDto(c, cache)),
       }));
     },
 
