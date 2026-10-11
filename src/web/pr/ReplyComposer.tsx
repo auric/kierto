@@ -101,7 +101,7 @@ export function ReplyComposer({
   const picked = target && t.msgs.find((m) => m.id === target.msg && !m.deleted);
   const parent = picked || last;
   if (!last || !parent) return null;
-  const place = placeOf(t.root.anchor);
+  const place = placeOf(t.root);
 
   const change = (text: string) => {
     const next = editDraft(d, text, () => crypto.randomUUID());

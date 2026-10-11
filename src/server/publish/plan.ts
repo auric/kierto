@@ -21,17 +21,19 @@ export const fileRef = ({ repoUrl }: Pick<PlanRun, "repoUrl">, path: string, at:
   return repoUrl && at ? `[${text.replace(/[\\[\]]/g, "\\$&")}](${fileUrl(repoUrl, path, at, line)})` : text;
 };
 
-type Inline = { path: string; line: number };
-const anchorOf = (a: unknown): (Inline & { fileType?: unknown }) | null => {
-  const x = a as { path?: unknown; line?: unknown; fileType?: unknown } | null;
-  return x && typeof x.path === "string" && typeof x.line === "number" ? { path: x.path, line: x.line, fileType: x.fileType } : null;
-};
+type Raw = { path?: unknown; line?: unknown; lineType?: unknown; fileType?: unknown } | null;
 
-function duplicate(comments: PlanComment[], me: string | null, at: Inline): PlannedPost["duplicate"] {
+// at.line: the new-side line of the finding. at.srcLine: its old-side line, for a ctx line only.
+function duplicate(
+  comments: PlanComment[],
+  me: string | null,
+  at: { path: string; line: number; srcLine?: number },
+): PlannedPost["duplicate"] {
   for (const c of comments) {
-    const a = anchorOf(c.anchor);
-    // fileType FROM numbers the line on the old side. New-side findings never match it.
-    if (!a || a.path !== at.path || a.line !== at.line || a.fileType === "FROM") continue;
+    const a = c.anchor as Raw;
+    if (!a || a.path !== at.path || typeof a.line !== "number") continue;
+    // Gate v3 U4: a CONTEXT anchor holds the old-side line, whatever fileType says. Any other FROM anchor is a removed line.
+    if (a.line !== (a.lineType === "CONTEXT" ? at.srcLine : a.fileType === "FROM" ? undefined : at.line)) continue;
     if (isMe({ slug: c.authorSlug, login: c.authorLogin }, me)) continue;
     return { commentId: c.id, author: c.authorName ?? c.authorSlug };
   }
@@ -71,15 +73,25 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
         continue;
       }
       // exact and moved anchors lie in the diff. A new-side diff line is an added or a context line.
-      if (a.side === "new" && a.state !== "outside") {
+      // Gate v3 U4: a context line posts with its old-side line. An excerpt stored without it sends the finding to the general comment.
+      const hit = a.side === "new" && a.state !== "outside" ? a.excerpt.find((l) => l.n === a.line && l.kind !== "del") : undefined;
+      if (hit?.kind === "add" || hit?.old !== undefined) {
         const srcPath = (it.payload as AnchoredFinding).anchor.oldPath;
-        const add = a.excerpt.some((l) => l.n === a.line && l.kind === "add");
+        const srcLine = hit.kind === "ctx" ? { srcLine: hit.old } : {};
         out.push({
           ...heads,
-          destination: { kind: "inline", path: a.path, srcPath, line: a.line, lineEnd: a.lineEnd, lineType: add ? "add" : "ctx" },
+          destination: {
+            kind: "inline",
+            path: a.path,
+            srcPath,
+            line: a.line,
+            lineEnd: a.lineEnd,
+            lineType: hit.kind === "ctx" ? "ctx" : "add",
+            ...srcLine,
+          },
           body: text(it.body),
           items: [ref],
-          duplicate: duplicate(input.comments, input.me, a),
+          duplicate: duplicate(input.comments, input.me, { path: a.path, line: a.line, ...srcLine }),
         });
         continue;
       }

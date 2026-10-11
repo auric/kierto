@@ -33,6 +33,15 @@ export type PullRequest = {
 // A context line of an old-side comment keeps its old number. hit: the commented line.
 export type ExcerptLine = { n: number; kind: "add" | "del" | "ctx"; text: string; hit: boolean };
 
+// The line of an inline root comment, numbered as its excerpt numbers it. undefined: no line, or a new-side CONTEXT anchor without an excerpt.
+// Gate v3 U4: the forge line of a CONTEXT anchor is the old-side line, whatever fileType says.
+export function commentLine(c: { anchor?: unknown; excerpt?: ExcerptLine[] }): number | undefined {
+  const hit = c.excerpt?.find((l) => l.hit);
+  if (hit) return hit.n;
+  const a = c.anchor as { line?: unknown; lineType?: unknown; fileType?: unknown } | null | undefined;
+  return typeof a?.line === "number" && (a.lineType !== "CONTEXT" || a.fileType === "FROM") ? a.line : undefined;
+}
+
 export type Comment = {
   id: number;
   version: number;

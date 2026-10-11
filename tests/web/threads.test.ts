@@ -239,5 +239,13 @@ describe("helpers", () => {
       orphaned: true,
     });
     expect(anchorOf(c(1))).toBeNull();
+    // Gate v3 U4: the forge line of a CONTEXT anchor is old line 7. The excerpt marks new line 9, so the thread shows 9.
+    const ctx = { path: "sample1.md", line: 7, lineType: "CONTEXT", fileType: "TO" };
+    const hit: ExcerptLine = { n: 9, kind: "ctx", text: "x", hit: true };
+    expect(anchorOf(c(2, { anchor: ctx, excerpt: [hit] }))?.line).toBe(9);
+    // Without the excerpt, the new line is unknown. A FROM anchor and an ADDED anchor keep their own line.
+    expect(anchorOf(c(2, { anchor: ctx }))).toMatchObject({ path: "sample1.md", line: undefined });
+    expect(anchorOf(c(2, { anchor: { ...ctx, fileType: "FROM" } }))?.line).toBe(7);
+    expect(anchorOf(c(2, { anchor: { ...ctx, lineType: "ADDED" } }))?.line).toBe(7);
   });
 });

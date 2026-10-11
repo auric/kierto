@@ -357,17 +357,41 @@ describe("forge data", () => {
   const serve = (values: unknown[]) => ({ [key("GET", ACTIVITIES_PATH)]: { status: 200, body: { isLastPage: true, start: 0, values } } });
   const lines = (c: { excerpt?: { n: number; kind: string; hit: boolean }[] } | undefined) =>
     c?.excerpt?.map((l) => `${l.hit ? ">" : ""}${l.kind}${l.n}`);
-  type Diff = { hunks: { segments: { type: string; lines: { source: number; destination: number; line: string }[] }[] }[] };
+  type Line = { source: number; destination: number; line: string; commentIds?: number[] };
+  type Diff = { hunks: { segments: { type: string; lines: Line[] }[] }[] };
   const diffOf = (list: unknown[], id: number) => (list.find((a) => (a as { id: number }).id === id) as { diff: Diff }).diff;
+  // Removes the commentIds marks of a diff, so only the anchor line names the row.
+  const unmark = (d: Diff) => {
+    for (const h of d.hunks) for (const s of h.segments) for (const l of s.lines) delete l.commentIds;
+  };
 
   test("an ADDED and a CONTEXT comment get the anchor line plus 3 lines on each side", async () => {
     const r = await setup(serve(v3())).listComments(PR_REF);
     expect(r.complete).toBe(true);
     const at = (id: number) => r.items.find((c) => c.id === id);
     expect(lines(at(1000004))).toEqual(["ctx1", "ctx2", ">add3", "add4", "ctx5", "ctx6"]);
-    // U4: the CONTEXT anchor numbers its line on the new side (fileType TO).
-    expect(lines(at(1000005))).toEqual(["add4", "ctx5", "ctx6", ">ctx7", "ctx8", "ctx9", "ctx10"]);
-    expect(at(1000005)?.excerpt?.[3]?.text).toBe("sample line 34");
+    // U4: the CONTEXT anchor `line 7, fileType TO` names the row source 7 / destination 9. The server marks that row with commentIds.
+    // The excerpt numbers its ctx lines on the new side.
+    expect(lines(at(1000005))).toEqual(["ctx6", "ctx7", "ctx8", ">ctx9", "ctx10", "ctx11", "ctx12"]);
+    expect(at(1000005)?.excerpt?.[3]?.text).toBe("sample line 36");
+  });
+
+  test("U4: without the commentIds mark, a CONTEXT anchor matches the row by its old line, whatever fileType says", async () => {
+    const list = v3();
+    unmark(diffOf(list, 10000006));
+    const r = await setup(serve(list)).listComments(PR_REF);
+    const c = r.items.find((x) => x.id === 1000005);
+    expect(c?.excerpt?.find((l) => l.hit)).toMatchObject({ n: 9, kind: "ctx", text: "sample line 36" });
+    // fileType FROM names the same row, and numbers the excerpt on the old side.
+    const from = { ...(findComment(v3(), 1000005).anchor as object), fileType: "FROM" };
+    expect(excerptOf(diffOf(list, 10000006), from)?.find((l) => l.hit)).toMatchObject({ n: 7, text: "sample line 36" });
+  });
+
+  test("the commentIds mark wins over the anchor line", () => {
+    const diff = diffOf(v3(), 10000006);
+    const anchor = { line: 3, lineType: "CONTEXT", fileType: "TO" };
+    expect(excerptOf(diff, anchor, 1000005)?.find((l) => l.hit)?.text).toBe("sample line 36");
+    expect(excerptOf(diff, anchor, 42)?.find((l) => l.hit)?.text).toBe("sample line 32");
   });
 
   test("U16: a reply keeps no anchor and no excerpt, and stays in its thread", async () => {
@@ -393,6 +417,7 @@ describe("forge data", () => {
     const list = v3();
     const removed = findComment(list, 1000004);
     removed.anchor = { ...(removed.anchor as object), line: 3, lineType: "REMOVED", fileType: "FROM" };
+    unmark(diffOf(list, 10000005));
     const segments = diffOf(list, 10000005).hunks[0]?.segments ?? [];
     segments.splice(1, 0, { type: "REMOVED", lines: [{ source: 3, destination: 3, line: "old line" }] });
     const orphan = findComment(list, 1000005);
@@ -400,13 +425,14 @@ describe("forge data", () => {
     const r = await setup(serve(list)).listComments(PR_REF);
     // An old-side comment numbers its context lines on the old side too.
     expect(lines(r.items.find((c) => c.id === 1000004))).toEqual(["ctx1", "ctx2", ">del3", "add3", "add4", "ctx3"]);
-    expect(r.items.find((c) => c.id === 1000005)?.excerpt?.find((l) => l.hit)?.n).toBe(7);
+    expect(r.items.find((c) => c.id === 1000005)?.excerpt?.find((l) => l.hit)?.n).toBe(9);
   });
 
   test("a line outside the diff gives no excerpt; a diff of another shape keeps the page complete", async () => {
     const list = v3();
     const far = findComment(list, 1000004);
     far.anchor = { ...(far.anchor as object), line: 99 };
+    unmark(diffOf(list, 10000005));
     const odd = list.find((a) => a.id === 10000006);
     if (odd) odd.diff = { hunks: "not a list" };
     const r = await setup(serve(list)).listComments(PR_REF);

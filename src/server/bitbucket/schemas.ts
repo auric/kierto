@@ -74,13 +74,21 @@ export const comment: z.ZodType<RawComment> = z.object({
 export const postedComment = z.object({ id: z.number(), version: z.number() });
 
 // The diff of an inline comment activity (I6). source and destination: the old and the new line number.
+// commentIds: the comments on that row (Gate v3 fixtures). A value of another shape drops only the mark.
 const diff = z.object({
   hunks: z.array(
     z.object({
       segments: z.array(
         z.object({
           type: z.string(),
-          lines: z.array(z.object({ source: z.number(), destination: z.number(), line: z.string() })),
+          lines: z.array(
+            z.object({
+              source: z.number(),
+              destination: z.number(),
+              line: z.string(),
+              commentIds: z.array(z.number()).optional().catch(undefined),
+            }),
+          ),
         }),
       ),
     }),

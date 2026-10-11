@@ -153,11 +153,18 @@ async function setup(mark = false) {
 }
 type S = Awaited<ReturnType<typeof setup>>;
 
-// New side: 1 is outside the diff, 2 is hunk context, 3 is added.
+// New side: 1 is outside the diff, 2 is hunk context (old line 2), 3 is added.
 const EXCERPT: ExcerptLine[] = [
   { n: 1, kind: "ctx", text: "a" },
-  { n: 2, kind: "ctx", text: "b", hunk: true },
+  { n: 2, kind: "ctx", text: "b", hunk: true, old: 2 },
   { n: 3, kind: "add", text: "c2" },
+];
+// New lines 5 and 6 are added, so hunk context new 7 is old 5 and new 8 is old 6.
+const CTX_EXCERPT: ExcerptLine[] = [
+  { n: 5, kind: "add", text: "e" },
+  { n: 6, kind: "add", text: "f" },
+  { n: 7, kind: "ctx", text: "g", hunk: true, old: 5 },
+  { n: 8, kind: "ctx", text: "h", hunk: true, old: 6 },
 ];
 
 // A completed review run on the given heads. item() adds a finding at a line, or a question for a null line.
@@ -168,7 +175,7 @@ function seedRun(s: S, heads = { source: SOURCE, target: TARGET }) {
       VALUES ($pr, 'general', '', 'k', $s, $t, $t, 'completed', 1, 2) RETURNING id`,
     )
     .get({ pr: s.pr, s: heads.source, t: heads.target }) as { id: number };
-  const item = (body: string, line: number | null, state: "exact" | "outside" = "exact") => {
+  const item = (body: string, line: number | null, state: "exact" | "outside" = "exact", excerpt = EXCERPT) => {
     const finding = line !== null;
     const payload = finding
       ? {
@@ -184,7 +191,7 @@ function seedRun(s: S, heads = { source: SOURCE, target: TARGET }) {
           evidenceStatus: "code",
           confidence: "high",
           agent: null,
-          anchor: { state, path: "src/app.ts", oldPath: null, line, lineEnd: line, excerpt: EXCERPT },
+          anchor: { state, path: "src/app.ts", oldPath: null, line, lineEnd: line, excerpt },
         }
       : { text: body, why: "Why." };
     return (
@@ -202,7 +209,7 @@ function seedRun(s: S, heads = { source: SOURCE, target: TARGET }) {
           side: finding ? "new" : null,
           line,
           state: finding ? state : null,
-          excerpt: finding ? JSON.stringify(EXCERPT) : null,
+          excerpt: finding ? JSON.stringify(excerpt) : null,
         }) as { id: number }
     ).id;
   };
@@ -583,7 +590,7 @@ describe("confirm", () => {
     const id = item("Context text.", 2);
     await accept(s, id);
     const plan = await s.plan();
-    expect(plan[0]?.destination).toMatchObject({ kind: "inline", line: 2, lineType: "ctx" });
+    expect(plan[0]?.destination).toMatchObject({ kind: "inline", line: 2, lineType: "ctx", srcLine: 2 });
     s.fake.routes[key("POST", `${PR_PATH}/comments`)] = refuse(400);
     const r = await s.call<ConfirmDto>(`/api/prs/${s.pr}/confirm`, { items: itemsOf(plan) });
     await s.settle();
@@ -597,6 +604,61 @@ describe("confirm", () => {
     expect(itemRow(s, id)).toEqual({ status: "accepted", revision: 2, anchor_state: "outside" });
     expect((await s.plan()).map((p) => [p.destination.kind, p.body])).toEqual([["general", "src/app.ts:2: Context text."]]);
     expect(await s.list()).toEqual([]);
+  });
+
+  test("U4: a context line posts its old-side line; a move by the user posts the old line of the new place", async () => {
+    const s = await setup();
+    const { item } = seedRun(s);
+    const ctx = item("Context text.", 7, "exact", CTX_EXCERPT);
+    const moved = item("Moved text.", 5, "exact", CTX_EXCERPT);
+    expect((await s.call<ReviewItemDto>(`/api/items/${moved}`, { action: "move", revision: 0, line: 8 })).status).toBe(200);
+    expect((await s.call(`/api/items/${moved}`, { action: "accept", revision: 1 })).status).toBe(200);
+    await accept(s, ctx);
+    const plan = await s.plan();
+    expect(plan.map((p) => p.destination)).toEqual([
+      { kind: "inline", path: "src/app.ts", srcPath: null, line: 7, lineEnd: 7, lineType: "ctx", srcLine: 5 },
+      { kind: "inline", path: "src/app.ts", srcPath: null, line: 8, lineEnd: 8, lineType: "ctx", srcLine: 6 },
+    ]);
+    expect((await s.call(`/api/prs/${s.pr}/confirm`, { items: itemsOf(plan) })).status).toBe(202);
+    await s.settle();
+    expect(s.posts.bodies.map((b) => [b.text, b.anchor?.line, b.anchor?.lineType])).toEqual([
+      ["Context text.", 5, "CONTEXT"],
+      ["Moved text.", 6, "CONTEXT"],
+    ]);
+  });
+
+  test("U4: after a dropped connection, the check matches the CONTEXT anchor on its old line, with no second POST", async () => {
+    const s = await setup();
+    s.posts.drop = true;
+    const { item } = seedRun(s);
+    const id = item("Context text.", 7, "exact", CTX_EXCERPT);
+    await accept(s, id);
+    expect((await s.call(`/api/prs/${s.pr}/confirm`, { items: [{ id, revision: 1 }] })).status).toBe(202);
+    await s.settle();
+    const [post] = await s.list();
+    expect(post).toMatchObject({ state: "confirmed", remoteId: FIRST_ID, attempts: 1, lastError: null });
+    expect(s.posts.bodies.map((b) => b.anchor?.line)).toEqual([5]);
+    expect(s.sent()).toBe(1);
+  });
+
+  test("a context-line post stored without srcLine fails with no POST", async () => {
+    const s = await setup();
+    const { run } = seedRun(s);
+    const destination = { kind: "inline", path: "src/app.ts", srcPath: null, line: 2, lineEnd: 2, lineType: "ctx" };
+    const { id } = s.db
+      .query(
+        `INSERT INTO post (pr, run, kind, idem_key, body, destination_json, items_json, state, created_at, updated_at)
+        VALUES ($pr, $run, 'inline', 'legacy', 'Old text.', $destination, '[]', 'failed', 1, 1) RETURNING id`,
+      )
+      .get({ pr: s.pr, run, destination: JSON.stringify(destination) }) as { id: number };
+    expect((await s.call(`/api/posts/${id}/retry`, {})).status).toBe(202);
+    await s.settle();
+    const [post] = await s.list();
+    expect([post?.state, post?.lastError]).toEqual([
+      "failed",
+      "The context line has no old line number. Move the finding to the general comment.",
+    ]);
+    expect(s.sent()).toBe(0);
   });
 });
 

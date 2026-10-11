@@ -32,10 +32,16 @@ afterEach(() => {
 // New side: 1 is outside the diff, 2 and 4 are hunk context, 3 is added, old line 3 is removed before new line 4.
 const NEW_EXCERPT: ExcerptLine[] = [
   { n: 1, kind: "ctx", text: "a" },
-  { n: 2, kind: "ctx", text: "b", hunk: true },
+  { n: 2, kind: "ctx", text: "b", hunk: true, old: 2 },
   { n: 3, kind: "add", text: "c2" },
   { n: 3, kind: "del", text: "c" },
-  { n: 4, kind: "ctx", text: "d", hunk: true },
+  { n: 4, kind: "ctx", text: "d", hunk: true, old: 4 },
+];
+// New lines 5 and 6 are added: hunk context new 7 is old 5. Each ctx line keeps its old number.
+const CTX_EXCERPT: ExcerptLine[] = [
+  { n: 5, kind: "add", text: "e" },
+  { n: 6, kind: "add", text: "f" },
+  { n: 7, kind: "ctx", text: "g", hunk: true, old: 5 },
 ];
 const OLD_EXCERPT: ExcerptLine[] = [
   { n: 7, kind: "ctx", text: "x", hunk: true },
@@ -49,6 +55,7 @@ type F = {
   state?: AnchoredFinding["anchor"]["state"];
   body?: string;
   oldPath?: string;
+  excerpt?: ExcerptLine[];
 };
 function findingPayload(o: F): AnchoredFinding {
   const side = o.side ?? "new";
@@ -73,7 +80,7 @@ function findingPayload(o: F): AnchoredFinding {
       oldPath: o.oldPath ?? null,
       line,
       lineEnd: line,
-      excerpt: side === "new" ? NEW_EXCERPT : OLD_EXCERPT,
+      excerpt: o.excerpt ?? (side === "new" ? NEW_EXCERPT : OLD_EXCERPT),
     },
   };
 }
@@ -263,6 +270,7 @@ describe("post plan", () => {
       line: 2,
       lineEnd: 2,
       lineType: "ctx",
+      srcLine: 2,
     });
 
     r = await s.act(f, { action: "move", revision: 2, line: 1 });
@@ -337,6 +345,38 @@ describe("post plan", () => {
     s.comment(14, "asmith", at(3));
     s.comment(15, "asmith", at(4), { parent: 14 });
     expect((await s.plan()).posts.map((x) => x.duplicate)).toEqual([{ commentId: 14, author: "Alex Smith" }, null]);
+  });
+
+  test("U4: a context line plans its old-side line; an excerpt stored without it goes to the general comment", async () => {
+    const s = await setup();
+    const ctx = s.finding({ line: 7, excerpt: CTX_EXCERPT, body: "Context text." });
+    const legacy = s.finding({ line: 7, excerpt: CTX_EXCERPT.map(({ old: _, ...l }) => l), body: "Legacy text." });
+    await s.accept(ctx);
+    await s.accept(legacy);
+    const p = await s.plan();
+    expect(p.posts.map((x) => [x.destination, x.body])).toEqual([
+      [{ kind: "inline", path: "src/app.ts", srcPath: null, line: 7, lineEnd: 7, lineType: "ctx", srcLine: 5 }, "Context text."],
+      [{ kind: "general" }, "src/app.ts:7: Legacy text."],
+    ]);
+  });
+
+  test("U4 duplicate: a CONTEXT comment matches on the old line, an ADDED comment on the new line", async () => {
+    const s = await setup();
+    const f = s.finding({ line: 7, excerpt: CTX_EXCERPT });
+    await s.accept(f);
+    const at = (line: number, lineType: string, fileType = "TO") => ({ path: "src/app.ts", line, lineType, fileType });
+    s.comment(20, "asmith", at(7, "CONTEXT"));
+    s.comment(21, "asmith", at(5, "ADDED"));
+    s.comment(22, "asmith", at(5, "REMOVED", "FROM"));
+    expect((await s.plan()).posts[0]?.duplicate).toBeNull();
+    s.comment(23, "asmith", at(5, "CONTEXT", "FROM"));
+    expect((await s.plan()).posts[0]?.duplicate).toEqual({ commentId: 23, author: "Alex Smith" });
+    s.db.run("DELETE FROM comment WHERE comment_id = 23");
+    s.comment(24, "asmith", at(7, "ADDED"));
+    expect((await s.plan()).posts[0]?.duplicate).toEqual({ commentId: 24, author: "Alex Smith" });
+    s.db.run("DELETE FROM comment WHERE comment_id = 24");
+    s.comment(25, "asmith", at(5, "CONTEXT"));
+    expect((await s.plan()).posts[0]?.duplicate).toEqual({ commentId: 25, author: "Alex Smith" });
   });
 
   test("an unknown pull request gives 404", async () => {

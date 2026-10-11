@@ -199,14 +199,15 @@ describe("anchor", () => {
       line: 10,
       lineEnd: 10,
       excerpt: [
-        { n: 7, kind: "ctx", text: "const a7 = 7;", hunk: true },
-        { n: 8, kind: "ctx", text: "const a8 = 8;", hunk: true },
-        { n: 9, kind: "ctx", text: "const a9 = 9;", hunk: true },
+        { n: 7, kind: "ctx", text: "const a7 = 7;", hunk: true, old: 7 },
+        { n: 8, kind: "ctx", text: "const a8 = 8;", hunk: true, old: 8 },
+        { n: 9, kind: "ctx", text: "const a9 = 9;", hunk: true, old: 9 },
         { n: 10, kind: "del", text: "const a10 = 10;" },
         { n: 10, kind: "add", text: "const a10 = 100;" },
         { n: 11, kind: "add", text: "const a10b = 101;" },
-        { n: 12, kind: "ctx", text: "const a11 = 11;", hunk: true },
-        { n: 13, kind: "ctx", text: "const a12 = 12;", hunk: true },
+        // Gate v3 U4: a hunk ctx line keeps its old-side number. One line was added above these two.
+        { n: 12, kind: "ctx", text: "const a11 = 11;", hunk: true, old: 11 },
+        { n: 13, kind: "ctx", text: "const a12 = 12;", hunk: true, old: 12 },
       ],
     });
     if (typeof a === "object") expect(moveChoices(a.excerpt, "new")).toEqual([7, 8, 9, 10, 11, 12, 13]);
@@ -295,6 +296,8 @@ describe("anchor", () => {
       [13, "ctx"],
     ]);
     expect(moveChoices(a.excerpt, "old")).toEqual([7, 8, 9, 10, 11, 12, 13]);
+    // Only a new-side excerpt carries the old-side number of its ctx lines.
+    expect(a.excerpt.some((l) => l.old !== undefined)).toBe(false);
     expect(one({ path: "src/gone.ts", side: "old", line: 1, anchorText: "bye();" })).toEqual({
       state: "exact",
       path: "src/gone.ts",

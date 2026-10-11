@@ -81,7 +81,8 @@ export type DiffKind = "add" | "del" | "ctx";
 
 // n: the line number on the side of its kind. ctx lines use the number on the finding's side.
 // hunk: a ctx line that the diff hunks show. Other ctx lines are outside the diff.
-export type ExcerptLine = { n: number; kind: DiffKind; text: string; hunk?: true };
+// old: the old-side number of a hunk ctx line on the new side. Bitbucket numbers a CONTEXT anchor on the old side (Gate v3 U4).
+export type ExcerptLine = { n: number; kind: DiffKind; text: string; hunk?: true; old?: number };
 
 // exact: the reported range holds the quote. moved: another range holds it. outside: a line of the range is not in the diff.
 export type AnchorState = "exact" | "moved" | "outside";

@@ -37,10 +37,10 @@ async function connect(page: Page) {
 test("an inline thread shows its excerpt and its link; the task, Files, and Commits show", async ({ page }) => {
   await connect(page);
 
-  // Gate v3 U4: the CONTEXT comment on new line 7. The excerpt splits after the commented line.
+  // Gate v3 U4: the CONTEXT anchor `line 7` is old line 7, new line 9. The excerpt splits after the commented line.
   const t = page.locator("#t-1000005");
   await t.locator("#th-1000005").click();
-  await expect(t.getByRole("figure", { name: "Code at sample1.md line 7" })).toContainText("sample line 34");
+  await expect(t.getByRole("figure", { name: "Code at sample1.md line 9" })).toContainText("sample line 36");
   await expect(t.getByRole("link", { name: "Open this thread in Bitbucket" })).toHaveAttribute(
     "href",
     `${PR_LINK}/overview?commentId=1000005`,

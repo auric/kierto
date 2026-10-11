@@ -269,9 +269,10 @@ export type ItemConflict = ApiError & { item: ReviewItemDto };
 
 // GET /api/prs/:id/post-plan (plan v3 WP12). Confirm (WP13) posts these bodies byte for byte.
 // lineType: the diff kind of the line. Old-side and outside findings post in the general comment (D3).
+// srcLine: the old-side line of a ctx line. Bitbucket reads the line of a CONTEXT anchor on the old side (Gate v3 U4).
 // reply: parentId is the comment that the reply answers.
 export type PostDestination =
-  | { kind: "inline"; path: string; srcPath: string | null; line: number; lineEnd: number; lineType: "add" | "ctx" }
+  | { kind: "inline"; path: string; srcPath: string | null; line: number; lineEnd: number; lineType: "add" | "ctx"; srcLine?: number }
   | { kind: "general" }
   | { kind: "reply"; parentId: number };
 export type PlannedPost = {

@@ -70,6 +70,13 @@ describe("confirm text", () => {
     expect(destLabel(reply(101), [root, kid])).toEqual({ code: null, text: "Reply to mlopez in src/cache/flush.ts:3" });
     expect(parentOf(200, [comment(200)])).toEqual({ name: "Alex Smith", place: "the general comment" });
     expect(destLabel(reply(999), [root])).toEqual({ code: null, text: "Reply" });
+    // Gate v3 U4: a CONTEXT anchor holds old line 7. The place names new line 9, the line that the excerpt marks.
+    const ctx = comment(300, {
+      anchor: { path: "sample1.md", line: 7, lineType: "CONTEXT", fileType: "TO" },
+      excerpt: [{ n: 9, kind: "ctx", text: "x", hit: true }],
+    });
+    expect(parentOf(300, [ctx])?.place).toBe("sample1.md:9");
+    expect(parentOf(300, [{ ...ctx, excerpt: undefined }])?.place).toBe("sample1.md");
   });
 
   test("an inline destination shows the file name and the line range", () => {

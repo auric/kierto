@@ -110,6 +110,11 @@ function excerpt(t: Text, file: DiffFile | undefined, side: Side, s: number, e: 
   const at = (r: { old: number; new: number }) => (side === "new" ? r.new : r.old);
   // Rows of the other side sit between the window lines, never at its edges.
   const extra = file?.rows.filter((r) => r.kind === other && at(r) > ws && at(r) <= we) ?? [];
+  const ctxOld = new Map(
+    side === "new"
+      ? file?.rows.filter((r) => r.kind === "ctx" && r.new >= ws && r.new <= we).map((r): [number, number] => [r.new, r.old])
+      : [],
+  );
   const clip = (s: string) => s.slice(0, MAX_LINE_CHARS);
   const out: ExcerptLine[] = [];
   let j = 0;
@@ -117,7 +122,14 @@ function excerpt(t: Text, file: DiffFile | undefined, side: Side, s: number, e: 
     for (let r = extra[j]; r && at(r) === k; r = extra[++j])
       out.push({ n: side === "new" ? r.old : r.new, kind: other, text: clip(r.text) });
     const kind = kinds?.get(k);
-    out.push({ n: k, kind: kind ?? "ctx", text: clip(t.lines[k - 1] as string), ...(kind === "ctx" ? { hunk: true as const } : {}) });
+    const old = ctxOld.get(k);
+    out.push({
+      n: k,
+      kind: kind ?? "ctx",
+      text: clip(t.lines[k - 1] as string),
+      ...(kind === "ctx" ? { hunk: true as const } : {}),
+      ...(old === undefined ? {} : { old }),
+    });
   }
   return out;
 }

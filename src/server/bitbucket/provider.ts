@@ -22,24 +22,37 @@ const EXCERPT_SIDE = 3;
 const EXCERPT_TEXT = 500;
 const KIND: Record<string, ExcerptLine["kind"]> = { ADDED: "add", REMOVED: "del", CONTEXT: "ctx" };
 
-// The excerpt of an inline comment from its activity diff. No match gives undefined. fileType FROM numbers the line on the old side.
-export function excerptOf(diff: RawDiff, anchor: { line?: number; lineType?: string; fileType?: string }): ExcerptLine[] | undefined {
+// The excerpt of an inline comment from its activity diff. No match gives undefined.
+// The row that lists the comment ID in commentIds wins. Else the anchor line names the row. fileType FROM numbers it on the old side.
+// Gate v3 U4: a CONTEXT anchor numbers its row on the old side, whatever fileType says. The excerpt still numbers ctx lines on the fileType side.
+export function excerptOf(
+  diff: RawDiff,
+  anchor: { line?: number; lineType?: string; fileType?: string },
+  id?: number,
+): ExcerptLine[] | undefined {
   if (anchor.line === undefined) return undefined;
   const old = anchor.fileType === "FROM";
   const want = anchor.lineType === undefined ? undefined : KIND[anchor.lineType];
   const n = (kind: ExcerptLine["kind"], l: { source: number; destination: number }) =>
     kind === "del" || (kind === "ctx" && old) ? l.source : l.destination;
-  for (const h of diff.hunks) {
-    const lines = h.segments.flatMap((s) => {
+  const hunks = diff.hunks.map((h) =>
+    h.segments.flatMap((s) => {
       const kind = KIND[s.type];
-      return kind ? s.lines.map((l) => ({ kind, n: n(kind, l), text: l.line })) : [];
-    });
-    const at = lines.findIndex((l) => l.n === anchor.line && (want ? l.kind === want : l.kind !== (old ? "add" : "del")));
-    if (at < 0) continue;
-    return lines
-      .slice(Math.max(0, at - EXCERPT_SIDE), at + EXCERPT_SIDE + 1)
-      .map((l) => ({ n: l.n, kind: l.kind, text: l.text.slice(0, EXCERPT_TEXT), hit: l === lines[at] }));
-  }
+      return kind ? s.lines.map((l) => ({ kind, n: n(kind, l), source: l.source, text: l.line, ids: l.commentIds })) : [];
+    }),
+  );
+  type Row = (typeof hunks)[number][number];
+  const marked = (l: Row) => id !== undefined && !!l.ids?.includes(id);
+  const named = (l: Row) =>
+    (want === "ctx" ? l.source : l.n) === anchor.line && (want ? l.kind === want : l.kind !== (old ? "add" : "del"));
+  for (const match of [marked, named])
+    for (const lines of hunks) {
+      const at = lines.findIndex(match);
+      if (at < 0) continue;
+      return lines
+        .slice(Math.max(0, at - EXCERPT_SIDE), at + EXCERPT_SIDE + 1)
+        .map((l) => ({ n: l.n, kind: l.kind, text: l.text.slice(0, EXCERPT_TEXT), hit: l === lines[at] }));
+    }
   return undefined;
 }
 
@@ -66,6 +79,7 @@ export function newestFirst(list: Commit[]): Commit[] {
 }
 
 // A new-side line of the diff between two fixed commits. fromHash: the target head. toHash: the reviewed source head (I8).
+// line: the new-side line of an added line, the old-side line of a context line (Gate v3 U4).
 export type NewAnchor = { path: string; srcPath: string | null; line: number; lineType: "add" | "ctx"; fromHash: string; toHash: string };
 export type NewComment = { text: string; parentId?: number; anchor?: NewAnchor };
 
@@ -152,7 +166,7 @@ export function createBitbucketProvider(opts: ClientOptions) {
         const prev = byId.get(c.id);
         if (!prev || c.version > prev.version) {
           const root = parentId === null;
-          const excerpt = root && c.anchor && diff ? excerptOf(diff, c.anchor) : undefined;
+          const excerpt = root && c.anchor && diff ? excerptOf(diff, c.anchor, c.id) : undefined;
           byId.set(c.id, {
             id: c.id,
             version: c.version,

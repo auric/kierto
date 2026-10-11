@@ -147,6 +147,7 @@ test("A9: the connection drops after Bitbucket accepts; the outcome is unknown, 
   await connect(page);
   await reviewed(page);
   await drafts(page).nth(0).getByRole("button", { name: "Accept" }).click();
+  await expect(page.getByText("Ready to post: 1 inline comment")).toBeVisible();
   // The POST is stored, then the connection drops. The check cannot read the comments yet.
   await posts({ drop: true, hide: true });
   await page.keyboard.press("p");
@@ -167,6 +168,7 @@ test("a failed inline post shows the reason and moves to the general comment", a
   await connect(page);
   await reviewed(page);
   await drafts(page).nth(0).getByRole("button", { name: "Accept" }).click();
+  await expect(page.getByText("Ready to post: 1 inline comment")).toBeVisible();
   await posts({ fail: 400 });
   await page.keyboard.press("p");
   await postButton(confirmBox(page)).click();
@@ -188,6 +190,24 @@ test("a failed inline post shows the reason and moves to the general comment", a
   expect(sent).toHaveLength(1);
   expect(sent[0]?.text).toBe(`${MARK}src/cache/flush.ts:3: ${LOCK}`);
   expect(sent[0]?.anchor).toBeUndefined();
+});
+
+test("p right after Accept opens the confirm while the accept request is still out", async ({ page }) => {
+  await connect(page);
+  await reviewed(page);
+  // A loaded machine: the accept answer comes 400 ms late, so p lands before it.
+  await page.route("**/api/items/*", async (route) => {
+    await new Promise((r) => setTimeout(r, 400));
+    await route.continue();
+  });
+  await drafts(page).nth(0).getByRole("button", { name: "Accept" }).click();
+  await page.keyboard.press("p");
+  const box = confirmBox(page);
+  await expect(box).toHaveAccessibleName("Post 1 inline comment to PROJ1/sample-repo-2 #1001?");
+  await expect(page.getByText("Nothing is accepted yet. Accept drafts, questions, or replies first.")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(box).toBeHidden();
+  expect(await posts()).toEqual([]);
 });
 
 test("two pages confirm the same items, and only one post goes out (A14)", async ({ page, context }) => {

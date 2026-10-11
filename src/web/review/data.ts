@@ -89,8 +89,18 @@ export const useStartReplies = (pr: number) =>
 
 export type ItemResult = { item: ReviewItemDto } | { conflict: ItemConflict };
 
+// Item requests that are out. The post confirm reads the plan only after they end.
+const sending = new Set<Promise<ItemResult>>();
+export const itemsSettled = () => Promise.allSettled(sending);
+
+export function sendItem(id: number, input: ItemActionInput): Promise<ItemResult> {
+  const p = postItem(id, input).finally(() => sending.delete(p));
+  sending.add(p);
+  return p;
+}
+
 // POST /api/items/:id (WP12). 409 with `item`: the item changed in another page. The page then shows that item.
-export async function sendItem(id: number, input: ItemActionInput): Promise<ItemResult> {
+async function postItem(id: number, input: ItemActionInput): Promise<ItemResult> {
   const res = await api.api.items[":id"].$post({ ...param(id), json: input });
   if (res.status !== 409) return { item: await read<ReviewItemDto>(res) };
   const text = await res.text();

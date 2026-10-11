@@ -105,6 +105,20 @@ const COMMENTS: Comment[] = [
     createdAt: 2,
     updatedAt: 2,
   },
+  // Gate v3 U4: a CONTEXT anchor holds old line 4. Its excerpt marks new line 5.
+  {
+    id: 103,
+    version: 0,
+    parentId: null,
+    rootId: 103,
+    author: jdoe,
+    text: "Context note.",
+    anchor: { path: "src/app.ts", line: 4, lineType: "CONTEXT", fileType: "TO" },
+    threadResolved: false,
+    createdAt: 3,
+    updatedAt: 3,
+    excerpt: [{ n: 5, kind: "ctx", text: "const c = 3;", hit: true }],
+  },
 ];
 
 const prOf = (source: string, target: string): PullRequest => ({
@@ -471,6 +485,7 @@ describe("workspace", () => {
         "Why does line 3 change?",
         "It fixes the bug.",
         "src/app.ts line 3",
+        "Comment 103 by Jane Doe (jdoe), on src/app.ts line 5",
       ])
         expect(pr).toContain(t);
       expect(pr.indexOf("Why does line 3 change?")).toBeLessThan(pr.indexOf("It fixes the bug."));

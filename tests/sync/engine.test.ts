@@ -950,7 +950,8 @@ describe("forge data", () => {
     const h = await setup();
     await h.cycle();
     const c = (id: number) => detail(h)?.comments.find((x) => x.id === id);
-    expect(c(1000005)?.excerpt?.find((l) => l.hit)).toEqual({ n: 7, kind: "ctx", text: "sample line 34", hit: true });
+    // Gate v3 U4: the CONTEXT anchor `line 7` names the row source 7 / destination 9.
+    expect(c(1000005)?.excerpt?.find((l) => l.hit)).toEqual({ n: 9, kind: "ctx", text: "sample line 36", hit: true });
     expect(c(1000004)?.task).toBeUndefined();
     for (const id of [1000006, 1000007]) {
       expect(c(id)?.anchor).toBeNull();

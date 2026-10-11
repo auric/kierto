@@ -76,11 +76,15 @@ function reason(e: unknown): string {
 const refused = (e: unknown): e is ForgeError & { status: number } =>
   e instanceof ForgeError && e.status !== undefined && e.status >= 300 && e.status < 500;
 
+// The anchor line that the POST sends and Bitbucket returns. Gate v3 U4: a CONTEXT anchor holds the old-side line.
+// A ctx row stored before srcLine existed was posted with its new-side line.
+const postedLine = (d: Extract<PostDestination, { kind: "inline" }>) => d.srcLine ?? d.line;
+
 function sameDestination(c: Comment, d: PostDestination): boolean {
   if (d.kind === "reply") return c.parentId === d.parentId;
   if (c.parentId !== null) return false;
   const a = c.anchor as { path?: unknown; line?: unknown } | undefined;
-  return d.kind === "general" ? !a : a?.path === d.path && a.line === d.line;
+  return d.kind === "general" ? !a : a?.path === d.path && a.line === postedLine(d);
 }
 
 // The planned posts whose items the request names with the same revisions. null: the plan differs from the confirm on screen.
@@ -171,12 +175,14 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
       if (status === "deleted") return fail("The comment was deleted. The reply was not sent.");
       if (status !== "present") return fail(`Could not check the comment (${reason(status)}). The reply was not sent.`);
     } else if (dest.kind === "inline") {
+      if (dest.lineType === "ctx" && dest.srcLine === undefined)
+        return fail("The context line has no old line number. Move the finding to the general comment.");
       const h = r.run === null ? null : (db.query(SQL.heads).get({ run: r.run }) as { source_head: string; target_head: string } | null);
       if (!h) return fail("The review run is gone.");
       anchor = {
         path: dest.path,
         srcPath: dest.srcPath,
-        line: dest.line,
+        line: postedLine(dest),
         lineType: dest.lineType,
         fromHash: h.target_head,
         toHash: h.source_head,

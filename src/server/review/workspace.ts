@@ -2,7 +2,7 @@
 // <dataDir>/runs/<id>/work/{repo,context} is the CLI cwd, <dataDir>/runs/<id>/app holds the app files.
 import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { Comment, ExcerptLine, PullRequest } from "../../shared/types";
+import { type Comment, commentLine, type ExcerptLine, type PullRequest } from "../../shared/types";
 import { log } from "../log";
 import { parseDiff } from "./diffmap";
 import { git, gitEnv } from "./git";
@@ -208,8 +208,9 @@ function prText(pr: PullRequest, comments: Comment[]): string {
     kids.set(c.parentId, list);
   }
   const visit = (c: Comment) => {
-    const a = (c.anchor ?? {}) as { path?: unknown; line?: unknown };
-    const at = typeof a.path === "string" ? `, on ${a.path}${typeof a.line === "number" ? ` line ${a.line}` : ""}` : "";
+    const a = (c.anchor ?? {}) as { path?: unknown };
+    const line = commentLine(c);
+    const at = typeof a.path === "string" ? `, on ${a.path}${line === undefined ? "" : ` line ${line}`}` : "";
     const head = c.parentId === null ? `Comment ${c.id}` : `Reply ${c.id} to ${c.parentId}`;
     out.push(`### ${head} by ${who(c.author)}${at}${c.threadResolved ? " (resolved)" : ""}`, "");
     // replies.md step 5: the stored excerpt of an inline root. An indented block, so no line of it can end the block.

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import type { CommentDto, PostDto, PostPlanDto, PrRow } from "../../shared/dto";
-import { usePrRuns } from "../review/data";
+import { itemsSettled, usePrRuns } from "../review/data";
 import { shortHash } from "../review/model";
 import { ApiError } from "../shell/data";
 import { prKey } from "../shell/model";
@@ -66,15 +66,11 @@ export function usePostBar(
     }
   };
 
-  // A triage that just ended refetches the plan, so only a settled empty plan means that nothing is accepted.
+  // The cached plan can miss a triage request that is still out. Only a plan read after those requests end decides.
   const open = () => {
-    if (!posts.length && !plan.isFetching) {
-      toast.add({ title: NOTHING });
-      return;
-    }
     if (c) return;
     setC({ plan: null, posting: false, error: null });
-    void load(null);
+    void itemsSettled().then(() => load(null));
   };
 
   const post = async () => {

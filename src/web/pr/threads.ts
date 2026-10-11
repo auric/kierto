@@ -2,13 +2,15 @@
 import type { CommentDto, ExcerptLine, PrRow } from "../../shared/dto";
 import { isMe } from "../../shared/me";
 import { newestLive, type Turn, threadTurn } from "../../shared/turn";
+import { commentLine } from "../../shared/types";
 import { clock } from "../shell/model";
 
+// line: the line that the excerpt marks (commentLine).
 export type Anchor = { path: string; line?: number; orphaned?: boolean };
 
-export function anchorOf(c: Pick<CommentDto, "anchor">): Anchor | null {
+export function anchorOf(c: Pick<CommentDto, "anchor" | "excerpt">): Anchor | null {
   const a = c.anchor as Partial<Anchor> | null;
-  return a && typeof a.path === "string" ? (a as Anchor) : null;
+  return a && typeof a.path === "string" ? { ...(a as Anchor), line: commentLine(c) } : null;
 }
 
 // Highlights keep the set captured at open and add every message that is unread now. A deleted message is never unread.
