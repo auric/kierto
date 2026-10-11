@@ -33,6 +33,7 @@ const row = (key: string, o: Partial<TaskContextDto> = {}): TaskContextDto => ({
   truncated: false,
   source: "jira",
   fetchedAt: 1_000,
+  files: [],
   ...o,
 });
 const meta = (context: MetaDto["context"]) => ({ context }) as MetaDto;
@@ -96,15 +97,20 @@ test("sourceTime reads the Jira offset form and keeps other text", () => {
   expect(sourceTime("")).toBe("");
 });
 
-test("contextLines marks a task fetched after the run started", () => {
+test("contextLines shows the tasks of the run; a run without that record marks a task fetched after the run started", () => {
   const now = new Date(2026, 9, 11, 15, 0).getTime();
   const at = (h: number, m: number) => new Date(2026, 9, 11, h, m).getTime();
-  const run = { startedAt: at(14, 0) } as RunDto;
-  expect(contextLines([row("ABC-1", { fetchedAt: at(13, 5) }), row("ABC-2", { fetchedAt: at(14, 30) })], run, "Jira", now)).toEqual([
+  const rows = [row("ABC-1", { fetchedAt: at(13, 5) }), row("ABC-2", { fetchedAt: at(14, 30) })];
+  const old = { startedAt: at(14, 0) } as RunDto;
+  expect(contextLines(rows, old, "Jira", now)).toEqual([
     "ABC-1 from Jira, fetched today 13:05",
     "ABC-2 from Jira, fetched after this run (today 14:30)",
   ]);
-  expect(contextLines([], run, "Jira", now)).toEqual([]);
+  expect(contextLines([], old, "Jira", now)).toEqual([]);
+  // The run read ABC-3, which is removed now. ABC-2 came after the run.
+  const run = { startedAt: at(14, 0), tasks: [{ key: "ABC-3", fetchedAt: at(12, 0) }] } as RunDto;
+  expect(contextLines(rows, run, "Jira", now)).toEqual(["ABC-3 from Jira, fetched today 12:00"]);
+  expect(contextLines(rows, { ...run, tasks: [] }, "Jira", now)).toEqual([]);
 });
 
 // ---------- Attachments (plan r3 UI-ATT) ----------
@@ -144,20 +150,11 @@ test("attachmentRows lists the listing, then the downloaded files that the listi
 });
 
 test("sizeText uses binary units with one decimal below 10", () => {
-  expect([0, 512, 1023, 1024, 1536, 2048, 10 * 1024, 1023 * 1024, MB, 5.25 * MB, 100 * MB, 3 * 1024 * MB].map(sizeText)).toEqual([
-    "0 B",
-    "512 B",
-    "1023 B",
-    "1 KB",
-    "1.5 KB",
-    "2 KB",
-    "10 KB",
-    "1023 KB",
-    "1 MB",
-    "5.3 MB",
-    "100 MB",
-    "3 GB",
-  ]);
+  expect([0, 512, 1023, 1024, 1536, 2048, 10 * 1024, 1023 * 1024, MB, 5.25 * MB, 100 * MB, 3 * 1024 * MB].map(sizeText)).toEqual(
+    ["0 B", "512 B", "1023 B", "1 KB", "1.5 KB", "2 KB", "10 KB", "1023 KB", "1 MB", "5.3 MB", "100 MB", "3 GB"].map((t) =>
+      t.replace(" ", "\u00a0"),
+    ),
+  );
 });
 
 test("the kind of a downloaded file comes from its bytes, before that from the listed type", () => {

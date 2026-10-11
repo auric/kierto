@@ -2,7 +2,18 @@
 // Plan r3 UI-TASKS: the same chips next to the run buttons and in the Ask section. UI-ATT: the task attachments.
 // Runs against serve.ts only: the fake Bitbucket, the fake Jira on JIRA_URL, and the fake Claude Code CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_JIRA_TOKEN, E2E_TOKEN, FAKE_URL, JIRA_ISSUE, JIRA_URL, jiraRequests, runAttachments } from "./control";
+import {
+  APP_PORT,
+  control,
+  E2E_JIRA_TOKEN,
+  E2E_TOKEN,
+  FAKE_URL,
+  JIRA_ISSUE,
+  JIRA_URL,
+  jiraRequests,
+  openFolder,
+  runAttachments,
+} from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -124,6 +135,18 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
   await table.getByRole("cell", { name: "wide".repeat(100) }).evaluate((td) => {
     td.textContent = "sync worker";
   });
+  // A long code line scrolls in its own box too.
+  const code = task.locator("pre code");
+  const line = await code.evaluate((el) => {
+    const text = el.textContent;
+    el.textContent = "x".repeat(400);
+    return text;
+  });
+  expect(await task.locator("pre").evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  expect(await widths()).toEqual(before);
+  await code.evaluate((el, text) => {
+    el.textContent = text;
+  }, line);
   const link = task.getByRole("link", { name: "design note" });
   await expect(link).toHaveAttribute("href", "https://docs.example.test/cache");
   await expect(link).toHaveAttribute("target", "_blank");
@@ -327,28 +350,24 @@ test("attachments: download all, the inline image, save, include after the polic
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
   await expect(runLine(page)).toContainText("You cancelled the review", { timeout: RUN_MS });
 
-  // Open folder without a file manager shows the path with Copy. The route stub keeps the e2e run from opening a window.
+  // Open folder without a file manager shows the path with Copy. serve.ts gives the server a recorder, so no window opens.
   await page.keyboard.press("Shift+R");
   await task.locator("summary").click();
-  const path = "C:\\data\\attachments\\review-loop\\1\\ABC-42";
-  await page.route("**/task-context/ABC-42/open-folder", (r) =>
-    r.fulfill({
-      status: 501,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "No file manager opened the folder. Copy the path.", path }),
-    }),
-  );
   await files.getByRole("button", { name: "Open folder" }).click();
   await expect(files).toContainText("No file manager opened the folder. Copy the path.");
+  const [path = ""] = await openFolder();
+  expect(path).toMatch(/[\\/]attachments[\\/][^\\/]+[\\/]\d+[\\/]ABC-42$/);
   await expect(files.getByText(path, { exact: true })).toBeVisible();
   const copy = files.getByRole("button", { name: "Copy the folder path" });
   await expect(copy).toBeFocused();
   await copy.click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(path);
-  await page.route("**/task-context/ABC-42/open-folder", (r) => r.fulfill({ status: 204 }));
+  await openFolder({ opens: true });
   await files.getByRole("button", { name: "Open folder" }).click();
   await expect(status(page)).toHaveText(`Opened the folder of ${JIRA_ISSUE}.`);
   await expect(files.getByText(path, { exact: true })).toHaveCount(0);
+  // The server asks for the task folder both times, never for a file.
+  expect(await openFolder()).toEqual([path, path]);
 
   // Delete removes the local copy. The image goes back to its alt text, and focus goes to Download.
   await png.getByRole("button", { name: "Delete screenshot.png" }).click();

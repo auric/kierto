@@ -162,7 +162,7 @@ describe("Markdown component", () => {
       return src === "attachment:10100" ? "/api/local/10100" : null;
     });
     expect(seen).toEqual(["attachment:10100", "https://x.example.test/r.png"]);
-    expect(html).toContain('<img src="/api/local/10100" alt="shot.png"/>');
+    expect(html).toContain('<img src="/api/local/10100" alt="shot.png" loading="lazy"/>');
     expect(html).toContain("<span>r</span>");
     expect(html).not.toContain("x.example.test");
   });

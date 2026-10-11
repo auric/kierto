@@ -31,6 +31,8 @@ export type AppOptions = GuardOptions & {
   indexHtml?: string;
   // Middleware for the built assets. Absent in dev and in tests.
   assets?: Parameters<Hono["use"]>[1];
+  // Absent: the OS file manager. serve.ts passes a recorder.
+  openFolder?: (path: string) => Promise<boolean>;
 };
 
 export function createApp(opts: AppOptions) {
@@ -73,7 +75,7 @@ export function createApp(opts: AppOptions) {
     .route("/api", createReviewRoutes({ review, live: opts.live }))
     .route("/api", createDiffRoutes({ review }))
     .route("/api", createFixRoutes({ review, settings, live: opts.live }))
-    .route("/api", createContextRoutes({ settings, review, live: opts.live }))
+    .route("/api", createContextRoutes({ settings, review, live: opts.live, openFolder: opts.openFolder }))
     .route("/api", createPublishRoutes({ review, settings, outbox }));
 
   if (opts.assets) app.use("/assets/*", opts.assets);

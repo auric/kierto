@@ -2,7 +2,7 @@
 
 Review Loop is a local-first inbox for Bitbucket Server pull requests (PRs). It runs the user's own Claude Code CLI (`claude -p`) for reviews. The app runs on localhost and keeps all data on the user's machine.
 
-Status: Release 1 and Release 2 are code complete. The user runs docs/smoke-m1.md, smoke-v3.md, smoke-m4.md, and smoke-r2.md; see docs/plans/r2.md. Release 3 (Fix it, Jira attachments and Markdown) is in progress; see docs/plans/r3.md. Do not assume that a file in the planned layout exists. Check first.
+Status: Releases 1, 2, and 3 are code complete. The user runs docs/smoke-m1.md, smoke-v3.md, smoke-m4.md, smoke-r2.md, and smoke-r3.md (with Gate B11 and B12); see docs/plans/r2.md and r3.md. Do not assume that a file in the planned layout exists. Check first.
 
 ## Document map
 
@@ -11,7 +11,7 @@ Status: Release 1 and Release 2 are code complete. The user runs docs/smoke-m1.m
 | `BRIEF.md` | The spec and the source of truth. If another file disagrees, BRIEF.md wins. |
 | `prototype/index.html` | Visual spec for the UI: three panes, color tokens, keyboard model. Sample data only. It is also a published artifact. |
 | `docs/plans/` | Milestone plans: m1.md, v3.md (M2, M3), replies.md, m4.md, r2.md (Release 2), r3.md (Release 3). |
-| `docs/smoke-m1.md`, `docs/smoke-v3.md`, `docs/smoke-m4.md`, `docs/smoke-r2.md` | Manual smoke tests with the real server and CLI. The user runs them. The smoke-v3.md last table maps A1 to A17 to their tests. |
+| `docs/smoke-m1.md`, `docs/smoke-v3.md`, `docs/smoke-m4.md`, `docs/smoke-r2.md`, `docs/smoke-r3.md` | Manual smoke tests with the real server and CLI. The user runs them. The smoke-v3.md last table maps A1 to A17 to their tests. |
 | `PROJECT_BRIEF_GPT_ASTRA_6.md` | Reference for edge cases and acceptance scenarios. |
 | `IMPLEMENTATION_PROMPTS_GPT_ASTRA_6.md` | Alternative spec-kit prompt set. Prompt 0 drives Gate 0. Its two-pane and general-comments-only rules do not apply. |
 | `skills-lock.json` | Pins the installed project skills. Commit it with every skill change. |
@@ -31,7 +31,7 @@ Tests:   bun test for logic and integration. Playwright for browser acceptance.
 Ship:    bun build --compile, one executable per OS with the UI embedded.
 ```
 
-Layout: `src/web/` (with `ask/` and `diff/`), `src/server/{bitbucket,sync,inbox,storage,tasks,review,publish,context}/`, `src/shared/`, `fixtures/`, `tests/`, `scripts/` exist. Release 3 adds `src/web/fix/`. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
+Layout: `src/web/` (with `ask/`, `diff/`, and `fix/`), `src/server/{bitbucket,sync,inbox,storage,tasks,review,publish,context}/`, `src/shared/`, `fixtures/`, `tests/`, `scripts/` exist. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
 
 Commands:
 - `bun install`: install the pinned dependencies.
@@ -41,7 +41,7 @@ Commands:
 - `bun run compile`: build the UI, then one self-contained executable for this host into `dist/bin/review-loop-<os>-<arch>`. `bun run compile:all` adds windows-x64, linux-x64, and linux-arm64. Release builds cover Windows and Linux only. `tests/build/compiled.test.ts` checks the host binary. It skips when the binary is absent and fails when a source is newer.
 - `bun run typecheck`: run strict `tsc --noEmit`. `bun run typecheck:5` runs it with TypeScript 5.
 - `bun run lint`: run Biome lint and format checks. `bun run format` applies the fixes.
-- `bun run demo`: serve the built UI on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. It uses a temp data folder and memory secrets.
+- `bun run demo`: serve the built UI on 127.0.0.1:7399 against a fake Bitbucket and a fake Jira with synthetic data. It uses a temp data folder, memory secrets, and a temp clone for Fix it.
 - `bun test`: run the tests under `tests/`. Each group ends green on typecheck, lint, and test.
 - `bun run check`: run typecheck, typecheck:5, lint, and `bun test` in sequence. It stops at the first failure.
 - `bun run release`: make a tested release in `dist/release/<version>-<commit>/`. It runs check, e2e, compile for all targets, and the compiled-binary test, then writes SHA256SUMS. It refuses a dirty tree unless `--allow-dirty`. `--skip-e2e` skips the e2e tests.

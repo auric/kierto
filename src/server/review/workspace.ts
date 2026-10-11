@@ -321,6 +321,16 @@ async function fetchHeads(cache: string, empty: string, id: number, remote: GitR
   return "branch" as const;
 }
 
+// The long path of a folder, or the folder as given when it does not exist. Windows can give an 8.3 short path for the same
+// folder. The cache path, its lock key, and the fetch commands in the UI need one spelling.
+export function longPath(dir: string) {
+  try {
+    return realpathSync.native(dir);
+  } catch {
+    return dir;
+  }
+}
+
 // The bare cache clone of one repository.
 export function cachePath(dataDir: string, ref: PrRef) {
   return join(dataDir, "git", name(ref.project, "project key"), `${name(ref.repo, "repository slug")}.git`);

@@ -31,7 +31,8 @@ export function Markdown({ text, images }: { text: string; images?: (src: string
             </a>
           );
         const local = images?.(src) ?? null;
-        return local ? <img src={local} alt={alt ?? ""} /> : <span>{alt}</span>;
+        // Lazy: an image in a closed fold loads only when the fold opens.
+        return local ? <img src={local} alt={alt ?? ""} loading="lazy" /> : <span>{alt}</span>;
       },
       // A wide table scrolls in its own box, so it never widens the pane.
       table: ({ node: _, ...props }) => (

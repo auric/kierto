@@ -127,6 +127,14 @@ export async function jiraRequests(): Promise<string[]> {
   return ((await res.json()) as { requests: string[] }).requests;
 }
 
+// The app opens a folder through a recorder in serve.ts. opens: the answer of the next calls; false gives 501 with the path.
+// A reset sets false. Answers with every folder path that the app asked to open since the last reset.
+export async function openFolder(change: { opens?: boolean } = {}): Promise<string[]> {
+  const res = await fetch(`${FAKE_URL}/__control/open-folder`, { method: "POST", headers: auth, body: JSON.stringify(change) });
+  if (!res.ok) throw new Error(`control open-folder: ${res.status}`);
+  return ((await res.json()) as { paths: string[] }).paths;
+}
+
 // The file names in context/attachments/ of the newest fake CLI run, or null before the first run.
 // The run folder exists only while the run runs. Start the run with control("claude", { stream: "tree", hang: true }).
 export async function runAttachments(): Promise<string[] | null> {

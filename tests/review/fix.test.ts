@@ -1,7 +1,7 @@
 // Plan r3 S-FIX: fix runs with the fake CLI and a temp git remote. No test starts the real CLI or reaches a forge.
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
@@ -579,7 +579,9 @@ describe("edits through a full run", () => {
         before: h.remote.source,
         state: "committed",
       });
-      expect(commit?.fetch).toEqual({ cache: cache.replaceAll("\\", "/"), ref: `refs/rl/2/fix-commit/${commit?.id}` });
+      // The fix routes give the long path too (clone.test.ts). Windows can give tmpdir() as an 8.3 short path.
+      const long = join(realpathSync.native(h.dir), "git", "PROJ", "repo.git");
+      expect(commit?.fetch).toEqual({ cache: long.replaceAll("\\", "/"), ref: `refs/rl/2/fix-commit/${commit?.id}` });
       expect((await h.json(`/api/prs/999/fixes`)).status).toBe(404);
     },
     SLOW,

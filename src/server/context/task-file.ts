@@ -19,6 +19,7 @@ type FileRow = {
   key: string;
   att_id: string;
   filename: string;
+  // The media type that Jira lists, for display only. image and text come from the file bytes.
   mime: string | null;
   size: number;
   file: string;

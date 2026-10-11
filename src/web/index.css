@@ -850,8 +850,10 @@ button.rl-ll:hover {
   font-family: var(--font-mono);
   font-size: 12px;
 }
+/* As .rl-md-table: a long line scrolls in the box and never widens a grid track of the pane. */
 .rl-md pre {
   overflow-x: auto;
+  contain: inline-size;
   padding: 8px 10px;
   border-radius: 6px;
   background: var(--muted);

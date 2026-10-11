@@ -66,8 +66,10 @@ export function commentsText(t: TaskContextDto): string {
   return t.comments.length === total ? all : `${t.comments.length} of ${all}`;
 }
 
-// The AI summary Context row. The run read the text that was stored when it started.
+// The AI summary Context row: the tasks that the run read at its start. A run made before Release 3 has no such record.
+// For it, the row shows the stored tasks and marks each task fetched after the run started.
 export function contextLines(rows: TaskContextDto[], run: RunDto, source: string, now: number): string[] {
+  if (run.tasks) return run.tasks.map((t) => `${t.key} from ${source}, fetched ${visitText(t.fetchedAt, now)}`);
   return rows.map((t) =>
     t.fetchedAt > run.startedAt
       ? `${t.key} from ${source}, fetched after this run (${visitText(t.fetchedAt, now)})`
@@ -93,12 +95,12 @@ export type AttachmentRow = {
 
 // The same list and order as task.md (task-file.ts): the listing, then the downloaded files that the listing no longer names.
 export function attachmentRows(t: TaskContextDto): AttachmentRow[] {
-  const files = new Map((t.files ?? []).map((f) => [f.id, f]));
+  const files = new Map(t.files.map((f) => [f.id, f]));
   const listed = t.attachments ?? [];
   const named = new Set(listed.map((a) => a.id));
   return [
     ...listed.map((a) => ({ id: a.id, filename: a.filename, size: a.size, type: a.mimeType, file: files.get(a.id) ?? null, listed: true })),
-    ...(t.files ?? [])
+    ...t.files
       .filter((f) => !named.has(f.id))
       .map((f) => ({ id: f.id, filename: f.filename, size: f.size, type: null, file: f, listed: false })),
   ];
@@ -106,9 +108,9 @@ export function attachmentRows(t: TaskContextDto): AttachmentRow[] {
 
 export const attachmentsText = (n: number) => (n === 1 ? "1 attachment" : `${n} attachments`);
 
-// Binary units, as the server caps count them.
+// Binary units, as the server caps count them. A no-break space keeps the number and the unit on one line.
 export function sizeText(bytes: number): string {
-  if (bytes < KB) return `${bytes} B`;
+  if (bytes < KB) return `${bytes}\u00a0B`;
   const units = ["KB", "MB", "GB"];
   let n = bytes / KB;
   let i = 0;
@@ -116,7 +118,7 @@ export function sizeText(bytes: number): string {
     n /= KB;
     i++;
   }
-  return `${n < 10 ? Number(n.toFixed(1)) : Math.round(n)} ${units[i]}`;
+  return `${n < 10 ? Number(n.toFixed(1)) : Math.round(n)}\u00a0${units[i]}`;
 }
 
 // A downloaded file has its kind from its bytes. Before the download, only the listed media type can name it.
@@ -149,7 +151,7 @@ export const imageRoute = (pr: number, key: string, id: string) => `${saveRoute(
 const ATTACHMENT_SRC = /^attachment:([0-9]{1,18})$/;
 
 // The downloaded raster images of a task. The image route serves only these.
-export const imageIds = (files: AttachmentDto[] | undefined) => (files ?? []).flatMap((f) => (f.image ? [f.id] : []));
+export const imageIds = (files: AttachmentDto[]) => files.flatMap((f) => (f.image ? [f.id] : []));
 
 // The Markdown images resolver of a task. Only a downloaded raster image gets a local URL. All else shows its alt text,
 // so the browser never sends a request to the tracker.
@@ -162,7 +164,7 @@ export function attachmentImages(pr: number, key: string, images: readonly strin
 }
 
 export const putFile = (rows: TaskContextDto[] | undefined, key: string, f: AttachmentDto) =>
-  rows?.map((t) => (t.key === key ? { ...t, files: [...(t.files ?? []).filter((x) => x.id !== f.id), f] } : t));
+  rows?.map((t) => (t.key === key ? { ...t, files: [...t.files.filter((x) => x.id !== f.id), f] } : t));
 
 export const dropFile = (rows: TaskContextDto[] | undefined, key: string, id: string) =>
-  rows?.map((t) => (t.key === key ? { ...t, files: (t.files ?? []).filter((x) => x.id !== id) } : t));
+  rows?.map((t) => (t.key === key ? { ...t, files: t.files.filter((x) => x.id !== id) } : t));

@@ -1,6 +1,5 @@
 // Fix it API (plan r3 S-APPLY): the clone routes, commit, and undo. Git in the user's clone runs no network command.
 import type { Database } from "bun:sqlite";
-import { realpathSync } from "node:fs";
 import { Hono } from "hono";
 import { validator } from "hono/validator";
 import {
@@ -41,7 +40,7 @@ import {
 } from "./clone";
 import { GitError, git } from "./git";
 import type { ReviewJobs } from "./jobs";
-import { cachePath, gitSetup, locked } from "./workspace";
+import { cachePath, gitSetup, locked, longPath } from "./workspace";
 
 type PrRow = { id: number; project: string; repo: string; pr_id: number; source_branch: string | null; source_head: string | null };
 // source: the source head S of the run.
@@ -97,13 +96,7 @@ const conflict = (error: string, problems: FixConflict["problems"] = []): Out =>
 export function createFixRoutes(opts: { review: ReviewJobs; settings: Settings; live: Live }) {
   const { review, settings, live } = opts;
   // syncCache keys the cache and its lock by the long path of the data folder.
-  const dataDir = () => {
-    try {
-      return realpathSync.native(review.dataDir);
-    } catch {
-      return review.dataDir;
-    }
-  };
+  const dataDir = () => longPath(review.dataDir);
   const env = () => gitSetup(dataDir()).env;
   const cacheOf = (p: { project: string; repo: string; pr_id: number }) =>
     cachePath(dataDir(), { project: p.project, repo: p.repo, id: p.pr_id });

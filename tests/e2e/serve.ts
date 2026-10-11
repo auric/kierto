@@ -407,6 +407,13 @@ async function resetClones() {
   rmSync(clonesDir, { recursive: true, force: true, maxRetries: 3 });
 }
 
+// Open folder (plan r3 S-ATT): the app calls this recorder, never the OS file manager. opens: the answer of the next calls.
+const folders = { opens: false, paths: [] as string[] };
+const openFolder = async (path: string) => {
+  folders.paths.push(path);
+  return folders.opens;
+};
+
 // The app. A restart keeps the data folder and the secret store, as a process restart with the OS store does.
 let secrets = createSecrets(null);
 let jiraSecrets = createSecrets(null, "jira-token");
@@ -426,6 +433,7 @@ function boot() {
     outbox,
     indexHtml,
     assets: serveStatic({ root: WEB_DIR }),
+    openFolder,
   });
   sync.start();
   void review.start();
@@ -456,6 +464,7 @@ r[key("POST", "/__control/reset")] = async () => {
   for (const p of [postsA, postsB, postsC, postsD]) p.reset();
   fake.requests.length = 0;
   jira.requests.length = 0;
+  Object.assign(folders, { opens: false, paths: [] });
   Object.assign(postA, { fail: null, hide: false });
   setClaude({ stream: "tree" });
   app = boot();
@@ -485,6 +494,12 @@ r[key("POST", "/__control/writes")] = () =>
 // ---------- Jira attachments (plan r3 S-ATT) ----------
 // Every request to the fake Jira since the last reset.
 r[key("POST", "/__control/jira-requests")] = () => ok({ requests: jira.requests });
+// Sets the answer of the next open-folder calls. Answers with every folder that the app asked to open since the last reset.
+r[key("POST", "/__control/open-folder")] = async (req) => {
+  const { opens } = (await req.json()) as { opens?: boolean };
+  if (opens !== undefined) folders.opens = opens;
+  return ok({ paths: folders.paths });
+};
 // The names in context/attachments/ of the newest fake CLI run. null: no run. The run folder exists only while the run runs.
 r[key("POST", "/__control/run-attachments")] = () => {
   const record = join(claudeDir, "calls.jsonl");

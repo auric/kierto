@@ -274,7 +274,8 @@ export function createContextRoutes(opts: {
         include: 0,
         downloaded_at: Date.now(),
       };
-      // The task can go away during the download.
+      // The task can go away during the download. mime: the media type that Jira lists, for display only. image and text come
+      // from the file bytes.
       const saved = db.transaction(() => {
         if (!hasContext(db, id, key)) return false;
         db.query(

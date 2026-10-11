@@ -1,9 +1,10 @@
 // Demo: the app on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. No real server, data folder, or credential store.
 // Reviews run the fake Claude Code CLI against a temp git remote. No real CLI and no network.
 // The data covers every inbox group and every thread turn. Task IDs use the fictional key ABC. A fake Jira serves each ABC task.
+// My PR 1004 shows Fix it: judgements, fix edits, and Apply into a temp clone that the demo makes and deletes.
 import "../tests/support/no-real-claude";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
@@ -11,6 +12,7 @@ import { writeConfig } from "../src/server/config";
 import { setFollowed } from "../src/server/inbox/queries";
 import { createLive } from "../src/server/live";
 import { startServer } from "../src/server/main";
+import { git, gitEnv } from "../src/server/review/git";
 import { createReviewJobs } from "../src/server/review/jobs";
 import { createSecrets } from "../src/server/secrets";
 import { createSettings } from "../src/server/settings";
@@ -25,11 +27,32 @@ const dataDir = mkdtempSync(join(tmpdir(), "review-loop-demo-"));
 process.env.REVIEW_LOOP_DATA_DIR = dataDir;
 process.env.REVIEW_LOOP_SECRETS = "memory";
 
+// Fix it (plan r3): the result of each fix run. It fixes threads 2000 and 2010 of PR 1004. Each old text is unique in the source
+// head (tests/support/review-fixture.ts). A fix run on another PR drops every edit as unrequested.
+const FIX = {
+  summary: "The lock release moves into a finally block, and the README notes the lock order.",
+  threads: [
+    { thread: 2000, fixed: true, reason: "Release the lock in a `finally` block." },
+    { thread: 2010, fixed: true, reason: "Note the lock order in the README." },
+  ],
+  edits: [
+    {
+      thread: 2000,
+      path: "src/cache/flush.ts",
+      old: "    write(entry);\n    lock.release();\n",
+      new: "    try {\n      write(entry);\n    } finally {\n      lock.release();\n    }\n",
+    },
+    { thread: 2010, path: "README.md", old: "# Sample\n", new: "# Sample\n\nflush() takes the write lock once per entry.\n" },
+  ],
+  coverage: { read: ["src/cache/flush.ts", "README.md"], skipped: [], unavailable: [], notChecked: [] },
+};
+
 // The fake CLI, its stream, and the git remote. PR 81 has new commits, so its head is the "next" commit.
+// Reply runs judge the threads valid, partly, invalid, question, and null in turn (tests/support/fake-claude.ts).
 const claudeDir = mkdtempSync(join(tmpdir(), "review-loop-demo-claude-"));
 const runner = fakeRunner(claudeDir);
-runner.write({ fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT) });
-const SOURCE_PRS = [1001, 1002, 31, 210, 212, 77, 74, 33, 215, 9, 5, 2];
+runner.write({ fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT), fix: FIX });
+const SOURCE_PRS = [1001, 1002, 31, 210, 212, 77, 74, 33, 215, 9, 5, 2, 1004];
 const remote = await reviewRemote(claudeDir, { ...Object.fromEntries(SOURCE_PRS.map((id) => [id, "source" as const])), 81: "next" });
 
 const PORT = 7399;
@@ -253,6 +276,20 @@ own.fromRef.latestCommit = remote.source;
   self: [{ href: `${fake.url}/users/${FAKE_USER}/repos/sample-repo-1/browse` }],
 };
 (own.toRef as { latestCommit: string }).latestCommit = remote.target;
+// Fix it (plan r3): my PR. The reviewer asks for three changes. A reply run judges them valid, partly valid, and not valid.
+// The demo clone below is the clone of PROJ1/sample-repo-4, so Apply commits there.
+const fixing = makePr({
+  project: "PROJ1",
+  repo: "sample-repo-4",
+  id: 1004,
+  title: "[ABC-10688] Release the write lock after each entry",
+  author: me,
+  reviewers: [{ user: alex, status: "NEEDS_WORK" }],
+  head: HEAD_A,
+  branch: "fix/ABC-10688-flush-lock",
+  minutes: 20,
+  description: "flush() takes the write lock per entry, so a long flush no longer blocks the readers.",
+});
 // Not on the dashboard. Paste its URL into the filter to follow it.
 const extra = makePr({
   project: "PROJ3",
@@ -410,6 +447,26 @@ const activities = new Map<Pr, () => S.Activity[]>([
   ],
   [prs.unfollowed, none],
   [
+    fixing,
+    () => {
+      let t = thread(none(), 2000, alex, 45, "Release the lock in a `finally` block, so a throwing `write()` cannot leave it held.", {
+        path: "src/cache/flush.ts",
+        line: 5,
+        code: [
+          "  for (const entry of cache.dirty()) {",
+          "    const lock = cache.lock();",
+          "    write(entry);",
+          "    lock.release();",
+          "  }",
+          "}",
+          "",
+        ],
+      });
+      t = thread(t, 2010, alex, 40, "Note the lock order in the README, so the next change keeps it.");
+      return thread(t, 2020, alex, 35, "Take the lock once, before the loop. Another writer can run between two entries.");
+    },
+  ],
+  [
     own,
     () => {
       if (phase === 1) return base();
@@ -462,6 +519,7 @@ const FILES = new Map<Pr, [string, string][]>([
       ["MOVE", "src/date/parse.ts"],
     ],
   ],
+  [fixing, [["MODIFY", "src/cache/flush.ts"]]],
 ]);
 const change = ([type, path]: [string, string]) => ({
   path: { toString: path },
@@ -503,15 +561,33 @@ for (const [pr, list] of activities) {
 fake.routes[key("GET", S.DASHBOARD_PATH)] = (req) => {
   const role = new URL(req.url).searchParams.get("role");
   const open = Object.values(prs).filter((p) => p !== prs.authored && !(phase === 2 && closed.has(p)));
-  return { status: 200, body: S.onePage(role === "AUTHOR" ? [own, prs.authored] : open) };
+  return { status: 200, body: S.onePage(role === "AUTHOR" ? [own, prs.authored, fixing] : open) };
 };
 
-// The fake Jira serves every ABC task of the listed PRs, with the PR title as the summary.
+// The fake Jira serves every ABC task of the listed PRs, with the PR title as the summary. Each task lists the fixture
+// attachments screenshot.png and sync-worker.log (fixtures/jira/README.md). ABC-10688 adds a dump that runs list by name only.
 const jira = startFakeJira();
-for (const p of Object.values(prs)) {
+for (const p of [...Object.values(prs), fixing]) {
   const k = JSON.stringify(p).match(/ABC-\d+/)?.[0];
   if (k) jira.addIssue(k, String(p.title).replace(/^\[ABC-\d+\]\s*/, ""));
 }
+const dump = Buffer.concat([Buffer.from("MDMP", "latin1"), Buffer.alloc(4092)]);
+jira.attach("ABC-10688", { id: "10102", filename: "flush-hang.dmp", mimeType: "application/octet-stream", body: dump });
+
+// The user's clone of PROJ1/sample-repo-4: a temp clone of the demo remote on the PR source branch at its head, outside the data
+// folder. Its own identity and no signing, so a commit never waits for a prompt. The commit runs the user's hooks, as Apply does.
+const cloneDir = realpathSync.native(mkdtempSync(join(tmpdir(), "review-loop-demo-clone-")));
+const cloneEnv = gitEnv(join(claudeDir, "empty.gitconfig"));
+const inClone = (args: string[]) => git(["-C", cloneDir, ...args], { env: cloneEnv });
+await git(["clone", "-q", "--no-checkout", remote.remote, cloneDir], { env: cloneEnv });
+await inClone(["fetch", "-q", "origin", `+refs/pull-requests/${fixing.id}/from:refs/remotes/origin/pr/${fixing.id}`]);
+await inClone(["checkout", "-q", "-B", "fix/ABC-10688-flush-lock", HEAD_A]);
+const cloneConfig: [string, string][] = [
+  ["user.name", "Jordan Doe"],
+  ["user.email", `${FAKE_USER}@example.test`],
+  ["commit.gpgsign", "false"],
+];
+for (const [k, v] of cloneConfig) await inClone(["config", k, v]);
 
 // The prototype rules: every source, the default pattern, only the fictional key ABC.
 const pattern = String.raw`[A-Z][A-Z0-9]+-\d+`;
@@ -543,6 +619,10 @@ await sync.syncNow();
 const db = settings.db();
 const hidden = db?.query("SELECT id FROM pull_request WHERE project = 'PROJ3' AND pr_id = 9").get() as { id: number } | null;
 if (db && hidden) setFollowed(db, hidden.id, false);
+db?.query("INSERT INTO repo_clone (project, repo, path, updated_at) VALUES ('PROJ1', 'sample-repo-4', $path, $now)").run({
+  path: cloneDir,
+  now: Date.now(),
+});
 phase = 2;
 await sync.syncNow();
 
@@ -562,6 +642,7 @@ void review.start();
 console.log(`Review Loop demo: http://127.0.0.1:${server.port}/ (pid ${process.pid})`);
 console.log(`Fake Bitbucket: ${fake.url}. Fake Jira: ${jira.url}. Data: ${dataDir}`);
 console.log(`Follow by URL: paste ${fake.url}/projects/PROJ3/repos/tools/pull-requests/5 into the filter.`);
+console.log(`Fix it: open "Release the write lock after each entry", draft replies, then fix. Apply commits in ${cloneDir}.`);
 
 async function stop() {
   sync.stop();
@@ -570,7 +651,7 @@ async function stop() {
   fake.stop();
   jira.stop();
   db?.close();
-  for (const dir of [dataDir, claudeDir])
+  for (const dir of [dataDir, claudeDir, cloneDir])
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {}

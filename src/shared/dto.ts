@@ -431,8 +431,8 @@ export type AttachmentDto = {
   include: boolean;
   downloadedAt: number;
 };
-// fetchedAt: ms. files: the downloaded attachments. Absent until S-ATT fills it.
-export type TaskContextDto = IssueContext & { source: "jira"; fetchedAt: number; files?: AttachmentDto[] };
+// fetchedAt: ms. files: the downloaded attachments.
+export type TaskContextDto = IssueContext & { source: "jira"; fetchedAt: number; files: AttachmentDto[] };
 
 // The :att route parameter.
 export const ATT_ID = /^[0-9]{1,18}$/;

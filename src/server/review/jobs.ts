@@ -81,7 +81,16 @@ import {
   validateEarlier,
   validateReplies,
 } from "./validate";
-import { type ContextFile, cachePath, type GitRemote, noUrl, prepareWorkspace, pruneWorkspaces, type Workspace } from "./workspace";
+import {
+  type ContextFile,
+  cachePath,
+  type GitRemote,
+  longPath,
+  noUrl,
+  prepareWorkspace,
+  pruneWorkspaces,
+  type Workspace,
+} from "./workspace";
 
 const RAW_MAX = 2 * 1024 * 1024;
 // Plan v3 WP10: at most 2 `changed` events with runs per second.
@@ -1247,7 +1256,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     fixes(db: Database, id: number): FixDto[] | null {
       const pr = prRow(db, id);
       if (!pr) return null;
-      const cache = cachePath(dataDir, { project: pr.project, repo: pr.repo, id: pr.pr_id });
+      const cache = cachePath(longPath(dataDir), { project: pr.project, repo: pr.repo, id: pr.pr_id });
       return (db.query(`${SQL.run} ${SQL.fixes}`).all({ pr: id }) as RunRow[]).map((r) => ({
         run: toRunDto(r),
         threads: r.fix_json ? (JSON.parse(r.fix_json) as FixThread[]) : [],
