@@ -25,7 +25,7 @@ import {
   useStartReplies,
   useStartReview,
 } from "./data";
-import { briefState, drafts, latestReview, plural, questions, replyCard, replyMap, replyOf, runLine } from "./model";
+import { briefState, drafts, latestReview, plural, questions, replyCard, replyMap, replyOf, runLine, triageText } from "./model";
 import { DraftRepliesButton, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft";
 import { RunLine } from "./RunLine";
 import { BriefLine, type LogTarget, RunLog } from "./RunLog";
@@ -62,8 +62,9 @@ export type ReviewUi = {
 const NO_ITEMS: ReviewItemDto[] = [];
 
 // A new run shows its line at once. Its log and items come with the next fetch.
+// A synced push changes only `stale`, with no run event. Then only the runs list refetches (live.ts), so `stale` comes from it.
 const detailOf = (r: RunDto | null, d: RunDetail | undefined): RunDetail | null =>
-  r ? (d?.run.id === r.id ? d : { run: r, events: [], items: [] }) : null;
+  r ? (d?.run.id === r.id ? { ...d, run: { ...d.run, stale: r.stale } } : { run: r, events: [], items: [] }) : null;
 
 const doing = (r: RunDto | null) => (r?.kind === "reply" ? "drafting replies for" : "reviewing");
 
@@ -230,6 +231,8 @@ export function useReview(
       }
       putItem(r.item);
       void qc.invalidateQueries({ queryKey: planKey(pr.id) });
+      // The focus goes on to the next item, so the live region says what happened to this one.
+      o.announce(triageText(it, r.item, input.action));
       if (close) setTriage((s) => ({ ...s, open: s.open?.id === it.id ? null : s.open }));
       if (input.action === "move") focusAfter({ id: domId(r.item), block: "nearest", flash: false });
       else advance(r.item);

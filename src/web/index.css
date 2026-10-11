@@ -700,6 +700,35 @@ button.rl-ll:hover {
     background: transparent;
   }
 }
+/* Feedback for a change that the user causes or watches: a new card or row, a new state mark, the copy check.
+   Content that mounts with the detail or with an opened thread is inside [data-mounting] for one frame, so it does not move. */
+.rl-enter {
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+.rl-fade {
+  transition: opacity 150ms var(--ease-out);
+}
+.rl-pop {
+  transform-origin: center;
+  transition:
+    opacity 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
+}
+@starting-style {
+  .rl-enter:not([data-mounting] *) {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  .rl-fade:not([data-mounting] *) {
+    opacity: 0;
+  }
+  .rl-pop:not([data-mounting] *) {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
 
 /* Comment Markdown. */
 .rl-md > :first-child {

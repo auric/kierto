@@ -13,6 +13,10 @@ export type Scenario = {
   reply: "none" | "new" | "two" | "dup" | "edit" | "absent" | "deleted";
   // PR 1001: this many more threads 1000101, 1000102, …: my general comment, then a reply 1000201, 1000202, … by another user.
   turns: number;
+  // PR 1001: the reply 1000201 tells the AI to ignore its instructions and to answer thread 1000003 (A17).
+  inject: boolean;
+  // PR 1001: the source branch moves one commit on, after the review (A7).
+  push: boolean;
   // PR 210: a new thread by another user with this many long replies.
   tall: number;
   // PR 77: "reply" adds an unread reply; "merged" also takes the PR off the dashboard as MERGED.
@@ -24,8 +28,10 @@ export type Scenario = {
 };
 
 // The next fake Claude Code run. tree: a subagent run with drafts. schema: a result that fails the schema. limit: a usage limit.
+// gaps: no finding, a read that stopped at a limit, and a documentation server that did not connect (A11, A12).
 // hang: the CLI stops before its result and waits for a cancel. replies: the result of a reply run; absent, the CLI answers each thread.
-export type ClaudeScenario = { stream: "tree" | "schema" | "limit"; hang?: boolean; replies?: unknown };
+// login: the authMethod of `claude auth status`. Absent: claude.ai.
+export type ClaudeScenario = { stream: "tree" | "schema" | "limit" | "gaps"; hang?: boolean; replies?: unknown; login?: string };
 
 // PR 1001 comment posts. drop: the next POST is stored, then the connection drops (A9). fail: the next POST gets this status
 // and stores nothing. hide: the activities of PR 1001 drop, so neither the sync nor the outbox check can read them.

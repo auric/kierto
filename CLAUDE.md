@@ -2,7 +2,7 @@
 
 Review Loop is a local-first inbox for Bitbucket Server pull requests (PRs). It runs the user's own Claude Code CLI (`claude -p`) for reviews. The app runs on localhost and keeps all data on the user's machine.
 
-Status: M1 is complete pending the manual smoke test (docs/smoke-m1.md); see docs/plans/m1.md. Do not assume that a file in the planned layout exists. Check first.
+Status: M2 and M3 are code complete pending the Monday smoke test with the real CLI (docs/smoke-v3.md); see docs/plans/v3.md. M1 also waits for docs/smoke-m1.md. Do not assume that a file in the planned layout exists. Check first.
 
 ## Document map
 
@@ -10,6 +10,7 @@ Status: M1 is complete pending the manual smoke test (docs/smoke-m1.md); see doc
 |---|---|
 | `BRIEF.md` | The spec and the source of truth. If another file disagrees, BRIEF.md wins. |
 | `prototype/index.html` | Visual spec for the UI: three panes, color tokens, keyboard model. Sample data only. It is also a published artifact. |
+| `docs/smoke-v3.md` | Manual smoke script for M2 and M3 with the real CLI. Its last table maps acceptance scenarios A1 to A17 to their tests. |
 | `PROJECT_BRIEF_GPT_ASTRA_6.md` | Reference for edge cases and acceptance scenarios. |
 | `IMPLEMENTATION_PROMPTS_GPT_ASTRA_6.md` | Alternative spec-kit prompt set. Prompt 0 drives Gate 0. Its two-pane and general-comments-only rules do not apply. |
 | `skills-lock.json` | Pins the installed project skills. Commit it with every skill change. |
@@ -29,7 +30,7 @@ Tests:   bun test for logic and integration. Playwright for browser acceptance.
 Ship:    bun build --compile, one executable per OS with the UI embedded.
 ```
 
-Layout: `src/web/`, `src/server/{bitbucket,sync,inbox,storage}/`, `src/shared/`, `fixtures/`, `tests/` exist. `src/server/{review,publish}/` arrive in M2 and M3. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
+Layout: `src/web/`, `src/server/{bitbucket,sync,inbox,storage,tasks,review,publish}/`, `src/shared/`, `fixtures/`, `tests/` exist. BRIEF section 7 defines each folder. All Bitbucket calls stay in `src/server/bitbucket/`.
 
 Commands:
 - `bun install`: install the pinned dependencies.

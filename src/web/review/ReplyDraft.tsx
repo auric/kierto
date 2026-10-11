@@ -46,7 +46,7 @@ export type ReplyCtx = {
 };
 
 // Dashed: a draft that nobody accepted yet. Solid: accepted, so the post bar holds it.
-const box = "mt-3.5 max-w-[72ch] scroll-mt-3 rounded-lg border border-dashed border-rule-strong px-2.5 pt-2 pb-2.5";
+const box = "rl-enter mt-3.5 max-w-[72ch] scroll-mt-3 rounded-lg border border-dashed border-rule-strong px-2.5 pt-2 pb-2.5";
 const icon = "size-[15px] shrink-0";
 
 function Head({ meta, children }: { meta: MetaDto; children?: ReactNode }) {
@@ -73,7 +73,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   const short = ctx.meta.runner.short;
   if (card.kind === "pending") {
     return (
-      <p data-reply-draft={thread} className="mt-3.5 mb-0 flex items-center gap-2 text-sm text-ink-2">
+      <p data-reply-draft={thread} className="rl-enter mt-3.5 mb-0 flex items-center gap-2 text-sm text-ink-2">
         <AiAvatar meta={ctx.meta} />
         <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
         {short} is drafting a reply…
@@ -93,7 +93,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
         aria-label="Discarded reply draft"
         className="mt-3.5 flex max-w-[72ch] scroll-mt-3 items-center gap-2"
       >
-        <p className="m-0 min-w-0 flex-1 truncate text-sm text-muted-foreground">Discarded reply draft: {snippet(it.body, 140)}</p>
+        <p className="rl-fade m-0 min-w-0 flex-1 truncate text-sm text-muted-foreground">Discarded reply draft: {snippet(it.body, 140)}</p>
         <RestoreButton it={it} busy={props.busy} ctx={ctx.triage} />
       </article>
     );
@@ -132,7 +132,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
       <Head meta={ctx.meta}>
         <span>Reply draft{props.to && <> to {props.to}</>}</span>
         {accepted && (
-          <span className="inline-flex items-center gap-1 font-medium text-ink-2">
+          <span className="rl-fade inline-flex items-center gap-1 font-medium text-ink-2">
             <Check aria-hidden className={icon} />
             Accepted
           </span>

@@ -24,7 +24,7 @@ function runnerNote(meta: MetaDto): { short: string; message: string } | null {
   const c = meta.runner.check;
   if (!c || c.ok) return null;
   return c.kind === "auth"
-    ? { short: "Review needs the subscription login", message: c.message }
+    ? { short: "Review needs the subscription login", message: `${c.message} Run: ${meta.runner.login}` }
     : { short: `${meta.runner.name} is not available`, message: c.message };
 }
 

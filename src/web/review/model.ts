@@ -3,6 +3,7 @@ import type {
   BriefDto,
   CommitDto,
   ExcerptLine,
+  ItemActionInput,
   ProfileDto,
   PrRow,
   ReviewItemDto,
@@ -258,6 +259,23 @@ export function anchorNote(it: ReviewItemDto): string | null {
   if (a.line !== p.anchor.line || a.lineEnd !== p.anchor.lineEnd) return `You moved it from line ${lineText(p.anchor)}.`;
   if (a.state === "moved") return `Moved from line ${p.line}: the quoted code is on line ${lineText(a)}.`;
   return null;
+}
+
+// The live-region text after a triage action (WP15). The focus moves on to the next item, so the page says what happened.
+// before: the item as the page showed it. after: the item that the server returned.
+export function triageText(before: ReviewItemDto, after: ReviewItemDto, action: ItemActionInput["action"]): string {
+  switch (action) {
+    case "accept":
+      return "Accepted.";
+    case "discard":
+      return "Discarded.";
+    case "restore":
+      return before.status === "accepted" ? "Accept undone." : "Restored.";
+    case "edit":
+      return "Saved and accepted.";
+    case "move":
+      return after.anchor ? `Moved to line ${lineText(after.anchor)}.` : "Moved.";
+  }
 }
 
 // ---------- Reply drafts (docs/plans/replies.md step 6) ----------

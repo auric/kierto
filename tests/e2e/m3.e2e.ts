@@ -147,6 +147,8 @@ test("A9: the connection drops after Bitbucket accepts; the outcome is unknown, 
   await connect(page);
   await reviewed(page);
   await drafts(page).nth(0).getByRole("button", { name: "Accept" }).click();
+  // p before the accept arrives finds nothing to post.
+  await expect(page.getByText("Ready to post: 1 inline comment")).toBeVisible();
   // The POST is stored, then the connection drops. The check cannot read the comments yet.
   await posts({ drop: true, hide: true });
   await page.keyboard.press("p");
@@ -167,6 +169,7 @@ test("a failed inline post shows the reason and moves to the general comment", a
   await connect(page);
   await reviewed(page);
   await drafts(page).nth(0).getByRole("button", { name: "Accept" }).click();
+  await expect(page.getByText("Ready to post: 1 inline comment")).toBeVisible();
   await posts({ fail: 400 });
   await page.keyboard.press("p");
   await postButton(confirmBox(page)).click();
@@ -264,6 +267,10 @@ test("an unsent reply survives a reload; Discard clears it", async ({ page }) =>
   await page.reload();
   await open(page);
   await openThread(page);
+  await expect(replyBox(page)).toHaveValue(text);
+  // Discard offers Undo, which gives the text back to the reply box.
+  await thread(page).getByRole("button", { name: "Discard" }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(replyBox(page)).toHaveValue(text);
   await thread(page).getByRole("button", { name: "Discard" }).click();
   await page.reload();

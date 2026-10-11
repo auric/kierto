@@ -16,7 +16,7 @@ import { Calm } from "../states";
 import { Header, webLink } from "./Header";
 import type { ReplyTarget } from "./ReplyComposer";
 import { CommitsFold, FilesFold, Overview } from "./Sections";
-import type { ThreadCtx } from "./Thread";
+import { type ThreadCtx, useSettled } from "./Thread";
 import { Threads } from "./ThreadList";
 import { buildThreads, mergeHighlights, newMessages, ordered, type Person, passes, reveal, shownThreads, summary } from "./threads";
 import { useAck } from "./useAck";
@@ -85,6 +85,7 @@ export function PrDetail({
   const runner = meta?.runner.name ?? "";
   const now = useMinute();
   const [hints] = useState(createHints);
+  const steady = useSettled(data ? row.id : null);
   // The last visit before this one. The POST below moves the stored value to now.
   const [since] = useState(row.seenAt);
   const { mutate: markSeen } = useMutation({ mutationFn: () => sendSeen(row.id) });
@@ -304,7 +305,7 @@ export function PrDetail({
         brief={review.brief}
         run={review.run}
       />
-      <div className="px-6 pb-16 max-[759px]:px-4">
+      <div data-mounting={!steady || undefined} className="px-6 pb-16 max-[759px]:px-4">
         {data ? (
           <>
             <Overview detail={data} me={me} forge={forge} diffLink={!data.files?.length} summary={review.summary} />

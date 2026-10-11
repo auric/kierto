@@ -5,6 +5,7 @@ import { CircleAlert, CornerDownRight, Eye, Reply, Send } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/toast";
 import { MAX_NOTE, type PostDto } from "../../shared/dto";
 import { Confirm } from "../publish/Confirm";
 import { postReply, postsKey } from "../publish/data";
@@ -291,10 +292,16 @@ export function ReplyComposer({
             size="sm"
             variant="outline"
             onClick={() => {
+              const text = d.text;
               change("");
               setOpen(false);
               ctx.onReply(t.id, null);
               document.getElementById(`th-${t.id}`)?.focus({ preventScroll: true });
+              if (text.trim())
+                toast.add({
+                  title: "Reply discarded",
+                  actionProps: { children: "Undo", onClick: () => restoreDraft(ctx.pr, t.id, text) },
+                });
             }}
           >
             {d.text ? "Discard" : "Close"}

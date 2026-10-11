@@ -24,10 +24,11 @@ export function Confirm(props: {
 }) {
   const post = useRef<HTMLButtonElement>(null);
   const ready = props.entries !== null;
-  // prototype/v3 openConfirm: focus goes to Post once the list shows.
+  // prototype/v3 openConfirm: focus goes to Post once the list shows. Posting removes the button, so a post that ends
+  // with the dialog still open (an error, a new plan) puts the focus back on it.
   useLayoutEffect(() => {
-    if (ready) post.current?.focus({ preventScroll: true });
-  }, [ready]);
+    if (ready && !props.posting) post.current?.focus({ preventScroll: true });
+  }, [ready, props.posting]);
   return (
     <section
       id={props.id}

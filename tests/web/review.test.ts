@@ -23,6 +23,7 @@ import {
   runRows,
   runWhy,
   tokenTotal,
+  triageText,
 } from "../../src/web/review/model";
 
 const ev = (id: string, seq: number, o: Partial<RunEvent> = {}): RunEvent => ({
@@ -284,6 +285,19 @@ describe("drafts", () => {
       "Moved from line 9: the quoted code is on line 12.",
     );
     expect(anchorNote(finding(1))).toBeNull();
+  });
+
+  test("triage text: each action says what happened to the item that loses the focus", () => {
+    const accepted = finding(1, { status: "accepted" });
+    expect(triageText(finding(1), accepted, "accept")).toBe("Accepted.");
+    expect(triageText(finding(1), finding(1, { status: "discarded" }), "discard")).toBe("Discarded.");
+    expect(triageText(accepted, finding(1), "restore")).toBe("Accept undone.");
+    expect(triageText(finding(1, { status: "discarded" }), finding(1), "restore")).toBe("Restored.");
+    expect(triageText(finding(1), accepted, "edit")).toBe("Saved and accepted.");
+    expect(triageText(finding(1), finding(1, { anchor: { ...anchor, line: 13, lineEnd: 14, side: "new" } }), "move")).toBe(
+      "Moved to line 13–14.",
+    );
+    expect(triageText(question(2), question(2), "move")).toBe("Moved.");
   });
 });
 
