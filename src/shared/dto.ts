@@ -458,8 +458,8 @@ export type MetaDto = {
   // Run log labels, keyed by RunEvent.tool.
   tools: Record<string, string>;
   profiles: ProfileDto[];
-  // Context sources (Release 2, plan v3 section 8). Empty in Release 1.
-  context: { id: string; name: string }[];
+  // Context sources (plan r2). Each source is listed whether it is set up or not. configured: the source has settings.
+  context: { id: string; name: string; configured: boolean }[];
 };
 
 // POST /api/settings/task-rules/preview. Absent prs: the first 20 listed PRs.

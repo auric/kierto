@@ -13,6 +13,6 @@ export const createMeta = (review: ReviewJobs, settings: Settings) =>
       runner: { ...RUNNER, check: review.runnerCheck() },
       tools: TOOL_LABELS,
       profiles: settings.profiles().map(({ id, name, note, explain, maxTurns }) => ({ id, name, note, explain, maxTurns })),
-      context: settings.config()?.jira ? [{ ...JIRA }] : [],
+      context: [{ ...JIRA, configured: settings.config()?.jira !== undefined }],
     } satisfies MetaDto),
   );

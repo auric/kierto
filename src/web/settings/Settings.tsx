@@ -9,6 +9,7 @@ import { useForge, useMeta } from "../meta";
 import { notifyPermission } from "../notify";
 import { useSaveSettings } from "../shell/data";
 import { Hint } from "../shell/Hint";
+import { JiraSettings } from "./JiraSettings";
 import { ReviewProfiles } from "./ReviewProfiles";
 import { TaskRules } from "./TaskRules";
 
@@ -167,6 +168,7 @@ export function Settings({
         {settings.baseUrl !== null && <AiMark settings={settings} />}
         {settings.baseUrl !== null && <ReviewProfiles settings={settings} />}
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
+        {settings.baseUrl !== null && <JiraSettings settings={settings} />}
       </div>
     </>
   );

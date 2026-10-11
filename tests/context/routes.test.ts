@@ -69,13 +69,13 @@ describe("task context API", () => {
 
   test("PUT checks the token, saves the URL without the token, and meta lists Jira", async () => {
     const s = setup();
-    expect(((await (await s.call("GET", "/meta")).json()) as MetaDto).context).toEqual([]);
+    expect(((await (await s.call("GET", "/meta")).json()) as MetaDto).context).toEqual([{ id: "jira", name: "Jira", configured: false }]);
     const res = await s.connect();
     expect(res.status).toBe(200);
     expect(((await res.json()) as SettingsDto).jira).toEqual({ baseUrl: jira.url, caFile: null, tokenStored: true });
     expect(jira.requests).toEqual(["GET /rest/api/2/myself"]);
     expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).jira).toEqual({ baseUrl: jira.url });
-    expect(((await (await s.call("GET", "/meta")).json()) as MetaDto).context).toEqual([{ id: "jira", name: "Jira" }]);
+    expect(((await (await s.call("GET", "/meta")).json()) as MetaDto).context).toEqual([{ id: "jira", name: "Jira", configured: true }]);
   });
 
   test("POST fetches, stores, broadcasts, and the run file holds the issue text", async () => {

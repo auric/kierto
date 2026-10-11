@@ -771,7 +771,7 @@ describe("brief and meta", () => {
       ["explain", "Explain", true, 12],
     ]);
     expect(meta.tools["mcp__rl-git__git_log"]).toBe("Git log");
-    expect(meta.context).toEqual([]);
+    expect(meta.context).toEqual([{ id: "jira", name: "Jira", configured: false }]);
   });
 });
 

@@ -1,19 +1,22 @@
 // Review button and review brief (prototype/v3 reviewBtn, briefHtml): task IDs, your note, the profile, then Start.
 // The note is the user's instruction. The server keeps the pull request text out of the prompt (plan v3 WP10).
-import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, CircleAlert, Download, LoaderCircle } from "lucide-react";
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight, CircleAlert, Download, LoaderCircle, RefreshCw, Settings2, X } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { type BriefDto, type BriefInput, MAX_NOTE, type MetaDto, type ProfileId, type PrTask } from "../../shared/dto";
+import { type BriefDto, type BriefInput, MAX_NOTE, type MetaDto, type ProfileId, type PrTask, type TaskContextDto } from "../../shared/dto";
+import { api } from "../api";
 import { webLink } from "../pr/Header";
+import { ApiError, read } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { taskHint } from "../shell/model";
 import { putBrief } from "./data";
 import type { BriefState } from "./model";
+import { commentsText, fetchedText, mergeTask, offerSetup, sourceTime, taskChips, trackerOf } from "./tasks";
 
 // The note saves this long after the last key. Start, Cancel, Esc, and a profile change save at once.
 const SAVE_MS = 600;
@@ -64,60 +67,237 @@ export function ReviewButton(props: { state: BriefState; open: boolean; meta: Me
 
 const SOURCE: Record<PrTask["source"], string> = { branch: "branch", title: "title", description: "description" };
 
-function TaskChips({ tasks, onSettings }: { tasks: PrTask[]; onSettings: () => void }) {
-  if (!tasks.length) {
+const taskKey = (pr: number) => ["pr", pr, "task-context"] as const;
+const keyParam = (pr: number, key: string) => ({ param: { id: String(pr), key } });
+
+// GET reads the local database. live.ts refetches it when SSE `changed` names the PR.
+// The server shares one param validator with the :key routes, so the client type asks for a key. This path has no key.
+export const useTaskContext = (pr: number) =>
+  useQuery({
+    queryKey: taskKey(pr),
+    queryFn: async () => read<TaskContextDto[]>(await api.api.prs[":id"]["task-context"].$get(keyParam(pr, ""))),
+  });
+
+// The only request from the brief that reaches the tracker, through the server.
+async function fetchTask(qc: QueryClient, pr: number, key: string) {
+  const dto = await read<TaskContextDto>(await api.api.prs[":id"]["task-context"][":key"].$post(keyParam(pr, key)));
+  qc.setQueryData<TaskContextDto[]>(taskKey(pr), (old) => mergeTask(old, dto));
+}
+
+async function removeTask(qc: QueryClient, pr: number, key: string) {
+  const res = await api.api.prs[":id"]["task-context"][":key"].$delete(keyParam(pr, key));
+  if (!res.ok) await read(res);
+  qc.setQueryData<TaskContextDto[]>(taskKey(pr), (old) => old?.filter((t) => t.key !== key));
+}
+
+// setup: the server has no tracker source (409), so the error offers the settings.
+type TaskError = { key: string; message: string; setup: boolean };
+
+const chipBtn =
+  "inline-grid w-6 cursor-pointer place-items-center border-l text-ink-2 last:rounded-r-[4px] hover:bg-hover hover:text-foreground aria-busy:cursor-progress";
+
+// The Task row of the brief: task ID chips with Fetch, Fetch again and Remove, then the imported text folds (plan r2, task context UI).
+function TaskChips({ pr, tasks, meta, onSettings }: { pr: number; tasks: PrTask[]; meta: MetaDto; onSettings: () => void }) {
+  const qc = useQueryClient();
+  const tracker = trackerOf(meta);
+  const data = useTaskContext(pr).data;
+  const rows = (tracker && data) || [];
+  const on = tracker?.configured === true;
+  const source = tracker?.name ?? "";
+  const chips = taskChips(tasks, rows, on);
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const [errors, setErrors] = useState<TaskError[]>([]);
+  const [said, setSaid] = useState("");
+  const now = Date.now();
+
+  const setUp = () => {
+    onSettings();
+    // The settings render in the same click. Focus then lands on the tracker URL field.
+    requestAnimationFrame(() => document.getElementById("tracker-url")?.focus());
+  };
+  const run = async (key: string, act: "fetch" | "remove") => {
+    if (busy.has(key)) return;
+    setBusy((b) => new Set(b).add(key));
+    setErrors((es) => es.filter((e) => e.key !== key));
+    try {
+      if (act === "fetch") await fetchTask(qc, pr, key);
+      else await removeTask(qc, pr, key);
+      setSaid(act === "fetch" ? `Fetched ${key} from ${source}.` : `Removed the ${key} text.`);
+      // Remove takes its own button away, and the chip too when the PR no longer names the task.
+      if (act === "remove")
+        requestAnimationFrame(() => (document.getElementById(`tk-fetch-${key}`) ?? document.getElementById("brief-note"))?.focus());
+    } catch (e) {
+      const message = (e as Error).message;
+      const setup = e instanceof ApiError && e.status === 409;
+      setErrors((es) => [...es.filter((x) => x.key !== key), { key, message, setup }]);
+      setSaid(`${key}: ${message}`);
+    } finally {
+      setBusy((b) => {
+        const n = new Set(b);
+        n.delete(key);
+        return n;
+      });
+    }
+  };
+
+  if (!chips.length) {
     return (
-      <>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
+        <span className="mr-1.5 font-semibold">Task</span>
         <span className="text-ink-2">No task ID found.</span>
         <button type="button" className="cursor-pointer rounded text-sm font-medium text-pen hover:underline" onClick={onSettings}>
           Set up task IDs
         </button>
-      </>
+      </div>
     );
   }
-  const chip = "inline-flex items-baseline gap-1.5 rounded-[5px] border px-2 py-0.5 text-xs whitespace-nowrap text-muted-foreground";
+  const chip = "inline-flex items-baseline gap-1.5 px-2 py-0.5 text-xs whitespace-nowrap text-muted-foreground";
+  const fetched = chips.flatMap((c) => (c.fetched ? [c.fetched] : []));
   return (
-    <>
-      {tasks.map((t) => {
-        const url = webLink(t.url);
-        const body = (
-          <>
-            <code translate="no" className={cn("font-mono text-xs", url ? "text-pen" : "text-ink-2")}>
-              {t.key}
-            </code>
-            <span>· from {SOURCE[t.source]}</span>
-          </>
-        );
-        return url ? (
-          <a
-            key={t.key}
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={`Open ${t.key} in a new tab`}
-            className={cn(chip, "hover:border-rule-strong [&:hover>code]:underline")}
+    <div className="grid gap-1.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
+        <span className="mr-1.5 font-semibold">Task</span>
+        {chips.map((t) => {
+          const url = webLink(t.url);
+          const body = (
+            <>
+              <code translate="no" className={cn("font-mono text-xs", url ? "text-pen" : "text-ink-2")}>
+                {t.key}
+              </code>
+              <span>{t.source ? `· from ${SOURCE[t.source]}` : "· no longer in this pull request"}</span>
+            </>
+          );
+          const wait = busy.has(t.key);
+          return (
+            <span key={t.key} className="inline-flex items-stretch rounded-[5px] border has-[a:hover]:border-rule-strong">
+              {url ? (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`Open ${t.key} in a new tab`}
+                  className={cn(chip, "rounded-[4px] [&:hover>code]:underline")}
+                >
+                  {body}
+                  <span className="sr-only">, opens a new tab</span>
+                </a>
+              ) : (
+                <span
+                  className={chip}
+                  title={t.source ? taskHint({ key: t.key, source: t.source }) : "The pull request no longer names this task."}
+                >
+                  {body}
+                </span>
+              )}
+              {t.fetchable && (
+                <Hint label={t.fetched ? `Fetch ${t.key} again` : `Fetch ${t.key} from ${source}`}>
+                  <button
+                    id={`tk-fetch-${t.key}`}
+                    type="button"
+                    className={chipBtn}
+                    aria-label={t.fetched ? `Fetch ${t.key} again` : `Fetch ${t.key} from ${source}`}
+                    aria-busy={wait || undefined}
+                    onClick={() => void run(t.key, "fetch")}
+                  >
+                    {wait ? (
+                      <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
+                    ) : t.fetched ? (
+                      <RefreshCw aria-hidden className={icon} />
+                    ) : (
+                      <Download aria-hidden className={icon} />
+                    )}
+                  </button>
+                </Hint>
+              )}
+              {t.fetched && (
+                <Hint label={`Remove the ${t.key} text`}>
+                  <button
+                    type="button"
+                    className={chipBtn}
+                    aria-label={`Remove the ${t.key} text`}
+                    aria-busy={wait || undefined}
+                    onClick={() => void run(t.key, "remove")}
+                  >
+                    <X aria-hidden className={icon} />
+                  </button>
+                </Hint>
+              )}
+            </span>
+          );
+        })}
+        {tracker && offerSetup(tasks, on) && (
+          <button
+            type="button"
+            className="inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-[5px] px-1.5 text-xs text-ink-2 hover:bg-hover hover:text-foreground"
+            onClick={setUp}
           >
-            {body}
-            <span className="sr-only">, opens a new tab</span>
-          </a>
-        ) : (
-          <span key={t.key} className={chip} title={taskHint(t)}>
-            {body}
+            <Settings2 aria-hidden className={icon} />
+            Set up {source}
+          </button>
+        )}
+      </div>
+      {errors.map((e) => (
+        <p key={e.key} className="m-0 flex items-start gap-1.5 text-xs text-destructive">
+          <CircleAlert aria-hidden className={icon} />
+          <span>
+            <code translate="no" className="font-mono">
+              {e.key}
+            </code>
+            : {e.message}
+            {e.setup && (
+              <>
+                {" "}
+                <button type="button" className="cursor-pointer rounded font-medium text-pen hover:underline" onClick={setUp}>
+                  Set up {source}
+                </button>
+              </>
+            )}
           </span>
-        );
-      })}
-      {/* Release 2 (plan v3 section 8): a tracker connector imports the task text. */}
-      <Hint label="Arrives with an issue tracker connector.">
-        <button
-          type="button"
-          aria-disabled="true"
-          className="inline-flex h-6 cursor-default items-center gap-1.5 rounded-[5px] px-1.5 text-xs text-muted-foreground"
-        >
-          <Download aria-hidden className={icon} />
-          Fetch the task text
-        </button>
-      </Hint>
-    </>
+        </p>
+      ))}
+      {/* One live region for fetch results and errors. It stays in the page, so each change is read. */}
+      <p role="status" className="sr-only">
+        {said}
+      </p>
+      {fetched.map((t) => (
+        <TaskFold key={t.key} t={t} source={source} now={now} />
+      ))}
+    </div>
+  );
+}
+
+// The imported text, read-only. Plain text: wiki markup and HTML show as typed. Closed until the user opens it.
+function TaskFold({ t, source, now }: { t: TaskContextDto; source: string; now: number }) {
+  const meta = [t.status, commentsText(t), fetchedText(t, now)].filter(Boolean).join(", ");
+  return (
+    <details data-task={t.key} className="group min-w-0 text-sm">
+      <summary className="-ml-1.5 flex min-w-0 items-center gap-2 rounded px-1.5 py-1 hover:bg-hover">
+        <ChevronRight aria-hidden className={cn("rl-chev text-muted-foreground", icon)} />
+        <code translate="no" className="flex-none font-mono text-xs text-ink-2">
+          {t.key}
+        </code>
+        <span className="min-w-0 truncate font-medium group-open:whitespace-normal">{t.summary}</span>
+        <span className="rl-wide-pane ml-auto flex-none text-xs text-muted-foreground">{meta}</span>
+      </summary>
+      <div className="mt-1 mb-1.5 ml-[7px] grid max-w-[72ch] gap-3 border-l border-rule-strong pl-[22px] [overflow-wrap:anywhere]">
+        <p className="m-0 text-xs text-muted-foreground">
+          {/* The summary line hides the same words in a narrow pane (.rl-wide-pane). */}
+          From {source}
+          <span className="hidden @max-[560px]/detail:inline">, {meta}</span>.
+          {t.truncated && " Review Loop cut this text at its size limits."}
+        </p>
+        <p className="m-0 whitespace-pre-wrap">{t.description?.trim() || "No description."}</p>
+        {t.comments.map((c, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the comments of one fetch keep their order.
+          <div key={i} className="grid gap-0.5">
+            <p className="m-0 text-xs text-muted-foreground">
+              <span className="font-medium text-ink-2">{c.author}</span>, {sourceTime(c.created)}
+            </p>
+            <p className="m-0 whitespace-pre-wrap">{c.body}</p>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -209,10 +389,7 @@ export function BriefComposer(props: {
       <h2 id="brief-title" className="m-0 text-[15px] font-bold">
         Review brief
       </h2>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
-        <span className="mr-1.5 font-semibold">Task</span>
-        <TaskChips tasks={props.tasks} onSettings={props.onSettings} />
-      </div>
+      <TaskChips pr={pr} tasks={props.tasks} meta={meta} onSettings={props.onSettings} />
       <div className="rl-bf-main grid gap-x-7 gap-y-3.5">
         <Field className="content-start gap-1.5">
           <FieldLabel htmlFor="brief-note" className="text-sm font-semibold">

@@ -7,6 +7,7 @@ import type { AnchoredFinding, Question } from "../../shared/review";
 import { Text } from "../pr/Thread";
 import { snippet, splitExcerpt } from "../pr/threads";
 import { type Hints, HintTrigger } from "../shell/Hint";
+import { useTaskContext } from "./Brief";
 import {
   anchorNote,
   carriedNote,
@@ -20,6 +21,7 @@ import {
   SEVERITY,
 } from "./model";
 import { Acts, Editor, Mover, RestoreButton, type TriageCtx, type TriageMode } from "./Triage";
+import { contextLines, trackerOf } from "./tasks";
 
 const icon = "size-[15px] shrink-0";
 const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
@@ -297,6 +299,7 @@ export function AiSummary(props: {
   ctx: TriageCtx;
 }) {
   const { run, meta, pr } = props;
+  const fetched = useTaskContext(pr.id).data ?? [];
   const s = run.summary;
   if (!s) return null;
   const qs = props.items.filter((i) => i.kind === "question" && i.status !== "posted");
@@ -334,7 +337,18 @@ export function AiSummary(props: {
         ))}
       </ul>,
     ]);
-  if (!meta.context.length) rows.push(["Context", "No context source is set up."]);
+  const tracker = trackerOf(meta);
+  const context = tracker ? contextLines(fetched, run, tracker.name, Date.now()) : [];
+  if (context.length)
+    rows.push([
+      "Context",
+      <ul key="context" className="m-0 list-none p-0">
+        {context.map((x) => (
+          <li key={x}>{x}</li>
+        ))}
+      </ul>,
+    ]);
+  else rows.push(["Context", tracker?.configured ? "No task text fetched." : "No context source is set up."]);
   if (s.dropped.length) rows.push(["Dropped", <Dropped key="dropped" run={run} meta={meta} />]);
   return (
     <details id="ai-sum" open={props.open} onToggle={(e) => props.onOpen(e.currentTarget.open)} className="group mb-1 w-full max-w-[72ch]">
