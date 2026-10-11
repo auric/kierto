@@ -423,16 +423,17 @@ test("keys j, k, Enter, Esc, /, n, N, o, g f, and ? work", async ({ page }) => {
   await page.keyboard.press("o");
   await expect(page.locator("#th-2000000")).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator("[data-new]")).toHaveCount(4);
-  // The e2e data has no file list yet (WP4).
+  // The e2e data has no forge file list (WP4). Plan r2 UI-DIFF: Files opens anyway and offers to get the code. Nothing fetches yet.
   await page.keyboard.press("g");
   await page.keyboard.press("f");
-  await expect(page.getByText("No file list for this pull request yet.")).toBeVisible();
+  await expect(page.locator("#s-files")).toHaveAttribute("open", "");
+  await expect(page.locator("#s-files-sum")).toBeFocused();
+  await expect(page.locator("#s-files").getByRole("button", { name: "Get the code from Bitbucket" })).toBeVisible();
 
   await page.keyboard.press("?");
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(help).toBeVisible();
   await page.keyboard.press("Escape");
-  // The toast of g f is a dialog too, so the check names the sheet.
   await expect(help).toHaveCount(0);
 });
 

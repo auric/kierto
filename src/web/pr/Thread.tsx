@@ -6,6 +6,7 @@ import {
   Copy,
   CornerDownRight,
   ExternalLink,
+  FileCode,
   History,
   Hourglass,
   MessageSquare,
@@ -72,6 +73,8 @@ export type ThreadCtx = {
   onReply: (thread: number, msg: number | null) => void;
   // Starts a reply-draft run for this thread only (replies.md step 6, D13).
   onDraftReply: (thread: number) => void;
+  // Plan r2 UI-DIFF: focuses the line of an inline thread in the diff.
+  onShowInDiff: (thread: number) => void;
   posts: PostCtx;
 };
 
@@ -250,10 +253,18 @@ export const Thread = memo(function Thread({
                   target={target}
                   ctx={ctx}
                   aside={
-                    <Button size="sm" variant="ghost" className="text-ink-2" onClick={() => ctx.onDraftReply(t.id)}>
-                      <Bot aria-hidden data-icon="inline-start" />
-                      Draft reply
-                    </Button>
+                    <>
+                      {a && (
+                        <Button size="sm" variant="ghost" className="text-ink-2" onClick={() => ctx.onShowInDiff(t.id)}>
+                          <FileCode aria-hidden data-icon="inline-start" />
+                          Show in diff
+                        </Button>
+                      )}
+                      <Button size="sm" variant="ghost" className="text-ink-2" onClick={() => ctx.onDraftReply(t.id)}>
+                        <Bot aria-hidden data-icon="inline-start" />
+                        Draft reply
+                      </Button>
+                    </>
                   }
                 />
               </>

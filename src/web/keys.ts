@@ -44,6 +44,7 @@ export type Effect =
   | "next-your"
   | "files"
   | "commits"
+  | "show-in-diff"
   | "overview"
   | "drafts"
   | "log"
@@ -91,7 +92,8 @@ const DETAIL: Record<string, Effect> = {
   d: "discard",
   p: "post",
 };
-const CHORD: Record<string, Effect> = { f: "files", c: "commits" };
+// Plan r2 UI-DIFF: g d shows the current inline thread or draft in the diff.
+const CHORD: Record<string, Effect> = { f: "files", c: "commits", d: "show-in-diff" };
 
 export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyResult {
   const done = (next: KeyState, effect: Effect = null): KeyResult => ({ state: next, effect, handled: true });
@@ -110,7 +112,7 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
   if (ctx.typing) return ignore(s);
   if (key === "?") return done({ ...s, help: !s.help });
   if (s.help) return ignore(s);
-  // The second key of "g f" or "g c". Any other key ends the chord.
+  // The second key of "g f", "g c", or "g d". Any other key ends the chord.
   if (chord) return hasPr && CHORD[key] ? done(inDetail, CHORD[key]) : done(s);
   if (key === "Enter" && s.focus === "detail") return ctx.onButton || !hasPr ? ignore(s) : done(s, "thread-toggle");
 
@@ -161,6 +163,7 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
       { keys: ["y"], text: "Next thread where it is your turn" },
       { keys: ["o"], text: "Open or close the current thread" },
       { keys: ["g"], second: ["f", "c"], text: "Open and go to Files or Commits" },
+      { keys: ["g"], second: ["d"], text: "Show the current inline thread or draft on its line in the diff" },
       { keys: ["1", "2", "3"], text: "Go to the overview, go to the drafts and then the reply drafts, open the run log" },
       { keys: ["?"], text: "Show or hide this list" },
     ],

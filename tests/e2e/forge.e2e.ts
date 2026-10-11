@@ -58,7 +58,9 @@ test("an inline thread shows its excerpt and its link; the task, Files, and Comm
   await page.keyboard.press("g");
   await page.keyboard.press("f");
   await expect(page.locator("#s-files")).toHaveAttribute("open", "");
+  // Plan r2 UI-DIFF: the forge list shows until a click gets the code.
   await expect(page.locator("#s-files")).toContainText("sample1.md");
+  await expect(page.locator("#s-files").getByRole("button", { name: "Get the code from Bitbucket" })).toBeVisible();
   await page.keyboard.press("g");
   await page.keyboard.press("c");
   await expect(page.locator("#s-commits")).toHaveAttribute("open", "");

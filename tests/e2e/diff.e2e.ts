@@ -1,0 +1,168 @@
+// Plan r2 UI-DIFF in the browser: get the code on a click, open a file, threads and drafts on their lines, Show in diff and
+// back, and the diff marks nothing read. Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake CLI.
+import { test as base, expect, type Page } from "@playwright/test";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, writes } from "./control";
+
+const APP = `http://127.0.0.1:${APP_PORT}`;
+const TITLE = "Batch cache writes in the sync worker";
+const PR_PATH = "/rest/api/1.0/projects/PROJ1/repos/sample-repo-2/pull-requests/1001";
+const RUN_MS = 60_000;
+// tests/support/review-fixture.ts: the diff of src/cache/flush.ts. The context row "for (…)" is old line 3, new line 2.
+// REVIEW_RESULT: the exact draft on new line 3, the moved draft on new line 5, and a README draft outside the diff.
+const LOCK = "The lock now covers one entry at a time.";
+const RELEASE = "lock.release() does not run when write() throws.";
+const NOTE = "Keep the loop header as it is.";
+
+const test = base.extend<{ seen: { urls: string[]; reads: number } }>({
+  seen: [
+    async ({ context }, use) => {
+      const seen = { urls: [] as string[], reads: 0 };
+      context.on("request", (r) => {
+        seen.urls.push(r.url());
+        if (r.method() === "POST" && new URL(r.url()).pathname === "/api/read") seen.reads++;
+      });
+      await control("reset");
+      await use(seen);
+      // The page sends requests to the local app only. Get the code runs git on the server.
+      expect(seen.urls.filter((u) => !u.startsWith(`${APP}/`))).toEqual([]);
+    },
+    { auto: true },
+  ],
+});
+
+const drafts = (page: Page) => page.locator("[data-draft]");
+const files = (page: Page) => page.locator("#s-files");
+// The cards after the row of one line.
+const cardsAt = (page: Page, row: string) => page.locator(`#${row} + .rl-dcard`);
+
+// Gate v3 U4: the app posts a context-line comment as lineType CONTEXT with the old-side line. My own comment is read at once.
+async function contextComment() {
+  const res = await fetch(`${FAKE_URL}${PR_PATH}/comments`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${E2E_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text: NOTE,
+      anchor: { path: "src/cache/flush.ts", line: 3, lineType: "CONTEXT", fileType: "TO", diffType: "COMMIT" },
+    }),
+  });
+  expect(res.status).toBe(201);
+}
+
+async function connect(page: Page) {
+  await page.goto("/");
+  await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
+  await page.getByLabel("Access token").fill(E2E_TOKEN);
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByLabel("Access token")).toBeHidden();
+  await control("state", {});
+  await page.locator("[data-row]", { hasText: TITLE }).first().click();
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(TITLE);
+}
+
+// Shift+R opens the brief. Ctrl+Enter starts the review. The fake CLI gives 3 drafts and 1 question.
+async function review(page: Page) {
+  await page.keyboard.press("Shift+R");
+  await page.getByLabel("Your note").press("Control+Enter");
+  await expect(page.locator("#runline")).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(drafts(page)).toHaveCount(3);
+}
+
+// The fetch moves the focus to the first file.
+async function getCode(page: Page, first: string) {
+  const get = files(page).getByRole("button", { name: "Get the code from Bitbucket" });
+  await expect(get).toBeVisible();
+  await get.click();
+  await expect(page.locator("#df-0")).toBeFocused();
+  await expect(page.locator("#df-0")).toContainText(first);
+}
+
+test("get the code, open flush.ts, cards on their lines, Show in diff and back, and nothing turns read", async ({ page, seen }) => {
+  await contextComment();
+  await connect(page);
+
+  // The general thread stays closed, so the reply that comes next never shows. Only the diff could mark it read.
+  const general = page.locator("#th-1000003");
+  await expect(general).toHaveAttribute("aria-expanded", "false");
+  await general.click();
+  await general.click();
+  await expect(general).toHaveAttribute("aria-expanded", "false");
+  await control("state", { reply: "new" });
+  await expect(general).toContainText("1 new");
+  const reads = seen.reads;
+
+  // Every loaded PR has Files. The fetch waits for a click.
+  await page.keyboard.press("g");
+  await page.keyboard.press("f");
+  await expect(files(page)).toHaveAttribute("open", "");
+  await expect(page.locator("#s-files-sum")).toBeFocused();
+  await getCode(page, "src/cache/flush.ts");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#df-0")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#dl-0-n3")).toContainText("const lock = cache.lock();");
+  await expect(page.locator("#dl-0-o2")).toContainText("const lock = cache.lock();");
+  // U4: the CONTEXT line 3 is old line 3, the row "for (…)" at new line 2. New line 3 is the added lock line.
+  await expect(page.locator("#dl-0-n2")).toContainText("for (const entry of cache.dirty())");
+  await expect(cardsAt(page, "dl-0-n2")).toContainText(`You: ${NOTE}`);
+  await expect(cardsAt(page, "dl-0-n3")).toHaveCount(0);
+
+  await review(page);
+  await expect(cardsAt(page, "dl-0-n3")).toContainText(LOCK);
+  await expect(cardsAt(page, "dl-0-n5")).toContainText(RELEASE);
+  await expect(cardsAt(page, "dl-0-n2")).toContainText(`You: ${NOTE}`);
+
+  // Show in diff from a draft, then back to the draft from its card.
+  const first = drafts(page).nth(0);
+  await first.getByRole("button", { name: "Show in diff" }).click();
+  await expect(page.locator("#dl-0-n3")).toBeFocused();
+  await cardsAt(page, "dl-0-n3").getByRole("button", { name: "Go to draft" }).click();
+  await expect(first).toBeFocused();
+  // g d from the focused draft.
+  await page.keyboard.press("g");
+  await page.keyboard.press("d");
+  await expect(page.locator("#dl-0-n3")).toBeFocused();
+
+  // Show in diff from the inline thread finds the old-side line.
+  const mine = page.locator("[data-thread]", { hasText: "flush.ts" }).first();
+  await mine.locator("button[aria-expanded]").first().click();
+  await mine.getByRole("button", { name: "Show in diff" }).click();
+  await expect(page.locator("#dl-0-n2")).toBeFocused();
+  await cardsAt(page, "dl-0-n2").getByRole("button", { name: "Go to thread" }).click();
+  await expect(mine).toBeFocused();
+
+  // The reply stays unread: no card and no step above sent a read.
+  await page.waitForTimeout(1500);
+  await expect(general).toContainText("1 new");
+  await expect(general).toHaveAttribute("aria-expanded", "false");
+  expect(seen.reads).toBe(reads);
+  await expect(page.locator("[data-row]", { hasText: TITLE }).first()).toContainText("1 new");
+  // Nothing went to Bitbucket but the comment of this test.
+  expect(await writes()).toEqual([`POST ${PR_PATH}/comments`]);
+});
+
+test("after a push, the drafts of the older head go to the list above the lines", async ({ page }) => {
+  await connect(page);
+  await review(page);
+  await page.keyboard.press("g");
+  await page.keyboard.press("f");
+  // The review run filled the cache, so the file list shows at once.
+  await expect(page.locator("#df-0")).toContainText("src/cache/flush.ts");
+  await page.locator("#df-0").click();
+  await expect(cardsAt(page, "dl-0-n3")).toContainText(LOCK);
+  const head = ((await page.locator("#runline code").first().textContent()) ?? "").trim();
+
+  // The new head is not in the cache: the file list goes back to the fetch button.
+  await control("state", { push: true });
+  await getCode(page, "docs/flush.md");
+  const flush = page.locator("#df-1");
+  await expect(flush).toContainText("src/cache/flush.ts");
+  if ((await flush.getAttribute("aria-expanded")) !== "true") await flush.click();
+  const list = page.locator(".rl-doff");
+  await expect(list).toContainText("Not on the lines shown");
+  await expect(list).toContainText(LOCK);
+  await expect(list).toContainText(`From the review of ${head}. The code changed after it.`);
+  await expect(page.locator(".rl-dcard")).toHaveCount(0);
+
+  // Show in diff now focuses the entry in the list.
+  await drafts(page).nth(0).getByRole("button", { name: "Show in diff" }).click();
+  await expect(list.locator("li").first()).toBeFocused();
+});

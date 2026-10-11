@@ -1,7 +1,7 @@
 // The review half of the detail (plan v3 WP11, replies.md WP18): buttons, brief, run line, summary, drafts, reply drafts,
 // and run log for one PR.
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
@@ -61,6 +61,8 @@ export type ReviewApi = {
   triage(key: "accept" | "edit" | "discard"): void;
   // A reply-draft run for one thread (replies.md step 6).
   draftReply(thread: number): void;
+  // Plan r2 UI-DIFF: opens a draft and focuses it, for "Go to draft" in the diff.
+  openDraft(id: number): void;
   // The layer that Esc closes first, for focus at target.
   layer(target: EventTarget | null): Layer;
   close(layer: Exclude<Layer, null>): void;
@@ -76,6 +78,8 @@ export type ReviewUi = {
   cards: ReadonlyMap<number, ReactNode>;
   sheet: ReactNode;
   api: ReviewApi;
+  // Plan r2 UI-DIFF: the finding drafts, the source head of their run, and the reply draft of each thread.
+  diff: { drafts: ReviewItemDto[]; head: string | null; replies: ReadonlyMap<number, ReviewItemDto> };
 };
 
 const NO_ITEMS: ReviewItemDto[] = [];
@@ -113,6 +117,8 @@ export function useReview(
     reveal: (thread: number) => void;
     announce: (text: string) => void;
     onSettings: () => void;
+    // Focuses the line of a draft in the diff.
+    showInDiff: (draft: number) => void;
   },
 ): ReviewUi {
   const meta = useMeta().data as MetaDto;
@@ -230,7 +236,8 @@ export function useReview(
     focusAfter({ id, block: "start", flash: false });
   };
 
-  const ds = drafts(items);
+  // Stable while the items stay, so the diff renders again only when they change.
+  const ds = useMemo(() => (items.length ? drafts(items) : NO_ITEMS), [items]);
   const all = [...items, ...replyItems];
   const latestItems = useRef(all);
   latestItems.current = all;
@@ -239,6 +246,15 @@ export function useReview(
   onLog.current = openLog;
   const onDraft = useRef(draftReplies);
   onDraft.current = draftReplies;
+  const onShow = useRef(o.showInDiff);
+  onShow.current = o.showInDiff;
+  const openDraft = useCallback(
+    (id: number) => {
+      setOpenDrafts((m) => new Map(m).set(id, true));
+      focusAfter({ id: `d-${id}`, block: "start", flash: true });
+    },
+    [focusAfter],
+  );
 
   // ---------- Triage (plan v3 WP14a) ----------
   const domId = (it: ReviewItemDto) => (it.kind === "question" ? `q-${it.id}` : it.kind === "reply" ? `rd-${it.id}` : `d-${it.id}`);
@@ -342,6 +358,7 @@ export function useReview(
           return new Map(m).set(id, !(m.get(id) ?? it?.status === "new"));
         }),
       onFrom: (agent) => onLog.current(agent, false, "review"),
+      onShowInDiff: (id) => onShow.current(id),
       triage: triageCtx,
     }),
     [meta, o.hints, triageCtx],
@@ -423,6 +440,7 @@ export function useReview(
       else if (it.status !== "discarded") triageFns.edit(it);
     },
     draftReply: (thread) => draftReplies([thread]),
+    openDraft,
     layer(target) {
       const inSheet = target instanceof Node && !!document.getElementById("run-log")?.contains(target);
       if (composer && !inSheet) return "brief";
@@ -431,6 +449,8 @@ export function useReview(
     close: (layer) => (layer === "brief" ? closeBrief() : closeLog()),
   };
 
+  const head = latest?.sourceHead ?? null;
+  const forDiff = useMemo(() => ({ drafts: ds, head, replies: byThread }), [ds, head, byThread]);
   const lineState = line ? runLine(line, meta.profiles, o.commits) : null;
   const logRun = typeof log?.of === "number" ? log.of : (log?.of === "review" ? latest : newest)?.id;
   const your = o.threads.filter((t) => t.turn === "your").length;
@@ -501,5 +521,6 @@ export function useReview(
       />
     ),
     api,
+    diff: forDiff,
   };
 }

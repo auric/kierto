@@ -167,6 +167,7 @@ function Shell({ stale }: { stale: boolean }) {
       else if (effect === "next-new" || effect === "prev-new") api?.nextNew(effect === "next-new" ? 1 : -1);
       else if (effect === "next-your") api?.nextYour();
       else if (effect === "files" || effect === "commits") api?.section(effect);
+      else if (effect === "show-in-diff") api?.showInDiff();
       else if (effect === "drafts") api?.drafts();
       else if (effect === "log") api?.log();
       else if (effect === "rerun") api?.rerun();

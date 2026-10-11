@@ -1,6 +1,7 @@
 // Drafts and the runner's summary (prototype/v3 threadsSec drafts, draft, draftBody, aiSummary, question), with triage (WP14a).
-import { Bot, Check, ChevronRight, CircleAlert, User } from "lucide-react";
+import { Bot, Check, ChevronRight, CircleAlert, FileCode, User } from "lucide-react";
 import { Fragment, memo, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { MetaDto, PrRow, ReviewItemDto, RunDto } from "../../shared/dto";
 import type { AnchoredFinding, Question } from "../../shared/review";
@@ -48,7 +49,7 @@ export function AiAvatar({ meta }: { meta: MetaDto }) {
   );
 }
 
-function Severity({ s }: { s: AnchoredFinding["severity"] }) {
+export function Severity({ s }: { s: AnchoredFinding["severity"] }) {
   // Hue rule: the error hue marks only errors and Blocker findings.
   return s === "blocker" ? (
     <span className="inline-flex shrink-0 items-center gap-1 font-semibold whitespace-nowrap text-destructive">
@@ -77,6 +78,8 @@ export type DraftCtx = {
   hints: Hints;
   onToggle: (id: number) => void;
   onFrom: (agent: string) => void;
+  // Plan r2 UI-DIFF: focuses the line of the draft in the diff.
+  onShowInDiff: (id: number) => void;
   triage: TriageCtx;
 };
 
@@ -205,6 +208,12 @@ function DraftBody({ it, mode, busy, ctx }: { it: ReviewItemDto; mode: TriageMod
               </button>
             )}
             {it.edited && <span>edited by you</span>}
+            {a && (
+              <Button size="sm" variant="ghost" className="-my-1 ml-auto text-ink-2" onClick={() => ctx.onShowInDiff(it.id)}>
+                <FileCode aria-hidden data-icon="inline-start" />
+                Show in diff
+              </Button>
+            )}
           </div>
           {mode === "edit" ? (
             <Editor it={it} busy={busy} ctx={ctx.triage} />

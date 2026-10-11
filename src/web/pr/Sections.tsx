@@ -7,7 +7,6 @@ import type { Hints } from "../shell/Hint";
 import { HintTrigger } from "../shell/Hint";
 import { ago } from "../shell/model";
 import { CheckBanner } from "../states";
-import { webLink } from "./Header";
 import { fullTime, Text } from "./Thread";
 import type { ThreadModel } from "./threads";
 
@@ -16,26 +15,13 @@ export const STATUS_TEXT: Record<string, string> = { APPROVED: "Approved", NEEDS
 const h2 = "m-0 flex items-baseline gap-2 text-[15px] font-bold tracking-[-0.005em]";
 const linkish = "inline-flex w-fit items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
 
-// summary: the runner's summary of the newest review (plan v3 WP11).
-export function Overview({
-  detail,
-  me,
-  forge,
-  diffLink,
-  summary,
-}: {
-  detail: PrDetail;
-  me: string | null;
-  forge: string;
-  diffLink: boolean;
-  summary?: ReactNode;
-}) {
+// summary: the runner's summary of the newest review (plan v3 WP11). The diff link moved to Files (plan r2 UI-DIFF).
+export function Overview({ detail, me, summary }: { detail: PrDetail; me: string | null; summary?: ReactNode }) {
   const { pr, description } = detail;
   const [more, setMore] = useState(false);
   const text = description?.trim() ?? "";
   const blocks = text.split(/\n\s*\n/);
   const long = blocks.length > 1;
-  const web = webLink(pr.webUrl);
   const opener = pr.role === "AUTHOR" ? "you" : (pr.authorName ?? pr.authorSlug);
   return (
     <section id="s-overview" aria-labelledby="h-overview" className="grid max-w-[86ch] scroll-mt-3 justify-items-start gap-2.5 pt-6">
@@ -75,7 +61,6 @@ export function Overview({
           </dd>
         </dl>
       )}
-      {diffLink && web && <DiffLink web={web} forge={forge} />}
     </section>
   );
 }
@@ -124,58 +109,63 @@ const CHANGE: Record<string, [typeof File, string]> = {
   COPY: [Copy, "Copied"],
 };
 
+// Plan r2 UI-DIFF: every loaded PR has Files. n: the file count, null while no list is known. children: the file list.
 export function FilesFold(props: {
-  files: ChangedFile[];
-  threads: ThreadModel[];
+  n: number | null;
   open: boolean;
   onOpen: (open: boolean) => void;
-  onFile: (path: string) => void;
   web: string | null;
   forge: string;
-  hints: Hints;
+  children: ReactNode;
 }) {
-  const n = props.files.length;
   return (
-    <Fold id="files" open={props.open} onOpen={props.onOpen} head={<FoldHead label="Files" n={`${n}`} />}>
-      <ul className="m-0 mb-2.5 list-none p-0">
-        {props.files.map((f) => {
-          const [Icon, type] = CHANGE[f.type] ?? [File, "Changed"];
-          const word = f.srcPath ? `${type} from ${f.srcPath}` : type;
-          const count = props.threads.filter((t) => t.anchor?.path === f.path).length;
-          const go = `Go to ${count === 1 ? "the thread" : `the first of ${count} threads`} on this file`;
-          const cut = f.path.lastIndexOf("/") + 1;
-          return (
-            <li key={f.path} className="grid grid-cols-[15px_minmax(0,1fr)_auto] items-center gap-3 border-b py-1.5">
-              <HintTrigger hints={props.hints} label={word}>
-                <span role="img" aria-label={word} className="inline-flex text-muted-foreground">
-                  <Icon aria-hidden className="size-[15px]" />
-                </span>
-              </HintTrigger>
-              <span translate="no" className="min-w-0 font-mono text-sm [overflow-wrap:anywhere]">
-                <span className="text-muted-foreground">{f.path.slice(0, cut)}</span>
-                {f.path.slice(cut)}
-              </span>
-              {count > 0 ? (
-                <HintTrigger hints={props.hints} label={go}>
-                  <button
-                    type="button"
-                    aria-label={go}
-                    onClick={() => props.onFile(f.path)}
-                    className="inline-flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-sm font-medium text-ink-2 hover:underline"
-                  >
-                    <MessageSquare aria-hidden className="size-[15px]" />
-                    {count}
-                  </button>
-                </HintTrigger>
-              ) : (
-                <span />
-              )}
-            </li>
-          );
-        })}
-      </ul>
+    <Fold id="files" open={props.open} onOpen={props.onOpen} head={<FoldHead label="Files" n={props.n === null ? "" : `${props.n}`} />}>
+      {props.children}
       {props.web && <DiffLink web={props.web} forge={props.forge} />}
     </Fold>
+  );
+}
+
+// The forge file list. It shows until the git index of the diff viewer loads.
+export function ForgeFiles(props: { files: ChangedFile[]; threads: ThreadModel[]; onFile: (path: string) => void; hints: Hints }) {
+  return (
+    <ul className="m-0 mb-2.5 list-none p-0">
+      {props.files.map((f) => {
+        const [Icon, type] = CHANGE[f.type] ?? [File, "Changed"];
+        const word = f.srcPath ? `${type} from ${f.srcPath}` : type;
+        const count = props.threads.filter((t) => t.anchor?.path === f.path).length;
+        const go = `Go to ${count === 1 ? "the thread" : `the first of ${count} threads`} on this file`;
+        const cut = f.path.lastIndexOf("/") + 1;
+        return (
+          <li key={f.path} className="grid grid-cols-[15px_minmax(0,1fr)_auto] items-center gap-3 border-b py-1.5">
+            <HintTrigger hints={props.hints} label={word}>
+              <span role="img" aria-label={word} className="inline-flex text-muted-foreground">
+                <Icon aria-hidden className="size-[15px]" />
+              </span>
+            </HintTrigger>
+            <span translate="no" className="min-w-0 font-mono text-sm [overflow-wrap:anywhere]">
+              <span className="text-muted-foreground">{f.path.slice(0, cut)}</span>
+              {f.path.slice(cut)}
+            </span>
+            {count > 0 ? (
+              <HintTrigger hints={props.hints} label={go}>
+                <button
+                  type="button"
+                  aria-label={go}
+                  onClick={() => props.onFile(f.path)}
+                  className="inline-flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-sm font-medium text-ink-2 hover:underline"
+                >
+                  <MessageSquare aria-hidden className="size-[15px]" />
+                  {count}
+                </button>
+              </HintTrigger>
+            ) : (
+              <span />
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

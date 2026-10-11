@@ -147,6 +147,15 @@ describe("detail keys", () => {
     expect(reduceKey(S, "g", C).handled).toBe(false);
   });
 
+  test("g then d shows the current thread or draft in the diff (plan r2 UI-DIFF); d alone still discards", () => {
+    const pr = { ...S, selected: 20 };
+    const g = reduceKey(pr, "g", C);
+    expect(reduceKey(g.state, "d", C)).toMatchObject({ effect: "show-in-diff", state: { focus: "detail", chord: null } });
+    expect(reduceKey(pr, "d", C).effect).toBe("discard");
+    expect(reduceKey(g.state, "d", { ...C, now: C.now + 1300 }).effect).toBe("discard");
+    expect(reduceKey(g.state, "d", { ...C, typing: true }).handled).toBe(false);
+  });
+
   test("detail keys do nothing without a PR or while typing", () => {
     expect(reduceKey(S, "n", C).handled).toBe(false);
     expect(reduceKey({ ...S, selected: 20 }, "n", { ...C, typing: true }).handled).toBe(false);

@@ -1,10 +1,13 @@
-// PR detail (plan v3 WP5, r2 UI-ASK): header, then one column of Overview, Threads, Files, Commits, and Ask (prototype/v3 renderDetail).
+// PR detail (plan v3 WP5, r2 UI-ASK, r2 UI-DIFF): header, then one column of Overview, Threads, Files, Commits, and Ask
+// (prototype/v3 renderDetail).
 import { useMutation } from "@tanstack/react-query";
 import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommentDto, PrRow } from "../../shared/dto";
 import { AskPanel } from "../ask/AskPanel";
+import { type DiffCtx, DiffSection, useDiffView } from "../diff/FileDiff";
+import type { Card } from "../diff/model";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
 import { PostsGroup, useOutbox } from "../publish/Outbox";
@@ -16,7 +19,7 @@ import { useMinute } from "../shell/ListPane";
 import { Calm } from "../states";
 import { Header, webLink } from "./Header";
 import type { ReplyTarget } from "./ReplyComposer";
-import { CommitsFold, FilesFold, Overview } from "./Sections";
+import { CommitsFold, Overview } from "./Sections";
 import { type ThreadCtx, useSettled } from "./Thread";
 import { Threads } from "./ThreadList";
 import { buildThreads, mergeHighlights, newMessages, ordered, type Person, passes, reveal, shownThreads, summary } from "./threads";
@@ -31,6 +34,8 @@ export type DetailApi = {
   nextNew(d: 1 | -1): void;
   nextYour(): void;
   section(id: "files" | "commits"): void;
+  // Plan r2 UI-DIFF: g d focuses the line of the focused inline thread or draft in the diff.
+  showInDiff(): void;
   // Plan r2 UI-ASK: q opens the Ask section with the focus in its box.
   ask(): void;
   // Plan v3 WP11: r, Shift+R, 2, 3, and the Esc layers of the review. Plan r2 UI-RR: c.
@@ -174,6 +179,8 @@ export function PrDetail({
   const announce = useCallback((text: string) => setSaid((s) => ({ text, n: s.n + 1 })), []);
   // The review hook comes after the thread context, so the context reads its action through this ref.
   const draftReply = useRef((_: number) => {});
+  // The diff view needs the drafts of the review hook. The thread context and the drafts read its action through this ref.
+  const showDiff = useRef((_: Card) => {});
 
   const web = webLink(pr.webUrl);
   const ctx = useMemo<ThreadCtx>(
@@ -202,13 +209,53 @@ export function PrDetail({
       announce,
       onReply,
       onDraftReply: (tid) => draftReply.current(tid),
+      onShowInDiff: (tid) => showDiff.current({ kind: "thread", id: tid }),
       posts: outbox.ctx,
     }),
     [row.id, hints, now, forge, web, runner, mine, ackRef, focusAfter, jump, announce, onReply, outbox.ctx],
   );
 
-  const review = useReview(pr, { commits: data?.commits, threads, hints, now, focusAfter, reveal: jump, announce, onSettings });
+  const review = useReview(pr, {
+    commits: data?.commits,
+    threads,
+    hints,
+    now,
+    focusAfter,
+    reveal: jump,
+    announce,
+    onSettings,
+    showInDiff: (id) => showDiff.current({ kind: "draft", id }),
+  });
   draftReply.current = review.api.draftReply;
+  const openFiles = useCallback(() => setSecs((s) => (s.has("files") ? s : new Set(s).add("files"))), []);
+  const diff = useDiffView(row.id, { ...review.diff, threads, forge, openFold: openFiles, focusAfter });
+  showDiff.current = diff.show;
+  const { openDraft } = review.api;
+  const onThreads = useCallback(
+    (ids: ReadonlySet<number>) => {
+      const t = ordered(latest.current, false).find((x) => ids.has(x.id));
+      if (t) jump(t.id);
+    },
+    [jump],
+  );
+  const diffCtx = useMemo<DiffCtx | null>(
+    () =>
+      meta
+        ? {
+            pr: row.id,
+            meta,
+            hints,
+            threads,
+            ...review.diff,
+            onThread: jump,
+            onDraft: openDraft,
+            onThreads,
+            focusAfter,
+            announce,
+          }
+        : null,
+    [row.id, meta, hints, threads, review.diff, jump, openDraft, onThreads, focusAfter, announce],
+  );
   const bar = usePostBar(pr, {
     comments,
     forge,
@@ -272,12 +319,21 @@ export function PrDetail({
     nextYour,
     post: bar.api.open,
     section(id) {
-      if (!(id === "files" ? data?.files : data?.commits)?.length) {
-        toast.add({ title: id === "files" ? "No file list for this pull request yet." : "No commit list for this pull request yet." });
+      // Plan r2 UI-DIFF: Files shows for every loaded PR. Without the code it offers the fetch.
+      if (id === "files" ? !data : !data?.commits?.length) {
+        toast.add({ title: id === "files" ? "The pull request is still loading." : "No commit list for this pull request yet." });
         return;
       }
       setSecs((s) => new Set(s).add(id));
       focusAfter({ id: `s-${id}-sum`, block: "start", flash: false });
+    },
+    showInDiff() {
+      const at = document.activeElement;
+      const d = at?.closest("[data-draft]")?.getAttribute("data-draft");
+      const t = at?.closest("[data-thread]")?.getAttribute("data-thread") ?? (cur === null ? null : String(cur));
+      if (d) diff.show({ kind: "draft", id: Number(d) });
+      else if (t) diff.show({ kind: "thread", id: Number(t) });
+      else toast.add({ title: "Move to an inline thread or a draft first. Then g d shows its line in the diff." });
     },
     ask() {
       if (!data) {
@@ -320,7 +376,7 @@ export function PrDetail({
       <div data-mounting={!steady || undefined} className="px-6 pb-16 max-[759px]:px-4">
         {data ? (
           <>
-            <Overview detail={data} me={me} forge={forge} diffLink={!data.files?.length} summary={review.summary} />
+            <Overview detail={data} me={me} summary={review.summary} />
             <Threads
               threads={threads}
               needMe={needMe}
@@ -342,21 +398,17 @@ export function PrDetail({
                 if (first) focusAfter({ id: `t-${first.id}`, block: "nearest", flash: false });
               }}
             />
-            {data.files?.length ? (
-              <FilesFold
+            {diffCtx && (
+              <DiffSection
                 files={data.files}
-                threads={threads}
                 open={secs.has("files")}
                 onOpen={openSec("files")}
-                onFile={(path) => {
-                  const t = ordered(threads, false).find((x) => x.anchor?.path === path);
-                  if (t) jump(t.id);
-                }}
                 web={web}
                 forge={forge}
-                hints={hints}
+                view={diff}
+                ctx={diffCtx}
               />
-            ) : null}
+            )}
             {data.commits?.length ? (
               <CommitsFold
                 commits={data.commits}
