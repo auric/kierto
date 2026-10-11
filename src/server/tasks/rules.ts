@@ -12,6 +12,8 @@ export const DEFAULT_TASK_RULES: TaskRule[] = (["branch", "title", "description"
 // D9: the union of all rules, in rule order, deduped, at most 10.
 export const MAX_TASKS = 10;
 export const BUDGET_MS = 100;
+// A timed-out PR runs once more on a fresh worker with this budget. Only a second timeout marks the rule.
+export const RETRY_BUDGET_MS = 500;
 const CAPS: Record<TaskSource, number> = { branch: 512, title: 512, description: 20_000 };
 const START_MS = 5_000;
 
@@ -26,8 +28,9 @@ export const taskInput = (branch: string | null, title: string | null, descripti
 // timedOut: the index of the rule that ran when the budget ended. tasks then holds the rules before it.
 export type Extraction = { tasks: FoundTask[]; errors: (string | null)[]; timedOut: number | null };
 
-export function createTaskRunner(opts: { budgetMs?: number } = {}) {
+export function createTaskRunner(opts: { budgetMs?: number; retryBudgetMs?: number } = {}) {
   const budget = opts.budgetMs ?? BUDGET_MS;
+  const retryBudget = opts.retryBudgetMs ?? RETRY_BUDGET_MS;
   let worker: Worker | null = null;
   let ready: Promise<void> = Promise.resolve();
   let pending: ((r: WorkerReply | null) => void) | null = null;
@@ -74,6 +77,7 @@ export function createTaskRunner(opts: { budgetMs?: number } = {}) {
 
   // Resolves null at the deadline. The caller then stops the worker.
   async function ask(req: Omit<WorkerRequest, "id">, ms: number): Promise<WorkerReply | null> {
+    if (ms <= 0) return null;
     const w = await ensure();
     const id = ++seq;
     return new Promise((resolve) => {
@@ -95,31 +99,36 @@ export function createTaskRunner(opts: { budgetMs?: number } = {}) {
     return run;
   };
 
+  async function extractOnce(rules: TaskRule[], input: TaskInput, ms: number): Promise<Extraction> {
+    const tasks: FoundTask[] = [];
+    const errors: (string | null)[] = rules.map(() => null);
+    let deadline: number | null = null;
+    for (const [i, r] of rules.entries()) {
+      if (tasks.length >= MAX_TASKS) break;
+      const text = input[r.source];
+      if (!text) continue;
+      await ensure();
+      // The budget starts after the worker is ready, so a restart never counts against a rule.
+      deadline ??= performance.now() + ms;
+      const reply = await ask({ pattern: r.pattern, text, keys: r.keys, max: MAX_TASKS }, deadline - performance.now());
+      if (!reply) {
+        stop();
+        return { tasks, errors, timedOut: i };
+      }
+      if ("error" in reply) errors[i] = reply.error;
+      else
+        for (const key of reply.keys)
+          if (tasks.length < MAX_TASKS && !tasks.some((t) => t.key === key)) tasks.push({ key, source: r.source });
+    }
+    return { tasks, errors, timedOut: null };
+  }
+
   return {
     // Runs the rules in order on one PR. Throws only when the worker cannot start.
     extract(rules: TaskRule[], input: TaskInput): Promise<Extraction> {
       return serial(async () => {
-        const tasks: FoundTask[] = [];
-        const errors: (string | null)[] = rules.map(() => null);
-        let deadline: number | null = null;
-        for (const [i, r] of rules.entries()) {
-          if (tasks.length >= MAX_TASKS) break;
-          const text = input[r.source];
-          if (!text) continue;
-          await ensure();
-          // The budget starts after the worker is ready, so a restart never counts against a rule.
-          deadline ??= performance.now() + budget;
-          const reply = await ask({ pattern: r.pattern, text, keys: r.keys, max: MAX_TASKS }, deadline - performance.now());
-          if (!reply) {
-            stop();
-            return { tasks, errors, timedOut: i };
-          }
-          if ("error" in reply) errors[i] = reply.error;
-          else
-            for (const key of reply.keys)
-              if (tasks.length < MAX_TASKS && !tasks.some((t) => t.key === key)) tasks.push({ key, source: r.source });
-        }
-        return { tasks, errors, timedOut: null };
+        const r = await extractOnce(rules, input, budget);
+        return r.timedOut === null ? r : extractOnce(rules, input, retryBudget);
       });
     },
     // The syntax error of each pattern, or null.

@@ -77,6 +77,26 @@ describe("task-ID rules", () => {
     expect(next).toEqual({ tasks: [{ key: "ABC-10613", source: "branch" }], errors: [null, null, null], timedOut: null });
   });
 
+  test("a PR that misses the first budget runs again with the retry budget and is not timed out", async () => {
+    // Budget 0 times out before the first rule runs, as a busy machine can.
+    const busy = createTaskRunner({ budgetMs: 0 });
+    try {
+      const r = await busy.extract(DEFAULT_TASK_RULES, input("bugfix/ABC-10145-name-of-ticket"));
+      expect(r).toEqual({ tasks: [{ key: "ABC-10145", source: "branch" }], errors: [null, null, null], timedOut: null });
+    } finally {
+      busy.close();
+    }
+  });
+
+  test("a PR that misses the retry budget too is timed out", async () => {
+    const busy = createTaskRunner({ budgetMs: 0, retryBudgetMs: 0 });
+    try {
+      expect((await busy.extract(DEFAULT_TASK_RULES, input("bugfix/ABC-10145-name-of-ticket"))).timedOut).toBe(0);
+    } finally {
+      busy.close();
+    }
+  });
+
   test("extractSkipping drops the timed-out rule and runs the rest", async () => {
     const rules: TaskRule[] = [
       { source: "description", pattern: "(a+)+$" },

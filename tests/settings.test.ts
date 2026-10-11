@@ -37,7 +37,7 @@ beforeEach(() => {
 const opened: Settings[] = [];
 afterEach(() => {
   fake.stop();
-  for (const s of opened.splice(0)) s.db()?.close();
+  for (const s of opened.splice(0)) s.close();
 });
 
 function setup(backend?: SecretBackend) {

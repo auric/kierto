@@ -126,7 +126,7 @@ async function setup(dir = join(root, `case-${n++}`), opts: { token?: boolean; c
   const engine = createSyncEngine({ settings, live, now: () => clock.t, random: () => random.value, timers });
   cleanup.push(() => {
     engine.stop();
-    settings.db()?.close();
+    settings.close();
   });
   const db = () => settings.db() as Database;
   const one = <T>(sql: string, params: Record<string, string | number> = {}) => db().query(sql).get(params) as T;

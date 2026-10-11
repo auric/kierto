@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database as Sqlite } from "bun:sqlite";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
-import { writeConfig } from "../../src/server/config";
+import { dbPath, writeConfig } from "../../src/server/config";
 import { listPrs } from "../../src/server/inbox/queries";
 import { createLive } from "../../src/server/live";
 import { createSecrets } from "../../src/server/secrets";
@@ -58,7 +59,7 @@ async function setup() {
   const app = createApp({ port: PORT, token: SESSION, live, settings, sync });
   cleanup.push(() => {
     sync.stop();
-    settings.db()?.close();
+    settings.close();
   });
   const call = (method: string, path: string, body?: unknown) =>
     app.request(`${ORIGIN}${path}`, {
@@ -118,6 +119,32 @@ describe("task IDs in sync", () => {
     expect(res.status).toBe(200);
     await until(() => s.rows()[0]?.tasks.length === 1);
     expect(s.rows()[0]?.tasks).toEqual([{ key: "ABC-10145", source: "title", url: "https://tracker.example.test/browse/ABC-10145" }]);
+  });
+
+  test("close during the background pass stops it without an error log or a write", async () => {
+    const s = await setup();
+    await s.sync.syncNow();
+    const lines: string[] = [];
+    const spy = spyOn(console, "log").mockImplementation((...a: unknown[]) => void lines.push(a.join(" ")));
+    try {
+      expect((await s.put({ taskRules: [{ source: "title", pattern: ID, keys: ["ABC"] }] })).status).toBe(200);
+      s.settings.close();
+      // The pass needs one worker reply per PR. This wait covers it with a wide margin.
+      await Bun.sleep(1_000);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(lines).toEqual([]);
+    const db = new Sqlite(dbPath(s.dir, fake.url), { readonly: true });
+    try {
+      expect(db.query("SELECT key FROM pr_task ORDER BY ord").all()).toEqual([
+        { key: "ABC-10613" },
+        { key: "ABC-10145" },
+        { key: "XYZ-7" },
+      ]);
+    } finally {
+      db.close();
+    }
   });
 });
 

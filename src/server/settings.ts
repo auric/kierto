@@ -67,6 +67,8 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
   let config: Config | null = null;
   let db: Database | null = null;
   let runner: TaskRunner | null = null;
+  // Each recompute pass and close() bump it. An older pass stops before its next write.
+  let generation = 0;
   const tasks = () => {
     runner ??= createTaskRunner();
     return runner;
@@ -160,6 +162,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
 
   // Background pass over every stored PR after a settings save.
   async function recompute() {
+    const gen = ++generation;
     const db = currentDb();
     if (!db) return;
     type Row = {
@@ -174,6 +177,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
     try {
       for (const r of rows) {
         const plan = await planOne(taskInput(r.source_branch, r.title, r.description), r.task_input_hash);
+        if (gen !== generation) return;
         if (!plan || currentDb() !== db) continue;
         // A sync can write the PR during the await. Its write wins.
         const wrote = db.transaction(() => {
@@ -187,6 +191,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
         if (wrote) changed.push(r.id);
       }
     } catch (e) {
+      if (gen !== generation) return;
       log(`Task IDs not recomputed: ${(e as Error).message}`);
     }
     if (changed.length) for (const fn of taskListeners) fn(changed);
@@ -336,6 +341,11 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
     // Task plans for forge PRs, in the same order. Await it before the PR transaction, then call applyTasks inside it.
     planTasks,
     applyTasks,
+    // Stops the background pass and closes the database. Call it once, at shutdown.
+    close() {
+      generation++;
+      db?.close();
+    },
     // Runs after a background pass wrote new task IDs.
     onTasksChanged(fn: (prs: number[]) => void) {
       taskListeners.push(fn);

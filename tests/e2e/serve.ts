@@ -192,7 +192,7 @@ async function halt() {
   await app.review.stop();
   await app.server.stop(true);
   // Windows cannot remove an open SQLite file.
-  app.settings.db()?.close();
+  app.settings.close();
 }
 
 const NO_CONTENT: Reply = { status: 204 };
