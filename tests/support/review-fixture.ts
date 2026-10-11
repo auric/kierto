@@ -135,10 +135,11 @@ export const REVIEW_RESULT = {
 };
 
 // A real Gate B stream with the init tools and MCP servers of a review run, and the given structured output. Writes <dir>/<name>.jsonl.
+// failed: MCP servers that init lists with the status "failed".
 const GIT_TOOLS = ["git_log", "git_blame", "git_show", "git_diff"].map((t) => `mcp__rl-git__${t}`);
 const REVIEW_TOOLS = ["Task", "Read", "Grep", "Glob", ...GIT_TOOLS, "StructuredOutput"];
 const FIXTURES = resolve(import.meta.dir, "../../fixtures");
-export function claudeStream(dir: string, name: string, file: string, structured?: unknown) {
+export function claudeStream(dir: string, name: string, file: string, structured?: unknown, failed: string[] = []) {
   const lines = readFileSync(join(FIXTURES, file), "utf8")
     .split("\n")
     .filter(Boolean)
@@ -148,7 +149,11 @@ export function claudeStream(dir: string, name: string, file: string, structured
         return {
           ...e,
           tools: REVIEW_TOOLS,
-          mcp_servers: ["rl-git", ...Object.keys(DOC_SERVERS)].map((s) => ({ name: s, status: "connected", source: "dynamic" })),
+          mcp_servers: ["rl-git", ...Object.keys(DOC_SERVERS)].map((s) => ({
+            name: s,
+            status: failed.includes(s) ? "failed" : "connected",
+            source: "dynamic",
+          })),
         };
       return e.type === "result" && structured !== undefined ? { ...e, structured_output: structured } : e;
     });
@@ -157,15 +162,15 @@ export function claudeStream(dir: string, name: string, file: string, structured
   return out;
 }
 
-// The argv of the fake CLI and its scenario file in dir. write() sets the next run.
+// The argv of the fake CLI and its scenario file in dir. write() sets the next run. authMethod: the login route of `auth status`.
 export function fakeRunner(dir: string) {
   const scenario = join(dir, "scenario.json");
-  const write = (o: Omit<FakeScenario, "record" | "auth">) =>
+  const write = ({ authMethod = "claude.ai", ...o }: Omit<FakeScenario, "record" | "auth"> & { authMethod?: string }) =>
     writeFileSync(
       scenario,
       JSON.stringify({
         record: join(dir, "calls.jsonl"),
-        auth: { loggedIn: true, authMethod: "claude.ai", projectsDirectory: join(dir, "projects") },
+        auth: { loggedIn: true, authMethod, projectsDirectory: join(dir, "projects") },
         delayMs: 5,
         ...o,
       } satisfies FakeScenario),

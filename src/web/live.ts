@@ -24,6 +24,8 @@ export function useLive(qc: QueryClient) {
       for (const id of prs) {
         qc.invalidateQueries({ queryKey: ["pr", id] });
         qc.invalidateQueries({ queryKey: ["brief", id] });
+        // RunDto.stale compares the run heads with the PR heads, so a synced push changes the runs of the PR.
+        qc.invalidateQueries({ queryKey: ["runs", "pr", id] });
       }
       if (runs.length) {
         qc.invalidateQueries({ queryKey: ["runs"] });

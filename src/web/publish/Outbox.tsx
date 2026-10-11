@@ -75,20 +75,24 @@ export function useOutbox(pr: number, comments: CommentDto[], forge: string) {
   return { ctx, threads: split.threads, rest: split.rest };
 }
 
+// The outer span is a live region that stays, so a screen reader reads each later state. The key gives each state a new node.
 function StateMark({ v }: { v: PostView }) {
   const Icon = { posting: LoaderCircle, checking: LoaderCircle, unknown: CircleHelp, failed: CircleAlert, posted: Check }[v.kind];
   return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap",
-        v.kind === "failed" ? "text-destructive" : v.kind === "posted" ? "text-ink-2" : "text-foreground",
-      )}
-    >
-      <Icon
-        aria-hidden
-        className={cn(icon, (v.kind === "posting" || v.kind === "checking") && "animate-spin motion-reduce:animate-none")}
-      />
-      {v.text}
+    <span role="status" className="inline-flex shrink-0">
+      <span
+        key={v.kind}
+        className={cn(
+          "rl-fade inline-flex items-center gap-1 font-medium whitespace-nowrap",
+          v.kind === "failed" ? "text-destructive" : v.kind === "posted" ? "text-ink-2" : "text-foreground",
+        )}
+      >
+        <Icon
+          aria-hidden
+          className={cn(icon, (v.kind === "posting" || v.kind === "checking") && "animate-spin motion-reduce:animate-none")}
+        />
+        {v.text}
+      </span>
     </span>
   );
 }
@@ -151,7 +155,7 @@ function RunPost({ p, comments, forge, ctx, web, hints }: { p: PostDto; comments
       data-post={p.id}
       tabIndex={-1}
       aria-label={`${d.code ? `${d.text} ${d.code}` : d.text}. ${v.text}`}
-      className="scroll-mt-3 border-b px-1.5 py-2"
+      className="rl-enter scroll-mt-3 border-b px-1.5 py-2"
     >
       <div className="flex min-w-0 items-center gap-3 text-sm">
         {d.code ? (
@@ -205,7 +209,14 @@ export function ReplyPosts(props: { posts: readonly PostDto[]; avatar: ReactNode
   return props.posts.map((p) => {
     const v = postView(p);
     return (
-      <article key={p.id} id={`p-${p.id}`} data-post={p.id} tabIndex={-1} aria-label={`Your reply. ${v.text}`} className="rl-msg mt-3.5">
+      <article
+        key={p.id}
+        id={`p-${p.id}`}
+        data-post={p.id}
+        tabIndex={-1}
+        aria-label={`Your reply. ${v.text}`}
+        className="rl-msg rl-enter mt-3.5"
+      >
         <div className="flex min-h-(--av) flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-muted-foreground">
           {avatar}
           <b className="font-semibold text-foreground">You</b>

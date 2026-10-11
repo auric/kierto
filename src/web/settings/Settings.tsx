@@ -223,13 +223,16 @@ function AiMark({ settings }: { settings: SettingsDto }) {
       <Field orientation="horizontal">
         <Switch
           id="mark-ai"
+          aria-describedby="mark-ai-help"
           checked={settings.markAi}
           disabled={save.isPending}
           onCheckedChange={(markAi) => save.mutate({ baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", markAi })}
         />
         <FieldContent>
           <FieldLabel htmlFor="mark-ai">Mark {runner}-drafted comments with 🤖</FieldLabel>
-          <FieldDescription>Comments and replies that {runner} drafted start with 🤖. Your own replies never do.</FieldDescription>
+          <FieldDescription id="mark-ai-help">
+            Comments and replies that {runner} drafted start with 🤖. Your own replies never do.
+          </FieldDescription>
         </FieldContent>
       </Field>
       {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}

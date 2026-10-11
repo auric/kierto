@@ -1,5 +1,6 @@
 // Review server state through TanStack Query. Keys: ['brief', pr], ['runs'], ['runs', 'pr', pr], ['run', id], ['raw', id],
-// ['pr', pr, 'reply-drafts']. live.ts invalidates ['runs'] and ['run', id] when SSE `changed` names the run, and ['pr', pr] when it names the PR.
+// ['pr', pr, 'reply-drafts']. live.ts invalidates ['runs'] and ['run', id] when SSE `changed` names the run, and ['pr', pr] and
+// ['runs', 'pr', pr] when it names the PR.
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BriefDto, BriefInput, ItemActionInput, ItemConflict, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../shared/dto";
 import { api } from "../api";

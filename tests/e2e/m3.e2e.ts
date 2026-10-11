@@ -285,6 +285,10 @@ test("an unsent reply survives a reload; Discard clears it", async ({ page }) =>
   await open(page);
   await openThread(page);
   await expect(replyBox(page)).toHaveValue(text);
+  // Discard offers Undo, which gives the text back to the reply box.
+  await thread(page).getByRole("button", { name: "Discard" }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(replyBox(page)).toHaveValue(text);
   await thread(page).getByRole("button", { name: "Discard" }).click();
   await page.reload();
   await open(page);

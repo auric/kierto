@@ -75,6 +75,17 @@ export type ThreadCtx = {
   posts: PostCtx;
 };
 
+// False until one frame after `key` changes. Put data-mounting on a container while it is false: the motion classes of
+// index.css then skip the content that mounts with that container.
+export function useSettled(key: unknown): boolean {
+  const [settled, setSettled] = useState<{ key: unknown } | null>(null);
+  useEffect(() => {
+    const h = requestAnimationFrame(() => setSettled({ key }));
+    return () => cancelAnimationFrame(h);
+  }, [key]);
+  return settled !== null && Object.is(settled.key, key);
+}
+
 export const fullTime = (ms: number) =>
   new Date(ms).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
@@ -151,6 +162,7 @@ export const Thread = memo(function Thread({
   const base = a ? a.path.slice(a.path.lastIndexOf("/") + 1) : null;
   const replies = t.msgs.length - 1;
   const last = t.last;
+  const settled = useSettled(open);
   return (
     <article
       id={`t-${t.id}`}
@@ -213,7 +225,7 @@ export const Thread = memo(function Thread({
           {open && ctx.web && <ForgeLink href={commentUrl(ctx.web, t.id)} label={`Open this thread in ${ctx.forge}`} hints={ctx.hints} />}
         </span>
       </div>
-      <div id={`tb-${t.id}`} hidden={!open} className="px-1.5 pt-0.5 pb-4">
+      <div id={`tb-${t.id}`} hidden={!open} data-mounting={!settled || undefined} className="px-1.5 pt-0.5 pb-4">
         {open && (
           <Body
             t={t}
@@ -423,7 +435,7 @@ export function CopyButton({ text, ctx }: { text: string; ctx: Pick<ThreadCtx, "
   return (
     <HintTrigger hints={ctx.hints} label={label}>
       <Button variant="ghost" size="icon-sm" aria-label={label} onClick={copy} className={msgBtn}>
-        {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+        {copied ? <Check key={copied} aria-hidden className="rl-pop" /> : <Copy aria-hidden />}
       </Button>
     </HintTrigger>
   );
