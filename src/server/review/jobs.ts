@@ -1,5 +1,5 @@
-// Review jobs (plan v3 WP10), re-reviews (r2 S-RR), ask runs (r2 S-ASK), and reply-draft jobs (replies.md WP17): one run from the stored brief to stored drafts.
-// One run at a time.
+// Review jobs (plan v3 WP10), re-reviews (r2 S-RR), ask runs (r2 S-ASK), reply-draft jobs (replies.md WP17), and fix runs (r3 S-FIX):
+// one run from the stored brief to stored drafts or edits. One run at a time.
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -7,11 +7,15 @@ import type {
   AskDto,
   BriefDto,
   BriefInput,
+  DiffRowDto,
+  FixCommitDto,
+  FixDto,
   PrTask,
   ReviewItemDto,
   RunConflict,
   RunDetail,
   RunDto,
+  RunKind,
   RunnerCheckDto,
   RunSummary,
   RunUsage,
@@ -22,6 +26,9 @@ import {
   askResult,
   type Carried,
   type Finding,
+  type FixThread,
+  fixJsonSchema,
+  fixResult,
   MAX_REPLY_THREADS,
   type Question,
   type ReplyPayload,
@@ -45,6 +52,7 @@ import {
   askAgent,
   createDocServers,
   DEFAULT_PROFILE,
+  fixAgent,
   GIT_SERVER,
   type ListTools,
   mainAgent,
@@ -58,9 +66,10 @@ import {
 } from "./catalog";
 import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude";
 import { type DiffFile, parseDiff } from "./diffmap";
+import { type FixFile, type ValidEdit, validateFix } from "./fix";
 import { git, gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
-import { buildAskPrompt, buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
+import { buildAskPrompt, buildFixPrompt, buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
 import {
   type CheckedEarlier,
   type EarlierItem,
@@ -72,7 +81,7 @@ import {
   validateEarlier,
   validateReplies,
 } from "./validate";
-import { type ContextFile, type GitRemote, noUrl, prepareWorkspace, pruneWorkspaces, type Workspace } from "./workspace";
+import { type ContextFile, cachePath, type GitRemote, noUrl, prepareWorkspace, pruneWorkspaces, type Workspace } from "./workspace";
 
 const RAW_MAX = 2 * 1024 * 1024;
 // Plan v3 WP10: at most 2 `changed` events with runs per second.
@@ -146,6 +155,10 @@ type RunRow = {
   range_base: string | null;
   question: string | null;
   answer: string | null;
+  // A fix run only: the thread notes.
+  fix_json: string | null;
+  // null for runs made before Release 3.
+  tasks_json: string | null;
 };
 
 export type ItemRow = {
@@ -168,24 +181,31 @@ export type ItemRow = {
 };
 type NewItem = Omit<ItemRow, "id" | "run" | "revision">;
 
-// checked: the earlier findings of a re-review.
+// checked: the earlier findings of a re-review. fix: the notes and edits of a fix run.
 type Ending = {
   status: Exclude<RunStatus, "running">;
   kind: RunErrorKind | null;
   text: string | null;
   raw: string;
   outcome?: RunOutcome;
-  result?: { summary: RunSummary; items: NewItem[]; checked?: CheckedEarlier[]; answer?: string };
+  result?: {
+    summary: RunSummary;
+    items: NewItem[];
+    checked?: CheckedEarlier[];
+    answer?: string;
+    fix?: { threads: FixThread[]; edits: ValidEdit[] };
+  };
 };
 
 // A re-review (plan r2 S-RR). since: the source head of the base run. sinceBase: its merge base.
 // items: the findings and questions of the base run with status new or accepted at the start.
 type Carry = { base: number; since: string; sinceBase: string | null; incomplete: boolean; items: ItemRow[] };
 
-// threads: the threads of a reply run. null for a review run. question: the question of an ask run, else null. profile: the profile as it was at the start.
+// threads: the threads of a reply or fix run, else null. question: the question of an ask run, else null. profile: the profile as it was at the start.
 type Job = {
   id: number;
   pr: number;
+  kind: RunKind;
   key: string;
   db: Database;
   profile: Profile;
@@ -211,16 +231,24 @@ const SQL = {
   saveBrief: `INSERT INTO pr_brief (pr, note, profile, updated_at) VALUES ($pr, $note, $profile, $now)
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
   insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, status, started_at,
-      since_head, question)
-    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since, $question)
+      since_head, question, tasks_json)
+    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since, $question, $tasks)
     RETURNING id`,
+  // Plan r3 Feature C: the fetched tasks at the start of a run, in the order of task.md.
+  fetched: "SELECT key, fetched_at AS fetchedAt FROM task_context WHERE pr = $pr ORDER BY key",
   run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
-      p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer
+      p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer, r.fix_json, r.tasks_json
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
   workspace: "UPDATE review_run SET merge_base = $base, range_base = $range, fetch_via = $via WHERE id = $id",
   end: `UPDATE review_run SET status = $status, error_kind = $kind, error_text = $text, session_id = $session, cli_version = $cli, model = $model,
-      usage_json = $usage, summary_json = $summary, answer = $answer, raw_output = $raw, finished_at = $now WHERE id = $id AND status = 'running'`,
+      usage_json = $usage, summary_json = $summary, answer = $answer, fix_json = $fix, raw_output = $raw, finished_at = $now
+    WHERE id = $id AND status = 'running'`,
+  fixEdit: `INSERT INTO fix_edit (run, ord, thread, path, old, new, start, rows_json) VALUES ($run, $ord, $thread, $path, $old, $new, $start, $rows)`,
+  fixEdits: "SELECT id, thread, path, rows_json FROM fix_edit WHERE run = $run ORDER BY ord",
+  fixCommits: `SELECT id, run, mode, edits_json, branch, before_head, commit_hash, short_hash, state, created_at FROM fix_commit
+    WHERE run = $run ORDER BY id`,
+  fixes: "WHERE r.pr = $pr AND r.kind = 'fix' ORDER BY r.id DESC LIMIT 10",
   // A run that was running at the last stop has no process now.
   recover: `UPDATE review_run SET status = 'failed', error_kind = 'restart', error_text = $text, raw_output = COALESCE(raw_output, $text),
       finished_at = $now WHERE status = 'running'`,
@@ -594,6 +622,113 @@ function judgeAsk(o: RunOutcome, servers: string[], gaps: string[]): Ending {
   });
 }
 
+const BLOB_TIMEOUT_MS = 60_000;
+
+// git() decodes stdout as text. That drops a BOM and hides invalid UTF-8, so the edit rules read the blob bytes here.
+async function blobBytes(cache: string, env: Record<string, string>, object: string): Promise<Uint8Array> {
+  const p = Bun.spawn(["git", `--git-dir=${cache}`, "cat-file", "blob", object], {
+    env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: BLOB_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+  });
+  const [bytes, err, code] = await Promise.all([new Response(p.stdout).bytes(), new Response(p.stderr).text(), p.exited]);
+  if (code !== 0) throw new Error(`git cat-file failed (exit ${code ?? p.signalCode}): ${err.trim().slice(-2000)}`);
+  return bytes;
+}
+
+// The edit paths at the source head, read from the cache clone, never from the sanitized worktree.
+// The full tree listing needs no pathspec, so no path text can act as pathspec magic.
+async function readFixFiles(ws: Workspace, paths: string[]): Promise<Map<string, FixFile>> {
+  const env = gitEnv("/dev/null");
+  const listing = await git([`--git-dir=${ws.cache}`, "ls-tree", "-r", "-t", "-l", "-z", "--full-tree", ws.sourceHead], { env });
+  // ls-tree -l: "<mode> <type> <object> <padded size>\t<path>". The size of a tree or a gitlink is "-".
+  const tree = new Map<string, { mode: string; type: string; object: string; size: number }>();
+  for (const entry of listing.split("\0")) {
+    const tab = entry.indexOf("\t");
+    if (tab < 0) continue;
+    const [mode = "", type = "", object = "", size = ""] = entry.slice(0, tab).split(/ +/);
+    tree.set(entry.slice(tab + 1), { mode, type, object, size: Number(size) });
+  }
+  const files = new Map<string, FixFile>();
+  for (const raw of paths) {
+    const path = repoPath(raw);
+    if (path === null || files.has(path)) continue;
+    const parts = path.split("/");
+    const underFile = parts.slice(0, -1).some((_, i) => {
+      const t = tree.get(parts.slice(0, i + 1).join("/"));
+      return t !== undefined && t.type !== "tree";
+    });
+    const t = tree.get(path);
+    if (underFile || t?.type === "tree") files.set(path, "blocked");
+    else if (t?.type === "commit") files.set(path, { mode: t.mode, bytes: new Uint8Array() });
+    else if (t) files.set(path, t.size > MAX_FILE_CHARS ? "size" : { mode: t.mode, bytes: await blobBytes(ws.cache, env, t.object) });
+  }
+  return files;
+}
+
+// Plan r3 S-FIX: a fix run makes no items. Its notes go to fix_json and its edits to fix_edit.
+async function judgeFix(o: RunOutcome, ws: Workspace, threads: ReplyThread[], servers: string[], gaps: string[]): Promise<Ending> {
+  const raw = rawOutput(o);
+  if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
+  const parsed = fixResult.safeParse(o.result?.structured_output);
+  if (!parsed.success) return schemaFailure(parsed.error.issues, "fix", raw, o);
+  const files = await readFixFiles(
+    ws,
+    parsed.data.edits.map((e) => e.path),
+  );
+  const v = validateFix(
+    parsed.data,
+    threads.map((t) => t.thread),
+    files,
+  );
+  const coverage = { ...v.coverage, unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)] };
+  return ended(raw, o, {
+    summary: { summary: v.summary, risks: [], coverage, dropped: [] },
+    items: [],
+    fix: { threads: v.threads, edits: v.edits },
+  });
+}
+
+type FixEditRow = { id: number; thread: number; path: string; rows_json: string };
+type FixCommitRow = {
+  id: number;
+  run: number;
+  mode: FixCommitDto["mode"];
+  edits_json: string;
+  branch: string | null;
+  before_head: string;
+  commit_hash: string | null;
+  short_hash: string | null;
+  state: FixCommitDto["state"];
+  created_at: number;
+};
+
+function toFixEditDto(r: FixEditRow) {
+  const rows = JSON.parse(r.rows_json) as DiffRowDto[];
+  const count = (kind: DiffRowDto["kind"]) => rows.filter((x) => x.kind === kind).length;
+  return { id: r.id, thread: r.thread, path: r.path, added: count("add"), removed: count("del"), rows };
+}
+
+// cache: the cache clone path with "/" separators. Plan r3: cache mode points refs/rl/<PR ID>/fix/<fix ID> at the commit.
+function toFixCommitDto(r: FixCommitRow, cache: () => string, prId: number): FixCommitDto {
+  return {
+    id: r.id,
+    run: r.run,
+    mode: r.mode,
+    edits: JSON.parse(r.edits_json) as number[],
+    branch: r.branch,
+    before: r.before_head,
+    commit: r.commit_hash,
+    short: r.short_hash,
+    state: r.state,
+    fetch: r.mode === "cache" ? { cache: cache(), ref: `refs/rl/${prId}/fix/${r.id}` } : null,
+    createdAt: r.created_at,
+  };
+}
+
 function toRunDto(r: RunRow): RunDto {
   const source = r.pr_source !== null && r.pr_source !== r.source_head;
   const target = r.pr_target !== null && r.pr_target !== r.target_head;
@@ -623,11 +758,14 @@ function toRunDto(r: RunRow): RunDto {
     hasRaw: r.has_raw === 1,
     since: r.since_head === null ? null : { head: r.since_head, incremental: r.range_base !== null && r.range_base !== r.merge_base },
     question: r.question,
+    ...(r.tasks_json !== null && { tasks: JSON.parse(r.tasks_json) as NonNullable<RunDto["tasks"]> }),
   };
 }
 
 export function toItemDto(r: ItemRow): ReviewItemDto {
-  const payload = JSON.parse(r.payload_json) as AnchoredFinding | Question | ReplyPayload;
+  const stored = JSON.parse(r.payload_json) as AnchoredFinding | Question | ReplyPayload;
+  // A reply draft stored before Release 3 has no judgement.
+  const payload = r.kind === "reply" ? { ...stored, judgement: (stored as ReplyPayload).judgement ?? null } : stored;
   const anchor =
     r.kind === "finding" && r.path !== null && r.side !== null && r.line !== null && r.line_end !== null && r.anchor_state !== null
       ? {
@@ -742,11 +880,24 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         usage: usage ? JSON.stringify(usage) : null,
         summary: e.result ? JSON.stringify(e.result.summary) : null,
         answer: e.result?.answer ?? null,
+        fix: e.result?.fix ? JSON.stringify(e.result.fix.threads) : null,
         raw: e.raw,
         now: now(),
       });
       // Restart recovery can end the row first. Then no item goes in.
       if (!done.changes) return false;
+      const edit = j.db.query(SQL.fixEdit);
+      for (const x of e.result?.fix?.edits ?? [])
+        edit.run({
+          run: j.id,
+          ord: x.ord,
+          thread: x.thread,
+          path: x.path,
+          old: x.old,
+          new: x.new,
+          start: x.start,
+          rows: JSON.stringify(x.rows),
+        });
       const items = e.result?.items ?? [];
       const supersede = j.db.query(SQL.supersede);
       for (const thread of new Set(items.map((it) => it.thread))) if (thread !== null) supersede.run({ thread, pr: j.pr });
@@ -820,24 +971,30 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       taskFile: files.length > 0,
       attachments: attachments.length > 0,
     };
-    const reply = j.threads;
+    const reply = j.kind === "reply" ? j.threads : null;
+    const fix = j.kind === "fix" ? j.threads : null;
     const question = j.question;
-    const prompt = reply
-      ? buildReplyPrompt({ ...input, threads: reply })
-      : question !== null
-        ? buildAskPrompt({ ...input, question })
-        : carry
-          ? buildRereviewPrompt({ ...input, since: carry.since, rangeBase: ws.rangeBase, earlier: earlier.map((r) => r.id) })
-          : buildPrompt(input);
+    const spec = reply
+      ? { prompt: buildReplyPrompt({ ...input, threads: reply }), schema: replyJsonSchema(), main: replyAgent(profile) }
+      : fix
+        ? { prompt: buildFixPrompt({ ...input, threads: fix }), schema: fixJsonSchema(), main: fixAgent(profile) }
+        : question !== null
+          ? { prompt: buildAskPrompt({ ...input, question }), schema: askJsonSchema(), main: askAgent(profile) }
+          : carry
+            ? {
+                prompt: buildRereviewPrompt({ ...input, since: carry.since, rangeBase: ws.rangeBase, earlier: earlier.map((r) => r.id) }),
+                schema: rereviewJsonSchema(),
+                main: mainAgent(profile),
+              }
+            : { prompt: buildPrompt(input), schema: reviewJsonSchema(), main: mainAgent(profile) };
     const o = await runner.run(
       {
         cwd: ws.work,
         appDir: ws.app,
-        prompt,
-        schema: reply ? replyJsonSchema() : question !== null ? askJsonSchema() : carry ? rereviewJsonSchema() : reviewJsonSchema(),
+        ...spec,
         maxTurns: profile.maxTurns,
-        main: reply ? replyAgent(profile) : question !== null ? askAgent(profile) : mainAgent(profile),
-        agents: reply || question !== null || profile.explain ? {} : { [REVIEWER]: reviewerAgent(profile) },
+        // Only a review gets subagents. With agents {}, the CLI gets no Agent tool.
+        agents: j.kind === "review" && !profile.explain ? { [REVIEWER]: reviewerAgent(profile) } : {},
         mcpServers,
       },
       (events) => {
@@ -849,6 +1006,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (j.cancelled) return cancelled(o);
     const servers = Object.keys(mcpServers);
     if (reply) return judgeReplies(o, reply, servers, docs.unavailable);
+    if (fix) return judgeFix(o, ws, fix, servers, docs.unavailable);
     if (question !== null) return judgeAsk(o, servers, docs.unavailable);
     const rereview = carry && { carry, items: current(j.db, earlier).map(earlierItem) };
     return judge(o, ws, profile, servers, docs.unavailable, rereview);
@@ -867,9 +1025,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     let e: Ending;
     try {
       e = await steps(j, pr, brief, held);
-      // A later re-review merges from this head. The ref keeps it after a force push.
-      if (e.result && !j.threads && j.question === null && !j.profile.explain)
-        await held.ws?.keep().catch((err) => log(`Could not keep the head of review run ${j.id}: ${noUrl((err as Error).message)}`));
+      // A later re-review merges from the reviewed head, and an apply builds the patch on the head of the fix run. The ref keeps it after a force push.
+      const ref = j.kind === "fix" ? `fix/${j.id}` : j.kind === "review" && !j.profile.explain ? "reviewed" : null;
+      if (e.result && ref)
+        await held.ws?.keep(ref).catch((err) => log(`Could not keep the head of review run ${j.id}: ${noUrl((err as Error).message)}`));
     } catch (err) {
       const message = (err as Error).message;
       log(`Review run ${j.id} failed: ${message}`);
@@ -905,18 +1064,18 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     brief: BriefInput,
     profile: Profile,
     key: string,
-    threads: ReplyThread[] | null,
-    carry: Carry | null = null,
-    question: string | null = null,
+    kind: RunKind,
+    o: { threads?: ReplyThread[]; carry?: Carry; question?: string } = {},
   ): StartResult {
     if (job) {
       const running = runRow(job.db, job.id);
       if (job.key === key && job.db === db && running) return { status: 200, run: toRunDto(running) };
       return { status: 409, conflict: { error: "Another review is running.", running: { run: job.id, pr: job.pr } } };
     }
+    const { threads = null, carry = null, question = null } = o;
     const { id: runId } = db.query(SQL.insert).get({
       pr: pr.id,
-      kind: question !== null ? "ask" : threads ? "reply" : "review",
+      kind,
       profile: profile.id,
       profile_name: profile.name,
       profile_revision: profileRevision(profile),
@@ -928,8 +1087,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       now: now(),
       since: carry?.since ?? null,
       question,
+      tasks: JSON.stringify(db.query(SQL.fetched).all({ pr: pr.id })),
     }) as { id: number };
-    const j: Job = { id: runId, pr: pr.id, key, db, profile, threads, carry, question, cancelled: false, done: Promise.resolve() };
+    const j: Job = { id: runId, pr: pr.id, kind, key, db, profile, threads, carry, question, cancelled: false, done: Promise.resolve() };
     job = j;
     j.done = execute(j, pr, brief).finally(() => {
       if (job === j) job = null;
@@ -938,11 +1098,16 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     return { status: 202, run: toRunDto(runRow(db, runId) as RunRow) };
   }
 
-  // The threads of a reply run, by thread ID. Absent list: every thread where it is my turn (D12, D13).
-  function replyThreads(db: Database, pr: PrRow, list?: number[]): ReplyThread[] | { status: 400 | 409; error: string } {
+  // The messages of each thread of a PR, by root comment ID.
+  function turnThreads(db: Database, pr: PrRow) {
     type Row = Omit<TurnMsg, "deleted" | "threadResolved"> & { deleted: number; threadResolved: number };
     const rows = db.query(SQL.turns).all({ pr: pr.id }) as Row[];
-    const threads = byThread(rows.map((m) => ({ ...m, deleted: m.deleted === 1, threadResolved: m.threadResolved === 1 })));
+    return byThread(rows.map((m) => ({ ...m, deleted: m.deleted === 1, threadResolved: m.threadResolved === 1 })));
+  }
+
+  // The threads of a reply run, by thread ID. Absent list: every thread where it is my turn (D12, D13).
+  function replyThreads(db: Database, pr: PrRow, list?: number[]): ReplyThread[] | { status: 400 | 409; error: string } {
+    const threads = turnThreads(db, pr);
     const me = settings.config()?.userSlug ?? null;
     const prAuthor = pr.my_role === "AUTHOR";
     const ids = list ? [...new Set(list)] : [...threads].filter(([, t]) => threadTurn(t, me, prAuthor) === "your").map(([id]) => id);
@@ -955,6 +1120,28 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (!out.length) return { status: 409, error: "No thread waits for your reply." };
     if (out.length > MAX_REPLY_THREADS)
       return { status: 409, error: `${out.length} threads wait for your reply. Draft at most ${MAX_REPLY_THREADS} at a time, per thread.` };
+    return out.sort((a, b) => a.thread - b.thread);
+  }
+
+  // The threads of a fix run (plan r3 S-FIX). A given list passes the reply-run checks.
+  // Absent list: each thread whose newest reply item is not posted and judges the comment valid or partly valid, and that has a live message.
+  function fixThreads(db: Database, pr: PrRow, list?: number[]): ReplyThread[] | { status: 400 | 409; error: string } {
+    if (list) return replyThreads(db, pr, list);
+    const newest = new Map<number, ItemRow>();
+    for (const r of db.query(SQL.replyItems).all({ pr: pr.id }) as ItemRow[]) if (r.thread !== null) newest.set(r.thread, r);
+    const threads = turnThreads(db, pr);
+    const out: ReplyThread[] = [];
+    for (const [thread, r] of newest) {
+      const judgement = r.status === "posted" ? null : (JSON.parse(r.payload_json) as ReplyPayload).judgement;
+      const last = newestLive(threads.get(thread) ?? []);
+      if ((judgement === "valid" || judgement === "partly") && last) out.push({ thread, replyTo: last.id });
+    }
+    if (!out.length) return { status: 409, error: "No reply draft finds a comment valid or partly valid. Draft replies first." };
+    if (out.length > MAX_REPLY_THREADS)
+      return {
+        status: 409,
+        error: `${out.length} threads have a valid reply draft. Fix at most ${MAX_REPLY_THREADS} at a time, per thread.`,
+      };
     return out.sort((a, b) => a.thread - b.thread);
   }
 
@@ -1008,7 +1195,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const brief = briefOf(db, id);
       const profile = profileOf(settings.profiles(), brief.profile);
       const key = [id, source_head, target_head, brief.profile, profileRevision(profile), sha256(brief.note)].join(":");
-      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, null);
+      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "review");
     },
 
     // Plan r2 S-RR: reviews the commits after the base run and checks its open findings. It shares the run slot.
@@ -1033,7 +1220,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         incomplete: base.status === "incomplete",
         items: db.query(SQL.carry).all({ run: base.id }) as ItemRow[],
       };
-      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, null, carry);
+      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "review", { carry });
     },
 
     // Plan r2 S-ASK: answers one question with the brief profile and an empty note. It shares the run slot.
@@ -1045,7 +1232,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const brief = briefOf(db, id);
       const profile = profileOf(settings.profiles(), brief.profile);
       const key = [id, "ask", source_head, target_head, brief.profile, profileRevision(profile), sha256(question)].join(":");
-      return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, null, null, question);
+      return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "ask", { question });
     },
 
     // The newest ask runs of a PR with their answers. null for an unknown PR.
@@ -1066,7 +1253,37 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const profile = profileOf(settings.profiles(), brief.profile);
       const at = threads.map((t) => `${t.thread}@${t.replyTo}`);
       const key = [id, "reply", source_head, target_head, brief.profile, profileRevision(profile), sha256(brief.note), ...at].join(":");
-      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, threads);
+      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "reply", { threads });
+    },
+
+    // Plan r3 S-FIX: proposes edits for the valid and partly valid review points on the user's own PR. It shares the run slot.
+    fix(db: Database, id: number, list?: number[]): StartResult {
+      const pr = prRow(db, id);
+      if (!pr) return { status: 404, error: "Pull request not found." };
+      const { source_head, target_head } = pr;
+      if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
+      if (pr.my_role !== "AUTHOR") return { status: 409, error: "Fix runs work only on your own pull requests." };
+      const brief = briefOf(db, id);
+      const profile = profileOf(settings.profiles(), brief.profile);
+      if (profile.explain) return { status: 409, error: "The Explain profile proposes no fixes. Pick a review profile first." };
+      const threads = fixThreads(db, pr, list);
+      if (!Array.isArray(threads)) return threads;
+      const at = threads.map((t) => `${t.thread}@${t.replyTo}`);
+      const key = [id, "fix", source_head, target_head, brief.profile, profileRevision(profile), ...at].join(":");
+      return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "fix", { threads });
+    },
+
+    // The newest fix runs of a PR with their notes, edits, and commits. null for an unknown PR.
+    fixes(db: Database, id: number): FixDto[] | null {
+      const pr = prRow(db, id);
+      if (!pr) return null;
+      const cache = () => cachePath(dataDir, { project: pr.project, repo: pr.repo, id: pr.pr_id }).replaceAll("\\", "/");
+      return (db.query(`${SQL.run} ${SQL.fixes}`).all({ pr: id }) as RunRow[]).map((r) => ({
+        run: toRunDto(r),
+        threads: r.fix_json ? (JSON.parse(r.fix_json) as FixThread[]) : [],
+        edits: (db.query(SQL.fixEdits).all({ run: r.id }) as FixEditRow[]).map(toFixEditDto),
+        commits: (db.query(SQL.fixCommits).all({ run: r.id }) as FixCommitRow[]).map((c) => toFixCommitDto(c, cache, pr.pr_id)),
+      }));
     },
 
     // The newest reply item of each thread, unless it is posted. null for an unknown PR.

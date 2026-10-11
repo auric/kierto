@@ -1,8 +1,8 @@
-// Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR, S-ASK): brief, start, re-review, ask, reply drafts, cancel, run, raw output, item triage.
-// Every mutation broadcasts `changed`.
+// Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR, S-ASK, r3 S-FIX): brief, start, re-review, ask, reply drafts, fix runs, cancel, run,
+// raw output, item triage. Every mutation broadcasts `changed`.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import { type ApiError, askInput, briefInput, itemActionInput, replyRunInput } from "../../shared/dto";
+import { type ApiError, askInput, briefInput, fixRunInput, itemActionInput, replyRunInput } from "../../shared/dto";
 import type { Live } from "../live";
 import { triage } from "./items";
 import type { ReviewJobs } from "./jobs";
@@ -105,6 +105,29 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       const db = review.open();
       const items = db && review.replyDrafts(db, c.req.valid("param").id);
       return items ? c.json(items, 200) : c.json(notFound("Pull request"), 404);
+    })
+    .post(
+      "/prs/:id/fix-run",
+      prParam,
+      validator("json", (v, c) => {
+        const r = fixRunInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid thread list." }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const r = review.fix(db, c.req.valid("param").id, c.req.valid("json").threads);
+        if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
+        if ("conflict" in r) return c.json(r.conflict, 409);
+        if (r.status === 400) return c.json({ error: r.error }, 400);
+        return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
+      },
+    )
+    .get("/prs/:id/fixes", prParam, (c) => {
+      const db = review.open();
+      if (!db) return c.json([], 200);
+      const fixes = review.fixes(db, c.req.valid("param").id);
+      return fixes ? c.json(fixes, 200) : c.json(notFound("Pull request"), 404);
     })
     .get("/prs/:id/runs", prParam, (c) => {
       const db = review.open();

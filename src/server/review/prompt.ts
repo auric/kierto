@@ -1,4 +1,4 @@
-// The stdin prompt of a run (plan v3 WP10, replies.md WP17, r2 S-ASK). Only the note or the ask question is an instruction. It never quotes PR, comment, or tracker text.
+// The stdin prompt of a run (plan v3 WP10, replies.md WP17, r2 S-ASK, r3 S-FIX). Only the note or the ask question is an instruction. It never quotes PR, comment, or tracker text.
 import type { PrTask } from "../../shared/dto";
 import { DOCS_RULE, type Profile } from "./catalog";
 
@@ -96,6 +96,9 @@ export function buildAskPrompt(i: PromptInput & { question: string }): string {
   ].join("\n");
 }
 
+const PR_HEADINGS =
+  'In ./context/pr.md, the heading "### Comment N" holds message N, the first message of thread N. The heading "### Reply M to P" holds message M.';
+
 // Plan replies.md R11: the thread list holds numbers only. The comment text stays in ./context/pr.md.
 export function buildReplyPrompt(i: PromptInput & { threads: ReplyThread[] }): string {
   return [
@@ -105,7 +108,22 @@ export function buildReplyPrompt(i: PromptInput & { threads: ReplyThread[] }): s
     "",
     `Threads: ${i.threads.map((t) => `${t.thread} (answer message ${t.replyTo})`).join(", ")}`,
     "",
-    'In ./context/pr.md, the heading "### Comment N" holds message N, the first message of thread N. The heading "### Reply M to P" holds message M.',
+    PR_HEADINGS,
+    "",
+    ...common(i),
+  ].join("\n");
+}
+
+// Plan r3 S-FIX: as the reply prompt, the thread list holds numbers only. The caller passes an empty note.
+export function buildFixPrompt(i: PromptInput & { threads: ReplyThread[] }): string {
+  return [
+    "# Task",
+    "",
+    `Propose code edits that fix the review points of the threads below. The change is ${i.mergeBase}..${i.head} in ./repo. Each entry names a thread and its newest message. Give one entry in threads per thread, and the edits.`,
+    "",
+    `Fix threads: ${i.threads.map((t) => `${t.thread} (comment ${t.replyTo})`).join(", ")}`,
+    "",
+    PR_HEADINGS,
     "",
     ...common(i),
   ].join("\n");
