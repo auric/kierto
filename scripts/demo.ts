@@ -1,6 +1,7 @@
 // Demo: the app on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. No real server, data folder, or credential store.
 // Reviews run the fake Claude Code CLI against a temp git remote. No real CLI and no network.
 // The data covers every inbox group and every thread turn. Task IDs use the fictional key ABC.
+import "../tests/support/no-real-claude";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,5 +1,6 @@
 // E2E server: the fake Bitbucket on FAKE_URL and the app on APP_PORT in one process (control.ts). Test code only.
 // The app gets a temp data folder and memory secrets. It never sees the real data folder or the credential store.
+import "../support/no-real-claude";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,6 +26,7 @@ process.env.REVIEW_LOOP_SECRETS = "memory";
 const claudeDir = mkdtempSync(join(tmpdir(), "review-loop-e2e-claude-"));
 const runner = fakeRunner(claudeDir);
 const runnerCommand = runner.command;
+console.log(`Fake claude CLI: ${runnerCommand.join(" ")}`);
 
 // ---------- Review data (plan v3 WP11) ----------
 // Every e2e PR has its source head at refs/pull-requests/<id>/from and its target head at main.

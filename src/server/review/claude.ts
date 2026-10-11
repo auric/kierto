@@ -197,7 +197,7 @@ export function createClaudeRunner(opts: RunnerOptions = {}) {
   // Finds the CLI, checks its version, and runs `claude auth status`. It starts no model call.
   async function check(): Promise<RunnerCheck> {
     const unavailable = (message: string): RunnerCheck => ({ ok: false, kind: "unavailable", message });
-    const found = Bun.which("claude");
+    const found = opts.command ? undefined : Bun.which("claude");
     const command = opts.command ?? (found ? [found] : undefined);
     if (!command?.[0]) return unavailable("Claude Code is not on PATH.");
     // Gate 0: the native claude.exe. A .cmd shim runs through cmd.exe, which parses the arguments again.
