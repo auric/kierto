@@ -37,6 +37,7 @@ Commands:
 - `bun run dev`: start Hono with `--watch` on 127.0.0.1:7317 and Vite with HMR on 127.0.0.1:5173. Open the Vite URL.
 - `bun run build`: build the UI into `dist/web`.
 - `bun run start`: serve the API and the built UI on 127.0.0.1:7317. `REVIEW_LOOP_PORT` overrides the port. `REVIEW_LOOP_DATA_DIR` sets the data folder. `REVIEW_LOOP_SECRETS=memory` keeps the token out of the OS store.
+- `bun run compile`: build the UI, then one self-contained executable for this host into `dist/bin/review-loop-<os>-<arch>`. `bun run compile:all` adds windows-x64, linux-x64, linux-arm64, darwin-x64, and darwin-arm64. `tests/build/compiled.test.ts` checks the host binary and skips when it is absent.
 - `bun run typecheck`: run strict `tsc --noEmit`.
 - `bun run lint`: run Biome lint and format checks. `bun run format` applies the fixes.
 - `bun run demo`: serve the built UI on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. It uses a temp data folder and memory secrets.

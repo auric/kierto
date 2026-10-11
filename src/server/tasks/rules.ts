@@ -2,6 +2,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import type { FoundTask, PrTask, TaskRule, TaskSource } from "../../shared/dto";
+import { COMPILED } from "../build";
 import type { WorkerReply, WorkerRequest } from "./worker";
 
 export const DEFAULT_TASK_RULES: TaskRule[] = (["branch", "title", "description"] as const).map((source) => ({
@@ -16,6 +17,8 @@ export const BUDGET_MS = 100;
 export const RETRY_BUDGET_MS = 500;
 const CAPS: Record<TaskSource, number> = { branch: 512, title: 512, description: 20_000 };
 const START_MS = 5_000;
+// In a compiled binary, import.meta.url names the bundle entry. scripts/compile.ts embeds worker.ts as tasks/worker.js beside it.
+const WORKER_URL = new URL(COMPILED ? "./tasks/worker.ts" : "./worker.ts", import.meta.url).href;
 
 export type TaskInput = Record<TaskSource, string>;
 
@@ -38,7 +41,7 @@ export function createTaskRunner(opts: { budgetMs?: number; retryBudgetMs?: numb
   let queue: Promise<unknown> = Promise.resolve();
 
   const start = (): Worker => {
-    const w = new Worker(new URL("./worker.ts", import.meta.url).href);
+    const w = new Worker(WORKER_URL);
     // An idle worker must not keep the process alive. The DOM Worker type has no unref().
     (w as unknown as { unref(): void }).unref();
     ready = new Promise<void>((resolve, reject) => {

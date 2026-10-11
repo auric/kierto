@@ -1,22 +1,28 @@
 import { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import m001_m1 from "./migrations/001_m1.sql" with { type: "text" };
+import m002_reviewers from "./migrations/002_reviewers.sql" with { type: "text" };
+import m003_author_login from "./migrations/003_author_login.sql" with { type: "text" };
+import m004_v3 from "./migrations/004_v3.sql" with { type: "text" };
+import m005_tasks from "./migrations/005_tasks.sql" with { type: "text" };
+import m006_forge from "./migrations/006_forge.sql" with { type: "text" };
+import m007_review from "./migrations/007_review.sql" with { type: "text" };
+import m008_post from "./migrations/008_post.sql" with { type: "text" };
+import m009_reply from "./migrations/009_reply.sql" with { type: "text" };
+import m010_profiles from "./migrations/010_profiles.sql" with { type: "text" };
 
-// Index i holds the SQL that raises user_version from i to i + 1.
-// ponytail: read from disk; `bun build --compile` (M4) must embed these files.
-// The list order, not the file number, sets the version. 006_forge.sql (WP4) came last, so it runs after 009_reply.sql.
+// Index i holds the SQL that raises user_version from i to i + 1. The list order, not the file number, sets the version.
 const MIGRATIONS = [
-  "001_m1.sql",
-  "002_reviewers.sql",
-  "003_author_login.sql",
-  "004_v3.sql",
-  "005_tasks.sql",
-  "007_review.sql",
-  "008_post.sql",
-  "009_reply.sql",
-  "006_forge.sql",
-  "010_profiles.sql",
-].map((f) => readFileSync(join(import.meta.dir, "migrations", f), "utf8"));
+  m001_m1,
+  m002_reviewers,
+  m003_author_login,
+  m004_v3,
+  m005_tasks,
+  m007_review,
+  m008_post,
+  m009_reply,
+  m006_forge, // 006_forge.sql (WP4) came last, so it runs after 009_reply.sql.
+  m010_profiles,
+];
 
 export function openDb(path: string): Database {
   const db = new Database(path, { create: true, strict: true });
