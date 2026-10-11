@@ -5,7 +5,7 @@
   "key": "ABC-42",
   "fields": {
     "summary": "Flush the cache before the write lock",
-    "description": "The sync worker writes each cache entry on its own.\r\n\r\nh3. Acceptance criteria\r\n* Batch the writes.\r\n* Flush the cache before the write lock.",
+    "description": "The sync worker writes each cache entry on its own.\r\n\r\nh3. Acceptance criteria\r\n* Batch the writes.\r\n* Flush the cache before the write lock.\r\n\r\n||Step||Owner||\r\n|Flush \\| now|[~asmith]|\r\n|Lock|sync worker|\r\n\r\n{code:java}\r\nString fence = \"``` is not a fence\";\r\n{code}\r\n\r\nSee the [design note|https://docs.example.test/cache] and the [old note|javascript:alert(1)]. !screenshot.png|thumbnail! :)",
     "status": {
       "self": "https://jira.example.test/rest/api/2/status/10000",
       "description": "The issue is currently being worked on.",
@@ -19,6 +19,15 @@
         "colorName": "yellow",
         "name": "In Progress"
       }
-    }
+    },
+    "attachment": [
+      {"self": "https://jira.example.test/rest/api/2/attachment/10100", "id": "10100", "filename": "screenshot.png", "author": {"self": "https://jira.example.test/rest/api/2/user?username=asmith", "name": "asmith", "displayName": "Alex Smith", "active": true}, "created": "2026-01-05T09:10:00.000+0000", "size": 2048, "mimeType": "image/png", "content": "https://jira.example.test/secure/attachment/10100/screenshot.png", "thumbnail": "https://jira.example.test/secure/thumbnail/10100/_thumb_10100.png"},
+      {"self": "https://jira.example.test/rest/api/2/attachment/10101", "id": "10101", "filename": "sync-worker.log", "author": {"self": "https://jira.example.test/rest/api/2/user?username=mlopez", "name": "mlopez", "displayName": "Maria Lopez", "active": true}, "created": "2026-01-06T14:00:00.000+0000", "size": 512, "mimeType": "text/plain", "content": "https://jira.example.test/secure/attachment/10101/sync-worker.log"}
+    ]
+  },
+  "renderedFields": {
+    "summary": null,
+    "status": null,
+    "description": "<p>The sync worker writes each cache entry on its own.</p>\n\n<h3><a name=\"Acceptancecriteria\"></a>Acceptance criteria</h3>\n<ul>\n\t<li>Batch the writes.</li>\n\t<li>Flush the cache before the write lock.</li>\n</ul>\n\n\n<div class='table-wrap'>\n<table class='confluenceTable'><tbody>\n<tr>\n<th class='confluenceTh'>Step</th>\n<th class='confluenceTh'>Owner</th>\n</tr>\n<tr>\n<td class='confluenceTd'>Flush | now</td>\n<td class='confluenceTd'><a href=\"/secure/ViewProfile.jspa?name=asmith\" class=\"user-hover\" rel=\"asmith\" id=\"asmith\">Alex Smith</a></td>\n</tr>\n<tr>\n<td class='confluenceTd'>Lock</td>\n<td class='confluenceTd'>sync worker</td>\n</tr>\n</tbody></table>\n</div>\n\n\n<div class=\"code panel\" style=\"border-width: 1px;\"><div class=\"codeContent panelContent\">\n<pre class=\"code-java\">String fence = &quot;``` is not a fence&quot;;</pre>\n</div></div>\n\n<p>See the <a href=\"https://docs.example.test/cache\" class=\"external-link\" rel=\"nofollow\">design note</a> and the <a href=\"javascript:alert(1)\">old note</a>. <span class=\"image-wrap\" style=\"\"><a id=\"10100_thumb\" href=\"/secure/attachment/10100/screenshot.png\" title=\"screenshot.png\" file-preview-type=\"image\" file-preview-id=\"10100\" file-preview-title=\"screenshot.png\"><img src=\"/secure/thumbnail/10100/_thumb_10100.png\" style=\"border: 0px solid black\" /></a></span> <img class=\"emoticon\" src=\"/images/icons/emoticons/smile.png\" height=\"16\" width=\"16\" align=\"absmiddle\" alt=\"\" border=\"0\"/></p>"
   }
 }

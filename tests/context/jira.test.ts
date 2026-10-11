@@ -1,6 +1,6 @@
-// Plan r2 S-JIRA: the Jira REST client against the fake Jira. No test calls a real server.
+// Plan r2 S-JIRA and r3 S-JMD: the Jira REST client against the fake Jira. No test calls a real server.
 import { afterEach, describe, expect, test } from "bun:test";
-import { CAPS, createJiraSource } from "../../src/server/context/jira";
+import { CAPS, createJiraSource, MAX_ATTACHMENTS, MAX_BODY_BYTES, MAX_HTML_BYTES } from "../../src/server/context/jira";
 import { ContextError } from "../../src/server/context/source";
 import { key, startFakeBitbucket } from "../support/fake-bitbucket";
 import { type FakeJira, ISSUE_KEY, JIRA_TOKEN, startFakeJira } from "../support/fake-jira";
@@ -27,6 +27,11 @@ async function failure(p: Promise<unknown>): Promise<ContextError> {
 }
 
 const ISSUE = `/rest/api/2/issue/${ISSUE_KEY}`;
+const ISSUE_QUERY = "?fields=summary,description,status,attachment&expand=renderedFields";
+const COMMENTS = (start: number) => `${ISSUE}/comment?startAt=${start}&maxResults=100&expand=renderedBody`;
+
+// One comment page with these comments.
+const page = (comments: unknown[]) => ({ status: 200, body: { startAt: 0, maxResults: 100, total: comments.length, comments } });
 
 describe("Jira client", () => {
   test("check sends the PAT as Bearer and returns the user name", async () => {
@@ -44,27 +49,123 @@ describe("Jira client", () => {
     expect(fake.requests.length).toBe(1);
   });
 
-  test("fetchIssue reads the issue and two comment pages", async () => {
+  test("fetchIssue reads the issue and two comment pages with rendered HTML, and converts it to Markdown", async () => {
     const { fake, source } = setup();
     const issue = await source.fetchIssue(ISSUE_KEY);
     expect(issue).toEqual({
       key: ISSUE_KEY,
       summary: "Flush the cache before the write lock",
       status: "In Progress",
-      description: expect.stringContaining("Acceptance criteria"),
+      description: expect.stringContaining("### Acceptance criteria\n\n-   Batch the writes."),
       comments: [
-        { author: "Alex Smith", created: "2026-01-05T09:12:31.000+0000", body: expect.stringContaining("before the lock") },
+        {
+          author: "Alex Smith",
+          created: "2026-01-05T09:12:31.000+0000",
+          body: "The flush must run before the lock. Otherwise readers see a stale entry.",
+        },
         { author: "Maria Lopez", created: "2026-01-06T14:03:10.000+0000", body: "Keep the batch size below 500 entries." },
-        { author: "Kenji Ito", created: "2026-01-07T08:45:00.000+0000", body: "QA: test with an empty cache too." },
+        {
+          author: "Kenji Ito",
+          created: "2026-01-07T08:45:00.000+0000",
+          body: "QA: test with an empty cache too.\n\nClick \\[here\\](javascript:alert(2)) now.",
+        },
       ],
       commentsTotal: 3,
       truncated: false,
+      format: "markdown",
+      attachments: [
+        { id: "10100", filename: "screenshot.png", mimeType: "image/png", size: 2048, created: "2026-01-05T09:10:00.000+0000" },
+        { id: "10101", filename: "sync-worker.log", mimeType: "text/plain", size: 512, created: "2026-01-06T14:00:00.000+0000" },
+      ],
     });
-    expect(fake.requests).toEqual([
-      `GET ${ISSUE}?fields=summary,description,status`,
-      `GET ${ISSUE}/comment?startAt=0&maxResults=100`,
-      `GET ${ISSUE}/comment?startAt=2&maxResults=100`,
+    // Links to Jira resolve against the configured base. The attachment image becomes a token, never a remote image.
+    expect(issue.description).toContain("| Flush \\| now | Alex Smith |");
+    expect(issue.description).toContain(`[![image 10100](attachment:10100)](${fake.url}/secure/attachment/10100/screenshot.png)`);
+    expect(issue.description).not.toContain("javascript:");
+    expect(fake.requests).toEqual([`GET ${ISSUE}${ISSUE_QUERY}`, `GET ${COMMENTS(0)}`, `GET ${COMMENTS(2)}`]);
+  });
+
+  test("a missing rendered field, HTML over 1 MB, or HTML that overflows the converter gives the wiki text in a fence", async () => {
+    const { fake, source } = setup();
+    const wiki = "h3. Title\r\n{code}a ``` b{code}";
+    const fence = "````\nh3. Title\n{code}a ``` b{code}\n````";
+    const issue = (rendered: string | null | undefined) => ({
+      status: 200,
+      body: {
+        fields: { summary: "S", description: wiki },
+        ...(rendered === undefined ? {} : { renderedFields: { description: rendered } }),
+      },
+    });
+    fake.routes[key("GET", `${ISSUE}/comment`)] = page([
+      { body: "*b*" },
+      { body: "c", renderedBody: null },
+      { body: "d", renderedBody: `<p>${"x".repeat(MAX_HTML_BYTES - 6)}</p>` },
+      { body: "e", renderedBody: "<p><b>e</b></p>" },
+      { body: null, renderedBody: null },
     ]);
+    for (const rendered of [undefined, null, `<p>${"x".repeat(MAX_HTML_BYTES - 6)}</p>`, "<b>".repeat(300_000)]) {
+      fake.routes[key("GET", ISSUE)] = issue(rendered);
+      const got = await source.fetchIssue(ISSUE_KEY);
+      expect(got.description).toBe(fence);
+      expect(got.comments.map((c) => c.body)).toEqual(["```\n*b*\n```", "```\nc\n```", "```\nd\n```", "**e**", ""]);
+      expect(got.format).toBe("markdown");
+    }
+    // Exactly 1 MB still converts.
+    fake.routes[key("GET", ISSUE)] = issue(`<p>${"y".repeat(MAX_HTML_BYTES - 7)}</p>`);
+    expect((await source.fetchIssue(ISSUE_KEY)).description).toBe("y".repeat(CAPS.description));
+  });
+
+  test("the caps apply to the Markdown, not to the HTML", async () => {
+    const { fake, source } = setup();
+    const html = `${"<span></span>".repeat(3000)}<p>short</p>`;
+    expect(html.length).toBeGreaterThan(CAPS.description);
+    fake.routes[key("GET", ISSUE)] = {
+      status: 200,
+      body: { fields: { summary: "S", description: "w" }, renderedFields: { description: html } },
+    };
+    fake.routes[key("GET", `${ISSUE}/comment`)] = page([{ body: "w", renderedBody: `<p>${"c".repeat(CAPS.comment + 5)}</p>${html}` }]);
+    const issue = await source.fetchIssue(ISSUE_KEY);
+    expect(issue.description).toBe("short");
+    expect(issue.comments[0]?.body).toBe("c".repeat(CAPS.comment));
+    expect(issue.truncated).toBe(true);
+  });
+
+  test("attachments: lenient entries, numeric IDs as digits, bad entries left out, at most 200", async () => {
+    const { fake, source } = setup();
+    const ok = { id: "1", filename: "a.png", mimeType: "image/png", size: 1, created: "C" };
+    const attachment = [
+      ok,
+      { id: 2, filename: "b.log", size: 0 },
+      { id: "x1", filename: "bad-id", size: 1 },
+      { id: "3", filename: "neg", size: -1 },
+      { id: "4", size: 1 },
+      { id: 1.5, filename: "frac", size: 1 },
+      "junk",
+    ];
+    fake.routes[key("GET", ISSUE)] = { status: 200, body: { fields: { summary: "S", attachment } } };
+    expect((await source.fetchIssue(ISSUE_KEY)).attachments).toEqual([
+      ok,
+      { id: "2", filename: "b.log", mimeType: null, size: 0, created: null },
+    ]);
+    const many = Array.from({ length: MAX_ATTACHMENTS + 5 }, (_, i) => ({ ...ok, id: String(i + 1) }));
+    fake.routes[key("GET", ISSUE)] = { status: 200, body: { fields: { summary: "S", attachment: many } } };
+    const listed = (await source.fetchIssue(ISSUE_KEY)).attachments ?? [];
+    expect(listed.length).toBe(MAX_ATTACHMENTS);
+    expect(listed.at(-1)?.id).toBe(String(MAX_ATTACHMENTS));
+    fake.routes[key("GET", ISSUE)] = { status: 200, body: { fields: { summary: "S", attachment: { id: "1" } } } };
+    expect((await failure(source.fetchIssue(ISSUE_KEY))).kind).toBe("shape");
+  });
+
+  test("an answer body over 10 MB is an error of kind shape", async () => {
+    const { fake, source } = setup();
+    const fields = (n: number) => ({ status: 200, body: { fields: { summary: "x".repeat(n) } } });
+    // JSON adds 25 bytes around the summary.
+    fake.routes[key("GET", ISSUE)] = fields(MAX_BODY_BYTES - 25);
+    expect((await source.fetchIssue(ISSUE_KEY)).summary.length).toBe(MAX_BODY_BYTES - 25);
+    fake.routes[key("GET", ISSUE)] = fields(MAX_BODY_BYTES - 24);
+    const e = await failure(source.fetchIssue(ISSUE_KEY));
+    expect(e.kind).toBe("shape");
+    expect(e.status).toBe(200);
   });
 
   test("a 302 is an error of kind redirect, and the client does not follow it", async () => {
@@ -101,7 +202,12 @@ describe("Jira client", () => {
       body: { startAt: 0, maxResults: 100, total: 1, comments: [{ body: "B", created: "C" }] },
     };
     const issue = await source.fetchIssue(ISSUE_KEY);
-    expect(issue).toMatchObject({ description: null, status: null, comments: [{ author: "(unknown)", body: "B" }], truncated: false });
+    expect(issue).toMatchObject({
+      description: null,
+      status: null,
+      comments: [{ author: "(unknown)", body: "```\nB\n```" }],
+      truncated: false,
+    });
   });
 
   test("caps cut the description and long comments, and set truncated", async () => {

@@ -2,12 +2,15 @@
 import type { Database } from "bun:sqlite";
 import type { IssueContext } from "../../shared/dto";
 import type { AttachmentFile, ContextFile } from "../review/workspace";
+import { ATTACHMENT_IMAGE } from "./markdown";
 
 export const TASK_FILE = "task.md";
 
 const SOURCES: Record<string, string> = { jira: "Jira" };
 
 const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ");
+// Rows without a format hold plain text.
+const body = (i: IssueContext, s: string) => (i.format === "markdown" ? s.replace(ATTACHMENT_IMAGE, "(image: $1)") : s);
 
 // No row: no file.
 export function taskFiles(db: Database, pr: number): ContextFile[] {
@@ -27,12 +30,12 @@ export function taskFiles(db: Database, pr: number): ContextFile[] {
       "",
       "### Description",
       "",
-      i.description?.trim() || "(none)",
+      body(i, i.description?.trim() || "(none)"),
       "",
       `### Comments (${i.comments.length} of ${i.commentsTotal})`,
       "",
     );
-    for (const c of i.comments) out.push(`#### ${oneLine(c.author)}, ${oneLine(c.created)}`, "", c.body, "");
+    for (const c of i.comments) out.push(`#### ${oneLine(c.author)}, ${oneLine(c.created)}`, "", body(i, c.body), "");
     if (!i.comments.length) out.push("(none)", "");
   }
   return [{ name: TASK_FILE, text: out.join("\n") }];

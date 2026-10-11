@@ -10,8 +10,9 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { binPath, HOST } from "../../scripts/compile";
 import { dbPath } from "../../src/server/config";
 import { openDb } from "../../src/server/storage/db";
-import type { TaskPreviewDto } from "../../src/shared/dto";
+import type { TaskContextDto, TaskPreviewDto } from "../../src/shared/dto";
 import { FAKE_TOKEN, key, startFakeBitbucket } from "../support/fake-bitbucket";
+import { ISSUE_KEY, JIRA_TOKEN, startFakeJira } from "../support/fake-jira";
 import { DASHBOARD_PATH, onePage } from "../support/scenarios";
 
 const BIN = binPath(HOST);
@@ -36,6 +37,7 @@ function newerInput(): string | null {
 describe.skipIf(!existsSync(BIN))("compiled binary", () => {
   let root = "";
   let fake: ReturnType<typeof startFakeBitbucket> | undefined;
+  let jira: ReturnType<typeof startFakeJira> | undefined;
   let proc: Bun.Subprocess<"ignore", "pipe", "inherit"> | undefined;
   let origin = "";
   let session = "";
@@ -45,6 +47,7 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
     if (stale) throw new Error(`The binary is older than ${stale}: rebuild with bun run compile.`);
     root = mkdtempSync(join(tmpdir(), "rl-bin-"));
     fake = startFakeBitbucket({ routes: { [key("GET", DASHBOARD_PATH)]: { status: 200, body: onePage([]) } } });
+    jira = startFakeJira();
     // An empty PATH keeps the real claude CLI out of the start-up runner check. Windows spells the name "Path".
     const emptyPath = join(root, "path");
     mkdirSync(emptyPath);
@@ -83,6 +86,7 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
     proc?.kill();
     if (proc) await Promise.race([proc.exited, Bun.sleep(5_000)]);
     fake?.stop();
+    jira?.stop();
     if (root) rmSync(root, { recursive: true, force: true, maxRetries: 3 });
   });
 
@@ -122,6 +126,29 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
     const expected = version(openDb(join(root, "source.sqlite")));
     expect(expected).toBeGreaterThan(0);
     expect(version(new Database(dbPath(join(root, "data"), url), { readonly: true }))).toBe(expected);
+  });
+
+  test("a task fetch converts the Jira HTML to Markdown with the bundled turndown", async () => {
+    const url = fake?.url as string;
+    expect((await call("PUT", "/api/settings", { baseUrl: url, token: FAKE_TOKEN, notifications: false })).status).toBe(200);
+    expect((await call("PUT", "/api/settings/jira", { baseUrl: jira?.url, token: JIRA_TOKEN })).status).toBe(200);
+    const db = new Database(dbPath(join(root, "data"), url));
+    let pr = 0;
+    try {
+      db.exec("PRAGMA busy_timeout = 5000");
+      pr = (db.query("INSERT INTO pull_request (project, repo, pr_id) VALUES ('PROJ', 'repo', 1) RETURNING id").get() as { id: number }).id;
+      db.query("INSERT INTO pr_task (pr, key, source, url, ord) VALUES (?, ?, 'title', NULL, 0)").run(pr, ISSUE_KEY);
+    } finally {
+      db.close();
+    }
+    const res = await call("POST", `/api/prs/${pr}/task-context/${ISSUE_KEY}`);
+    expect(res.status).toBe(200);
+    const dto = (await res.json()) as TaskContextDto;
+    // A failed conversion gives the fenced wiki text ("h3. Acceptance criteria") instead.
+    expect(dto.format).toBe("markdown");
+    expect(dto.description).toContain("### Acceptance criteria\n\n-   Batch the writes.");
+    expect(dto.description).toContain("| Flush \\| now | Alex Smith |");
+    expect(dto.comments.at(-1)?.body).toBe("QA: test with an empty cache too.\n\nClick \\[here\\](javascript:alert(2)) now.");
   });
 
   test("the task-rule preview runs in the worker and recovers after a ReDoS rule", async () => {

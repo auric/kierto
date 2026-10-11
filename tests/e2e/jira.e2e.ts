@@ -101,11 +101,23 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
   await expect(description).toBeHidden();
   await task.locator("summary").click();
   await expect(description).toBeVisible();
-  // Plain text: the Jira wiki markup shows as typed, with its line breaks.
-  await expect(description).toContainText("h3. Acceptance criteria");
-  await expect(description).toHaveCSS("white-space", "pre-wrap");
-  await expect(task.locator("h1, h2, h3, h4, ul, li, a, img")).toHaveCount(0);
+  // Markdown from the rendered HTML (plan r3 S-JMD).
+  await expect(task.getByRole("heading", { level: 3, name: "Acceptance criteria" })).toBeVisible();
+  await expect(task.getByRole("listitem")).toHaveText(["Batch the writes.", "Flush the cache before the write lock."]);
+  await expect(task.locator("pre code")).toHaveText('String fence = "``` is not a fence";');
+  const link = task.getByRole("link", { name: "design note" });
+  await expect(link).toHaveAttribute("href", "https://docs.example.test/cache");
+  await expect(link).toHaveAttribute("target", "_blank");
+  // A mention is a plain name. The javascript: link is text. The attachment image shows its alt text and loads nothing.
+  await expect(task.getByRole("link", { name: /Alex Smith|old note/ })).toHaveCount(0);
+  await expect(task).toContainText("Alex Smith");
+  await expect(task.getByText("image 10100", { exact: true })).toBeVisible();
+  await expect(task.locator("img, script, style, iframe, a[href^='javascript:' i]")).toHaveCount(0);
+  // The hostile comment keeps its visible text only.
   await expect(task.getByText("QA: test with an empty cache too.")).toBeVisible();
+  await expect(task.getByText("Click [here](javascript:alert(2)) now.")).toBeVisible();
+  await expect(task).not.toContainText("CANARY");
+  expect(await page.title()).not.toContain("CANARY");
   await expect(task.getByText("Kenji Ito")).toBeVisible();
 
   // A fetch error shows the fixed server text and stores nothing.

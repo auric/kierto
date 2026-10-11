@@ -1,7 +1,8 @@
 // Jira Server REST 2 client (BRIEF section 7, Jira 9.12 docs). The only module that sends requests to Jira. GET only.
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { type IssueContext, JIRA_KEY } from "../../shared/dto";
+import { ATT_ID, type AttachmentMeta, type IssueContext, JIRA_KEY } from "../../shared/dto";
+import { fenced, toMarkdown } from "./markdown";
 import { ContextError, type ContextErrorKind, type ContextSource } from "./source";
 
 export const JIRA = { id: "jira", name: "Jira" } as const;
@@ -10,6 +11,11 @@ const TIMEOUT_MS = 30_000;
 const PAGE_SIZE = 100;
 const MAX_PAGES = 5;
 export const CAPS = { description: 20_000, comment: 5_000, comments: 500, totalBytes: 200_000 };
+// A larger answer body is an error of kind shape.
+export const MAX_BODY_BYTES = 10 * 1024 * 1024;
+// A larger rendered field uses the wiki text.
+export const MAX_HTML_BYTES = 1024 * 1024;
+export const MAX_ATTACHMENTS = 200;
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 // Lenient: unknown keys pass. The real shapes are not recorded (integration-check.md, Release 2).
@@ -19,13 +25,49 @@ const issue = z.object({
     summary: z.string(),
     description: z.string().nullish(),
     status: z.object({ name: z.string() }).nullish(),
+    attachment: z.array(z.unknown()).nullish(),
   }),
+  renderedFields: z.object({ description: z.string().nullish() }).nullish(),
+});
+// An entry with another shape is left out of the list.
+const attachment = z.object({
+  id: z.union([z.string().regex(ATT_ID), z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(String)]),
+  filename: z.string(),
+  mimeType: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
+  size: z.number().int().nonnegative(),
+  created: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
 });
 const user = z.object({ displayName: z.string().nullish(), name: z.string().nullish() }).nullish();
 const commentPage = z.object({
   total: z.number().int().nonnegative(),
-  comments: z.array(z.object({ author: user, body: z.string().nullish(), created: z.string().nullish() })),
+  comments: z.array(
+    z.object({ author: user, body: z.string().nullish(), renderedBody: z.string().nullish(), created: z.string().nullish() }),
+  ),
 });
+
+// The body as text, or null when it passes MAX_BODY_BYTES.
+async function readBody(res: Response): Promise<string | null> {
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return new TextDecoder().decode(Buffer.concat(chunks));
+    bytes += value.byteLength;
+    if (bytes > MAX_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+}
 
 export type JiraOptions = { baseUrl: string; token: string; caFile?: string; timeoutMs?: number };
 
@@ -54,7 +96,7 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
     const target = new URL(base + path);
     if (target.origin !== url.origin) throw new ContextError("shape", endpoint);
     let res: Response;
-    let text: string;
+    let text: string | null;
     try {
       res = await fetch(target, {
         method: "GET",
@@ -63,13 +105,14 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
         headers: { Authorization: `Bearer ${opts.token}`, Accept: "application/json" },
         tls: ca ? { ca } : undefined,
       });
-      text = await res.text();
+      text = await readBody(res);
     } catch (e) {
       const code = (e as { code?: unknown }).code;
       const safe = typeof code === "string" && /^[A-Z][A-Z0-9_]*$/.test(code) ? code : undefined;
       throw new ContextError((e as Error).name === "TimeoutError" ? "timeout" : "network", endpoint, undefined, safe);
     }
     if (res.status < 200 || res.status > 299) throw new ContextError(kindOf(res.status), endpoint, res.status);
+    if (text === null) throw new ContextError("shape", endpoint, res.status);
     let json: unknown;
     try {
       json = JSON.parse(text);
@@ -87,13 +130,13 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
     async fetchIssue(key) {
       if (!JIRA_KEY.test(key)) throw new ContextError("not_found", "/rest/api/2/issue");
       const path = `/rest/api/2/issue/${encodeURIComponent(key)}`;
-      const { fields } = await get(`${path}?fields=summary,description,status`, issue);
+      const { fields, renderedFields } = await get(`${path}?fields=summary,description,status,attachment&expand=renderedFields`, issue);
 
       const raw: z.infer<typeof commentPage>["comments"] = [];
       let total = 0;
       let truncated = true;
       for (let i = 0, startAt = 0; i < MAX_PAGES; i++) {
-        const page = await get(`${path}/comment?startAt=${startAt}&maxResults=${PAGE_SIZE}`, commentPage);
+        const page = await get(`${path}/comment?startAt=${startAt}&maxResults=${PAGE_SIZE}&expand=renderedBody`, commentPage);
         raw.push(...page.comments);
         total = page.total;
         startAt += page.comments.length;
@@ -108,7 +151,19 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
         truncated = true;
         return s.slice(0, max);
       };
-      const description = fields.description == null ? null : cut(fields.description, CAPS.description);
+      // The rendered HTML as Markdown. A missing or too large rendered field, or a failed conversion, gives the wiki text.
+      const markdown = (html: string | null | undefined, wiki: string | null | undefined): string | null => {
+        if (html != null && Buffer.byteLength(html) <= MAX_HTML_BYTES) {
+          try {
+            return toMarkdown(html, base);
+          } catch {
+            // Deep nesting overflows the stack of the converter.
+          }
+        }
+        return wiki ? fenced(wiki) : (wiki ?? null);
+      };
+      const text = markdown(renderedFields?.description, fields.description);
+      const description = text == null ? null : cut(text, CAPS.description);
       let bytes = Buffer.byteLength(fields.summary) + Buffer.byteLength(description ?? "");
       const comments: IssueContext["comments"] = [];
       if (raw.length > CAPS.comments) truncated = true;
@@ -116,7 +171,7 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
         const out = {
           author: c.author?.displayName || c.author?.name || "(unknown)",
           created: c.created ?? "",
-          body: cut(c.body ?? "", CAPS.comment),
+          body: cut(markdown(c.renderedBody, c.body) ?? "", CAPS.comment),
         };
         bytes += Buffer.byteLength(out.author) + Buffer.byteLength(out.created) + Buffer.byteLength(out.body);
         if (bytes > CAPS.totalBytes) {
@@ -125,7 +180,23 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
         }
         comments.push(out);
       }
-      return { key, summary: fields.summary, status: fields.status?.name ?? null, description, comments, commentsTotal: total, truncated };
+      const attachments: AttachmentMeta[] = [];
+      for (const a of fields.attachment ?? []) {
+        if (attachments.length === MAX_ATTACHMENTS) break;
+        const r = attachment.safeParse(a);
+        if (r.success) attachments.push(r.data);
+      }
+      return {
+        key,
+        summary: fields.summary,
+        status: fields.status?.name ?? null,
+        description,
+        comments,
+        commentsTotal: total,
+        truncated,
+        format: "markdown",
+        attachments,
+      };
     },
   };
 }

@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { type BriefDto, type BriefInput, MAX_NOTE, type MetaDto, type ProfileId, type PrTask, type TaskContextDto } from "../../shared/dto";
 import { api } from "../api";
 import { webLink } from "../pr/Header";
+import { Markdown } from "../pr/Markdown";
 import { ApiError, read } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { taskHint } from "../shell/model";
@@ -266,7 +267,12 @@ function TaskChips({ pr, tasks, meta, onSettings }: { pr: number; tasks: PrTask[
   );
 }
 
-// The imported text, read-only. Plain text: wiki markup and HTML show as typed. Closed until the user opens it.
+// Text converted from the rendered HTML shows as Markdown. Rows from before Release 3 hold plain text: wiki markup shows as typed.
+function TaskText({ t, text }: { t: TaskContextDto; text: string }) {
+  return t.format === "markdown" ? <Markdown text={text} /> : <p className="m-0 whitespace-pre-wrap">{text}</p>;
+}
+
+// The imported text, read-only. Closed until the user opens it.
 function TaskFold({ t, source, now }: { t: TaskContextDto; source: string; now: number }) {
   const meta = [t.status, commentsText(t), fetchedText(t, now)].filter(Boolean).join(", ");
   return (
@@ -286,14 +292,14 @@ function TaskFold({ t, source, now }: { t: TaskContextDto; source: string; now: 
           <span className="hidden @max-[560px]/detail:inline">, {meta}</span>.
           {t.truncated && " Review Loop cut this text at its size limits."}
         </p>
-        <p className="m-0 whitespace-pre-wrap">{t.description?.trim() || "No description."}</p>
+        <TaskText t={t} text={t.description?.trim() || "No description."} />
         {t.comments.map((c, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: the comments of one fetch keep their order.
           <div key={i} className="grid gap-0.5">
             <p className="m-0 text-xs text-muted-foreground">
               <span className="font-medium text-ink-2">{c.author}</span>, {sourceTime(c.created)}
             </p>
-            <p className="m-0 whitespace-pre-wrap">{c.body}</p>
+            <TaskText t={t} text={c.body} />
           </div>
         ))}
       </div>

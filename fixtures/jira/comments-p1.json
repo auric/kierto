@@ -10,7 +10,8 @@
       "body": "QA: test with an empty cache too.",
       "updateAuthor": { "self": "https://jira.example.test/rest/api/2/user?username=kito", "name": "kito", "displayName": "Kenji Ito", "active": false },
       "created": "2026-01-07T08:45:00.000+0000",
-      "updated": "2026-01-07T08:45:00.000+0000"
+      "updated": "2026-01-07T08:45:00.000+0000",
+      "renderedBody": "<p>QA: test with an empty cache too.</p>\n<script>document.title = \"SCRIPT-CANARY\"</script><style>body { display: none } /* STYLE-CANARY */</style><iframe src=\"https://evil.example.test/frame\">IFRAME-CANARY</iframe><img src=\"https://evil.example.test/pixel.png\" onerror=\"alert('ONERROR-CANARY')\"><p>Click [here](javascript:alert(2)) now.</p>"
     }
   ]
 }
