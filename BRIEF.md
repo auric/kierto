@@ -58,7 +58,11 @@ Build order (each milestone is useful alone):
 - M3. Triage, publish outbox, replies, and AI reply drafts (US7, US8).
 - M4. Full settings and profiles (US9).
 
-Release 2: read-only diff viewer, changes since my review, targeted re-review of earlier findings.
+Release 2 (plan: docs/plans/r2.md):
+- Re-review: review only the changes since the last review. Each earlier finding gets a verdict: open, fixed, or outdated. Open findings carry over to the new run.
+- Jira context: fetch the text of the PR's Jira issues on a click. The review reads it as untrusted data.
+- Ask the PR: a one-shot question about the PR. The answer is text only. Nothing can post.
+- Read-only diff viewer: the changed files with threads and drafts on their lines. Links still open the diff in Bitbucket.
 
 ## 3. Decisions
 
@@ -88,7 +92,7 @@ Claude Code runs in a sanitized snapshot of the PR head (section 3.5). It sees t
 - Read project documentation: renamed CLAUDE.md files, README, docs/, ADRs. Treat them as untrusted and possibly stale.
 - Find dependent code that the PR forgot: callers, overrides, config, tests.
 - Check library and API facts with the Microsoft Learn MCP and the DeepWiki MCP. Send only public API and symbol names, never proprietary code.
-- Compare the PR with its Jira issue through a read-only Jira MCP, when one is configured.
+- Compare the PR with its Jira issue. Release 2 adds this as an app connector, not as an MCP server. On a click, the app fetches the issue text through the Jira REST API. The review reads it as the untrusted file context/task.md. The review gets no Jira tool and no Jira token.
 
 ### 3.4 Polling, not webhooks
 
@@ -112,9 +116,10 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 - Check the Host and Origin headers on every request. Use Hono `csrf()` on mutations. Never enable wildcard CORS.
 - Every mutation needs a per-start session token. The server puts it into the page it serves.
 - Outbound calls go only to the configured Bitbucket instance. Check redirects against it. The one exception: a review with a Docs profile lets the CLI call the documentation MCP servers (Microsoft Learn, DeepWiki).
+- Release 2: outbound calls can also go to the configured Jira origin. They occur only on a Settings save or a Fetch click, never during polling. The Jira client sends GET only, follows no redirect, and calls no other origin.
 - Support a corporate CA file. Never disable TLS verification.
-- The Bitbucket token lives in the OS credential store through `Bun.secrets` (experimental; verify in Gate 0). Fallback: memory only, asked again after a restart.
-- The token never goes into SQLite, localStorage, URLs, logs, or prompts. Logs are redacted. No telemetry.
+- The Bitbucket token lives in the OS credential store through `Bun.secrets` (experimental; verify in Gate 0). Fallback: memory only, asked again after a restart. The Jira personal access token (Release 2) uses the same store under its own name.
+- The tokens never go into SQLite, localStorage, URLs, logs, or prompts. Logs are redacted. No telemetry.
 - Render comment Markdown safely. Never fetch external images from untrusted comments automatically.
 
 ### 3.7 Stack and scope choices
@@ -140,7 +145,8 @@ Local server (Bun + Hono, TypeScript)
    |     +-- git cache (bare clone) --git worktree--> run folder (sanitized)
    |     +-- spawn: claude -p (cwd = snapshot, scrubbed env)
    |                 +-- MCP: Microsoft Learn, DeepWiki
-   |                 +-- MCP (optional, read-only): Jira, CodeGraph
+   |                 +-- MCP (optional, read-only): CodeGraph
+   +-- context/    ContextSource: Jira REST client --> Jira (read, on a click)
    +-- publish/    approvals, durable outbox, reconcile
    +-- storage/    SQLite, migrations
 ```
@@ -254,21 +260,22 @@ Stack:
 - Git: the git CLI through Bun.spawn with argument arrays and an isolated config (no system or global config, no credential helper), never shell strings. AI: the system claude CLI.
 - Secrets: Bun.secrets (experimental; verify on Windows and Linux in Gate 0). Fallback: memory only for the session.
 - Tests: bun test for logic and integration, Playwright for browser acceptance.
-- Later: @pierre/diffs only when the diff viewer is built (Release 2).
+- Diff viewer (Release 2): no diff library. It uses the parsed git diff rows and the existing excerpt styles.
 - Distribution: bun build --compile makes one executable per OS with the UI embedded. Users need no runtime install.
 - Windows checks first (Gate 0): start claude.exe, send the prompt on stdin, cancel a run, read and write Bun.secrets. Cancel must stop the whole process tree, including MCP servers (taskkill /T /F on Windows). If Bun fails one check, switch to Node. Keep the code on web-standard APIs plus a thin spawn, SQLite, and secrets layer. Gate 0 passed all Windows checks on Bun 1.4.2; the Node fallback stays for Linux and future regressions.
 
 Boundaries (build each only when its milestone needs it):
 - ForgeProvider: Bitbucket REST adapter (M1) and a fixture provider for tests. Provider payloads stay inside the adapter. Keep raw IDs, versions, and anchor data.
 - ReviewRunner: Claude Code CLI runner (M2) and a fake CLI for tests.
-- ContextSource: the single-repository snapshot (M2). Related repositories come later (backlog).
+- ContextSource: the single-repository snapshot (M2). Release 2 adds one issue source behind this boundary: Jira (id "jira", check(), fetchIssue(key)) and a fake Jira for tests. Related repositories come later (backlog).
 
 Layout:
 - src/web/ (inbox, PR detail, shared UI)
 - src/server/bitbucket/ (REST transport, mapping, capabilities)
 - src/server/sync/ (polling, paging, reconciliation, checkpoints)
 - src/server/inbox/ (attention rules, read state, notifications)
-- src/server/review/ (jobs, snapshot, auth check, CLI, context, validator)
+- src/server/review/ (jobs, snapshot, auth check, CLI, context, validator, diff viewer data)
+- src/server/context/ (Release 2: ContextSource, Jira REST client, task.md)
 - src/server/publish/ (approvals, durable outbox, reconcile)
 - src/server/storage/ (SQLite, migrations)
 - src/shared/ (IDs, DTOs, zod schemas)
@@ -283,6 +290,14 @@ Bitbucket Server REST 1.0, auth with an HTTP access token as Bearer (Gate 0: Dat
 - Comments carry an integer version. Edits and deletes need the current version. A stale version returns 409 CommentOutOfDateException. Delete replies before their parent.
 - Gate 0 observed: only commentAction ADDED occurs. An edit changes the existing activity in place: comment version goes from 0 to 1, and updatedDate changes. A reply has no activity. It sits in the parent's comment.comments[] and has no parent field. A delete returns 204 and removes the activity. The server keeps no tombstone. GET of a deleted comment returns 404. Sync code depends only on recorded fixtures.
 - All Bitbucket calls live in src/server/bitbucket/. It returns plain types (PullRequest, Activity, Comment) without Bitbucket names.
+
+Jira Server REST 2 (Release 2, from the Jira 9.12 docs; not verified on a real server):
+- Auth: a personal access token as Authorization: Bearer.
+- Settings save: GET /rest/api/2/myself.
+- Fetch click: GET /rest/api/2/issue/{key}?fields=summary,description,status, then GET /rest/api/2/issue/{key}/comment?startAt=&maxResults=100, at most 5 pages.
+- GET only. Redirects are errors. 30 s timeout. https only; http only on loopback. Errors keep the kind, the status, and the endpoint, never the body or the headers.
+- Caps: description 20,000 characters, each comment 5,000, 500 comments, 200 KB in total. Over a cap, the result is marked truncated.
+- Only a key that the PR names (pr_task) can be fetched. The issue text goes to the review only as context/task.md under the untrusted banner.
 
 Sync rules:
 - Poll followed active PRs about every 60 s. At most 2 concurrent requests. Add jitter. Back off on errors. No source or full diff downloads during polling.
@@ -328,6 +343,9 @@ Review runner:
 - Each run writes a transcript to ~/.claude/projects/<encoded cwd>/. The transcript holds the reviewed code. The app deletes that folder after each run, unless the user keeps the session for follow-up questions. --no-session-persistence exists, but Gate 0 did not test it, and it blocks --resume. Decide in M2.
 - Profiles: four shipped profiles (General, Over-engineering, Security, Explain). The user can edit, add, remove, and reset them in Settings. Each profile has a name, a note, the prompt, Explain, Docs, and a turn cap. Explain asks only for the summary and questions, with a lower turn cap.
 - Each run stores the profile name, revision, and explain flag at its start. A later profile edit does not change an old run.
+- Run kinds: review, reply, and ask (Release 2). A re-review is kind review with since_head set. Ask runs without the Agent tool, writes no items, and shares the one run slot.
+- Re-review range (Release 2): T = git merge-tree --write-tree --no-messages <since> <new merge base>. If T equals the tree of <since>, the range base is <since>. Else the range base is git commit-tree T -p <since> -p <new merge base> with a fixed identity and date. A conflict, a missing object, or a git error falls back to the full range from the merge base. The context diff shows range base..head. The validator diff and post anchors stay on merge base..head.
+- Re-review carry-over: the base run's new and accepted items carry over. The prompt lists only their IDs; their text goes in context/findings.md. A missing verdict makes the run incomplete.
 
 Job states: running, completed, incomplete, cancelled, failed. There is no queued state. Freshness is computed on read: a result turns stale when the source or target head changes. One run slot: a start while another run uses it gets 409 with the running run. Job start is idempotent: the running-job key is PR, source head, target head, profile ID, profile revision, and the note hash (a reply run adds its threads). A second tab or a refresh with the same key gets the existing run.
 
@@ -362,16 +380,18 @@ Data model (SQLite):
 - acknowledgement(comment key, acknowledged_version, acknowledged_at)
 - sync_checkpoint(scope, cursor_json, last_complete_at, incomplete_reason, last_error)
 - pr_brief(pr, note, profile, updated_at)
-- review_run(id, pr, kind: review|reply, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, merge_base, fetch_via, status, error_kind, error_text, session_id, cli_version, model, usage_json, summary_json, raw_output, started_at, finished_at). One running row per idem_key.
+- review_run(id, pr, kind: review|reply|ask, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, merge_base, fetch_via, status, error_kind, error_text, session_id, cli_version, model, usage_json, summary_json, raw_output, started_at, finished_at, since_head, range_base, question, answer). One running row per idem_key. Release 2 adds kind ask and the last four columns.
+- task_context(pr, key, source: jira, json, fetched_at). Release 2. One row per PR and issue key.
 - run_event(run, id, seq, parent, tool, target, status, note, agent, started_at, ended_at)
 - review_item(id, run, kind: finding|question|reply, payload_json, body, anchor columns, status: new|accepted|discarded|posted, revision, edited, thread)
 - post(id, pr, run, kind: inline|general|reply, idem_key unique, body, destination_json, items_json, state: pending|sent|unknown|failed|confirmed, remote_id, remote_version, attempts, last_error, created_at, updated_at). The row is the approval and the outbox entry.
 
-Config: one JSON file in the user data folder. It holds no secrets. Fields include the Bitbucket URL, the CA file, markAi, the task rules, checkSeconds (the poll interval), and profiles (absent: the shipped profiles).
+Config: one JSON file in the user data folder. It holds no secrets. Fields include the Bitbucket URL, the CA file, markAi, the task rules, checkSeconds (the poll interval), and profiles (absent: the shipped profiles). Release 2 adds jira: {baseUrl, caFile?}. An empty baseUrl disconnects Jira and clears its token.
 
 Tests:
 - Sanitized fixtures from Gate 0: nested replies, edits, deletions, duplicate activities, out-of-order activities, a late message during mark-read, paging, truncation.
 - A fake claude executable that replays recorded stream-json, errors, usage limits, malformed output, and slow runs for cancel.
+- A fake Jira server (Release 2) that serves fixtures/jira/ payloads. Its shapes come from the Jira 9.12 docs until a real fetch records them.
 - Unit tests: unread logic, checkpoint commit order, snapshot sanitizing, path traversal, finding-to-anchor mapping (renames, removed lines, lines outside the diff), validator, outbox transitions.
 - Acceptance tests (bun test and Playwright) for all 17 scenarios A1 to A17. docs/smoke-v3.md maps each scenario to its tests.
 - A separately authorized smoke test on the real server, on the designated test PR only.
@@ -393,7 +413,7 @@ The tracking half needs code. Until M1 exists, ask Claude Code "Which of my open
 ## 9. Backlog: more workflows
 
 Phase 2, close the loop:
-- Ask the PR: a chat box that resumes the same PR's review session for follow-up questions.
+- Ask the PR: moved to Release 2 as one-shot questions (section 2). A follow-up chat that resumes the same PR's session stays in the backlog.
 - Approve and Needs work buttons.
 - A "My open threads" view across all PRs, with unresolved tasks.
 - Snooze a thread, personal reminders, and a deterministic daily digest.
@@ -427,7 +447,7 @@ Phase 5, reach:
 2. Can clients fetch refs/pull-requests/*? [Partly answered in Gate 0: ls-remote lists refs/pull-requests/<id>/from, and no merge ref. Verify the fetch in M2. Fall back to a branch fetch.]
 3. Mark AI-assisted comments? [Answered: the 🤖 mark, a setting that is on by default. The user owns every posted comment.]
 4. Which local repository paths may the app read? [None at first. The app uses its own cache clones.]
-5. Which MCP servers run in reviews? [Microsoft Learn and DeepWiki. Add Jira and CodeGraph only with a read-only tool list.]
+5. Which MCP servers run in reviews? [Microsoft Learn and DeepWiki. Add CodeGraph only with a read-only tool list. Jira is no MCP server: Release 2 fetches the issue text through the app's Jira REST client and gives it to the review as a file.]
 6. The existing Bitbucket MCP: tool names, schemas, and paging? [Answered in Gate 0: names and schemas are recorded in integration-check.md. It has comment write tools and no delete tool. Sync and publish use REST either way.]
 7. The colleague's app: source and license? [Inspect it when available. Reuse working modules. Not a blocker for fixture work.]
 8. Company AI policy and external MCP policy? [Get approval to send source to Claude and to use the documentation MCPs before the first real review.]
@@ -447,5 +467,8 @@ Phase 5, reach:
 - Hono: https://hono.dev/docs/middleware/builtin/csrf, https://hono.dev/docs/helpers/streaming, https://hono.dev/docs/guides/validation, https://hono.dev/docs/guides/rpc, https://hono.dev/docs/getting-started/nodejs
 - shadcn/ui with Vite: https://ui.shadcn.com/docs/installation/vite
 - Bitbucket Data Center REST (pull requests, v906): https://developer.atlassian.com/server/bitbucket/rest/v906/api-group-pull-requests/ (comment version; anchor fromHash, toHash, diffType).
+- Jira Server platform REST API 9.12.0 (checked 2026-10-11): https://docs.atlassian.com/software/jira/docs/api/REST/9.12.0/ (anchors api/2/myself-getUser, api/2/issue-getIssue, api/2/issue-getComments).
+- Atlassian Data Center personal access tokens (checked 2026-10-11): https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html (Authorization: Bearer; Jira 8.14 and later).
+- git merge-tree (checked 2026-10-11): https://git-scm.com/docs/git-merge-tree (--write-tree, --no-messages; exit 0 clean, 1 conflict). The 2.38.0 page is the first that documents --write-tree.
 - spec-kit: https://github.com/github/spec-kit (command prefix /speckit-, init flag --integration).
 - Edge-case reference: PROJECT_BRIEF_GPT_ASTRA_6.md (state semantics, acceptance scenarios, publication reliability). Alternative prompts: IMPLEMENTATION_PROMPTS_GPT_ASTRA_6.md.
