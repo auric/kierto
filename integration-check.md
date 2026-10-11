@@ -226,3 +226,23 @@ Status: DONE on Windows 11 with Bun 1.4.2 on 2026-10-11. Linux and macOS are not
 App checks (`bun run compile`, then `bun test tests/build`): 4 pass. The page carries the session token. Each `/assets/*` file returns 200 with the same bytes as `dist/web/assets`. A settings PUT against the fake Bitbucket creates a database at the same `user_version` as `openDb` from source. The task-rule preview finds `ABC-10145`. `(a+)+$` on 20,000 characters times out in 606 ms, and the next preview works. `<exe> --git-mcp ...` lists exactly the 4 git tools through the MCP SDK client. Control: a build without `--asset` exits with "Missing B:\~BUN\root\web\index.html", and the test fails.
 
 Not run: the `--all` targets (cross-compile), Linux, and macOS. The Bun guide `guides/runtime/codesign-macos-executable` says that Gatekeeper warns about an unsigned macOS binary.
+
+## Release 2 (not run)
+
+Status: NOT RUN against a real Jira server or the real `claude` CLI, 2026-10-11. The rows below come from public docs and one local git check. Code may depend on them only with the safe fallback in docs/plans/r2.md section 6. docs/smoke-r2.md records the real results.
+
+Sources:
+- Jira Server platform REST API 9.12.0: https://docs.atlassian.com/software/jira/docs/api/REST/9.12.0/ (anchors `api/2/myself-getUser`, `api/2/issue-getIssue`, `api/2/issue-getComments`).
+- Atlassian Data Center personal access tokens: https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html
+- git merge-tree: https://git-scm.com/docs/git-merge-tree and https://git-scm.com/docs/git-merge-tree/2.38.0
+
+| Fact | Result | Evidence |
+|---|---|---|
+| Jira PAT as `Authorization: Bearer <token>` | UNVERIFIED | The PAT page says to pass the token as a bearer token in the Authorization header. It lists Jira Core and Jira Software 8.14 and later. |
+| `GET /rest/api/2/myself` checks the token | UNVERIFIED | 9.12 docs `api/2/myself-getUser`: 200 gives the user, 401 when the user is not authenticated. |
+| `GET /rest/api/2/issue/{key}?fields=summary,description,status` | UNVERIFIED | 9.12 docs `api/2/issue-getIssue`: the `fields` parameter takes a comma-separated list. The real shape of `description` (null, wiki text) and `status` is not recorded. |
+| Comment paging | UNVERIFIED | 9.12 docs `api/2/issue-getComments`: query `startAt` (default 0) and `maxResults` (default 50). The page holds `startAt`, `maxResults`, `total`, and `comments`. The server cap on `maxResults` is not documented there. |
+| 404 meaning | UNVERIFIED | 9.12 docs: 404 when the issue does not exist or the user may not view it. The app cannot tell the two cases apart and shows one fixed text. |
+| Redirects (SSO, login page, http to https) | UNVERIFIED | The docs do not describe them. The client treats any 3xx as an error and follows none. |
+| `git merge-tree --write-tree --no-messages` | CONFIRMED (Windows git 2.56.0.windows.1) | A run in a temp repository printed a tree ID with exit 0. The docs give exit 0 for a clean merge and 1 for a conflict. Other codes are errors. The 2.38.0 page is the first that documents `--write-tree`. Linux and macOS git are not checked. |
+| Real CLI accepts `rereviewJsonSchema()` and `askJsonSchema()` with `--json-schema` | NOT RUN | Only the fake CLI ran. On a rejection, the run fails and keeps the raw output. |
