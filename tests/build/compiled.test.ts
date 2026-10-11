@@ -1,0 +1,145 @@
+// Checks the binary of `bun run compile` for this host. It skips when the binary is absent.
+import { Database } from "bun:sqlite";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { binPath, HOST } from "../../scripts/compile";
+import { dbPath } from "../../src/server/config";
+import { openDb } from "../../src/server/storage/db";
+import type { TaskPreviewDto } from "../../src/shared/dto";
+import { FAKE_TOKEN, key, startFakeBitbucket } from "../support/fake-bitbucket";
+import { DASHBOARD_PATH, onePage } from "../support/scenarios";
+
+const BIN = binPath(HOST);
+const WEB = join(import.meta.dir, "../../dist/web");
+const START_MS = 20_000;
+const ID = String.raw`[A-Z][A-Z0-9]+-\d+`;
+
+describe.skipIf(!existsSync(BIN))("compiled binary", () => {
+  let root = "";
+  let fake: ReturnType<typeof startFakeBitbucket> | undefined;
+  let proc: Bun.Subprocess<"ignore", "pipe", "inherit"> | undefined;
+  let origin = "";
+  let session = "";
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "rl-bin-"));
+    fake = startFakeBitbucket({ routes: { [key("GET", DASHBOARD_PATH)]: { status: 200, body: onePage([]) } } });
+    // An empty PATH keeps the real claude CLI out of the start-up runner check. Windows spells the name "Path".
+    const emptyPath = join(root, "path");
+    mkdirSync(emptyPath);
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env))
+      if (v !== undefined && k.toUpperCase() !== "PATH" && !k.startsWith("REVIEW_LOOP_")) env[k] = v;
+    Object.assign(env, { PATH: emptyPath, REVIEW_LOOP_PORT: "0", REVIEW_LOOP_DATA_DIR: join(root, "data"), REVIEW_LOOP_SECRETS: "memory" });
+    const p = Bun.spawn([BIN], { cwd: root, env, stdin: "ignore", stdout: "pipe", stderr: "inherit" });
+    proc = p;
+
+    let out = "";
+    const stdout = p.stdout.getReader();
+    const decoder = new TextDecoder();
+    const started = (async () => {
+      for (;;) {
+        const { done, value } = await stdout.read();
+        if (done) return null;
+        out += decoder.decode(value, { stream: true });
+        const m = /Review Loop \(([^)]+)\): (http:\/\/127\.0\.0\.1:\d+)\//.exec(out);
+        if (m) return m;
+      }
+    })();
+    const m = await Promise.race([started, p.exited.then(() => null), Bun.sleep(START_MS - 5_000).then(() => null)]);
+    if (!m) throw new Error(`The binary did not start. Output:\n${out}`);
+    origin = m[2] as string;
+    console.log(`Binary: ${BIN}\nModified: ${statSync(BIN).mtime.toISOString()}\nBuild commit: ${m[1]}\nURL: ${origin}`);
+    // Keep the pipe drained, so that a log line never blocks the binary.
+    void (async () => {
+      while (!(await stdout.read()).done);
+    })().catch(() => {});
+    const page = await (await fetch(`${origin}/`)).text();
+    session = /<meta name="rl-session" content="([0-9a-f]{64})"/.exec(page)?.[1] ?? "";
+  }, START_MS);
+
+  afterAll(async () => {
+    proc?.kill();
+    if (proc) await Promise.race([proc.exited, Bun.sleep(5_000)]);
+    fake?.stop();
+    if (root) rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+  });
+
+  const call = (method: string, path: string, body?: unknown) =>
+    fetch(`${origin}${path}`, {
+      method,
+      headers: { origin, "x-rl-session": session, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  const preview = async (body: unknown) => {
+    const res = await call("POST", "/api/settings/task-rules/preview", body);
+    expect(res.status).toBe(200);
+    return (await res.json()) as TaskPreviewDto;
+  };
+
+  test("serves the embedded page with the session token and every asset", async () => {
+    expect(session).toMatch(/^[0-9a-f]{64}$/);
+    const files = readdirSync(join(WEB, "assets"));
+    expect(files.length).toBeGreaterThan(0);
+    for (const f of files) {
+      const r = await fetch(`${origin}/assets/${f}`);
+      expect(r.status, f).toBe(200);
+      expect(Buffer.from(await r.arrayBuffer()).equals(readFileSync(join(WEB, "assets", f))), f).toBe(true);
+    }
+  });
+
+  test("a settings PUT creates the database at the last migration", async () => {
+    const url = fake?.url as string;
+    expect((await call("PUT", "/api/settings", { baseUrl: url, token: FAKE_TOKEN, notifications: false })).status).toBe(200);
+    const version = (db: Database) => {
+      try {
+        return (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
+      } finally {
+        db.close();
+      }
+    };
+    const expected = version(openDb(join(root, "source.sqlite")));
+    expect(expected).toBeGreaterThan(0);
+    expect(version(new Database(dbPath(join(root, "data"), url), { readonly: true }))).toBe(expected);
+  });
+
+  test("the task-rule preview runs in the worker and recovers after a ReDoS rule", async () => {
+    const plain = { rules: [{ source: "branch", pattern: ID }], sample: { branch: "bugfix/ABC-10145-name-of-ticket" }, prs: [] };
+    expect((await preview(plain)).sample).toEqual([{ key: "ABC-10145", source: "branch" }]);
+
+    const t0 = performance.now();
+    const redos = await preview({
+      rules: [{ source: "description", pattern: "(a+)+$" }],
+      sample: { description: `${"a".repeat(19_999)}!` },
+      prs: [],
+    });
+    const ms = Math.round(performance.now() - t0);
+    console.log(`ReDoS preview: ${ms} ms`);
+    expect(redos.rules).toEqual([{ error: null, timedOut: true }]);
+    expect(ms).toBeLessThan(1_500);
+
+    expect((await preview(plain)).sample).toEqual([{ key: "ABC-10145", source: "branch" }]);
+  });
+
+  test("--git-mcp lists exactly the four git tools", async () => {
+    const hash = "0".repeat(40);
+    const client = new Client({ name: "compiled-test", version: "0" });
+    await client.connect(
+      new StdioClientTransport({
+        command: BIN,
+        args: ["--git-mcp", `--git-dir=${root}`, `--head=${hash}`, `--base=${hash}`, `--target=${hash}`],
+        stderr: "pipe",
+      }),
+    );
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name).sort()).toEqual(["git_blame", "git_diff", "git_log", "git_show"]);
+    } finally {
+      await client.close();
+    }
+  });
+});

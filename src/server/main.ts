@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
 import { type AppOptions, createApp } from "./app";
+import { BUILD_COMMIT } from "./build";
 import { createLive } from "./live";
 import { createOutbox } from "./publish/outbox";
 import { runGitMcp } from "./review/git-mcp";
@@ -11,7 +12,8 @@ import { createSettings } from "./settings";
 import { createSyncEngine } from "./sync/engine";
 
 export const DEFAULT_PORT = 7317;
-const WEB_DIR = resolve(import.meta.dir, "../../dist/web");
+// scripts/compile.ts embeds dist/web with --asset. Bun puts an asset folder under import.meta.dir by its base name.
+const WEB_DIR = BUILD_COMMIT === null ? resolve(import.meta.dir, "../../dist/web") : join(import.meta.dir, "web");
 
 export function startServer(opts: Omit<AppOptions, "port"> & { port: number }) {
   let app = createApp(opts);
@@ -65,7 +67,7 @@ if (import.meta.main && gitMcpAt >= 0) {
       indexHtml,
       assets: indexHtml === undefined ? undefined : serveStatic({ root: WEB_DIR }),
     });
-    console.log(`Review Loop: http://127.0.0.1:${server.port}/`);
+    console.log(`Review Loop (${BUILD_COMMIT ?? "source"}): http://127.0.0.1:${server.port}/`);
     sync.start();
     void review.start();
     outbox.start();

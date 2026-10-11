@@ -200,3 +200,29 @@ Bitbucket lines that need an edit (Gate 0, Bitbucket Data Center 9.4.26):
 - 7 line 286 paging: proposed addition: "On the last page, `nextPageStart` is absent or `null`. Accept both."
 - 7 line 302 snapshot: "`refs/pull-requests/{id}/from` is listed by `git ls-remote` with `http.extraHeader`. No `merge` ref was listed. A fetch is still not tested."
 - 7 line 315 deny list: "every code-host write tool" includes the existing MCP tools `create_pull_request_comment` and `edit_pull_request_comment`.
+
+## M4 packaging (local)
+
+Status: DONE on Windows 11 with Bun 1.4.2 on 2026-10-11. Linux and macOS are not run. A spike in a temp folder built small binaries with `bun build --compile`. The app binary then passed `tests/build/compiled.test.ts`. Sources: `node_modules/bun-types/docs/bundler/executables.mdx` and DeepWiki `oven-sh/bun`.
+
+| Fact | Result | Evidence |
+|---|---|---|
+| Virtual root | CONFIRMED (Windows) | `import.meta.dir` = `B:\~BUN\root`. The docs give `/$bunfs/root` on Linux and macOS (not run). |
+| Entry identity | CONFIRMED | `import.meta.url` = `file:///B:/%7EBUN/root/<outfile base name>`. `Bun.main` = `B:/~BUN/root/<name>` with forward slashes. `import.meta.main` = true. `process.execPath` = the real `.exe` path. |
+| `import.meta.url` of an inner module | CONFIRMED | A module from a subfolder that is bundled into the entry gets the entry URL. `new URL("./worker.ts", import.meta.url)` in `tasks/rules.ts` resolved to `B:\~BUN\root\worker.ts` and failed with `ModuleNotFound`. |
+| `process.argv` | CONFIRMED | `["bun", "B:/~BUN/root/<name>", ...user args]`. A child started as `<exe> --git-mcp ...` gets the same shape. It needs no entry path. |
+| `--asset <dir>` | CONFIRMED | The files go under `import.meta.dir` by the base name of the folder: `--asset dist/web` gives `web/index.html` and `web/assets/...`. `--asset dist` gives `dist/web/...`. `--root` does not change it. Upstream: `collect_compile_assets` in `src/runtime/cli/build_command.rs` (DeepWiki). `existsSync`, `readFileSync`, `readdirSync`, and `Bun.file` read them. `Bun.embeddedFiles` lists them as `web/...`. |
+| Source path in the binary | FAILS | `resolve(import.meta.dir, "../../dist/web")` gives `B:\dist\web`, which does not exist. The app uses a `--define` value (`src/server/build.ts`) and `join(import.meta.dir, "web")`. |
+| Hono `serveStatic` on the embedded root | CONFIRMED | `serveStatic({ root: join(import.meta.dir, "web") })`: 200 for `/assets/app.js` and `/assets/sub/deep.css`. 404 for `/assets/../web/index.html`, `/assets/%2e%2e/index.html`, `/assets/..%5cindex.html`, a missing file, and a folder. No name map is needed. |
+| Worker as an extra entry point | CONFIRMED | `bun build --compile main.ts tasks/worker.ts`: `new Worker(new URL("./tasks/worker.ts", import.meta.url).href)` loads `tasks/worker.js`. The `URL` object and the plain relative string also load. The app uses this form. Control: the app binary without the worker entry fails the task-rule preview test. |
+| Worker from a `blob:` URL | CONFIRMED, not used | A `blob:` URL with plain JavaScript loads. It needs the worker as built JavaScript text, so the app does not use it. |
+| `--define` with `typeof` | CONFIRMED | `--define 'NAME="value"'` and `typeof NAME === "string" ? NAME : null` give the value in the binary. Under `bun` from source, `typeof` gives `undefined` and no `ReferenceError`. `bun build --help` does not list `--define`, but it works. |
+| `.sql` with `{ type: "text" }` | CONFIRMED | The import gives the file text in the binary, under `bun test`, and under `bun run`. |
+| `.env` autoload | CONFIRMED | Without `--no-compile-autoload-dotenv`, the binary read `.env` from its working folder. With the flag, it did not. `scripts/compile.ts` also passes `--no-compile-autoload-bunfig`. |
+| Environment overrides | DOCUMENTED, not tested | `BUN_BE_BUN=1` makes the binary act as the `bun` CLI. `BUN_OPTIONS` adds runtime flags. Both also reach the git MCP child. |
+| Size | MEASURED | `review-loop-windows-x64.exe`: 88,101,888 bytes. A hello-size spike: 82.2 MB. The Bun runtime is most of it. |
+| Start time | OBSERVED | One start of a just-built binary took about 5 s before it exited. Other starts took under 1 s. The cause is not known. |
+
+App checks (`bun run compile`, then `bun test tests/build`): 4 pass. The page carries the session token. Each `/assets/*` file returns 200 with the same bytes as `dist/web/assets`. A settings PUT against the fake Bitbucket creates a database at the same `user_version` as `openDb` from source. The task-rule preview finds `ABC-10145`. `(a+)+$` on 20,000 characters times out in 606 ms, and the next preview works. `<exe> --git-mcp ...` lists exactly the 4 git tools through the MCP SDK client. Control: a build without `--asset` exits with "Missing B:\~BUN\root\web\index.html", and the test fails.
+
+Not run: the `--all` targets (cross-compile), Linux, and macOS. The Bun guide `guides/runtime/codesign-macos-executable` says that Gatekeeper warns about an unsigned macOS binary.

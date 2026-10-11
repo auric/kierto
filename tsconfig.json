@@ -17,5 +17,14 @@
       "@/*": ["./src/web/*"]
     }
   },
-  "include": ["src", "tests", "scripts/dev.ts", "scripts/demo.ts", "scripts/gate", "vite.config.ts", "playwright.config.ts"]
+  "include": [
+    "src",
+    "tests",
+    "scripts/dev.ts",
+    "scripts/demo.ts",
+    "scripts/compile.ts",
+    "scripts/gate",
+    "vite.config.ts",
+    "playwright.config.ts"
+  ]
 }
