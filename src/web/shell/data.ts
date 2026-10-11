@@ -1,4 +1,4 @@
-// Server state through TanStack Query. Keys: ['prs'], ['pr', id], ['status'], ['settings'].
+// Server state through TanStack Query. Keys: ['prs'], ['pr', id], ['status'], ['settings'], ['meta'], ['task-preview', ...].
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/components/ui/toast";
 import type { CheckpointDto, ClaimedEvent, FollowState, PrDetail, PrRow, SettingsDto, SettingsInput, SyncStatus } from "../../shared/dto";
@@ -26,7 +26,7 @@ type Res = { ok: boolean; status: number; json(): Promise<unknown>; text(): Prom
 // Retries only failures that can pass: not a stopped server, not an answer from the server.
 export const retry = (n: number, e: unknown) => !isStopped(e) && !(e instanceof ApiError) && n < 2;
 
-async function read<T>(res: Res): Promise<T> {
+export async function read<T>(res: Res): Promise<T> {
   if (res.ok) return (await res.json()) as T;
   const text = await res.text();
   if (res.status === 403 && text === "session_stale") throw new ApiError(403, "The service restarted. Reload the page.", true);
@@ -44,8 +44,12 @@ export const useStatus = () => useQuery({ queryKey: ["status"], queryFn: async (
 export const useSettings = () =>
   useQuery({ queryKey: ["settings"], queryFn: async () => read<SettingsDto>(await api.api.settings.$get()) });
 
-export const usePr = (id: number) =>
-  useQuery({ queryKey: ["pr", id], queryFn: async () => read<PrDetail>(await api.api.prs[":id"].$get({ param: { id: String(id) } })) });
+export const usePr = (id: number, enabled = true) =>
+  useQuery({
+    queryKey: ["pr", id],
+    enabled,
+    queryFn: async () => read<PrDetail>(await api.api.prs[":id"].$get({ param: { id: String(id) } })),
+  });
 
 export const claimEvents = async () => read<ClaimedEvent[]>(await api.api.notifications.claim.$post());
 

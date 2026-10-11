@@ -366,7 +366,7 @@ describe("POST /api/follow (by URL)", () => {
 });
 
 describe("GET /api/prs and /api/prs/:id", () => {
-  test("rows carry reasons, unread counts, and follow state", async () => {
+  test("rows carry groups, unread counts, and follow state", async () => {
     const h = await setup();
     const requested = h.pr();
     const newCommits = h.pr({ last_reviewed_commit: "head0", my_status: "NEEDS_WORK" });
@@ -388,11 +388,9 @@ describe("GET /api/prs and /api/prs/:id", () => {
     expect(list.map((r) => r.id).sort()).toEqual([requested, newCommits, approved, mine, unfollowed].sort());
     expect(list.find((r) => r.id === offDashboard || r.id === archived)).toBeUndefined();
     const by = (id: number) => list.find((r) => r.id === id) as PrRow;
-    expect(by(requested).reasons).toEqual(["review_requested"]);
-    expect(by(newCommits).reasons).toEqual(["new_commits"]);
-    expect(by(approved)).toMatchObject({ reasons: [], unread: 1 });
-    expect(by(mine)).toMatchObject({ reasons: ["reply_to_you"], unread: 1, lastActivity: 9000, role: "AUTHOR" });
-    expect(by(unfollowed)).toMatchObject({ followed: false, unread: 0, reasons: ["review_requested"] });
+    expect(by(approved)).toMatchObject({ unread: 1 });
+    expect(by(mine)).toMatchObject({ yourTurn: 1, unread: 1, lastActivity: 9000, role: "AUTHOR" });
+    expect(by(unfollowed)).toMatchObject({ followed: false, unread: 0 });
     // v3 order: reason order first (your, review, commits, comments), then unread, then the newest activity. M1 put unread first.
     expect(list.map((r) => [r.id, r.group])).toEqual([
       [mine, "your"],
@@ -409,7 +407,7 @@ describe("GET /api/prs and /api/prs/:id", () => {
     h.comment(p, 1, { author_slug: ME, ack_version: 0 });
     h.comment(p, 2, { root_id: 1 });
     h.comment(p, 3, { root_id: 1 });
-    expect(await h.row(p)).toMatchObject({ state: "MERGED", unread: 2, reasons: ["reply_to_you", "closed"], followed: true });
+    expect(await h.row(p)).toMatchObject({ state: "MERGED", unread: 2, group: "your", followed: true });
   });
 
   test("a closed PR with a your-turn or unread reason keeps it (D1), else it is closed", async () => {

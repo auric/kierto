@@ -593,7 +593,7 @@ describe("current user by username (synthetic)", () => {
   const NAME = "JDoe";
   const mine = <T>(v: T) => asUsername(v, FAKE_USER, NAME);
 
-  test("role, own comments, events, and reply_to_you match the username and the slug", async () => {
+  test("role, own comments, events, and the turn match the username and the slug", async () => {
     fake.user = NAME;
     world.author = [mine(ownPr())];
     world.reviewer = [mine(reviewPr())];
@@ -610,7 +610,8 @@ describe("current user by username (synthetic)", () => {
     expect(h.unread()).toBe(1);
     expect(h.events()).toEqual([{ kind: "comment_new", ref: "1000011", digest: 0 }]);
     const row = listPrs(h.db(), NAME).find((r) => r.id === h.pr(2).id);
-    expect(row?.reasons).toContain("reply_to_you");
+    // The newest live message is my reply 1000001. Only a match by username makes the thread "wait" and not "your".
+    expect(row).toMatchObject({ yourTurn: 0, waitSince: expect.any(Number) });
   });
 });
 

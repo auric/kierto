@@ -8,13 +8,21 @@
   --font-heading: var(--font-sans);
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace;
+  /* The type scale follows the density (prototype/v3 --fs, --fs-s, --fs-xs), also in the shadcn components. */
+  --text-base: var(--fs);
+  --text-sm: var(--fs-s);
+  --text-xs: var(--fs-xs);
   --color-pane: var(--pane);
   --color-pane-2: var(--pane-2);
   --color-hover: var(--hover);
-  --color-mark: var(--mark);
+  --color-sel: var(--sel);
+  --color-sunken: var(--sunken);
+  --color-ink-2: var(--ink-2);
+  --color-rule-strong: var(--rule-strong);
+  --color-pen: var(--pen);
+  --color-turn: var(--turn);
   --color-ok: var(--ok);
   --color-warn: var(--warn);
-  --color-overlay: var(--overlay);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -55,89 +63,91 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* prototype/v3/index.html:7-54. Hue rule: --turn marks only "your turn", --destructive (prototype --err) marks only errors, --pen marks links and focus. The primary action is an ink fill. */
 :root {
-  /* prototype/index.html:7-50. Prototype --accent is --primary, --accent-soft is --accent. */
-  --background: #eceff3;
-  --foreground: #17202b;
-  --card: #f8f9fb;
-  --card-foreground: #17202b;
-  --popover: #f8f9fb;
-  --popover-foreground: #17202b;
-  --primary: #2647c9;
-  --primary-foreground: #ffffff;
-  --secondary: #e1e5eb;
-  --secondary-foreground: #17202b;
-  --muted: #e1e5eb;
-  --muted-foreground: #5a6573;
-  --accent: #dfe5fa;
-  --accent-foreground: #2647c9;
-  --destructive: #b8282f;
-  --border: #cfd5dd;
-  --input: #cfd5dd;
-  --ring: #2647c9;
-  --chart-1: #2647c9;
-  --chart-2: #2b7a45;
-  --chart-3: #b8650c;
-  --chart-4: #29788a;
-  --chart-5: #7a808a;
-  --radius: 0.375rem;
-  --sidebar: #e2e6ec;
-  --sidebar-foreground: #17202b;
-  --sidebar-primary: #2647c9;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e7ebf0;
-  --sidebar-accent-foreground: #17202b;
-  --sidebar-border: #cfd5dd;
-  --sidebar-ring: #2647c9;
-  --pane: #fbfcfd;
-  --pane-2: #f2f4f7;
-  --hover: #e7ebf0;
-  --mark: #fbecd2;
+  --frame: #e8ebee;
+  --pane-2: #f3f5f7;
+  --pane: #fcfcfd;
+  --sunken: #eff1f4;
+  --hover: #e9ecf0;
+  --sel: #dde2e8;
+  --foreground: #161a21;
+  --ink-2: #4b5563;
+  --muted-foreground: #636d7b;
+  --border: #d9dee4;
+  --rule-strong: #b6bec9;
+  --pen: #2a45b0;
+  --turn: #a3420a;
+  --destructive: #b42318;
   --ok: #2b7a45;
   --warn: #b8650c;
-  --overlay: rgba(23, 32, 43, 0.45);
+  --fs: 14px;
+  --fs-s: 12.75px;
+  --fs-xs: 11.75px;
+  --fs-title: 21px;
+  --row-y: 10px;
 }
 
 .dark {
-  --background: #1a1f27;
-  --foreground: #dbe1e9;
-  --card: #262d38;
-  --card-foreground: #dbe1e9;
-  --popover: #262d38;
-  --popover-foreground: #dbe1e9;
-  --primary: #8aa2ff;
-  --primary-foreground: #111726;
-  --secondary: #2a313c;
-  --secondary-foreground: #dbe1e9;
-  --muted: #2a313c;
-  --muted-foreground: #8e98a5;
-  --accent: #2a3354;
-  --accent-foreground: #8aa2ff;
-  --destructive: #f06b6f;
-  --border: #343c48;
-  --input: #343c48;
-  --ring: #8aa2ff;
-  --chart-1: #8aa2ff;
-  --chart-2: #63c483;
-  --chart-3: #e89c48;
-  --chart-4: #5cb6c7;
-  --chart-5: #9aa0aa;
-  --sidebar: #14181e;
-  --sidebar-foreground: #dbe1e9;
-  --sidebar-primary: #8aa2ff;
-  --sidebar-primary-foreground: #111726;
-  --sidebar-accent: #2a313c;
-  --sidebar-accent-foreground: #dbe1e9;
-  --sidebar-border: #343c48;
-  --sidebar-ring: #8aa2ff;
-  --pane: #212731;
-  --pane-2: #1a1f27;
-  --hover: #2a313c;
-  --mark: #3b3222;
+  color-scheme: dark;
+  --frame: #121519;
+  --pane-2: #171a1f;
+  --pane: #1c2027;
+  --sunken: #15181d;
+  --hover: #22272f;
+  --sel: #2b313b;
+  --foreground: #e4e8ed;
+  --ink-2: #a9b2be;
+  --muted-foreground: #8c96a3;
+  --border: #2c323b;
+  --rule-strong: #46505c;
+  --pen: #93a8ff;
+  --turn: #ffa364;
+  --destructive: #ff8b7e;
   --ok: #63c483;
   --warn: #e89c48;
-  --overlay: rgba(5, 8, 12, 0.6);
-  color-scheme: dark;
+}
+
+:root[data-density="compact"] {
+  --fs: 13px;
+  --fs-s: 12px;
+  --fs-xs: 11.25px;
+  --fs-title: 18px;
+  --row-y: 6px;
+}
+
+/* shadcn roles on the prototype tokens. */
+:root,
+.dark {
+  --background: var(--frame);
+  --card: var(--pane);
+  --card-foreground: var(--foreground);
+  --popover: var(--pane);
+  --popover-foreground: var(--foreground);
+  --primary: var(--foreground);
+  --primary-foreground: var(--pane);
+  --secondary: var(--sel);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--sunken);
+  --accent: var(--sel);
+  --accent-foreground: var(--foreground);
+  --input: var(--rule-strong);
+  --ring: var(--pen);
+  --chart-1: var(--pen);
+  --chart-2: var(--ok);
+  --chart-3: var(--warn);
+  --chart-4: var(--turn);
+  --chart-5: var(--muted-foreground);
+  --radius: 0.375rem;
+  --sidebar: var(--frame);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--foreground);
+  --sidebar-primary-foreground: var(--pane);
+  --sidebar-accent: var(--hover);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--pen);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 @layer base {
@@ -157,13 +167,21 @@
     @apply bg-background text-foreground;
     margin: 0;
     overflow: hidden;
-    font-size: 13.5px;
-    line-height: 1.45;
+    font-size: var(--fs);
+    line-height: 1.5;
     font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
   }
   :focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 1px;
+  }
+  summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  summary::-webkit-details-marker {
+    display: none;
   }
 }
 
@@ -178,60 +196,62 @@
   }
 }
 
-/* App grid (prototype/index.html:6): sidebar | list | detail. A rail from 760 to 1099 px. One pane below 760 px.
+/* Disclosure chevron: right when closed, down when open (prototype/v3:80-84). */
+.rl-chev {
+  transition: transform 150ms var(--ease-out);
+}
+details[open] > summary .rl-chev {
+  transform: rotate(90deg);
+}
+
+/* App grid (prototype/v3:86-88): sidebar | list | detail. A rail from 760 to 1099 px. One pane below 760 px.
    Unlayered, so these display rules win over the Tailwind utilities on the same elements. */
 .rl-app {
   height: 100%;
   display: grid;
-  grid-template-columns: 224px minmax(320px, 368px) minmax(0, 1fr);
+  grid-template-columns: 228px 368px minmax(0, 1fr);
 }
 .rl-app > * {
   min-height: 0;
   min-width: 0;
 }
-.rl-abbr,
 .rl-m-only {
   display: none;
 }
 .pane-edge {
-  box-shadow: inset 0 2px 0 var(--primary);
+  box-shadow: inset 0 2px 0 var(--pen);
 }
 @media (min-width: 760px) and (max-width: 1099px) {
   .rl-app {
-    grid-template-columns: 60px minmax(300px, 340px) minmax(0, 1fr);
+    grid-template-columns: 60px 320px minmax(0, 1fr);
   }
-  .rl-side .rl-lbl {
+  .rl-side .rl-lbl,
+  .rl-side .rl-repos {
     display: none;
   }
-  .rl-side .rl-abbr {
-    display: inline-block;
+  .rl-side .rl-lbl-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
   .rl-side .rl-center {
     justify-content: center;
   }
   .rl-side .rl-stack {
     flex-direction: column;
-    padding-inline: 0;
+    align-items: center;
   }
-  .rl-side .rl-stack > * {
-    flex-basis: auto;
-    margin: 0;
+  .rl-side .rl-stack > .rl-grow {
+    display: none;
   }
   .rl-side .rl-check {
-    width: 30px;
+    width: 32px;
     padding: 0;
+    margin: 0 0 4px;
     justify-content: center;
-  }
-  .rl-side .rl-has-count::after {
-    content: "";
-    position: absolute;
-    top: 4px;
-    right: 6px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--primary);
-    box-shadow: 0 0 0 2px var(--sidebar);
   }
 }
 @media (max-width: 759px) {
@@ -241,10 +261,10 @@
   .rl-app > .rl-pane {
     display: none;
   }
-  .rl-app[data-m="side"] > .rl-side,
   .rl-app[data-m="detail"] > .rl-detail {
     display: flex;
   }
+  .rl-app[data-m="side"] > .rl-side,
   .rl-app[data-m="list"] > .rl-list {
     display: grid;
   }
@@ -253,6 +273,16 @@
   }
   .rl-wide-only {
     display: none;
+  }
+  /* One pane at a time, so no pane needs a focus edge. */
+  .pane-edge {
+    box-shadow: none;
+  }
+  .rl-side .rl-nav {
+    min-height: 40px;
+  }
+  .rl-side .rl-repo {
+    min-height: 36px;
   }
 }
 
@@ -275,7 +305,7 @@
 }
 .rl-tab[aria-selected="true"] {
   color: var(--foreground);
-  border-bottom-color: var(--primary);
+  border-bottom-color: var(--pen);
   font-weight: 600;
 }
 .rl-tab[aria-disabled="true"] {
@@ -303,7 +333,7 @@
   list-style: decimal;
 }
 .rl-md a {
-  color: var(--primary);
+  color: var(--pen);
   text-decoration: underline;
 }
 .rl-md code {

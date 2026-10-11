@@ -11,7 +11,6 @@ import type {
   PrDetail,
   PrRow,
   PrTask,
-  Reason,
 } from "../../shared/dto";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
 import type { Reviewer, Role } from "../../shared/types";
@@ -24,12 +23,9 @@ const LISTED = "p.archived_at IS NULL AND (p.followed = 1 OR p.on_dashboard = 1)
 const SNIPPET = 110;
 
 const SQL = {
-  // lower() folds ASCII only, as foldCase in src/shared/me.ts does.
   rows: `SELECT p.id, p.project, p.repo, p.pr_id, p.title, p.author_slug, p.author_name, p.my_role, p.state, p.my_status, p.last_reviewed_commit,
       p.source_head, p.source_branch, p.target_branch, p.web_url, p.on_dashboard, p.followed, p.reviewers_json, p.seen_at,
       (SELECT COUNT(*) FROM comment c WHERE ${UNREAD}) AS unread,
-      EXISTS (SELECT 1 FROM comment c WHERE ${UNREAD}
-        AND EXISTS (SELECT 1 FROM comment m WHERE m.pr = c.pr AND m.root_id = c.root_id AND (lower(m.author_slug) = lower($me) OR lower(m.author_login) = lower($me)))) AS reply,
       MAX(COALESCE(p.updated_date, 0), COALESCE((SELECT MAX(c.updated_at) FROM comment c WHERE c.pr = p.id), 0)) AS last_activity,
       k.scope IS NOT NULL AS has_checkpoint, k.last_complete_at, k.incomplete_reason, k.last_error
     FROM pull_request p LEFT JOIN sync_checkpoint k ON k.scope = 'pr:' || p.id
@@ -82,7 +78,6 @@ type RawRow = {
   on_dashboard: number;
   followed: number;
   unread: number;
-  reply: number;
   last_activity: number;
   has_checkpoint: number;
   last_complete_at: number | null;
@@ -158,17 +153,6 @@ const toCheckpoint = (k: RawCheckpoint): CheckpointDto => ({
   error: k.last_error,
 });
 
-function reasonsOf(r: RawRow): Reason[] {
-  const out: Reason[] = [];
-  const open = r.state === "OPEN";
-  const reviewer = open && r.my_role === "REVIEWER";
-  if (r.reply) out.push("reply_to_you");
-  if (reviewer && r.my_status === "UNAPPROVED" && !r.last_reviewed_commit) out.push("review_requested");
-  if (reviewer && r.last_reviewed_commit && r.last_reviewed_commit !== r.source_head) out.push("new_commits");
-  if (r.state === "MERGED" || r.state === "DECLINED") out.push("closed");
-  return out;
-}
-
 const toRow = (r: RawRow, t: Turns, tasks: PrTask[]): PrRow => ({
   id: r.id,
   project: r.project,
@@ -190,7 +174,6 @@ const toRow = (r: RawRow, t: Turns, tasks: PrTask[]): PrRow => ({
   onDashboard: r.on_dashboard === 1,
   followed: r.followed === 1,
   unread: r.unread,
-  reasons: reasonsOf(r),
   group: groupOf(r, t),
   yourTurn: t.yourTurn,
   cause: t.cause,
@@ -221,7 +204,7 @@ function selectRows(db: Database, me: string, id: number | null): PrRow[] {
     else msgs.set(c.pr, [m]);
   }
   const tasks = Map.groupBy(db.query(SQL.tasks).all({ id }) as (PrTask & { pr: number })[], (t) => t.pr);
-  return (db.query(SQL.rows).all({ me, id }) as RawRow[]).map((r) =>
+  return (db.query(SQL.rows).all({ id }) as RawRow[]).map((r) =>
     toRow(
       r,
       turnsOf(msgs.get(r.id) ?? [], me, r.my_role === "AUTHOR"),

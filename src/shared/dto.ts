@@ -72,8 +72,6 @@ export type SyncStatus = {
   error: string | null;
 };
 
-export type Reason = "reply_to_you" | "review_requested" | "new_commits" | "closed";
-
 // The inbox reason of a row. views.ts GROUPS maps each one to a list group. "triage" needs review drafts (M2).
 export type Group = "your" | "triage" | "review" | "commits" | "comments" | "waiting" | "quiet" | "closed";
 
@@ -105,7 +103,6 @@ export type PrRow = {
   followed: boolean;
   // 0 for an unfollowed PR.
   unread: number;
-  reasons: Reason[];
   group: Group;
   // The count of threads where it is my turn (src/shared/turn.ts).
   yourTurn: number;

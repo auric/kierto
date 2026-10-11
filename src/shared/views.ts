@@ -1,5 +1,5 @@
 // Pure inbox view rules (plan G5, D1). The server and the UI use the same rules.
-import type { Group, PrRow, Reason } from "./dto";
+import type { Group, PrRow } from "./dto";
 
 const open = (p: PrRow) => p.state === "OPEN";
 
@@ -15,14 +15,6 @@ export const VIEWS = {
 export type View = keyof typeof VIEWS;
 
 export const VIEW_LABEL: Record<View, string> = { needs: "Needs you", reviewing: "Reviewing", mine: "My PRs", following: "Following" };
-
-// D3: no commit count in M1.
-export const REASON_TEXT: Record<Reason, string> = {
-  reply_to_you: "Reply to you",
-  review_requested: "Review requested",
-  new_commits: "New commits since your review",
-  closed: "Closed",
-};
 
 // prototype/v3 GROUPS. Each list group names its reasons in display order.
 export const GROUPS = [

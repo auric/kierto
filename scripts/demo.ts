@@ -1,4 +1,5 @@
 // Demo: the app on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. No real server, data folder, or credential store.
+// The data covers every inbox group and every thread turn. Task IDs use the fictional key ABC.
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -58,6 +59,7 @@ type Spec = {
   head: string;
   branch: string;
   minutes: number;
+  description?: string;
 };
 
 function makePr(o: Spec): Pr {
@@ -70,7 +72,7 @@ function makePr(o: Spec): Pr {
   Object.assign(pr, {
     id: o.id,
     title: o.title,
-    description: "Synthetic demo data.",
+    description: o.description ?? "Synthetic demo data.",
     state: "OPEN",
     updatedDate: min(o.minutes),
     author: { user: o.author, role: "AUTHOR", approved: false, status: "UNAPPROVED" },
@@ -84,23 +86,27 @@ function makePr(o: Spec): Pr {
 
 const HEAD_A = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 const HEAD_B = "b2c3d4e5f60718293a4b5c6d7e8f901234567890";
+// I review with this status. A last reviewed commit equal to the head means no new commits.
 const reviewing = (user: User, status = "UNAPPROVED", lastReviewedCommit?: string) => [
   { user: me, status, lastReviewedCommit },
   { user, status: "UNAPPROVED" },
 ];
 
 const prs = {
-  commits: makePr({
+  // Your turn: an unread reply in my inline thread. Also a resolved thread and a thread between others.
+  yourTurn: makePr({
     project: "PROJ1",
     repo: "sample-repo-2",
     id: 1001,
-    title: "Batch cache writes in the sync worker",
+    title: "[ABC-10145] Take the cache lock inside evict",
     author: alex,
     reviewers: reviewing(maria, "NEEDS_WORK", HEAD_A),
-    head: HEAD_B,
-    branch: "feature/batch-writes",
-    minutes: 30,
+    head: HEAD_A,
+    branch: "bugfix/ABC-10145-evict-takes-cache-lock",
+    minutes: 8,
+    description: "evict() now takes the cache lock itself. The trim pass runs after the lock ends.",
   }),
+  // Review requested, with a thread between two others.
   requested: makePr({
     project: "PROJ1",
     repo: "sample-repo-2",
@@ -109,31 +115,59 @@ const prs = {
     author: maria,
     reviewers: reviewing(kenji),
     head: HEAD_A,
-    branch: "feature/retry-budget",
+    branch: "feature/ABC-10620-retry-budget",
     minutes: 95,
   }),
-  approved: makePr({
+  // New commits since my review. My last reply waits.
+  commits: makePr({
+    project: "PROJ1",
+    repo: "sample-repo-3",
+    id: 81,
+    title: "Batch cache writes in the sync worker",
+    author: alex,
+    reviewers: reviewing(maria, "NEEDS_WORK", HEAD_A),
+    head: HEAD_B,
+    branch: "feature/ABC-10613-batch-writes",
+    minutes: 50,
+  }),
+  // New comments between others on a PR that I approved. The description holds a key that the rules skip.
+  comments: makePr({
+    project: "PROJ2",
+    repo: "api",
+    id: 31,
+    title: "Paginate the audit log query",
+    author: alex,
+    reviewers: reviewing(kenji, "APPROVED", HEAD_A),
+    head: HEAD_A,
+    branch: "feature/audit-paging",
+    minutes: 600,
+    description: "Part of ABC-10598. Keeps UTF-8 user names intact.",
+  }),
+  // Waiting on others: my reply is the newest message.
+  waiting: makePr({
     project: "PROJ2",
     repo: "web-app",
     id: 210,
     title: "Show build status on the release page",
     author: kenji,
-    reviewers: reviewing(alex, "APPROVED", HEAD_A),
+    reviewers: reviewing(alex, "NEEDS_WORK", HEAD_A),
     head: HEAD_A,
     branch: "feature/build-status",
-    minutes: 1500,
+    minutes: 170,
   }),
-  authored: makePr({
+  // Quiet: one resolved thread.
+  quiet: makePr({
     project: "PROJ2",
     repo: "web-app",
-    id: 215,
-    title: "Move date formatting into one helper",
-    author: me,
-    reviewers: [{ user: kenji, status: "NEEDS_WORK" }],
+    id: 212,
+    title: "Cache the release notes per tag",
+    author: maria,
+    reviewers: reviewing(kenji, "NEEDS_WORK", HEAD_A),
     head: HEAD_A,
-    branch: "chore/date-helper",
-    minutes: 2900,
+    branch: "chore/ABC-10577-notes-cache",
+    minutes: 2000,
   }),
+  // D1: merged after a reply to me, so it stays in Needs you with "Merged." first.
   merging: makePr({
     project: "PROJ1",
     repo: "sample-repo-3",
@@ -145,20 +179,57 @@ const prs = {
     branch: "chore/drop-export",
     minutes: 300,
   }),
+  // Declined with no new message: Done.
+  declined: makePr({
+    project: "PROJ1",
+    repo: "sample-repo-3",
+    id: 74,
+    title: "Inline the export helper",
+    author: alex,
+    reviewers: reviewing(kenji, "APPROVED", HEAD_A),
+    head: HEAD_A,
+    branch: "chore/ABC-10544-inline-export",
+    minutes: 4000,
+  }),
+  // The activities fail in phase 2: the row shows an incomplete check.
   broken: makePr({
     project: "PROJ2",
     repo: "api",
-    id: 31,
-    title: "Paginate the audit log query",
-    author: alex,
-    reviewers: reviewing(kenji),
+    id: 33,
+    title: "Index the audit log by user",
+    author: maria,
+    reviewers: reviewing(alex),
     head: HEAD_A,
-    branch: "feature/audit-paging",
-    minutes: 600,
+    branch: "feature/ABC-10640-audit-index",
+    minutes: 700,
+  }),
+  // My PR: two read threads by a reviewer, so it is my turn in two threads.
+  authored: makePr({
+    project: "PROJ2",
+    repo: "web-app",
+    id: 215,
+    title: "Move date formatting into one helper",
+    author: me,
+    reviewers: [{ user: kenji, status: "NEEDS_WORK" }],
+    head: HEAD_A,
+    branch: "chore/ABC-10655-date-helper",
+    minutes: 2900,
+  }),
+  // On the dashboard, but unfollowed below. It shows only in Reviewing.
+  unfollowed: makePr({
+    project: "PROJ3",
+    repo: "tools",
+    id: 9,
+    title: "Pin the linter version",
+    author: kenji,
+    reviewers: reviewing(maria),
+    head: HEAD_A,
+    branch: "chore/pin-linter",
+    minutes: 3100,
   }),
 };
 const own = Object.assign(S.ownPr() as Pr, {
-  title: "Replace the polling timer with a scheduler",
+  title: "[ABC-10701] Replace the polling timer with a scheduler",
   updatedDate: min(12),
   reviewers: [{ user: alex, role: "REVIEWER", approved: false, status: "NEEDS_WORK" }],
   links: { self: [{ href: `${fake.url}/users/${FAKE_USER}/repos/sample-repo-1/pull-requests/2` }] },
@@ -193,29 +264,84 @@ function reply(list: S.Activity[], parent: number, id: number, user: User, minut
   return out;
 }
 
-function newThread(list: S.Activity[], id: number, user: User, minutes: number, text: string): S.Activity[] {
-  const root = S.clone(S.findComment(list, ROOT));
+type ThreadOpts = { path?: string; line?: number; resolved?: boolean };
+
+// A new root comment. A path gives an inline comment on an added line.
+function thread(list: S.Activity[], id: number, user: User, minutes: number, text: string, o: ThreadOpts = {}): S.Activity[] {
+  const root = S.clone(S.findComment(base(), ROOT));
   Object.assign(root, { id, version: 0, text, author: user, createdDate: min(minutes), updatedDate: min(minutes), comments: [] });
+  if (o.path) root.anchor = { path: o.path, line: o.line, lineType: "ADDED", fileType: "TO" };
+  if (o.resolved) root.threadResolved = true;
   return [...S.clone(list), { id: id + 9_000_000, action: "COMMENTED", commentAction: "ADDED", comment: root }];
 }
 
+const none = (): S.Activity[] => [];
+
 const activities = new Map<Pr, () => S.Activity[]>([
   [
-    prs.commits,
-    () => (phase === 1 ? base() : reply(base(), ROOT, 1000010, alex, 8, "Pushed a fix for the flush order. Can you look again?")),
+    prs.yourTurn,
+    () => {
+      let t = thread(none(), 1100, me, 300, "Does evict() still need the caller to hold the lock?", {
+        path: "src/cache/evict.ts",
+        line: 42,
+      });
+      t = thread(t, 1110, maria, 280, "Typo in the comment above trim().", { path: "src/cache/trim.ts", line: 8, resolved: true });
+      t = reply(t, 1110, 1111, alex, 270, "Fixed.");
+      t = thread(t, 1120, maria, 260, "Can the eviction policy own the budget?");
+      t = reply(t, 1120, 1121, alex, 250, "Yes. That comes in the next pull request.");
+      return phase === 1 ? t : reply(t, 1100, 1101, alex, 8, "It takes the cache lock itself now. Callers must not lock.");
+    },
   ],
   [
     prs.requested,
+    () => reply(thread(none(), 1200, kenji, 90, "Is the budget per request or per upload?"), 1200, 1201, maria, 85, "Per upload."),
+  ],
+  [
+    prs.commits,
     () => {
-      if (phase === 1) return base();
-      const t = newThread(base(), 1000020, maria, 40, "The budget resets on every request. Is that intended?");
-      return reply(t, 1000020, 1000021, kenji, 25, "It should reset per upload, not per request.");
+      let t = thread(none(), 1300, me, 400, "Flush the batch before the write lock?", { path: "src/sync/worker.ts", line: 118 });
+      t = reply(t, 1300, 1301, alex, 380, "Done in the next push.");
+      return reply(t, 1300, 1302, me, 370, "Thanks. I will look again after the push.");
     },
   ],
-  [prs.approved, base],
-  [prs.authored, base],
-  [prs.merging, () => (phase === 1 ? base() : reply(base(), ROOT, 1000030, kenji, 15, "Merged. Thanks for the quick review."))],
-  [prs.broken, base],
+  [
+    prs.comments,
+    () => {
+      if (phase === 1) return none();
+      const t = thread(none(), 1400, kenji, 40, "The cursor skips rows with equal timestamps.", { path: "src/audit/query.ts", line: 57 });
+      return reply(t, 1400, 1401, alex, 25, "Good catch. I add the row ID as a tiebreak.");
+    },
+  ],
+  [
+    prs.waiting,
+    () => {
+      let t = thread(none(), 1500, me, 200, "Does the badge update without a reload?");
+      t = reply(t, 1500, 1501, kenji, 180, "Yes, through the poll.");
+      return reply(t, 1500, 1502, me, 170, "Then show the time of the last poll next to it.");
+    },
+  ],
+  [
+    prs.quiet,
+    () =>
+      reply(thread(none(), 1600, kenji, 2100, "Is the cache size capped?", { resolved: true }), 1600, 1601, me, 2050, "Yes, at 50 tags."),
+  ],
+  [
+    prs.merging,
+    () => {
+      const t = thread(none(), 1700, me, 400, "Is any client still on the export endpoint?");
+      return phase === 1 ? t : reply(t, 1700, 1701, kenji, 15, "None in the logs since May. Merged. Thanks for the quick review.");
+    },
+  ],
+  [prs.declined, () => thread(none(), 1800, me, 4100, "This moves the helper back into three files. Is that the plan?")],
+  [prs.broken, none],
+  [
+    prs.authored,
+    () => {
+      const t = thread(none(), 1900, kenji, 2800, "Use Intl.DateTimeFormat here.", { path: "src/date/format.ts", line: 12 });
+      return thread(t, 1910, kenji, 2790, "Please add a test for the leap day.");
+    },
+  ],
+  [prs.unfollowed, none],
   [
     own,
     () => {
@@ -233,27 +359,38 @@ const activities = new Map<Pr, () => S.Activity[]>([
   [extra, base],
 ]);
 
+// Merged and declined in phase 2. Both leave the dashboard and stay followed.
+const closed = new Map<Pr, string>([
+  [prs.merging, "MERGED"],
+  [prs.declined, "DECLINED"],
+]);
+
 for (const [pr, list] of activities) {
   fake.routes[key("GET", `${pathOf(pr)}/activities`)] = () =>
     phase === 2 && pr === prs.broken
       ? { status: 500, body: { errors: [{ message: "Internal error." }] } }
       : { status: 200, body: S.onePage(list()) };
-  fake.routes[key("GET", pathOf(pr))] = () =>
-    pr === prs.merging && phase === 2 ? { status: 200, body: { ...pr, state: "MERGED", updatedDate: min(15) } } : { status: 200, body: pr };
+  fake.routes[key("GET", pathOf(pr))] = () => {
+    const state = phase === 2 ? closed.get(pr) : undefined;
+    return { status: 200, body: state ? { ...pr, state, updatedDate: min(15) } : pr };
+  };
 }
 
 fake.routes[key("GET", S.DASHBOARD_PATH)] = (req) => {
   const role = new URL(req.url).searchParams.get("role");
-  const reviewer = phase === 1 ? Object.values(prs) : Object.values(prs).filter((p) => p !== prs.merging);
-  const values = role === "AUTHOR" ? [own, prs.authored] : reviewer.filter((p) => p !== prs.authored);
-  if (phase === 2) {
-    const c = values.find((p) => p === prs.commits);
-    if (c) c.updatedDate = min(8);
-  }
-  return { status: 200, body: S.onePage(values) };
+  const open = Object.values(prs).filter((p) => p !== prs.authored && !(phase === 2 && closed.has(p)));
+  return { status: 200, body: S.onePage(role === "AUTHOR" ? [own, prs.authored] : open) };
 };
 
-writeConfig(dataDir, { baseUrl: fake.url, userSlug: FAKE_USER, notifications: false });
+// The prototype rules: every source, the default pattern, only the fictional key ABC.
+const pattern = String.raw`[A-Z][A-Z0-9]+-\d+`;
+writeConfig(dataDir, {
+  baseUrl: fake.url,
+  userSlug: FAKE_USER,
+  notifications: false,
+  taskRules: (["branch", "title", "description"] as const).map((source) => ({ source, pattern, keys: ["ABC"] })),
+  taskLink: "https://tracker.example.test/browse/{key}",
+});
 const secrets = createSecrets(null);
 await secrets.set(FAKE_TOKEN);
 const settings = createSettings({ dir: dataDir, secrets });
@@ -262,8 +399,8 @@ const sync = createSyncEngine({ settings, live });
 
 await sync.syncNow();
 const db = settings.db();
-const approved = db?.query("SELECT id FROM pull_request WHERE pr_id = 210").get() as { id: number } | null;
-if (db && approved) setFollowed(db, approved.id, false);
+const hidden = db?.query("SELECT id FROM pull_request WHERE project = 'PROJ3' AND pr_id = 9").get() as { id: number } | null;
+if (db && hidden) setFollowed(db, hidden.id, false);
 phase = 2;
 await sync.syncNow();
 

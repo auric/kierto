@@ -202,7 +202,8 @@ test("A3, A4, A5: duplicates, edit, delete after the 404, multi-page data, and a
   const panel = page.locator("#panel-activity");
   await expect(panel.getByText("Last check incomplete", { exact: true })).toBeVisible();
   await expect(panel.getByText("a comment is missing from the activities")).toBeVisible();
-  await expect(row(page, TITLE.a)).toContainText("Incomplete");
+  // v3 (WP3): the row says "Last check incomplete", as in prototype/v3 row().
+  await expect(row(page, TITLE.a)).toContainText("Last check incomplete");
   await expect(page.locator("#c-1000010")).toContainText("Edited: the flush order is fixed now.");
 
   // The 404 confirms the delete.
@@ -265,9 +266,32 @@ test("A15: a merge leaves Reviewing, stays in Needs you on my turn, and stays fo
   // v3 (WP1): the reply makes it my turn, so the PR stays in Needs you after the read. M1 dropped it from Needs you.
   await expect(row(page, TITLE.c)).not.toContainText("1 new");
   expect(await prRow(request, TITLE.c)).toMatchObject({ state: "MERGED", unread: 0, yourTurn: 1, group: "your" });
-  await expect(row(page, TITLE.c)).toContainText("Merged");
+  // v3 (WP3, D1): the row sits in the Needs you group, and its why-line starts with "Merged.".
+  const needs = page.locator("section[aria-labelledby='g-needs'] [data-row]", { hasText: TITLE.c });
+  await expect(needs).toContainText(/Merged\.\s*Your turn/);
   await nav(page, "Following").click();
-  await expect(row(page, TITLE.c)).toContainText("Merged");
+  await expect(needs).toContainText("Merged.");
+});
+
+test("task rules: a live preview, a syntax error, and the saved rule on the rows", async ({ page }) => {
+  await connect(page, false);
+  await nav(page, "Reviewing").click();
+  await row(page, TITLE.a).click();
+  await page.getByRole("button", { name: "Settings" }).click();
+  // The default rules find nothing in the e2e PR, whose branch is topic/sample-3.
+  await expect(page.getByText("No match.")).toBeVisible();
+  const pattern = page.getByLabel("Pattern of rule 1");
+  const save = page.getByRole("button", { name: "Save task rules" });
+  await pattern.fill("(");
+  await expect(page.getByText("This is not a valid regular expression")).toBeVisible();
+  await expect(save).toBeDisabled();
+  await pattern.fill(String.raw`sample-\d+`);
+  await expect(page.getByRole("list", { name: "Task IDs found" })).toContainText("sample-3");
+  await save.click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  // The background pass writes the IDs, and the live channel refreshes the list.
+  await expect(row(page, TITLE.a)).toContainText("sample-3");
 });
 
 test.describe("denied notifications", () => {

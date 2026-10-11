@@ -1,47 +1,33 @@
 // Pure list and sidebar rules. No DOM access, so bun test runs them directly.
 
-import type { CheckpointDto, PrRow, SyncStatus } from "../../shared/dto";
+import type { CheckpointDto, CheckpointReason, PrRow, PrTask, SyncStatus, TaskSource } from "../../shared/dto";
 import { parsePrUrl } from "../../shared/pr-url";
 import type { PrRef } from "../../shared/types";
-import { REASON_TEXT, VIEWS, type View } from "../../shared/views";
+import { GROUPS, VIEWS, type View } from "../../shared/views";
 
 export const repoOf = (p: Pick<PrRow, "project" | "repo">) => `${p.project}/${p.repo}`;
 export const prKey = (p: Pick<PrRow, "project" | "repo" | "prId">) => `${repoOf(p)} #${p.prId}`;
 
-export type Tone = "new" | "reason" | "muted" | "warn";
-export type BadgeInfo = { text: string; tone: Tone };
-
-const CLOSED_TEXT: Record<string, string> = { MERGED: "Merged", DECLINED: "Declined" };
-
-// Status is always text. Color only repeats it.
-export function badges(p: PrRow): BadgeInfo[] {
-  const out: BadgeInfo[] = [];
-  if (p.unread > 0) out.push({ text: `${p.unread} new`, tone: "new" });
-  for (const r of p.reasons) {
-    if (r === "closed") out.push({ text: CLOSED_TEXT[p.state ?? ""] ?? REASON_TEXT.closed, tone: "muted" });
-    else out.push({ text: REASON_TEXT[r], tone: r === "new_commits" ? "muted" : "reason" });
-  }
-  if (p.onDashboard && !p.followed) out.push({ text: "Not followed", tone: "muted" });
-  return out;
+// forge: the product name from GET /api/meta.
+export function reasonLabel(forge: string): Record<CheckpointReason, string> {
+  return {
+    network: `no answer from ${forge}`,
+    timeout: `${forge} timed out`,
+    auth: `${forge} rejected the token`,
+    forbidden: "no access",
+    not_found: `not found on ${forge}`,
+    rate: "rate limited",
+    server: `${forge} server error`,
+    shape: "unexpected response",
+    cursor: "paging stopped early",
+    page_limit: "too many pages",
+    gap: "a comment is missing from the activities",
+  };
 }
 
-export const REASON_LABEL: Record<NonNullable<CheckpointDto["reason"]>, string> = {
-  network: "no answer from Bitbucket",
-  timeout: "Bitbucket timed out",
-  auth: "Bitbucket rejected the token",
-  forbidden: "no access",
-  not_found: "not found on Bitbucket",
-  rate: "rate limited",
-  server: "Bitbucket server error",
-  shape: "unexpected response",
-  cursor: "paging stopped early",
-  page_limit: "too many pages",
-  gap: "a comment is missing from the activities",
-};
-
 // null when the last check of this PR was complete.
-export function incompleteText(c: CheckpointDto | null): string | null {
-  return c?.reason ? `Last check incomplete: ${REASON_LABEL[c.reason]}` : null;
+export function incompleteText(c: CheckpointDto | null, forge: string): string | null {
+  return c?.reason ? `Last check incomplete: ${reasonLabel(forge)[c.reason]}` : null;
 }
 
 export function viewCounts(prs: PrRow[]): Record<View, number> {
@@ -50,25 +36,97 @@ export function viewCounts(prs: PrRow[]): Record<View, number> {
   return out;
 }
 
-export type RepoCount = { repo: string; unread: number };
+export type RepoCount = { key: string; repo: string; unread: number };
+export type ProjectRepos = { project: string; repos: RepoCount[] };
 
-export function repoCounts(prs: PrRow[]): RepoCount[] {
-  const m = new Map<string, number>();
-  for (const p of prs) m.set(repoOf(p), (m.get(repoOf(p)) ?? 0) + p.unread);
-  return [...m].map(([repo, unread]) => ({ repo, unread })).sort((a, b) => a.repo.localeCompare(b.repo));
+// prototype/v3 renderSide(): repositories under their project, both in name order.
+export function repoTree(prs: PrRow[]): ProjectRepos[] {
+  const m = new Map<string, Map<string, number>>();
+  for (const p of prs) {
+    const repos = m.get(p.project) ?? new Map<string, number>();
+    repos.set(p.repo, (repos.get(p.repo) ?? 0) + p.unread);
+    m.set(p.project, repos);
+  }
+  const byName = (a: string, b: string) => a.localeCompare(b);
+  return [...m.keys()].sort(byName).map((project) => ({
+    project,
+    repos: [...(m.get(project) ?? [])]
+      .sort(([a], [b]) => byName(a, b))
+      .map(([repo, unread]) => ({ key: `${project}/${repo}`, repo, unread })),
+  }));
 }
 
 export const unreadTotal = (prs: PrRow[]) => prs.reduce((n, p) => n + p.unread, 0);
 
+// prototype/v3 listRows(): a repository replaces the view. The filter text also matches task IDs.
 export function filterRows(prs: PrRow[], view: View, repo: string | null, q: string): PrRow[] {
   const needle = q.trim().toLowerCase();
   return prs.filter(
     (p) =>
-      VIEWS[view](p) &&
-      (!repo || repoOf(p) === repo) &&
-      (!needle || [p.title, prKey(p), p.authorName, p.authorSlug].some((s) => s?.toLowerCase().includes(needle))),
+      (repo ? repoOf(p) === repo : VIEWS[view](p)) &&
+      (!needle ||
+        [p.title, prKey(p), p.authorName, p.authorSlug, ...p.tasks.map((t) => t.key)].some((s) => s?.toLowerCase().includes(needle))),
   );
 }
+
+export type ListGroup = { id: (typeof GROUPS)[number][0]; label: string; rows: PrRow[] };
+
+// prototype/v3 grouped(): the three inbox groups, without empty ones. Rows keep the server order.
+export function groupRows(rows: PrRow[]): ListGroup[] {
+  return GROUPS.map(([id, label, groups]) => ({
+    id,
+    label,
+    rows: rows.filter((p) => (groups as readonly string[]).includes(p.group)),
+  })).filter((g) => g.rows.length > 0);
+}
+
+// prototype/v3 orderedRows(): j and k skip the rows of the folded Done group.
+export const navIds = (groups: ListGroup[], doneOpen: boolean): number[] =>
+  groups.flatMap((g) => (g.id === "done" && !doneOpen ? [] : g.rows.map((p) => p.id)));
+
+// The why-line of a row (prototype/v3 why()). turn "wait" is an icon whose label is the turn text.
+export type Why = {
+  // D1: a closed PR names its state first, in every group.
+  closed: string | null;
+  turn: { kind: "your" | "wait"; text: string } | null;
+  // Bold words, then plain text.
+  lead: string | null;
+  text: string | null;
+};
+
+const CLOSED: Record<string, string> = { MERGED: "Merged.", DECLINED: "Declined." };
+
+export function why(p: PrRow, now: number): Why {
+  const out: Why = { closed: CLOSED[p.state ?? ""] ?? null, turn: null, lead: null, text: null };
+  const quote = p.cause && `${p.cause.author}: ${p.cause.snippet}`;
+  switch (p.group) {
+    case "your":
+      return { ...out, turn: { kind: "your", text: p.yourTurn > 1 ? `Your turn in ${p.yourTurn} threads` : "Your turn" }, text: quote };
+    case "triage":
+      return { ...out, lead: "Drafts to triage." };
+    case "review":
+      return { ...out, lead: p.authorName ?? p.authorSlug ?? "The author", text: "asked for your review." };
+    case "commits":
+      // D3: M1 data holds no commit count and no commit message.
+      return { ...out, lead: "New commits since your review." };
+    case "comments":
+      return { ...out, text: quote ?? "New messages." };
+    case "waiting": {
+      const when = p.waitSince === null ? null : ago(p.waitSince, now);
+      const text = when === null ? "You replied last." : when === "now" ? "You replied last, just now." : `You replied last, ${when} ago.`;
+      return { ...out, turn: { kind: "wait", text: "Waiting on others" }, text };
+    }
+    case "closed":
+      return out;
+    default:
+      return { ...out, text: "No new messages." };
+  }
+}
+
+const SOURCE_WORD: Record<TaskSource, string> = { branch: "branch", title: "title", description: "description" };
+
+// The tooltip of a task ID: the ID and the field that holds it.
+export const taskHint = (t: Pick<PrTask, "key" | "source">) => `Task ${t.key}, from the ${SOURCE_WORD[t.source]}`;
 
 // A filter text that is a PR URL on the configured origin. The server checks the origin again.
 export function followCandidate(q: string, baseUrl: string | null): PrRef | null {
@@ -101,7 +159,7 @@ export const clock = (ms: number) => {
 
 export type StatusInfo = { text: string; tone: "ok" | "busy" | "warn" | "error" | "idle" };
 
-export function statusInfo(s: SyncStatus, now: number): StatusInfo {
+export function statusInfo(s: SyncStatus, now: number, forge: string): StatusInfo {
   if (s.running) return { text: "Checking…", tone: "busy" };
   const last = s.lastCompleteAt === null ? "never" : clock(s.lastCompleteAt);
   switch (s.state) {
@@ -112,7 +170,7 @@ export function statusInfo(s: SyncStatus, now: number): StatusInfo {
       return { text: `Offline. Last checked ${last}.${next}`, tone: "warn" };
     }
     case "auth":
-      return { text: "Bitbucket rejected the token", tone: "error" };
+      return { text: `${forge} rejected the token`, tone: "error" };
     case "unconfigured":
       return { text: "Not configured", tone: "idle" };
     case "error":

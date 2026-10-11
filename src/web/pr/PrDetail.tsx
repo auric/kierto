@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { CommentDto, PrDetail as Detail, PrRow } from "../../shared/dto";
 import { isMe } from "../../shared/me";
+import { useForge } from "../meta";
 import { ApiError, useArchive, useFollow, usePr } from "../shell/data";
 import { ago, initials, prKey } from "../shell/model";
 import { Calm, CheckBanner } from "../states";
@@ -96,6 +97,7 @@ function Header({ pr, me, onLeave }: { pr: PrRow; me: string | null; onLeave: ()
   const archive = useArchive();
   const key = prKey(pr);
   const web = webLink(pr.webUrl);
+  const forge = useForge();
 
   const onArchive = () => {
     onLeave();
@@ -126,12 +128,12 @@ function Header({ pr, me, onLeave }: { pr: PrRow; me: string | null; onLeave: ()
         )}
         {web && (
           <>
-            <a className="inline-flex items-center gap-1 text-primary hover:underline" href={web} target="_blank" rel="noopener noreferrer">
-              Open in Bitbucket
+            <a className="inline-flex items-center gap-1 text-pen hover:underline" href={web} target="_blank" rel="noopener noreferrer">
+              Open in {forge}
               <ExternalLink aria-hidden className="size-3.5" />
             </a>
             <a
-              className="inline-flex items-center gap-1 text-primary hover:underline"
+              className="inline-flex items-center gap-1 text-pen hover:underline"
               href={`${web}/diff`}
               target="_blank"
               rel="noopener noreferrer"
@@ -216,6 +218,7 @@ function Activity({ detail, me }: { detail: Detail; me: string | null }) {
   const threads = buildThreads(comments, next, atOpen);
   const mine = openThreads(comments, me);
   const ackRef = useAck(detail.pr.id, comments);
+  const forge = useForge();
   const now = Date.now();
 
   const jump = (e: MouseEvent<HTMLAnchorElement>, id: number) => {
@@ -243,7 +246,7 @@ function Activity({ detail, me }: { detail: Detail; me: string | null }) {
           <ul className="m-0 grid list-none gap-1 p-0">
             {mine.map((c) => (
               <li key={c.id} className="min-w-0 truncate">
-                <a href={`#c-${c.id}`} onClick={(e) => jump(e, c.id)} className="text-primary hover:underline">
+                <a href={`#c-${c.id}`} onClick={(e) => jump(e, c.id)} className="text-pen hover:underline">
                   {where(c) ?? firstLine(c.text)}
                 </a>
               </li>
@@ -254,7 +257,16 @@ function Activity({ detail, me }: { detail: Detail; me: string | null }) {
       {threads.length ? (
         <ol className="m-0 max-w-[760px] list-none border-l p-0">
           {threads.map((t) => (
-            <ThreadItem key={t.root.id} root={t.root} open={t.highlighted} divider={t.divider} hl={next} ackRef={ackRef} now={now} />
+            <ThreadItem
+              key={t.root.id}
+              root={t.root}
+              open={t.highlighted}
+              divider={t.divider}
+              hl={next}
+              ackRef={ackRef}
+              now={now}
+              forge={forge}
+            />
           ))}
         </ol>
       ) : (
@@ -264,7 +276,7 @@ function Activity({ detail, me }: { detail: Detail; me: string | null }) {
   );
 }
 
-type Shared = { hl: ReadonlySet<number>; ackRef: (el: HTMLElement | null) => (() => void) | undefined; now: number };
+type Shared = { hl: ReadonlySet<number>; ackRef: (el: HTMLElement | null) => (() => void) | undefined; now: number; forge: string };
 
 function ThreadItem({ root, open, divider, ...shared }: { root: Msg; open: boolean; divider: boolean } & Shared) {
   const count = countReplies(root);
@@ -281,7 +293,8 @@ function ThreadItem({ root, open, divider, ...shared }: { root: Msg; open: boole
         ) : (
           <details className="group">
             <summary className="cursor-pointer text-[12.5px] text-muted-foreground marker:text-border">
-              <b className="font-semibold text-foreground">{who(root)}</b> {firstLine(root.deleted ? "Deleted on Bitbucket" : root.text)}
+              <b className="font-semibold text-foreground">{who(root)}</b>{" "}
+              {firstLine(root.deleted ? `Deleted on ${shared.forge}` : root.text)}
               {count > 0 && ` · ${count} ${count === 1 ? "reply" : "replies"}`}
             </summary>
             <div className="mt-1.5">
@@ -309,7 +322,7 @@ function Tree({ m, ...shared }: { m: Msg } & Shared) {
   );
 }
 
-function Message({ m, hl, ackRef, now }: { m: Msg } & Shared) {
+function Message({ m, hl, ackRef, now, forge }: { m: Msg } & Shared) {
   const isNew = hl.has(m.id);
   const anchor = anchorOf(m);
   return (
@@ -340,7 +353,7 @@ function Message({ m, hl, ackRef, now }: { m: Msg } & Shared) {
           isNew ? "border-transparent bg-accent" : "bg-card",
         )}
       >
-        {m.deleted || m.text === null ? <p className="m-0 text-muted-foreground italic">Deleted on Bitbucket</p> : <Text text={m.text} />}
+        {m.deleted || m.text === null ? <p className="m-0 text-muted-foreground italic">Deleted on {forge}</p> : <Text text={m.text} />}
       </div>
     </article>
   );

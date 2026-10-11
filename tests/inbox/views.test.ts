@@ -20,7 +20,6 @@ const row = (o: Partial<PrRow>): PrRow => ({
   onDashboard: true,
   followed: true,
   unread: 0,
-  reasons: [],
   group: "quiet",
   yourTurn: 0,
   cause: null,

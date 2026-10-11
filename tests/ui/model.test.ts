@@ -1,16 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import type { PrRow, SyncStatus } from "../../src/shared/dto";
+import { reduceKey } from "../../src/web/keys";
 import {
   ago,
-  badges,
   filterRows,
   followCandidate,
+  groupRows,
   incompleteText,
   initials,
-  repoCounts,
+  navIds,
+  repoTree,
   statusInfo,
+  taskHint,
   unreadTotal,
   viewCounts,
+  why,
 } from "../../src/web/shell/model";
 
 const row = (o: Partial<PrRow>): PrRow => ({
@@ -31,7 +35,6 @@ const row = (o: Partial<PrRow>): PrRow => ({
   onDashboard: true,
   followed: true,
   unread: 0,
-  reasons: [],
   group: "quiet",
   yourTurn: 0,
   cause: null,
@@ -43,35 +46,108 @@ const row = (o: Partial<PrRow>): PrRow => ({
   ...o,
 });
 
-const texts = (p: PrRow) => badges(p).map((b) => b.text);
+const NOW = 10 * 86_400_000;
+const cause = { thread: 5, msg: 6, author: "Lena Petrova", snippet: "Can you take the lock here?" };
 
-describe("badge text", () => {
-  test("unread count and reasons are text", () => {
-    expect(texts(row({ unread: 3, reasons: ["reply_to_you", "review_requested"] }))).toEqual(["3 new", "Reply to you", "Review requested"]);
-    expect(texts(row({ reasons: ["new_commits"] }))).toEqual(["New commits since your review"]);
+describe("inbox groups", () => {
+  // The server order: reason order, then unread, then activity. The groups keep it.
+  const list = [
+    row({ id: 1, group: "your" }),
+    row({ id: 2, group: "review" }),
+    row({ id: 3, group: "comments", state: "MERGED" }),
+    row({ id: 4, group: "waiting" }),
+    row({ id: 5, group: "quiet" }),
+    row({ id: 6, group: "closed", state: "DECLINED" }),
+  ];
+
+  test("Needs you, Waiting on others, and Done hold their reasons in server order", () => {
+    expect(groupRows(list).map((g) => [g.id, g.label, g.rows.map((p) => p.id)])).toEqual([
+      ["needs", "Needs you", [1, 2, 3]],
+      ["waiting", "Waiting on others", [4]],
+      ["done", "Done", [5, 6]],
+    ]);
   });
 
-  test("a closed PR names its state", () => {
-    expect(texts(row({ state: "MERGED", reasons: ["closed"] }))).toEqual(["Merged"]);
-    expect(texts(row({ state: "DECLINED", reasons: ["closed"] }))).toEqual(["Declined"]);
-    expect(texts(row({ state: "OTHER", reasons: ["closed"] }))).toEqual(["Closed"]);
+  test("an empty group is left out", () => {
+    expect(groupRows([row({ id: 4, group: "waiting" })]).map((g) => g.id)).toEqual(["waiting"]);
+    expect(groupRows([])).toEqual([]);
   });
 
-  test("an unfollowed dashboard row says so", () => {
-    expect(texts(row({ followed: false }))).toEqual(["Not followed"]);
-    expect(texts(row({}))).toEqual([]);
+  test("j and k skip the rows of a folded Done group", () => {
+    const groups = groupRows(list);
+    expect(navIds(groups, false)).toEqual([1, 2, 3, 4]);
+    expect(navIds(groups, true)).toEqual([1, 2, 3, 4, 5, 6]);
+    const ctx = { ids: navIds(groups, false), typing: false, onButton: false, settingsLocked: false };
+    const s = { focus: "list" as const, mobile: "list" as const, selected: 4, help: false, settings: false };
+    // At the last open row, j stays. k from a folded row restarts at the top.
+    expect(reduceKey(s, "j", ctx).state.selected).toBe(4);
+    expect(reduceKey({ ...s, selected: 5 }, "k", ctx).state.selected).toBe(1);
+  });
+});
+
+describe("why-lines", () => {
+  test("your turn names the thread count and quotes the cause", () => {
+    expect(why(row({ group: "your", yourTurn: 1, cause }), NOW)).toEqual({
+      closed: null,
+      turn: { kind: "your", text: "Your turn" },
+      lead: null,
+      text: "Lena Petrova: Can you take the lock here?",
+    });
+    expect(why(row({ group: "your", yourTurn: 3, cause }), NOW).turn).toEqual({ kind: "your", text: "Your turn in 3 threads" });
   });
 
-  test("every badge has a tone and a text", () => {
-    for (const b of badges(row({ unread: 1, reasons: ["reply_to_you", "new_commits", "closed"], followed: false }))) {
-      expect(b.text.length).toBeGreaterThan(0);
-    }
+  test("a review request names the author", () => {
+    expect(why(row({ group: "review", authorName: "Dan Okafor" }), NOW)).toMatchObject({
+      lead: "Dan Okafor",
+      text: "asked for your review.",
+    });
+    expect(why(row({ group: "review", authorName: null, authorSlug: "dokafor" }), NOW).lead).toBe("dokafor");
   });
 
-  test("an incomplete check has text", () => {
-    expect(incompleteText(null)).toBeNull();
-    expect(incompleteText({ lastCompleteAt: 1, reason: null, error: null })).toBeNull();
-    expect(incompleteText({ lastCompleteAt: 1, reason: "server", error: "500" })).toBe("Last check incomplete: Bitbucket server error");
+  test("new commits, comments, and quiet rows", () => {
+    expect(why(row({ group: "commits" }), NOW)).toMatchObject({ lead: "New commits since your review.", text: null });
+    expect(why(row({ group: "comments", cause }), NOW).text).toBe("Lena Petrova: Can you take the lock here?");
+    expect(why(row({ group: "quiet" }), NOW).text).toBe("No new messages.");
+  });
+
+  test("waiting names the time of my last reply", () => {
+    expect(why(row({ group: "waiting", waitSince: NOW - 3 * 3_600_000 }), NOW)).toMatchObject({
+      turn: { kind: "wait", text: "Waiting on others" },
+      text: "You replied last, 3h ago.",
+    });
+    expect(why(row({ group: "waiting", waitSince: NOW }), NOW).text).toBe("You replied last, just now.");
+    expect(why(row({ group: "waiting" }), NOW).text).toBe("You replied last.");
+  });
+
+  test("D1: a closed PR names its state first, also in Needs you", () => {
+    expect(why(row({ group: "closed", state: "MERGED" }), NOW)).toEqual({ closed: "Merged.", turn: null, lead: null, text: null });
+    expect(why(row({ group: "closed", state: "DECLINED" }), NOW).closed).toBe("Declined.");
+    const merged = why(row({ group: "your", state: "MERGED", yourTurn: 1, cause }), NOW);
+    expect(merged).toMatchObject({ closed: "Merged.", turn: { kind: "your", text: "Your turn" } });
+    expect(why(row({ group: "comments", state: "DECLINED", cause }), NOW).closed).toBe("Declined.");
+    expect(why(row({ group: "your", yourTurn: 1, cause }), NOW).closed).toBeNull();
+  });
+});
+
+describe("task ID on a row", () => {
+  test("the tooltip names the ID and its source field", () => {
+    expect(taskHint({ key: "ABC-10145", source: "branch" })).toBe("Task ABC-10145, from the branch");
+    expect(taskHint({ key: "ABC-7", source: "description" })).toBe("Task ABC-7, from the description");
+  });
+
+  test("the filter matches task IDs", () => {
+    const prs = [row({ id: 1, tasks: [{ key: "ABC-10145", source: "title", url: null }] }), row({ id: 2 })];
+    expect(filterRows(prs, "following", null, "abc-1014").map((p) => p.id)).toEqual([1]);
+  });
+});
+
+describe("incomplete check text", () => {
+  test("names the forge from meta", () => {
+    expect(incompleteText(null, "Forge")).toBeNull();
+    expect(incompleteText({ lastCompleteAt: 1, reason: null, error: null }, "Forge")).toBeNull();
+    expect(incompleteText({ lastCompleteAt: 1, reason: "server", error: "500" }, "Forge")).toBe(
+      "Last check incomplete: Forge server error",
+    );
   });
 });
 
@@ -80,8 +156,8 @@ describe("sidebar counts", () => {
     row({ id: 1, unread: 2 }),
     row({ id: 2, status: "APPROVED" }),
     row({ id: 3, role: "AUTHOR", status: null, repo: "other", unread: 1 }),
-    row({ id: 4, state: "MERGED", reasons: ["closed"], unread: 4 }),
-    row({ id: 5, followed: false, repo: "other" }),
+    row({ id: 4, state: "MERGED", group: "comments", unread: 4 }),
+    row({ id: 5, followed: false, repo: "other", project: "PROJ0" }),
   ];
 
   test("each view counts its rows", () => {
@@ -89,17 +165,24 @@ describe("sidebar counts", () => {
     expect(viewCounts([])).toEqual({ needs: 0, reviewing: 0, mine: 0, following: 0 });
   });
 
-  test("repositories list unread counts by name", () => {
-    expect(repoCounts(prs)).toEqual([
-      { repo: "PROJ1/other", unread: 1 },
-      { repo: "PROJ1/repo", unread: 6 },
+  test("repositories sit under their project with unread counts", () => {
+    expect(repoTree(prs)).toEqual([
+      { project: "PROJ0", repos: [{ key: "PROJ0/other", repo: "other", unread: 0 }] },
+      {
+        project: "PROJ1",
+        repos: [
+          { key: "PROJ1/other", repo: "other", unread: 1 },
+          { key: "PROJ1/repo", repo: "repo", unread: 6 },
+        ],
+      },
     ]);
     expect(unreadTotal(prs)).toBe(7);
   });
 
-  test("the filter matches title, key, and author within the view and repository", () => {
+  test("a repository replaces the view, and the filter matches title, key, and author", () => {
     expect(filterRows(prs, "needs", null, "").map((p) => p.id)).toEqual([1, 3, 4]);
-    expect(filterRows(prs, "needs", "PROJ1/other", "").map((p) => p.id)).toEqual([3]);
+    // prototype/v3: the repository view lists every row of the repository, also the unfollowed one.
+    expect(filterRows(prs, "needs", "PROJ0/other", "").map((p) => p.id)).toEqual([5]);
     expect(filterRows(prs, "following", null, "proj1/repo #1").map((p) => p.id)).toEqual([1, 2, 4]);
     expect(filterRows([row({ id: 9, authorName: "Ada Lovelace", title: null })], "following", null, "ada").map((p) => p.id)).toEqual([9]);
     expect(filterRows(prs, "needs", null, "zzz")).toEqual([]);
@@ -107,15 +190,15 @@ describe("sidebar counts", () => {
 });
 
 describe("follow by URL in the filter", () => {
-  const base = "https://bitbucket.example.test/context";
+  const base = "https://forge.example.test/context";
 
   test("a PR URL on the configured origin is a candidate", () => {
-    expect(followCandidate("https://bitbucket.example.test/projects/PROJ/repos/app/pull-requests/12/overview", base)).toEqual({
+    expect(followCandidate("https://forge.example.test/projects/PROJ/repos/app/pull-requests/12/overview", base)).toEqual({
       project: "PROJ",
       repo: "app",
       id: 12,
     });
-    expect(followCandidate("  https://bitbucket.example.test/users/jdoe/repos/r/pull-requests/2  ", base)).toEqual({
+    expect(followCandidate("  https://forge.example.test/users/jdoe/repos/r/pull-requests/2  ", base)).toEqual({
       project: "~JDOE",
       repo: "r",
       id: 2,
@@ -125,8 +208,8 @@ describe("follow by URL in the filter", () => {
   test("other text, other origins, and no config give no candidate", () => {
     expect(followCandidate("fix login", base)).toBeNull();
     expect(followCandidate("https://other.example.test/projects/PROJ/repos/app/pull-requests/12", base)).toBeNull();
-    expect(followCandidate("https://bitbucket.example.test/projects/PROJ/repos/app", base)).toBeNull();
-    expect(followCandidate("https://bitbucket.example.test/projects/PROJ/repos/app/pull-requests/12", null)).toBeNull();
+    expect(followCandidate("https://forge.example.test/projects/PROJ/repos/app", base)).toBeNull();
+    expect(followCandidate("https://forge.example.test/projects/PROJ/repos/app/pull-requests/12", null)).toBeNull();
   });
 });
 
@@ -155,14 +238,14 @@ describe("check status text", () => {
   const at = new Date(2026, 0, 1, 9, 5).getTime();
 
   test("each state reads as text", () => {
-    expect(statusInfo(s({ lastCompleteAt: at }), at)).toEqual({ text: "Checked 09:05", tone: "ok" });
-    expect(statusInfo(s({ running: true }), at).text).toBe("Checking…");
-    expect(statusInfo(s({ state: "offline", lastCompleteAt: at, nextAt: at + 41_200 }), at).text).toBe(
+    expect(statusInfo(s({ lastCompleteAt: at }), at, "Forge")).toEqual({ text: "Checked 09:05", tone: "ok" });
+    expect(statusInfo(s({ running: true }), at, "Forge").text).toBe("Checking…");
+    expect(statusInfo(s({ state: "offline", lastCompleteAt: at, nextAt: at + 41_200 }), at, "Forge").text).toBe(
       "Offline. Last checked 09:05. Next try in 42 s.",
     );
-    expect(statusInfo(s({ state: "auth" }), at).text).toBe("Bitbucket rejected the token");
-    expect(statusInfo(s({ state: "unconfigured" }), at).text).toBe("Not configured");
-    expect(statusInfo(s({ state: "error", error: "Cannot read the CA file (ENOENT)." }), at).text).toBe(
+    expect(statusInfo(s({ state: "auth" }), at, "Forge").text).toBe("Forge rejected the token");
+    expect(statusInfo(s({ state: "unconfigured" }), at, "Forge").text).toBe("Not configured");
+    expect(statusInfo(s({ state: "error", error: "Cannot read the CA file (ENOENT)." }), at, "Forge").text).toBe(
       "Cannot read the CA file (ENOENT).",
     );
   });
