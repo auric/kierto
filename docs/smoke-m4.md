@@ -55,6 +55,13 @@ This test checks the compiled binary, the check interval, the profile editor, an
 5. Run `bun test tests/build/compiled.test.ts`. Expect no fails and no skips.
 6. Record the distribution, the kernel version (`uname -r`), and the results.
 
-## macOS
+## Linux binary under WSL
 
-- The binary is not signed. Gatekeeper blocks the first start of a downloaded binary. A binary that you build on the same Mac usually starts. If Gatekeeper blocks it, open System Settings, Privacy & Security, and allow it. Record what you saw.
+This check runs the cross-compiled linux-x64 binary from Windows in WSL. It needs no Bun in WSL.
+
+1. On Windows, run `bun run compile:all` or `bun run release`. Note the path of the linux-x64 binary.
+2. In WSL, copy the binary into the Linux file system, not under `/mnt/c`: `mkdir -p ~/rl-smoke && cp /mnt/d/<repo>/dist/bin/review-loop-linux-x64 ~/rl-smoke/ && cd ~/rl-smoke`.
+3. Run `chmod +x review-loop-linux-x64`.
+4. Run `REVIEW_LOOP_SECRETS=memory REVIEW_LOOP_DATA_DIR="$(mktemp -d)" ./review-loop-linux-x64`. Expect "Review Loop (<commit>): http://127.0.0.1:7317/" with the commit of step 1.
+5. On Windows, open the printed URL in the browser. Expect the inbox page. WSL forwards localhost to Windows by default. If the page does not open, record the WSL networking mode (`wsl --version` and `.wslconfig`).
+6. Press Ctrl+C in WSL. Expect the process to stop. Record the distribution, `uname -r`, and the results.

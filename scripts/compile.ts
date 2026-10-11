@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
 export const HOST = `${process.platform === "win32" ? "windows" : process.platform}-${process.arch}`;
-const ALL = ["windows-x64", "linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"];
+export const ALL = ["windows-x64", "linux-x64", "linux-arm64"];
 
 export const binPath = (target: string) => join(ROOT, "dist", "bin", `review-loop-${target}${target.startsWith("windows") ? ".exe" : ""}`);
 

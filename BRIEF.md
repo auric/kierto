@@ -262,7 +262,7 @@ Stack:
 - Secrets: Bun.secrets (experimental; verify on Windows and Linux in Gate 0). Fallback: memory only for the session.
 - Tests: bun test for logic and integration, Playwright for browser acceptance.
 - Diff viewer (Release 2): no diff library. It uses the parsed git diff rows and the existing excerpt styles.
-- Distribution: bun build --compile makes one executable per OS with the UI embedded. Users need no runtime install.
+- Distribution: bun build --compile makes one executable for Windows and one for Linux, with the UI embedded. Users need no runtime install.
 - Windows checks first (Gate 0): start claude.exe, send the prompt on stdin, cancel a run, read and write Bun.secrets. Cancel must stop the whole process tree, including MCP servers (taskkill /T /F on Windows). If Bun fails one check, switch to Node. Keep the code on web-standard APIs plus a thin spawn, SQLite, and secrets layer. Gate 0 passed all Windows checks on Bun 1.4.2; the Node fallback stays for Linux and future regressions.
 
 Boundaries (build each only when its milestone needs it):

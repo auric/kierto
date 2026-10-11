@@ -38,11 +38,13 @@ Commands:
 - `bun run dev`: start Hono with `--watch` on 127.0.0.1:7317 and Vite with HMR on 127.0.0.1:5173. Open the Vite URL.
 - `bun run build`: build the UI into `dist/web`.
 - `bun run start`: serve the API and the built UI on 127.0.0.1:7317. `REVIEW_LOOP_PORT` overrides the port. `REVIEW_LOOP_DATA_DIR` sets the data folder. `REVIEW_LOOP_SECRETS=memory` keeps the token out of the OS store.
-- `bun run compile`: build the UI, then one self-contained executable for this host into `dist/bin/review-loop-<os>-<arch>`. `bun run compile:all` adds windows-x64, linux-x64, linux-arm64, darwin-x64, and darwin-arm64. `tests/build/compiled.test.ts` checks the host binary. It skips when the binary is absent and fails when a source is newer.
+- `bun run compile`: build the UI, then one self-contained executable for this host into `dist/bin/review-loop-<os>-<arch>`. `bun run compile:all` adds windows-x64, linux-x64, and linux-arm64. Release builds cover Windows and Linux only. `tests/build/compiled.test.ts` checks the host binary. It skips when the binary is absent and fails when a source is newer.
 - `bun run typecheck`: run strict `tsc --noEmit`. `bun run typecheck:5` runs it with TypeScript 5.
 - `bun run lint`: run Biome lint and format checks. `bun run format` applies the fixes.
 - `bun run demo`: serve the built UI on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. It uses a temp data folder and memory secrets.
 - `bun test`: run the tests under `tests/`. Each group ends green on typecheck, lint, and test.
+- `bun run check`: run typecheck, typecheck:5, lint, and `bun test` in sequence. It stops at the first failure.
+- `bun run release`: make a tested release in `dist/release/<version>-<commit>/`. It runs check, e2e, compile for all targets, and the compiled-binary test, then writes SHA256SUMS. It refuses a dirty tree unless `--allow-dirty`. `--skip-e2e` skips the e2e tests.
 - `bun run test:e2e`: build the UI, then run the Playwright suite `tests/e2e/*.e2e.ts` with Node. `tests/e2e/serve.ts` starts the fake Bitbucket on `E2E_FAKE_PORT` (default 7398), the fake Jira on `E2E_JIRA_PORT` (default 7397), and the app on `E2E_APP_PORT` (default 7399). Stop `bun run demo` first, because it uses port 7399.
 
 ## Skills
