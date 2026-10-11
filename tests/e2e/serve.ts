@@ -1,4 +1,4 @@
-// E2E server: the fake Bitbucket on 127.0.0.1:7398 and the app on 127.0.0.1:7399 in one process. Test code only.
+// E2E server: the fake Bitbucket on FAKE_URL and the app on APP_PORT in one process (control.ts). Test code only.
 // The app gets a temp data folder and memory secrets. It never sees the real data folder or the credential store.
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
 import { createLive } from "../../src/server/live";
 import { startServer } from "../../src/server/main";
+import { createOutbox } from "../../src/server/publish/outbox";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
@@ -160,6 +161,11 @@ const paged = <T>(values: T[], req: Request, last: "absent" | "null") => {
   return p ? ok(p) : ok(S.onePage([]));
 };
 
+// The comments that the app posts (plan v3 WP13a). They show in the activities of the next sync.
+const postsA = S.commentPosts(A.path, activitiesA, me, 4_000_001);
+const postsB = S.commentPosts(B.path, activitiesB, me, 4_100_001);
+const postsC = S.commentPosts(C.path, activitiesC, me, 4_200_001);
+
 const fake = startFakeBitbucket({ port: Number(new URL(FAKE_URL).port) });
 fake.token = E2E_TOKEN;
 const r = fake.routes;
@@ -171,9 +177,10 @@ r[key("GET", S.DASHBOARD_PATH)] = (req) => {
 r[key("GET", A.path)] = ok(A.pr);
 r[key("GET", B.path)] = ok(B.pr);
 r[key("GET", C.path)] = () => ok(sc.merge === "merged" ? { ...C.pr, state: "MERGED" } : C.pr);
-r[key("GET", `${A.path}/activities`)] = (req) => paged(activitiesA(), req, "null");
-r[key("GET", `${B.path}/activities`)] = () => ok(S.onePage(activitiesB()));
-r[key("GET", `${C.path}/activities`)] = (req) => paged(activitiesC(), req, "absent");
+r[key("GET", `${A.path}/activities`)] = (req) => paged(postsA.activities(), req, "null");
+r[key("GET", `${B.path}/activities`)] = () => ok(S.onePage(postsB.activities()));
+r[key("GET", `${C.path}/activities`)] = (req) => paged(postsC.activities(), req, "absent");
+Object.assign(r, postsA.routes, postsB.routes, postsC.routes);
 r[key("GET", `${A.path}/comments/1000010`)] = () => (sc.reply === "deleted" ? NOT_FOUND : ok(S.findComment(withReply(), 1000010)));
 
 // The app. A restart keeps the data folder and the secret store, as a process restart with the OS store does.
@@ -183,6 +190,7 @@ function boot() {
   const settings = createSettings({ dir: dataDir, secrets });
   const sync = createSyncEngine({ settings, live });
   const review = createReviewJobs({ settings, live, dataDir, runnerCommand, listTools: stubListTools, gitRemote: remote.gitRemote });
+  const outbox = createOutbox({ settings, live });
   const server = startServer({
     port: APP_PORT,
     token: randomBytes(32).toString("hex"),
@@ -190,18 +198,21 @@ function boot() {
     settings,
     sync,
     review,
+    outbox,
     indexHtml,
     assets: serveStatic({ root: WEB_DIR }),
   });
   sync.start();
   void review.start();
-  return { server, settings, sync, review };
+  outbox.start();
+  return { server, settings, sync, review, outbox };
 }
 let app = boot();
 
 async function halt() {
   app.sync.stop();
   await app.review.stop();
+  await app.outbox.stop();
   await app.server.stop(true);
   // Windows cannot remove an open SQLite file.
   app.settings.close();
@@ -214,6 +225,7 @@ r[key("POST", "/__control/reset")] = async () => {
   mkdirSync(dataDir);
   secrets = createSecrets(null);
   sc = { ...INITIAL };
+  for (const p of [postsA, postsB, postsC]) p.reset();
   setClaude({ stream: "tree" });
   app = boot();
   return NO_CONTENT;

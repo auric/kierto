@@ -1,0 +1,459 @@
+// Durable outbox (plan v3 WP13a): each approved text reaches the forge once, from the user's point of view.
+// A row goes pending, then sent (committed before the request), then confirmed, failed, or unknown.
+// An unknown row is checked against the remote comments before any new send. Without a match, the user decides.
+import type { Database } from "bun:sqlite";
+import type { PlannedPost, PostDestination, PostDto, PostState, ReplyConflict, ReplyPostInput } from "../../shared/dto";
+import { isMe } from "../../shared/me";
+import { newestLive, type TurnMsg } from "../../shared/turn";
+import type { Comment, PrRef } from "../../shared/types";
+import { ForgeError } from "../bitbucket/client";
+import type { ForgeProvider, NewAnchor } from "../bitbucket/provider";
+import type { Live } from "../live";
+import { log } from "../log";
+import type { Settings } from "../settings";
+
+type Ref = { id: number; revision: number };
+
+type PostRow = {
+  id: number;
+  pr: number;
+  run: number | null;
+  kind: PostDestination["kind"];
+  idem_key: string;
+  body: string;
+  destination_json: string;
+  items_json: string;
+  state: PostState;
+  remote_id: number | null;
+  remote_version: number | null;
+  attempts: number;
+  last_error: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+const UNCONFIGURED = "Configure the Bitbucket URL and token first.";
+const NO_MATCH = "No matching comment on Bitbucket. Post again or drop.";
+
+const SQL = {
+  recover: "UPDATE post SET state = 'unknown', last_error = $text, updated_at = $now WHERE state = 'sent'",
+  unknown: "SELECT id FROM post WHERE state = 'unknown' ORDER BY id",
+  next: "SELECT * FROM post WHERE state = 'pending' ORDER BY id LIMIT 1",
+  get: "SELECT * FROM post WHERE id = $id",
+  byPr: "SELECT * FROM post WHERE pr = $pr ORDER BY id",
+  byKey: "SELECT * FROM post WHERE idem_key = $key",
+  runPosts: "SELECT * FROM post WHERE pr = $pr AND run IS NOT NULL ORDER BY id",
+  owned: "SELECT remote_id FROM post WHERE pr = $pr AND id != $id AND remote_id IS NOT NULL",
+  ref: "SELECT project, repo, pr_id AS id FROM pull_request WHERE id = $pr",
+  heads: "SELECT source_head, target_head FROM review_run WHERE id = $run",
+  parent: "SELECT root_id, tombstoned_at FROM comment WHERE pr = $pr AND comment_id = $id",
+  thread: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
+      tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr AND root_id = $root`,
+  insert: `INSERT INTO post (pr, run, kind, idem_key, body, destination_json, items_json, state, created_at, updated_at)
+    VALUES ($pr, $run, $kind, $key, $body, $destination, $items, 'pending', $now, $now) RETURNING *`,
+  // `from` makes each step a compare-and-set, so two pages or a page and the sender never both win.
+  move: `UPDATE post SET state = $to, last_error = $text, remote_id = COALESCE($remoteId, remote_id),
+      remote_version = COALESCE($remoteVersion, remote_version), updated_at = $now WHERE id = $id AND state = $from`,
+  // Committed before the request. A stop after this point gives unknown at the next start.
+  sent: "UPDATE post SET state = 'sent', attempts = attempts + 1, last_error = NULL, updated_at = $now WHERE id = $id AND state = 'pending'",
+  drop: "DELETE FROM post WHERE id = $id AND state = $state",
+  // An item of a post stays `posted` until the user drops the post.
+  take: "UPDATE review_item SET status = 'posted' WHERE id = $id AND revision = $revision AND status = 'accepted'",
+  release: `UPDATE review_item SET status = 'accepted', revision = revision + 1, anchor_state = IIF($outside = 1, 'outside', anchor_state)
+    WHERE id = $id AND status = 'posted'`,
+};
+
+const parseList = (s: string) => JSON.parse(s) as Ref[];
+
+// Only the status or the error kind goes into a row. Never a header or a response text.
+function reason(e: unknown): string {
+  if (!(e instanceof ForgeError)) return "internal error";
+  if (e.status !== undefined) return `HTTP ${e.status}`;
+  return e.code ? `${e.kind} ${e.code}` : e.kind;
+}
+
+// The forge processed and refused the request: a redirect or a client error. Anything else can follow an accepted write.
+const refused = (e: unknown): e is ForgeError & { status: number } =>
+  e instanceof ForgeError && e.status !== undefined && e.status >= 300 && e.status < 500;
+
+function sameDestination(c: Comment, d: PostDestination): boolean {
+  if (d.kind === "reply") return c.parentId === d.parentId;
+  if (c.parentId !== null) return false;
+  const a = c.anchor as { path?: unknown; line?: unknown } | undefined;
+  return d.kind === "general" ? !a : a?.path === d.path && a.line === d.line;
+}
+
+// The planned posts whose items the request names with the same revisions. null: the plan differs from the confirm on screen.
+export function selectPosts(plan: PlannedPost[], want: Map<number, number>): PlannedPost[] | null {
+  const chosen = plan.filter((p) => p.items.some((i) => want.has(i.id)));
+  const exact = chosen.every((p) => p.items.every((i) => want.get(i.id) === i.revision));
+  return exact && chosen.reduce((n, p) => n + p.items.length, 0) === want.size ? chosen : null;
+}
+
+const runKey = (pr: number, p: PlannedPost) =>
+  `run:${pr}:${p.run}:${[...p.items]
+    .sort((a, b) => a.id - b.id)
+    .map((i) => `${i.id}@${i.revision}`)
+    .join(",")}`;
+
+export type ReplyResult =
+  | { status: 200 | 202; post: PostDto }
+  | { status: 404; error: string }
+  | { status: 409; error: string }
+  | { status: 409; conflict: ReplyConflict };
+export type RetryResult = { status: 200 | 202; post: PostDto } | { status: 404 | 409 | 502; error: string };
+export type DropResult = { status: 200; items: Ref[] } | { status: 400 | 404 | 409; error: string };
+export type HeadCheck = { warning: string | null } | { status: 409 | 502; error: string };
+
+export function createOutbox(opts: { settings: Settings; live: Live; now?: () => number }) {
+  const { settings, live } = opts;
+  const now = opts.now ?? Date.now;
+  const recovered = new WeakSet<Database>();
+  // Unknown rows that wait for a check or are in one.
+  const checking = new Set<number>();
+  let busy: Promise<void> | null = null;
+  let again = false;
+  let stopped = false;
+
+  const provider = (): Promise<ForgeProvider | null> => settings.provider().catch(() => null);
+  const notify = (pr: number) => live.broadcast("changed", { prs: [pr] });
+  const row = (db: Database, id: number) => db.query(SQL.get).get({ id }) as PostRow | null;
+  const refOf = (db: Database, pr: number) => db.query(SQL.ref).get({ pr }) as PrRef | null;
+  const move = (db: Database, id: number, from: PostState, to: PostState, text: string | null, remote?: { id: number; version: number }) =>
+    db.query(SQL.move).run({ id, from, to, text, remoteId: remote?.id ?? null, remoteVersion: remote?.version ?? null, now: now() })
+      .changes > 0;
+
+  function toDto(r: PostRow): PostDto {
+    return {
+      id: r.id,
+      pr: r.pr,
+      run: r.run,
+      destination: JSON.parse(r.destination_json) as PostDestination,
+      body: r.body,
+      items: parseList(r.items_json),
+      state: r.state,
+      remoteId: r.remote_id,
+      remoteVersion: r.remote_version,
+      attempts: r.attempts,
+      lastError: r.last_error,
+      checking: r.state === "unknown" && checking.has(r.id),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  // The database of the configured origin. Its first use turns sent rows into unknown rows and resumes the outbox.
+  function open(): Database | null {
+    const db = settings.db();
+    if (db && !recovered.has(db)) {
+      recovered.add(db);
+      db.query(SQL.recover).run({ text: "The app stopped while the post was out.", now: now() });
+      for (const { id } of db.query(SQL.unknown).all() as { id: number }[]) checking.add(id);
+      void kick();
+    }
+    return db;
+  }
+
+  // ---------- Sender ----------
+  async function send(db: Database, r: PostRow) {
+    const dest = JSON.parse(r.destination_json) as PostDestination;
+    const fail = (text: string) => {
+      move(db, r.id, "pending", "failed", text);
+      notify(r.pr);
+    };
+    const ref = refOf(db, r.pr);
+    const forge = await provider();
+    if (!ref || !forge) return fail(UNCONFIGURED);
+    let anchor: NewAnchor | undefined;
+    if (dest.kind === "reply") {
+      // D14: a reply checks its parent, not the heads.
+      const status = await forge.commentStatus(ref, dest.parentId).catch((e: unknown) => e);
+      if (status === "deleted") return fail("The comment was deleted. The reply was not sent.");
+      if (status !== "present") return fail(`Could not check the comment (${reason(status)}). The reply was not sent.`);
+    } else if (dest.kind === "inline") {
+      const h = r.run === null ? null : (db.query(SQL.heads).get({ run: r.run }) as { source_head: string; target_head: string } | null);
+      if (!h) return fail("The review run is gone.");
+      anchor = {
+        path: dest.path,
+        srcPath: dest.srcPath,
+        line: dest.line,
+        lineType: dest.lineType,
+        fromHash: h.target_head,
+        toHash: h.source_head,
+      };
+    }
+    if (!db.query(SQL.sent).run({ id: r.id, now: now() }).changes) return;
+    notify(r.pr);
+    try {
+      const c = await forge.createComment(ref, { text: r.body, parentId: dest.kind === "reply" ? dest.parentId : undefined, anchor });
+      move(db, r.id, "sent", "confirmed", null, c);
+    } catch (e) {
+      if (refused(e)) {
+        // v3 R2 (U4): Bitbucket can refuse a context line. The drop route can move the finding to the general comment.
+        const ctx = dest.kind === "inline" && dest.lineType === "ctx" && e.status === 400;
+        move(
+          db,
+          r.id,
+          "sent",
+          "failed",
+          ctx
+            ? "Bitbucket refused the inline comment on a context line (HTTP 400). Post the finding in the general comment."
+            : `Bitbucket refused the comment (${reason(e)}).`,
+        );
+      } else {
+        if (!(e instanceof ForgeError)) log(`Post ${r.id}: ${(e as Error).message}`);
+        move(db, r.id, "sent", "unknown", `No clear answer from Bitbucket (${reason(e)}).`);
+        checking.add(r.id);
+      }
+    }
+    notify(r.pr);
+  }
+
+  // confirmed: a remote comment matches. none: the remote comments hold no match. unclear: the check could not run.
+  // A match needs my author, the exact text, the same destination, and an ID that no other post owns.
+  async function check(db: Database, id: number): Promise<"confirmed" | "none" | "unclear" | "not_unknown"> {
+    const r = row(db, id);
+    if (r?.state !== "unknown") return "not_unknown";
+    const unclear = (text: string) => {
+      move(db, id, "unknown", "unknown", text);
+      return "unclear" as const;
+    };
+    const ref = refOf(db, r.pr);
+    const forge = await provider();
+    if (!ref || !forge) return unclear(UNCONFIGURED);
+    let list: Awaited<ReturnType<ForgeProvider["listComments"]>>;
+    try {
+      list = await forge.listComments(ref);
+    } catch (e) {
+      if (!(e instanceof ForgeError)) log(`Post ${id} check: ${(e as Error).message}`);
+      return unclear(`Could not read the comments on Bitbucket (${reason(e)}).`);
+    }
+    if (!list.complete) return unclear(`Could not read all comments on Bitbucket (${list.reason}).`);
+    const me = settings.config()?.userSlug ?? null;
+    const dest = JSON.parse(r.destination_json) as PostDestination;
+    const owned = new Set((db.query(SQL.owned).all({ pr: r.pr, id }) as { remote_id: number }[]).map((o) => o.remote_id));
+    const hit = list.items
+      .filter((c) => !owned.has(c.id) && isMe(c.author, me) && c.text === r.body && sameDestination(c, dest))
+      .sort((a, b) => a.id - b.id)[0];
+    if (!hit) {
+      move(db, id, "unknown", "unknown", NO_MATCH);
+      return "none";
+    }
+    move(db, id, "unknown", "confirmed", null, hit);
+    return "confirmed";
+  }
+
+  async function drain() {
+    for (;;) {
+      const db = stopped ? null : open();
+      if (!db) return;
+      const next = db.query(SQL.next).get() as PostRow | null;
+      if (next) {
+        await send(db, next);
+        continue;
+      }
+      const [id] = checking;
+      if (id === undefined) return;
+      const pr = row(db, id)?.pr;
+      await check(db, id);
+      checking.delete(id);
+      if (pr !== undefined) notify(pr);
+    }
+  }
+
+  // One drain at a time. A kick during a drain runs one more pass.
+  function kick(): Promise<void> {
+    if (stopped) return Promise.resolve();
+    again = true;
+    busy ??= (async () => {
+      try {
+        while (again && !stopped) {
+          again = false;
+          await drain();
+        }
+      } catch (e) {
+        // A settings change closes the database. The next open resumes the outbox.
+        log(`Outbox stopped: ${(e as Error).message}`);
+      } finally {
+        busy = null;
+      }
+    })();
+    return busy;
+  }
+
+  settings.onSettingsChanged(() => {
+    open();
+  });
+
+  // The source head must equal the reviewed head of every run. A moved target head only warns (D2).
+  async function headCheck(db: Database, pr: number, runs: number[]): Promise<HeadCheck> {
+    const ref = refOf(db, pr);
+    const forge = await provider();
+    if (!ref || !forge) return { status: 409, error: UNCONFIGURED };
+    let live: Awaited<ReturnType<ForgeProvider["getPullRequest"]>>;
+    try {
+      live = await forge.getPullRequest(ref);
+    } catch (e) {
+      return { status: 502, error: `Could not read the pull request on Bitbucket (${reason(e)}).` };
+    }
+    const heads = runs.map((run) => db.query(SQL.heads).get({ run }) as { source_head: string; target_head: string } | null);
+    if (heads.some((h) => h?.source_head !== live.sourceHead))
+      return { status: 409, error: "The source branch has new commits since the review. Review it again." };
+    return {
+      warning: heads.some((h) => h?.target_head !== live.targetHead)
+        ? "The target branch moved since the review. The comments stay on the reviewed commits."
+        : null,
+    };
+  }
+
+  // The rows of an earlier confirm with exactly these items and revisions (A14), else null.
+  function existing(db: Database, pr: number, want: Map<number, number>): PostDto[] | null {
+    const rows = (db.query(SQL.runPosts).all({ pr }) as PostRow[]).filter((r) => {
+      const items = parseList(r.items_json);
+      return items.length > 0 && items.every((i) => want.get(i.id) === i.revision);
+    });
+    const ids = new Set(rows.flatMap((r) => parseList(r.items_json).map((i) => i.id)));
+    return rows.length > 0 && ids.size === want.size ? rows.map(toDto) : null;
+  }
+
+  return {
+    open,
+    // Restart recovery, then the send of pending rows and the check of unknown rows.
+    start() {
+      stopped = false;
+      open();
+    },
+    // Waits for the active request. Rows that wait stay pending for the next start.
+    async stop() {
+      stopped = true;
+      await busy;
+    },
+    // Resolves when the sender is idle.
+    wait: () => busy ?? Promise.resolve(),
+    headCheck,
+    existing,
+
+    posts(db: Database, pr: number): PostDto[] | null {
+      return refOf(db, pr) ? (db.query(SQL.byPr).all({ pr }) as PostRow[]).map(toDto) : null;
+    },
+
+    // One transaction: the items become posted and the rows appear. existing: an earlier confirm made the rows.
+    // null: an item changed after the plan was read.
+    enqueue(db: Database, pr: number, posts: PlannedPost[], want: Map<number, number>): { rows: PostDto[]; existing: boolean } | null {
+      const conflict = new Error("conflict");
+      let out: { rows: PostDto[]; existing: boolean };
+      try {
+        out = db.transaction(() => {
+          const done = existing(db, pr, want);
+          if (done) return { rows: done, existing: true };
+          const rows = posts.map((p) => {
+            for (const it of p.items) if (!db.query(SQL.take).run(it).changes) throw conflict;
+            return toDto(
+              db.query(SQL.insert).get({
+                pr,
+                run: p.run,
+                kind: p.destination.kind,
+                key: runKey(pr, p),
+                body: p.body,
+                destination: JSON.stringify(p.destination),
+                items: JSON.stringify(p.items),
+                now: now(),
+              }) as PostRow,
+            );
+          });
+          return { rows, existing: false };
+        })();
+      } catch (e) {
+        if (e === conflict) return null;
+        throw e;
+      }
+      if (!out.existing) {
+        notify(pr);
+        void kick();
+      }
+      return out;
+    },
+
+    // A manual reply (replies.md step 3). The same key returns its row and never sends twice.
+    reply(db: Database, pr: number, input: ReplyPostInput): ReplyResult {
+      const key = `reply:${pr}:${input.key}`;
+      const dup = db.query(SQL.byKey).get({ key }) as PostRow | null;
+      if (dup) {
+        const d = JSON.parse(dup.destination_json) as PostDestination;
+        return dup.body === input.body && d.kind === "reply" && d.parentId === input.parentId
+          ? { status: 200, post: toDto(dup) }
+          : { status: 409, error: "This reply was already sent with another text." };
+      }
+      if (!refOf(db, pr)) return { status: 404, error: "Pull request not found." };
+      const parent = db.query(SQL.parent).get({ pr, id: input.parentId }) as { root_id: number; tombstoned_at: number | null } | null;
+      if (!parent) return { status: 404, error: "Comment not found." };
+      if (parent.tombstoned_at !== null) return { status: 409, error: "The comment was deleted." };
+      const newest = newestLive(db.query(SQL.thread).all({ pr, root: parent.root_id }) as TurnMsg[]);
+      if (newest && newest.id !== input.seen)
+        return { status: 409, conflict: { error: "New messages arrived in the thread. Read them first.", newest: newest.id } };
+      const destination: PostDestination = { kind: "reply", parentId: input.parentId };
+      const r = db.query(SQL.insert).get({
+        pr,
+        run: null,
+        kind: "reply",
+        key,
+        body: input.body,
+        destination: JSON.stringify(destination),
+        items: "[]",
+        now: now(),
+      }) as PostRow;
+      notify(pr);
+      void kick();
+      return { status: 202, post: toDto(r) };
+    },
+
+    // "Post again". An unknown row is checked first, so a match confirms it with no second POST.
+    async retry(db: Database, id: number): Promise<RetryResult> {
+      let r = row(db, id);
+      if (!r) return { status: 404, error: "Post not found." };
+      if (r.state === "unknown") {
+        checking.add(id);
+        notify(r.pr);
+        const found = await check(db, id).finally(() => checking.delete(id));
+        if (found === "unclear") return { status: 502, error: "Could not check the comments on Bitbucket. Try again, or drop the post." };
+        r = row(db, id);
+        if (!r) return { status: 404, error: "Post not found." };
+        if (r.state === "confirmed") {
+          notify(r.pr);
+          return { status: 200, post: toDto(r) };
+        }
+      }
+      if (r.state !== "unknown" && r.state !== "failed") return { status: 409, error: "Only an unknown or failed post can post again." };
+      if (r.run !== null) {
+        const heads = await headCheck(db, r.pr, [r.run]);
+        if ("error" in heads) return heads;
+      }
+      if (!move(db, id, r.state, "pending", null)) return { status: 409, error: "The post changed. Check it again." };
+      notify(r.pr);
+      void kick();
+      return { status: 202, post: toDto(row(db, id) as PostRow) };
+    },
+
+    // The user gives up an unknown or failed post. Its items return to accepted with a new revision.
+    // general: the findings of a failed inline post go into the general comment of the next plan.
+    drop(db: Database, id: number, general: boolean): DropResult {
+      const r = row(db, id);
+      if (!r) return { status: 404, error: "Post not found." };
+      if (r.state !== "unknown" && r.state !== "failed") return { status: 409, error: "Only an unknown or failed post can be dropped." };
+      if (general && (r.kind !== "inline" || r.state !== "failed"))
+        return { status: 400, error: "Only a failed inline post can move to the general comment." };
+      const items = parseList(r.items_json);
+      const done = db.transaction(() => {
+        if (!db.query(SQL.drop).run({ id, state: r.state }).changes) return false;
+        for (const it of items) db.query(SQL.release).run({ id: it.id, outside: general ? 1 : 0 });
+        return true;
+      })();
+      if (!done) return { status: 409, error: "The post changed. Check it again." };
+      checking.delete(id);
+      notify(r.pr);
+      return { status: 200, items };
+    },
+  };
+}
+
+export type Outbox = ReturnType<typeof createOutbox>;

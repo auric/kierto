@@ -2,7 +2,7 @@
 import { z } from "zod";
 import type { Comment, CommentStatus, ListResult, PrRef, PullRequest, Role } from "../../shared/types";
 import { type ClientOptions, createClient, ForgeError } from "./client";
-import { activity, pullRequest, type RawComment, type user } from "./schemas";
+import { activity, postedComment, pullRequest, type RawComment, type user } from "./schemas";
 
 const API = "/rest/api/1.0";
 const DASHBOARD = `${API}/dashboard/pull-requests`;
@@ -16,6 +16,10 @@ const cloneRepo = z.object({
 });
 const remoteRef = z.object({ id: z.string(), repository: cloneRepo });
 const remoteRefs = z.object({ fromRef: remoteRef, toRef: remoteRef });
+
+// A new-side line of the diff between two fixed commits. fromHash: the target head. toHash: the reviewed source head (I8).
+export type NewAnchor = { path: string; srcPath: string | null; line: number; lineType: "add" | "ctx"; fromHash: string; toHash: string };
+export type NewComment = { text: string; parentId?: number; anchor?: NewAnchor };
 
 export function createBitbucketProvider(opts: ClientOptions) {
   const client = createClient(opts);
@@ -110,6 +114,28 @@ export function createBitbucketProvider(opts: ClientOptions) {
       };
       for (const a of r.items) if (a.comment) visit(a.comment, null, a.comment.id);
       return { ...r, items: [...byId.values()] };
+    },
+
+    // One POST, never repeated. parent makes a reply (Gate 0). The anchor uses diffType COMMIT (Gate 0, integration-check.md:50).
+    async createComment(ref: PrRef, c: NewComment): Promise<{ id: number; version: number }> {
+      const a = c.anchor;
+      const body = {
+        text: c.text,
+        ...(c.parentId === undefined ? {} : { parent: { id: c.parentId } }),
+        ...(a && {
+          anchor: {
+            path: a.path,
+            ...(a.srcPath === null ? {} : { srcPath: a.srcPath }),
+            line: a.line,
+            lineType: a.lineType === "add" ? "ADDED" : "CONTEXT",
+            fileType: "TO",
+            diffType: "COMMIT",
+            fromHash: a.fromHash,
+            toHash: a.toHash,
+          },
+        }),
+      };
+      return client.post(`${prPath(ref)}/comments`, body, postedComment);
     },
 
     // A deleted comment has no tombstone. Only a 404 proves the delete.

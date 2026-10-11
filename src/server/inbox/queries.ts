@@ -54,6 +54,8 @@ const SQL = {
       (SELECT followed = 1 AND archived_at IS NULL FROM pull_request WHERE id = event.pr) AS shown`,
   cleanup: "DELETE FROM event WHERE claimed_at IS NOT NULL AND claimed_at < $cutoff",
   description: "SELECT description FROM pull_request WHERE id = $id",
+  // Plan v3 WP13: confirmed outbox rows link a remote comment to its source.
+  posted: "SELECT remote_id, run IS NOT NULL AS run FROM post WHERE pr = $pr AND state = 'confirmed' AND remote_id IS NOT NULL",
   checkpoint: "SELECT last_complete_at, incomplete_reason, last_error FROM sync_checkpoint WHERE scope = $scope",
 };
 
@@ -237,8 +239,14 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
     ack_version: number | null;
     tombstoned_at: number | null;
   };
+  const posted = new Map(
+    (db.query(SQL.posted).all({ pr: id }) as { remote_id: number; run: number }[]).map(
+      (p) => [p.remote_id, p.run ? "run" : "reply"] as const,
+    ),
+  );
   const comments = (db.query(SQL.comments).all({ pr: id }) as Raw[]).map((c): CommentDto => {
     const deleted = c.tombstoned_at !== null;
+    const by = posted.get(c.comment_id);
     return {
       id: c.comment_id,
       version: c.version,
@@ -254,6 +262,7 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
       updatedAt: c.updated_at,
       unread: pr.followed && !deleted && (c.ack_version === null || c.ack_version < c.version),
       deleted,
+      ...(by && { posted: by }),
     };
   });
   const { description } = db.query(SQL.description).get({ id }) as { description: string | null };

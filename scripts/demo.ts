@@ -387,11 +387,16 @@ const closed = new Map<Pr, string>([
   [prs.declined, "DECLINED"],
 ]);
 
+let firstId = 5_000_000;
 for (const [pr, list] of activities) {
+  // Posted comments and replies show in the next sync (plan v3 WP13a).
+  const posts = S.commentPosts(pathOf(pr), list, me, firstId);
+  firstId += 10_000;
+  Object.assign(fake.routes, posts.routes);
   fake.routes[key("GET", `${pathOf(pr)}/activities`)] = () =>
     phase === 2 && pr === prs.broken
       ? { status: 500, body: { errors: [{ message: "Internal error." }] } }
-      : { status: 200, body: S.onePage(list()) };
+      : { status: 200, body: S.onePage(posts.activities()) };
   fake.routes[key("GET", pathOf(pr))] = () => {
     const state = phase === 2 ? closed.get(pr) : undefined;
     return { status: 200, body: state ? { ...pr, state, updatedDate: min(15) } : pr };

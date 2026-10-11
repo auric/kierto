@@ -1,5 +1,5 @@
 // Synthetic states derived from the recorded fixtures (fixtures/bitbucket/README.md, "Synthetic scenarios").
-import { fixture, key, type Reply } from "./fake-bitbucket";
+import { fixture, key, type Reply, type Route } from "./fake-bitbucket";
 
 export type RawComment = { id: number; version: number; text: string; author: unknown; comments?: RawComment[]; [k: string]: unknown };
 export type Activity = { id: number; action: string; comment?: RawComment; [k: string]: unknown };
@@ -75,12 +75,82 @@ export function byUser(list: Activity[], id: number, user: unknown): Activity[] 
 }
 
 // A new reply under comment `parentId`. Bitbucket nests a reply in the parent's comments[] and gives it no activity (I2).
-export function addReply(list: Activity[], parentId: number, id: number, user: unknown): Activity[] {
+export function addReply(list: Activity[], parentId: number, id: number, user: unknown, text = `Reply ${id}`): Activity[] {
   const out = clone(list);
   const parent = findComment(out, parentId);
   const { anchor: _, ...rest } = clone(parent);
-  parent.comments = [...(parent.comments ?? []), { ...rest, id, version: 0, text: `Reply ${id}`, author: clone(user), comments: [] }];
+  parent.comments = [...(parent.comments ?? []), { ...rest, id, version: 0, text, author: clone(user), comments: [] }];
   return out;
+}
+
+const NOT_FOUND: Reply = { status: 404, body: { errors: [{ message: "Not found." }] } };
+const findIn = (list: Activity[], id: number): RawComment | undefined => {
+  try {
+    return findComment(list, id);
+  } catch {
+    return undefined;
+  }
+};
+
+// Comments that the app posts to one fake PR (plan v3 WP13a). routes: POST .../comments and GET .../comments/{id}.
+// list: the PR activities without the posted comments. author: the token owner. New comment IDs start at firstId.
+// drop: the next POST stores the comment, then resets the connection (A9, accept-then-drop).
+export function commentPosts(path: string, list: () => Activity[], author: unknown, firstId: number) {
+  type Body = { text: string; parent?: { id: number }; anchor?: Record<string, unknown> };
+  const state = { drop: false, bodies: [] as Body[], posted: [] as { parentId: number | null; comment: RawComment }[] };
+  let next = firstId;
+  // A root comment gets its own activity. A reply nests under its parent, which can be a posted comment too.
+  const all = (): Activity[] => {
+    let out = list();
+    for (const { parentId, comment: c } of state.posted) {
+      if (parentId === null) out = [...out, { id: c.id, action: "COMMENTED", commentAction: "ADDED", comment: clone(c) }];
+      else if (findIn(out, parentId)) {
+        out = addReply(out, parentId, c.id, c.author, c.text);
+        Object.assign(findComment(out, c.id), { createdDate: c.createdDate, updatedDate: c.updatedDate });
+      }
+    }
+    return out;
+  };
+  const routes: Record<string, Route> = {
+    [key("POST", `${path}/comments`)]: async (req) => {
+      const body = (await req.json()) as Body;
+      state.bodies.push(body);
+      const parentId = body.parent?.id ?? null;
+      if (parentId !== null && !findIn(all(), parentId)) return NOT_FOUND;
+      const at = Date.now();
+      const comment: RawComment = {
+        id: next++,
+        version: 0,
+        text: body.text,
+        author: clone(author),
+        createdDate: at,
+        updatedDate: at,
+        comments: [],
+        threadResolved: false,
+        ...(body.anchor && { anchor: { ...body.anchor, orphaned: false } }),
+      };
+      state.posted.push({ parentId, comment });
+      if (state.drop) {
+        state.drop = false;
+        return { drop: true };
+      }
+      return { status: 201, body: comment };
+    },
+    [key("GET", `${path}/comments/*`)]: (req) => {
+      const c = findIn(all(), Number(new URL(req.url).pathname.split("/").pop()));
+      return c ? { status: 200, body: c } : NOT_FOUND;
+    },
+  };
+  return Object.assign(state, {
+    routes,
+    activities: all,
+    reset() {
+      state.drop = false;
+      state.bodies = [];
+      state.posted = [];
+      next = firstId;
+    },
+  });
 }
 
 // One last page that holds every value.
