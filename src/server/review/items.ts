@@ -29,6 +29,8 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
   const next = { ...row };
   switch (input.action) {
     case "accept":
+      // A reply draft with action none has no body.
+      if (row.kind === "reply" && !row.body.trim()) return { status: 400, error: "Write the reply first." };
       next.status = "accepted";
       break;
     case "discard":

@@ -1,7 +1,7 @@
-// Review API (plan v3 WP10, WP12): brief, start, cancel, run, raw output, item triage. Every mutation broadcasts `changed`.
+// Review API (plan v3 WP10, WP12, replies.md WP17): brief, start, reply drafts, cancel, run, raw output, item triage. Every mutation broadcasts `changed`.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import { type ApiError, briefInput, itemActionInput } from "../../shared/dto";
+import { type ApiError, briefInput, itemActionInput, replyRunInput } from "../../shared/dto";
 import type { Live } from "../live";
 import { triage } from "./items";
 import type { ReviewJobs } from "./jobs";
@@ -50,6 +50,28 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
       if ("conflict" in r) return c.json(r.conflict, 409);
       return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
+    })
+    .post(
+      "/prs/:id/reply-run",
+      prParam,
+      validator("json", (v, c) => {
+        const r = replyRunInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid thread list." }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const r = review.draftReplies(db, c.req.valid("param").id, c.req.valid("json").threads);
+        if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
+        if ("conflict" in r) return c.json(r.conflict, 409);
+        if (r.status === 400) return c.json({ error: r.error }, 400);
+        return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
+      },
+    )
+    .get("/prs/:id/reply-drafts", prParam, (c) => {
+      const db = review.open();
+      const items = db && review.replyDrafts(db, c.req.valid("param").id);
+      return items ? c.json(items, 200) : c.json(notFound("Pull request"), 404);
     })
     .get("/prs/:id/runs", prParam, (c) => {
       const db = review.open();

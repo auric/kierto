@@ -18,8 +18,8 @@ export type Scenario = {
 };
 
 // The next fake Claude Code run. tree: a subagent run with drafts. schema: a result that fails the schema. limit: a usage limit.
-// hang: the CLI stops before its result and waits for a cancel.
-export type ClaudeScenario = { stream: "tree" | "schema" | "limit"; hang?: boolean };
+// hang: the CLI stops before its result and waits for a cancel. replies: the result of a reply run; absent, the CLI answers each thread.
+export type ClaudeScenario = { stream: "tree" | "schema" | "limit"; hang?: boolean; replies?: unknown };
 
 // Test-only control routes on the fake Bitbucket. The app has no such route.
 export async function control(action: "reset" | "restart" | "shutdown"): Promise<void>;

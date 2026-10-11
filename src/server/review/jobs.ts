@@ -1,4 +1,4 @@
-// Review jobs (plan v3 WP10): one run from the stored brief to stored drafts. One run at a time.
+// Review jobs (plan v3 WP10) and reply-draft jobs (replies.md WP17): one run from the stored brief to stored drafts. One run at a time.
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -14,8 +14,19 @@ import type {
   RunSummary,
   RunUsage,
 } from "../../shared/dto";
-import { type AnchoredFinding, type Finding, type Question, reviewJsonSchema, reviewResult } from "../../shared/review";
+import {
+  type AnchoredFinding,
+  type Finding,
+  MAX_REPLY_THREADS,
+  type Question,
+  type ReplyPayload,
+  replyJsonSchema,
+  replyResult,
+  reviewJsonSchema,
+  reviewResult,
+} from "../../shared/review";
 import type { RunErrorKind, RunEvent, RunStatus } from "../../shared/run-log";
+import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
 import type { Comment, PrRef, PullRequest } from "../../shared/types";
 import { dataDir as defaultDataDir } from "../config";
 import type { Live } from "../live";
@@ -30,14 +41,15 @@ import {
   type Profile,
   profileOf,
   REVIEWER,
+  replyAgent,
   reviewerAgent,
 } from "./catalog";
 import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude";
 import { type DiffFile, parseDiff } from "./diffmap";
 import { git, gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
-import { buildPrompt } from "./prompt";
-import { MAX_FILE_CHARS, repoPath, validate } from "./validate";
+import { buildPrompt, buildReplyPrompt, type ReplyThread } from "./prompt";
+import { MAX_FILE_CHARS, repoPath, type ValidatedReply, validate, validateReplies } from "./validate";
 import { type GitRemote, prepareWorkspace, pruneWorkspaces, type Workspace } from "./workspace";
 
 const RAW_MAX = 2 * 1024 * 1024;
@@ -69,6 +81,7 @@ type PrRow = {
   description: string | null;
   author_slug: string | null;
   author_name: string | null;
+  my_role: string | null;
   state: string | null;
   pr_version: number | null;
   source_head: string | null;
@@ -79,9 +92,12 @@ type PrRow = {
   updated_date: number | null;
 };
 
+type Heads = PrRow & { source_head: string; target_head: string };
+
 type RunRow = {
   id: number;
   pr: number;
+  kind: RunDto["kind"];
   profile: string;
   note: string;
   source_head: string;
@@ -106,7 +122,7 @@ type RunRow = {
 export type ItemRow = {
   id: number;
   run: number;
-  kind: "finding" | "question";
+  kind: ReviewItemDto["kind"];
   payload_json: string;
   body: string;
   path: string | null;
@@ -118,8 +134,10 @@ export type ItemRow = {
   status: ReviewItemDto["status"];
   revision: number;
   edited: number;
+  // Reply items only: the root comment ID.
+  thread: number | null;
 };
-type NewItem = Omit<ItemRow, "id" | "run" | "status" | "revision" | "edited">;
+type NewItem = Omit<ItemRow, "id" | "run" | "revision" | "edited">;
 
 type Ending = {
   status: Exclude<RunStatus, "running">;
@@ -130,15 +148,16 @@ type Ending = {
   result?: { summary: RunSummary; items: NewItem[] };
 };
 
-type Job = { id: number; pr: number; key: string; db: Database; cancelled: boolean; done: Promise<void> };
+// threads: the threads of a reply run. null for a review run.
+type Job = { id: number; pr: number; key: string; db: Database; threads: ReplyThread[] | null; cancelled: boolean; done: Promise<void> };
 
 export type StartResult =
   | { status: 200 | 202; run: RunDto }
   | { status: 409; conflict: RunConflict }
-  | { status: 404 | 409; error: string };
+  | { status: 400 | 404 | 409; error: string };
 
 const SQL = {
-  pr: `SELECT id, project, repo, pr_id, title, description, author_slug, author_name, state, pr_version, source_head, target_head, source_branch,
+  pr: `SELECT id, project, repo, pr_id, title, description, author_slug, author_name, my_role, state, pr_version, source_head, target_head, source_branch,
       target_branch, web_url, updated_date FROM pull_request WHERE id = $id`,
   comments: `SELECT comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json, thread_resolved, created_at,
       updated_at FROM comment WHERE pr = $pr AND tombstoned_at IS NULL`,
@@ -146,9 +165,9 @@ const SQL = {
   brief: "SELECT note, profile, updated_at FROM pr_brief WHERE pr = $pr",
   saveBrief: `INSERT INTO pr_brief (pr, note, profile, updated_at) VALUES ($pr, $note, $profile, $now)
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
-  insert: `INSERT INTO review_run (pr, profile, note, idem_key, source_head, target_head, status, started_at)
-    VALUES ($pr, $profile, $note, $key, $source, $target, 'running', $now) RETURNING id`,
-  run: `SELECT r.id, r.pr, r.profile, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
+  insert: `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, started_at)
+    VALUES ($pr, $kind, $profile, $note, $key, $source, $target, 'running', $now) RETURNING id`,
+  run: `SELECT r.id, r.pr, r.kind, r.profile, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
       p.source_head AS pr_source, p.target_head AS pr_target
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
@@ -163,9 +182,16 @@ const SQL = {
     ON CONFLICT (run, id) DO UPDATE SET status = excluded.status, note = excluded.note, agent = excluded.agent, ended_at = excluded.ended_at`,
   events: `SELECT id, seq, parent, tool, target, status, note, agent, started_at AS startedAt, ended_at AS endedAt FROM run_event
     WHERE run = $run ORDER BY seq`,
-  item: `INSERT INTO review_item (run, kind, payload_json, body, path, side, line, line_end, anchor_state, excerpt_json)
-    VALUES ($run, $kind, $payload_json, $body, $path, $side, $line, $line_end, $anchor_state, $excerpt_json)`,
+  item: `INSERT INTO review_item (run, kind, payload_json, body, path, side, line, line_end, anchor_state, excerpt_json, status, thread)
+    VALUES ($run, $kind, $payload_json, $body, $path, $side, $line, $line_end, $anchor_state, $excerpt_json, $status, $thread)`,
   items: "SELECT * FROM review_item WHERE run = $run ORDER BY id",
+  // A new reply draft replaces the open drafts of its thread. Posted drafts stay.
+  supersede: `UPDATE review_item SET status = 'discarded', revision = revision + 1
+    WHERE kind = 'reply' AND thread = $thread AND status IN ('new', 'accepted') AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
+  replyItems: "SELECT i.* FROM review_item i JOIN review_run r ON r.id = i.run WHERE r.pr = $pr AND i.kind = 'reply' ORDER BY i.id",
+  // Deleted messages too: the turn rule reads them.
+  turns: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
+      tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr`,
   raw: "SELECT raw_output FROM review_run WHERE id = $id",
 };
 
@@ -305,54 +331,78 @@ const findingItem = (f: AnchoredFinding): NewItem => ({
   line_end: f.anchor.lineEnd,
   anchor_state: f.anchor.state,
   excerpt_json: JSON.stringify(f.anchor.excerpt),
+  status: "new",
+  thread: null,
 });
+
+const NO_ANCHOR = { path: null, side: null, line: null, line_end: null, anchor_state: null, excerpt_json: null } as const;
 
 const questionItem = (q: Question): NewItem => ({
   kind: "question",
   payload_json: JSON.stringify(q),
   body: q.text,
-  path: null,
-  side: null,
-  line: null,
-  line_end: null,
-  anchor_state: null,
-  excerpt_json: null,
+  ...NO_ANCHOR,
+  status: "new",
+  thread: null,
 });
+
+const replyItem = (r: ValidatedReply): NewItem => ({
+  kind: "reply",
+  payload_json: JSON.stringify(r.payload),
+  body: r.payload.body,
+  ...NO_ANCHOR,
+  status: r.status,
+  thread: r.payload.thread,
+});
+
+function schemaFailure(issues: { path: PropertyKey[]; message: string }[], what: string, raw: string, o: RunOutcome): Ending {
+  const text = issues
+    .slice(0, 5)
+    .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+    .join("; ");
+  return { status: "failed", kind: "schema", text: `The result does not match the ${what} schema. ${text}`, raw, outcome: o };
+}
+
+// The servers left out of the spec, then the servers of the spec that did not connect.
+function unavailable(o: RunOutcome, servers: string[], gaps: string[]): string[] {
+  const down = servers.flatMap((name) => {
+    const status = o.init?.mcp_servers?.find((s) => s.name === name)?.status ?? "absent";
+    return status === "connected" ? [] : [`MCP server ${name}: ${status}`];
+  });
+  return [...gaps, ...down];
+}
+
+function ended(raw: string, o: RunOutcome, result: NonNullable<Ending["result"]>): Ending {
+  const c = result.summary.coverage;
+  return { status: c.skipped.length || c.unavailable.length ? "incomplete" : "completed", kind: null, text: null, raw, outcome: o, result };
+}
 
 // Turns a runner outcome into the run end. servers: the MCP servers of the spec. gaps: the servers left out of the spec.
 async function judge(o: RunOutcome, ws: Workspace, profile: Profile, servers: string[], gaps: string[]): Promise<Ending> {
   const raw = rawOutput(o);
   if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
   const parsed = reviewResult.safeParse(o.result?.structured_output);
-  if (!parsed.success) {
-    const issues = parsed.error.issues
-      .slice(0, 5)
-      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
-      .join("; ");
-    return { status: "failed", kind: "schema", text: `The result does not match the review schema. ${issues}`, raw, outcome: o };
-  }
+  if (!parsed.success) return schemaFailure(parsed.error.issues, "review", raw, o);
   // Only a finished Agent call returned a report.
   const agents = o.events.filter((e) => e.tool === "Agent" && e.agent !== null && e.status === "ok").map((e) => e.agent as string);
   const blobs = await readBlobs(ws, parsed.data.findings);
   const v = validate({ result: parsed.data, diff: ws.diff, ...blobs, agents, explain: profile.explain });
   const dropped = v.dropped.map((d) => (d.reason === "file" && blobs.oversized(d) ? { ...d, reason: "size" as const } : d));
-  const down = servers.flatMap((name) => {
-    const status = o.init?.mcp_servers?.find((s) => s.name === name)?.status ?? "absent";
-    return status === "connected" ? [] : [`MCP server ${name}: ${status}`];
+  const coverage = { ...v.coverage, unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)] };
+  return ended(raw, o, {
+    summary: { summary: v.summary, risks: v.risks, coverage, dropped },
+    items: [...v.findings.map(findingItem), ...v.questions.map(questionItem)],
   });
-  const coverage = { ...v.coverage, unavailable: [...v.coverage.unavailable, ...gaps, ...down] };
-  const incomplete = coverage.skipped.length > 0 || coverage.unavailable.length > 0;
-  return {
-    status: incomplete ? "incomplete" : "completed",
-    kind: null,
-    text: null,
-    raw,
-    outcome: o,
-    result: {
-      summary: { summary: v.summary, risks: v.risks, coverage, dropped },
-      items: [...v.findings.map(findingItem), ...v.questions.map(questionItem)],
-    },
-  };
+}
+
+function judgeReplies(o: RunOutcome, threads: ReplyThread[], servers: string[], gaps: string[]): Ending {
+  const raw = rawOutput(o);
+  if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
+  const parsed = replyResult.safeParse(o.result?.structured_output);
+  if (!parsed.success) return schemaFailure(parsed.error.issues, "reply", raw, o);
+  const v = validateReplies(parsed.data, threads);
+  const coverage = { ...v.coverage, unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)] };
+  return ended(raw, o, { summary: { summary: v.summary, risks: [], coverage, dropped: [] }, items: v.replies.map(replyItem) });
 }
 
 function toRunDto(r: RunRow): RunDto {
@@ -361,6 +411,7 @@ function toRunDto(r: RunRow): RunDto {
   return {
     id: r.id,
     pr: r.pr,
+    kind: r.kind,
     profile: profileOf(r.profile).id,
     note: r.note,
     status: r.status,
@@ -383,7 +434,7 @@ function toRunDto(r: RunRow): RunDto {
 }
 
 export function toItemDto(r: ItemRow): ReviewItemDto {
-  const payload = JSON.parse(r.payload_json) as AnchoredFinding | Question;
+  const payload = JSON.parse(r.payload_json) as AnchoredFinding | Question | ReplyPayload;
   const anchor =
     r.kind === "finding" && r.path !== null && r.side !== null && r.line !== null && r.line_end !== null && r.anchor_state !== null
       ? {
@@ -502,13 +553,16 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       });
       // Restart recovery can end the row first. Then no item goes in.
       if (!done.changes) return;
+      const items = e.result?.items ?? [];
+      const supersede = j.db.query(SQL.supersede);
+      for (const thread of new Set(items.map((it) => it.thread))) if (thread !== null) supersede.run({ thread, pr: j.pr });
       const q = j.db.query(SQL.item);
-      for (const it of e.result?.items ?? []) q.run({ run: j.id, ...it });
+      for (const it of items) q.run({ run: j.id, ...it });
     })();
     notify(j.id, j.pr);
   }
 
-  async function steps(j: Job, pr: PrRow & { source_head: string; target_head: string }, brief: BriefInput, held: { ws?: Workspace }) {
+  async function steps(j: Job, pr: Heads, brief: BriefInput, held: { ws?: Workspace }) {
     const cancelled = (o?: RunOutcome): Ending => ({
       status: "cancelled",
       kind: null,
@@ -537,23 +591,24 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const docs = await docServers(profile);
     if (j.cancelled) return cancelled();
     const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...docs.servers };
-    const prompt = buildPrompt({
+    const input = {
       mergeBase: ws.mergeBase,
       head: ws.sourceHead,
       note: brief.note,
       profile,
       pr: { project: pr.project, repo: pr.repo, prId: pr.pr_id, webUrl: pr.web_url },
       tasks: j.db.query(SQL.tasks).all({ pr: j.pr }) as PrTask[],
-    });
+    };
+    const reply = j.threads;
     const o = await runner.run(
       {
         cwd: ws.work,
         appDir: ws.app,
-        prompt,
-        schema: reviewJsonSchema(),
+        prompt: reply ? buildReplyPrompt({ ...input, threads: reply }) : buildPrompt(input),
+        schema: reply ? replyJsonSchema() : reviewJsonSchema(),
         maxTurns: profile.maxTurns,
-        main: mainAgent(profile),
-        agents: profile.explain ? {} : { [REVIEWER]: reviewerAgent(profile) },
+        main: reply ? replyAgent(profile) : mainAgent(profile),
+        agents: reply || profile.explain ? {} : { [REVIEWER]: reviewerAgent(profile) },
         mcpServers,
       },
       (events) => {
@@ -563,7 +618,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     );
     // The runner ignores a cancel that comes after the process ended.
     if (j.cancelled) return cancelled(o);
-    return judge(o, ws, profile, Object.keys(mcpServers), docs.unavailable);
+    const servers = Object.keys(mcpServers);
+    return reply ? judgeReplies(o, reply, servers, docs.unavailable) : judge(o, ws, profile, servers, docs.unavailable);
   }
 
   async function forgeRemote(ref: PrRef): Promise<GitRemote> {
@@ -572,7 +628,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     return provider.gitRemote(ref);
   }
 
-  async function execute(j: Job, pr: PrRow & { source_head: string; target_head: string }, brief: BriefInput) {
+  async function execute(j: Job, pr: Heads, brief: BriefInput) {
     const held: { ws?: Workspace } = {};
     try {
       end(j, await steps(j, pr, brief, held));
@@ -601,6 +657,52 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   settings.onSettingsChanged(() => {
     cancelActive();
   });
+
+  // The one run slot (A14). The same key returns the running run.
+  function launch(db: Database, pr: Heads, brief: BriefInput, key: string, threads: ReplyThread[] | null): StartResult {
+    if (job) {
+      const running = runRow(job.db, job.id);
+      if (job.key === key && job.db === db && running) return { status: 200, run: toRunDto(running) };
+      return { status: 409, conflict: { error: "Another review is running.", running: { run: job.id, pr: job.pr } } };
+    }
+    const { id: runId } = db.query(SQL.insert).get({
+      pr: pr.id,
+      kind: threads ? "reply" : "review",
+      profile: brief.profile,
+      note: brief.note,
+      key,
+      source: pr.source_head,
+      target: pr.target_head,
+      now: now(),
+    }) as { id: number };
+    const j: Job = { id: runId, pr: pr.id, key, db, threads, cancelled: false, done: Promise.resolve() };
+    job = j;
+    j.done = execute(j, pr, brief).finally(() => {
+      if (job === j) job = null;
+    });
+    notify(runId, pr.id);
+    return { status: 202, run: toRunDto(runRow(db, runId) as RunRow) };
+  }
+
+  // The threads of a reply run, by thread ID. Absent list: every thread where it is my turn (D12, D13).
+  function replyThreads(db: Database, pr: PrRow, list?: number[]): ReplyThread[] | { status: 400 | 409; error: string } {
+    type Row = Omit<TurnMsg, "deleted" | "threadResolved"> & { deleted: number; threadResolved: number };
+    const rows = db.query(SQL.turns).all({ pr: pr.id }) as Row[];
+    const threads = byThread(rows.map((m) => ({ ...m, deleted: m.deleted === 1, threadResolved: m.threadResolved === 1 })));
+    const me = settings.config()?.userSlug ?? null;
+    const prAuthor = pr.my_role === "AUTHOR";
+    const ids = list ? [...new Set(list)] : [...threads].filter(([, t]) => threadTurn(t, me, prAuthor) === "your").map(([id]) => id);
+    const out: ReplyThread[] = [];
+    for (const thread of ids) {
+      const last = newestLive(threads.get(thread) ?? []);
+      if (!last) return { status: 400, error: `Comment ${thread} does not start a thread of this pull request with a live message.` };
+      out.push({ thread, replyTo: last.id });
+    }
+    if (!out.length) return { status: 409, error: "No thread waits for your reply." };
+    if (out.length > MAX_REPLY_THREADS)
+      return { status: 409, error: `${out.length} threads wait for your reply. Draft at most ${MAX_REPLY_THREADS} at a time, per thread.` };
+    return out.sort((a, b) => a.thread - b.thread);
+  }
 
   // ---------- Reads ----------
   const prRow = (db: Database, id: number) => db.query(SQL.pr).get({ id }) as PrRow | null;
@@ -648,27 +750,32 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
       const brief = briefOf(db, id);
       const key = [id, source_head, target_head, brief.profile, sha256(brief.note)].join(":");
-      if (job) {
-        const running = runRow(job.db, job.id);
-        if (job.key === key && job.db === db && running) return { status: 200, run: toRunDto(running) };
-        return { status: 409, conflict: { error: "Another review is running.", running: { run: job.id, pr: job.pr } } };
-      }
-      const { id: runId } = db.query(SQL.insert).get({
-        pr: id,
-        profile: brief.profile,
-        note: brief.note,
-        key,
-        source: source_head,
-        target: target_head,
-        now: now(),
-      }) as { id: number };
-      const j: Job = { id: runId, pr: id, key, db, cancelled: false, done: Promise.resolve() };
-      job = j;
-      j.done = execute(j, { ...pr, source_head, target_head }, brief).finally(() => {
-        if (job === j) job = null;
-      });
-      notify(runId, id);
-      return { status: 202, run: toRunDto(runRow(db, runId) as RunRow) };
+      return launch(db, { ...pr, source_head, target_head }, brief, key, null);
+    },
+
+    // Starts a reply-draft run of the stored brief (plan replies.md WP17). It shares the run slot with reviews.
+    draftReplies(db: Database, id: number, list?: number[]): StartResult {
+      const pr = prRow(db, id);
+      if (!pr) return { status: 404, error: "Pull request not found." };
+      const { source_head, target_head } = pr;
+      if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
+      const threads = replyThreads(db, pr, list);
+      if (!Array.isArray(threads)) return threads;
+      const brief = briefOf(db, id);
+      const at = threads.map((t) => `${t.thread}@${t.replyTo}`);
+      const key = [id, "reply", source_head, target_head, brief.profile, sha256(brief.note), ...at].join(":");
+      return launch(db, { ...pr, source_head, target_head }, brief, key, threads);
+    },
+
+    // The newest reply item of each thread, unless it is posted. null for an unknown PR.
+    replyDrafts(db: Database, pr: number): ReviewItemDto[] | null {
+      if (!prRow(db, pr)) return null;
+      const newest = new Map<number, ItemRow>();
+      for (const r of db.query(SQL.replyItems).all({ pr }) as ItemRow[]) if (r.thread !== null) newest.set(r.thread, r);
+      return [...newest.values()]
+        .filter((r) => r.status !== "posted")
+        .sort((a, b) => (a.thread ?? 0) - (b.thread ?? 0))
+        .map(toItemDto);
     },
 
     cancel(db: Database, run: number): "cancelled" | "not_running" | null {

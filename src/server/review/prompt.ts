@@ -1,4 +1,4 @@
-// The stdin prompt of a review run (plan v3 WP10). Only the note is an instruction. It never quotes PR or tracker text.
+// The stdin prompt of a run (plan v3 WP10, replies.md WP17). Only the note is an instruction. It never quotes PR, comment, or tracker text.
 import type { PrTask } from "../../shared/dto";
 import { DOCS_RULE, type Profile } from "./catalog";
 
@@ -11,16 +11,13 @@ export type PromptInput = {
   tasks: PrTask[];
 };
 
-export function buildPrompt(i: PromptInput): string {
-  const range = `${i.mergeBase}..${i.head}`;
+// thread: the root comment ID. replyTo: the message to answer.
+export type ReplyThread = { thread: number; replyTo: number };
+
+// The Tools, Your instructions, and Metadata sections.
+function common(i: PromptInput): string[] {
   const tasks = i.tasks.map((t) => `${t.key} (${t.source})`).join(", ");
   return [
-    "# Task",
-    "",
-    i.profile.explain
-      ? `Explain the change ${range} in ./repo. Give the summary, the risks, and your questions.`
-      : `Review the change ${range} in ./repo. Give the findings, the risks, and your questions.`,
-    "",
     "# Tools",
     "",
     "- ./repo holds the files at the head commit.",
@@ -41,5 +38,33 @@ export function buildPrompt(i: PromptInput): string {
     `- Profile: ${i.profile.name}`,
     `- Task IDs from the pull request fields: ${tasks || "none"}`,
     "",
+  ];
+}
+
+export function buildPrompt(i: PromptInput): string {
+  const range = `${i.mergeBase}..${i.head}`;
+  return [
+    "# Task",
+    "",
+    i.profile.explain
+      ? `Explain the change ${range} in ./repo. Give the summary, the risks, and your questions.`
+      : `Review the change ${range} in ./repo. Give the findings, the risks, and your questions.`,
+    "",
+    ...common(i),
+  ].join("\n");
+}
+
+// Plan replies.md R11: the thread list holds numbers only. The comment text stays in ./context/pr.md.
+export function buildReplyPrompt(i: PromptInput & { threads: ReplyThread[] }): string {
+  return [
+    "# Task",
+    "",
+    `Draft the user's replies in the review threads below. The change is ${i.mergeBase}..${i.head} in ./repo. Give one entry in replies per thread.`,
+    "",
+    `Threads: ${i.threads.map((t) => `${t.thread} (answer message ${t.replyTo})`).join(", ")}`,
+    "",
+    'In ./context/pr.md, the heading "### Comment N" holds message N, the first message of thread N. The heading "### Reply M to P" holds message M.',
+    "",
+    ...common(i),
   ].join("\n");
 }
