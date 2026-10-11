@@ -80,7 +80,7 @@ let before: Record<string, string> = {};
 beforeAll(async () => {
   await fixture();
   before = snapshot();
-  const spec = gitMcpServer({ cache, sourceHead: c.c4, mergeBase: c.c1, targetHead: c.c2 }, MAIN);
+  const spec = gitMcpServer({ cache, sourceHead: c.c4, rangeBase: c.c1, targetHead: c.c2 }, MAIN);
   client = new Client({ name: "wp7-test", version: "0" });
   await client.connect(new StdioClientTransport({ command: spec.command, args: spec.args, stderr: "pipe" }));
 }, SLOW);
@@ -105,7 +105,7 @@ const refused = async (name: string, args: Record<string, unknown>) => {
 
 describe("git MCP server", () => {
   test("the RunSpec entry names the server command and the four tools", () => {
-    const spec = gitMcpServer({ cache, sourceHead: c.c4, mergeBase: c.c1, targetHead: c.c2 }, MAIN);
+    const spec = gitMcpServer({ cache, sourceHead: c.c4, rangeBase: c.c1, targetHead: c.c2 }, MAIN);
     expect(spec.command).toBe(process.execPath);
     expect(spec.args.slice(0, 3)).toEqual([MAIN, "--git-mcp", `--git-dir=${cache}`]);
     expect(spec.tools).toEqual(GIT_MCP_TOOLS);

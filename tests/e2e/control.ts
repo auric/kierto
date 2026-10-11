@@ -1,8 +1,9 @@
 // Shared by serve.ts (Bun) and the Playwright files (Node). Keep it free of Bun APIs.
-// E2E_APP_PORT and E2E_FAKE_PORT move the servers, so that two checkouts can run e2e at the same time.
+// E2E_APP_PORT, E2E_FAKE_PORT, and E2E_JIRA_PORT move the servers, so that two checkouts can run e2e at the same time.
 // Playwright passes its environment to the web server command.
 export const APP_PORT = Number(process.env.E2E_APP_PORT || 7399);
 export const FAKE_URL = `http://127.0.0.1:${Number(process.env.E2E_FAKE_PORT || 7398)}`;
+export const JIRA_URL = `http://127.0.0.1:${Number(process.env.E2E_JIRA_PORT || 7397)}`;
 // The fake Bitbucket accepts only this token. serve.ts sets it on the fake.
 export const E2E_TOKEN = "e2e-token-7f3a9c1d5b2e8f40";
 // src/server/publish/plan.ts AI_MARK. The default markAi setting puts it before each post of an AI item.
@@ -30,8 +31,16 @@ export type Scenario = {
 // The next fake Claude Code run. tree: a subagent run with drafts. schema: a result that fails the schema. limit: a usage limit.
 // gaps: no finding, a read that stopped at a limit, and a documentation server that did not connect (A11, A12).
 // hang: the CLI stops before its result and waits for a cancel. replies: the result of a reply run; absent, the CLI answers each thread.
+// rereview: the result of a re-review; absent, the CLI gives one verdict per earlier finding. answer: the result of an ask run; absent, an echo.
 // login: the authMethod of `claude auth status`. Absent: claude.ai.
-export type ClaudeScenario = { stream: "tree" | "schema" | "limit" | "gaps"; hang?: boolean; replies?: unknown; login?: string };
+export type ClaudeScenario = {
+  stream: "tree" | "schema" | "limit" | "gaps";
+  hang?: boolean;
+  replies?: unknown;
+  rereview?: unknown;
+  answer?: unknown;
+  login?: string;
+};
 
 // PR 1001 comment posts. drop: the next POST is stored, then the connection drops (A9). fail: the next POST gets this status
 // and stores nothing. hide: the activities of PR 1001 drop, so neither the sync nor the outbox check can read them.

@@ -29,6 +29,7 @@ import type { RunErrorKind, RunEvent, RunStatus } from "../../shared/run-log";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
 import type { Comment, ExcerptLine, PrRef, PullRequest } from "../../shared/types";
 import { dataDir as defaultDataDir } from "../config";
+import { taskFiles } from "../context/task-file";
 import type { Live } from "../live";
 import { log } from "../log";
 import type { Settings } from "../settings";
@@ -52,7 +53,7 @@ import { git, gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
 import { buildPrompt, buildReplyPrompt, type ReplyThread } from "./prompt";
 import { MAX_FILE_CHARS, repoPath, type ValidatedReply, validate, validateReplies } from "./validate";
-import { type GitRemote, prepareWorkspace, pruneWorkspaces, type Workspace } from "./workspace";
+import { type GitRemote, noUrl, prepareWorkspace, pruneWorkspaces, type Workspace } from "./workspace";
 
 const RAW_MAX = 2 * 1024 * 1024;
 // Plan v3 WP10: at most 2 `changed` events with runs per second.
@@ -122,6 +123,9 @@ type RunRow = {
   finished_at: number | null;
   pr_source: string | null;
   pr_target: string | null;
+  since_head: string | null;
+  range_base: string | null;
+  question: string | null;
 };
 
 export type ItemRow = {
@@ -183,9 +187,9 @@ const SQL = {
     VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now) RETURNING id`,
   run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
-      p.source_head AS pr_source, p.target_head AS pr_target
+      p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
-  workspace: "UPDATE review_run SET merge_base = $base, fetch_via = $via WHERE id = $id",
+  workspace: "UPDATE review_run SET merge_base = $base, range_base = $range, fetch_via = $via WHERE id = $id",
   end: `UPDATE review_run SET status = $status, error_kind = $kind, error_text = $text, session_id = $session, cli_version = $cli, model = $model,
       usage_json = $usage, summary_json = $summary, raw_output = $raw, finished_at = $now WHERE id = $id AND status = 'running'`,
   // A run that was running at the last stop has no process now.
@@ -210,9 +214,6 @@ const SQL = {
 };
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
-
-// Plan v3 section 7: a workspace failure shows no URL. git names the remote URL in its errors.
-const noUrl = (s: string) => s.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi, "[url]");
 
 function cap(s: string) {
   const b = Buffer.from(s);
@@ -450,6 +451,8 @@ function toRunDto(r: RunRow): RunDto {
     finishedAt: r.finished_at,
     stale: source || target ? { source, target } : null,
     hasRaw: r.has_raw === 1,
+    since: r.since_head === null ? null : { head: r.since_head, incremental: r.range_base !== null && r.range_base !== r.merge_base },
+    question: r.question,
   };
 }
 
@@ -596,14 +599,21 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
 
     await prune();
     let ws: Workspace;
+    const files = taskFiles(j.db, j.pr);
     try {
-      const remote = await (opts.gitRemote ?? forgeRemote)({ project: pr.project, repo: pr.repo, id: pr.pr_id });
-      ws = await prepareWorkspace({ dataDir, runId: String(j.id), pr: toPullRequest(pr), comments: commentsOf(j.db, j.pr), remote });
+      ws = await prepareWorkspace({
+        dataDir,
+        runId: String(j.id),
+        pr: toPullRequest(pr),
+        comments: commentsOf(j.db, j.pr),
+        remote: await remote({ project: pr.project, repo: pr.repo, id: pr.pr_id }),
+        files,
+      });
     } catch (e) {
       return failure("workspace", noUrl((e as Error).message));
     }
     held.ws = ws;
-    j.db.query(SQL.workspace).run({ id: j.id, base: ws.mergeBase, via: ws.via });
+    j.db.query(SQL.workspace).run({ id: j.id, base: ws.mergeBase, range: ws.rangeBase, via: ws.via });
     notify(j.id);
     if (j.cancelled) return cancelled();
 
@@ -618,6 +628,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       profile,
       pr: { project: pr.project, repo: pr.repo, prId: pr.pr_id, webUrl: pr.web_url },
       tasks: j.db.query(SQL.tasks).all({ pr: j.pr }) as PrTask[],
+      taskFile: files.length > 0,
     };
     const reply = j.threads;
     const o = await runner.run(
@@ -642,7 +653,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     return reply ? judgeReplies(o, reply, servers, docs.unavailable) : judge(o, ws, profile, servers, docs.unavailable);
   }
 
-  async function forgeRemote(ref: PrRef): Promise<GitRemote> {
+  // The git remote of a PR: the test remote, else the forge provider.
+  async function remote(ref: PrRef): Promise<GitRemote> {
+    if (opts.gitRemote) return opts.gitRemote(ref);
     const provider = await settings.provider();
     if (!provider) throw new Error("Configure the Bitbucket URL and token first.");
     return provider.gitRemote(ref);
@@ -740,6 +753,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
 
   return {
     open,
+    dataDir,
+    remote,
     // At start: restart recovery, the prune of leftover workspaces, and the runner check.
     async start() {
       open();

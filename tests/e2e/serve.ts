@@ -61,6 +61,8 @@ function setClaude(c: ClaudeScenario) {
     exitCode: c.stream === "limit" ? 1 : 0,
     hang: c.hang,
     replies: c.replies,
+    rereview: c.rereview,
+    answer: c.answer,
     authMethod: c.login,
   });
 }

@@ -23,7 +23,7 @@ const NO_DIFF_HELPERS = ["--no-ext-diff", "--no-textconv"];
 type Pins = { gitDir: string; head: string; base: string; target: string };
 
 // The RunSpec.mcpServers entry for one workspace. entry is the script that main.ts runs. A compiled binary takes no entry (U13).
-export function gitMcpServer(ws: Pick<Workspace, "cache" | "sourceHead" | "mergeBase" | "targetHead">, entry = Bun.main): StdioServerSpec {
+export function gitMcpServer(ws: Pick<Workspace, "cache" | "sourceHead" | "rangeBase" | "targetHead">, entry = Bun.main): StdioServerSpec {
   return {
     command: process.execPath,
     args: [
@@ -31,7 +31,7 @@ export function gitMcpServer(ws: Pick<Workspace, "cache" | "sourceHead" | "merge
       "--git-mcp",
       `--git-dir=${ws.cache}`,
       `--head=${ws.sourceHead}`,
-      `--base=${ws.mergeBase}`,
+      `--base=${ws.rangeBase}`,
       `--target=${ws.targetHead}`,
     ],
     tools: [...GIT_MCP_TOOLS],

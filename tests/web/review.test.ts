@@ -73,6 +73,8 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
   finishedAt: 61_000,
   stale: null,
   hasRaw: true,
+  since: null,
+  question: null,
   ...o,
 });
 

@@ -3,6 +3,9 @@ import { z } from "zod";
 import {
   type Anchor,
   type AnchoredFinding,
+  type Carried,
+  type DiffKind,
+  MAX_QUESTION,
   MAX_REPLY_THREADS,
   type Question,
   type ReplyPayload,
@@ -245,7 +248,7 @@ export type RunUsage = { costUsd: number; turns: number; durationMs: number; tok
 // dropped: findings that the validator could not anchor. They show as coverage only.
 export type RunSummary = Pick<ValidatedResult, "summary" | "risks" | "coverage" | "dropped">;
 
-export type RunKind = "review" | "reply";
+export type RunKind = "review" | "reply" | "ask";
 
 export type RunDto = {
   id: number;
@@ -275,6 +278,10 @@ export type RunDto = {
   // Computed on read: a head of the PR differs from the reviewed head. null: both heads are the same.
   stale: { source: boolean; target: boolean } | null;
   hasRaw: boolean;
+  // A re-review: head is the head that the base run reviewed. incremental: false when the run fell back to the full change.
+  since: { head: string; incremental: boolean } | null;
+  // An ask run only.
+  question: string | null;
 };
 
 export type ItemStatus = "new" | "accepted" | "discarded" | "posted";
@@ -285,7 +292,8 @@ export type ReviewItemDto = {
   kind: "finding" | "question" | "reply";
   body: string;
   // finding: the AnchoredFinding as validated. question: the Question. reply: the ReplyPayload; body is empty for action none.
-  payload: AnchoredFinding | Question | ReplyPayload;
+  // carried: the item came from the base run of a re-review.
+  payload: (AnchoredFinding | Question | ReplyPayload) & { carried?: Carried };
   // Findings only: the current anchor.
   anchor: (Anchor & { side: Side }) | null;
   status: ItemStatus;
@@ -377,6 +385,61 @@ export type ConfirmDto = { posts: PostDto[]; warning: string | null };
 
 // POST /api/prs/:id/reply-run. Absent threads: every thread where it is my turn. A thread is the ID of its root comment.
 export const replyRunInput = z.object({ threads: z.array(positiveInt).min(1).max(MAX_REPLY_THREADS).optional() });
+
+// ---------- Ask (plan r2 S-ASK) ----------
+
+// POST /api/prs/:id/ask. GET /api/prs/:id/asks gives AskDto[], newest first, at most 20.
+export const askInput = z.object({ question: z.string().trim().min(1).max(MAX_QUESTION) });
+export type AskInput = z.infer<typeof askInput>;
+// answer: null until the run ends with a valid result.
+export type AskDto = { run: RunDto; answer: string | null };
+
+// ---------- Task context (plan r2 S-JIRA) ----------
+
+export const JIRA_KEY = /^[A-Z][A-Z0-9_]*-[1-9][0-9]*$/;
+
+// created: the timestamp text from the source. commentsTotal: the comment count at the source. truncated: a size cap cut the text.
+export type IssueContext = {
+  key: string;
+  summary: string;
+  status: string | null;
+  description: string | null;
+  comments: { author: string; created: string; body: string }[];
+  commentsTotal: number;
+  truncated: boolean;
+};
+// fetchedAt: ms.
+export type TaskContextDto = IssueContext & { source: "jira"; fetchedAt: number };
+
+// PUT /api/settings/jira. Empty baseUrl disconnects Jira and clears the token. Absent or empty token keeps the stored token.
+export const jiraSettingsInput = z.object({
+  baseUrl: z.string().trim().max(2048),
+  token: z.string().trim().optional(),
+  caFile: z.string().trim().optional(),
+});
+export type JiraSettingsInput = z.infer<typeof jiraSettingsInput>;
+
+// ---------- Diff (plan r2 S-DIFF) ----------
+
+export const DIFF_PAGE_ROWS = 1000;
+
+// Same shape as DiffRow in src/server/review/diffmap.ts.
+export type DiffRowDto = { kind: DiffKind; old: number; new: number; text: string };
+// path: null for a deleted file. oldPath: null for an added file. rows: the row count of the file.
+export type DiffFileDto = { path: string | null; oldPath: string | null; binary: boolean; added: number; removed: number; rows: number };
+// GET /api/prs/:id/diff and POST /api/prs/:id/diff/fetch.
+export type DiffIndexDto = { sourceHead: string; targetHead: string; mergeBase: string; files: DiffFileDto[] };
+// GET /api/prs/:id/diff/file?path=&start=. next: the start of the next page, or null on the last page.
+export type DiffPageDto = {
+  path: string | null;
+  oldPath: string | null;
+  binary: boolean;
+  start: number;
+  next: number | null;
+  rows: DiffRowDto[];
+};
+// GET /api/prs/:id/diff gives 409 with this body when the cache does not hold the PR heads.
+export type DiffFetchNeeded = ApiError & { fetch: true };
 
 // GET /api/runs/:id. events: the run log in seq order.
 export type RunDetail = { run: RunDto; events: RunEvent[]; items: ReviewItemDto[] };

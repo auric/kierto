@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import { csrf } from "hono/csrf";
 import { secureHeaders } from "hono/secure-headers";
+import { createContextRoutes } from "./context/routes";
 import { allowedOrigins, type GuardOptions, guard } from "./guard";
 import { createInboxRoutes } from "./inbox/routes";
 import type { Live } from "./live";
 import { createMeta } from "./meta";
 import { createOutbox, type Outbox } from "./publish/outbox";
 import { createPublishRoutes } from "./publish/routes";
+import { createDiffRoutes } from "./review/diff-routes";
 import { createReviewJobs, type ReviewJobs } from "./review/jobs";
 import { createReviewRoutes } from "./review/routes";
 import { createSettings, type Settings } from "./settings";
@@ -59,6 +61,8 @@ export function createApp(opts: AppOptions) {
     })
     .route("/api", createInboxRoutes({ settings, sync, live: opts.live }))
     .route("/api", createReviewRoutes({ review, live: opts.live }))
+    .route("/api", createDiffRoutes({ review }))
+    .route("/api", createContextRoutes({ settings, review, live: opts.live }))
     .route("/api", createPublishRoutes({ review, settings, outbox }));
 
   if (opts.assets) app.use("/assets/*", opts.assets);

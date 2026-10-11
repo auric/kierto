@@ -1,0 +1,46 @@
+-- Release 2 runs (plan r2 WP0). SQLite cannot change a CHECK, so review_run is rebuilt with its column order and row IDs.
+-- run_event, review_item, and post refer to review_run with ON DELETE CASCADE. db.ts runs migrations with foreign keys off, so DROP TABLE keeps their rows.
+-- since_head: the head that the base run of a re-review reviewed. range_base: the base of the reviewed range. question, answer: an ask run.
+CREATE TABLE review_run_new (
+  id INTEGER PRIMARY KEY,
+  pr INTEGER NOT NULL REFERENCES pull_request (id) ON DELETE CASCADE,
+  profile TEXT NOT NULL,
+  note TEXT NOT NULL,
+  idem_key TEXT NOT NULL,
+  source_head TEXT NOT NULL,
+  target_head TEXT NOT NULL,
+  merge_base TEXT,
+  fetch_via TEXT,
+  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'incomplete', 'failed', 'cancelled')),
+  error_kind TEXT CHECK (error_kind IN ('usage_limit', 'auth', 'max_turns', 'schema', 'tool_check', 'workspace', 'process', 'restart')),
+  error_text TEXT,
+  session_id TEXT,
+  cli_version TEXT,
+  model TEXT,
+  usage_json TEXT,
+  summary_json TEXT,
+  raw_output TEXT,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  kind TEXT NOT NULL DEFAULT 'review' CHECK (kind IN ('review', 'reply', 'ask')),
+  profile_name TEXT,
+  profile_revision TEXT,
+  explain INTEGER,
+  since_head TEXT,
+  range_base TEXT,
+  question TEXT,
+  answer TEXT
+);
+
+INSERT INTO review_run_new (id, pr, profile, note, idem_key, source_head, target_head, merge_base, fetch_via, status, error_kind, error_text,
+    session_id, cli_version, model, usage_json, summary_json, raw_output, started_at, finished_at, kind, profile_name, profile_revision, explain)
+  SELECT id, pr, profile, note, idem_key, source_head, target_head, merge_base, fetch_via, status, error_kind, error_text,
+    session_id, cli_version, model, usage_json, summary_json, raw_output, started_at, finished_at, kind, profile_name, profile_revision, explain
+  FROM review_run;
+
+DROP TABLE review_run;
+ALTER TABLE review_run_new RENAME TO review_run;
+
+-- A14: one running run per key. An ended run frees its key for a rerun.
+CREATE UNIQUE INDEX review_run_running ON review_run (idem_key) WHERE status = 'running';
+CREATE INDEX review_run_pr ON review_run (pr, id);

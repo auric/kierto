@@ -75,6 +75,45 @@ export type ReplyPayload = ReplyDraft & { replyTo: number };
 
 export const replyJsonSchema = (): Record<string, unknown> => z.toJSONSchema(replyResult, { target: "draft-07" });
 
+// ---------- Re-review (plan r2 S-RR) ----------
+
+export const verdicts = ["open", "fixed", "outdated"] as const;
+export type Verdict = (typeof verdicts)[number];
+
+export const earlierVerdict = z.object({
+  id: lineNo.describe("An ID from the Earlier findings line."),
+  status: z
+    .enum(verdicts)
+    .describe("open: the problem is still in the code. fixed: the new commits fix it. outdated: the code that it names is gone."),
+  reason: z.string().describe("One line."),
+  path: z.string().nullable().describe("The current path of an open finding when the file moved, else null."),
+  line: lineNo.nullable().describe("The current first line of an open finding when the code moved, else null."),
+});
+
+export const rereviewResult = reviewResult.extend({ earlier: z.array(earlierVerdict).max(100) });
+
+export type EarlierVerdict = z.infer<typeof earlierVerdict>;
+export type RereviewResult = z.infer<typeof rereviewResult>;
+
+export const rereviewJsonSchema = (): Record<string, unknown> => z.toJSONSchema(rereviewResult, { target: "draft-07" });
+
+// A finding or question that a re-review copied from its base run. from: the source item ID. since: the head that the base run reviewed.
+export type Carried = { from: number; verdict: Verdict; reason: string; since: string };
+
+// ---------- Ask (plan r2 S-ASK) ----------
+
+export const MAX_QUESTION = 4000;
+export const MAX_ANSWER = 20_000;
+
+export const askResult = z.object({
+  answer: z.string().max(MAX_ANSWER).describe("The answer as Markdown."),
+  coverage,
+});
+
+export type AskResult = z.infer<typeof askResult>;
+
+export const askJsonSchema = (): Record<string, unknown> => z.toJSONSchema(askResult, { target: "draft-07" });
+
 // ---------- Validator output ----------
 
 export type DiffKind = "add" | "del" | "ctx";

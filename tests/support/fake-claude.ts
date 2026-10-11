@@ -17,8 +17,11 @@ export type FakeScenario = {
   stderr?: string;
   // Start a child that ignores stdin EOF, stop before the first result event, and wait forever.
   hang?: boolean;
-  // Reply runs only: the structured_output of the result. Absent: echoReplies() of the stdin.
+  // The structured_output of the result, by the --json-schema shape. Absent: the echo of the stdin.
+  // replies: a reply run (properties.replies). rereview: a re-review (properties.earlier). answer: an ask run (properties.answer).
   replies?: unknown;
+  rereview?: unknown;
+  answer?: unknown;
 };
 
 const CHILD = "process.stdin.on('end', () => {}); process.stdin.resume(); setInterval(() => {}, 1000);";
@@ -42,6 +45,33 @@ export function echoReplies(stdin: string) {
     ),
     coverage: { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] },
   };
+}
+
+const VERDICTS = ["open", "fixed", "outdated"] as const;
+
+// A re-review result: the fixture result with no findings, and one verdict per ID of the stdin "Earlier findings:" line.
+// The verdicts cycle open, fixed, outdated.
+export function echoRereview(stdin: string, fixture: unknown) {
+  const line = /^Earlier findings: (.*)$/m.exec(stdin)?.[1] ?? "";
+  const ids = [...line.matchAll(/\d+/g)].map((m) => Number(m[0]));
+  return {
+    ...(fixture && typeof fixture === "object" ? fixture : {}),
+    findings: [],
+    earlier: ids.map((id, i) => {
+      const status = VERDICTS[i % VERDICTS.length];
+      return { id, status, reason: `The echo marks finding ${id} ${status}.`, path: null, line: null };
+    }),
+  };
+}
+
+// An ask result. The question line is the last line with text in the "# Your instructions" section of the stdin.
+export function echoAnswer(stdin: string) {
+  const lines = stdin.split(/\r?\n/);
+  const start = lines.indexOf("# Your instructions");
+  const end = lines.findIndex((l, i) => i > start && l.startsWith("# "));
+  const section = start < 0 ? [] : lines.slice(start + 1, end < 0 ? undefined : end);
+  const question = section.filter((l) => l.trim()).at(-1) ?? "";
+  return { answer: `Echo: ${question}`, coverage: { read: [], skipped: [], unavailable: [], notChecked: [] } };
 }
 
 async function main() {
@@ -84,18 +114,23 @@ async function main() {
     record({ childPid: child.pid });
   }
 
-  // A reply run: --json-schema has properties.replies. Its result carries the replies.
+  // The --json-schema shape picks the result. A review run keeps the fixture result.
   const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
-  const replyRun = JSON.parse(flag("--json-schema") ?? "null")?.properties?.replies !== undefined;
+  const props = JSON.parse(flag("--json-schema") ?? "null")?.properties ?? {};
   const agentTool = (flag("--tools") ?? "").split(",").includes("Agent");
+  const result = (fixture: unknown) => {
+    if (props.replies !== undefined) return s.replies ?? echoReplies(stdin);
+    if (props.earlier !== undefined) return s.rereview ?? echoRereview(stdin, fixture);
+    if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);
+    return undefined;
+  };
   const rewrite = (l: string) => {
-    if (!replyRun) return l;
     const e = JSON.parse(l);
     // Gate B8: init lists the agent tool as Task. The real CLI lists it only when --tools names Agent.
     if (e.type === "system" && e.subtype === "init" && Array.isArray(e.tools) && !agentTool)
       return JSON.stringify({ ...e, tools: e.tools.filter((t: unknown) => t !== "Task") });
-    if (e.type === "result") return JSON.stringify({ ...e, structured_output: s.replies ?? echoReplies(stdin) });
-    return l;
+    const r = e.type === "result" ? result(e.structured_output) : undefined;
+    return r === undefined ? l : JSON.stringify({ ...e, structured_output: r });
   };
 
   // The fixture paths name the recorded cwd. Replace it with the real cwd.
