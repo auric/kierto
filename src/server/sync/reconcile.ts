@@ -2,7 +2,6 @@
 import { isMe } from "../../shared/me";
 import type { Comment, PullRequest, Role } from "../../shared/types";
 
-export const INTERVAL_MS = 60_000;
 const MAX_BACKOFF_MS = 15 * 60_000;
 
 export type EventKind = "comment_new" | "commits_pushed" | "reviewer_added";
@@ -64,10 +63,10 @@ export function prEvents(before: PrBefore | null, pr: PullRequest, me: string, d
   return out;
 }
 
-// failures: consecutive cycles in which no request reached the server.
-export function nextDelay(failures: number, random: () => number): number {
-  if (failures === 0) return INTERVAL_MS * (0.9 + 0.2 * random());
-  return random() * Math.min(MAX_BACKOFF_MS, INTERVAL_MS * 2 ** failures);
+// failures: consecutive cycles in which no request reached the server. intervalMs: the configured check interval.
+export function nextDelay(failures: number, random: () => number, intervalMs: number): number {
+  if (failures === 0) return intervalMs * (0.9 + 0.2 * random());
+  return random() * Math.min(MAX_BACKOFF_MS, intervalMs * 2 ** failures);
 }
 
 // The HTTP-date form would need a server time against the local clock, so only delta seconds count.

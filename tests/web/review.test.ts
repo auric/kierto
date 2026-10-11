@@ -54,6 +54,7 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
   pr: 7,
   kind: "review",
   profile: "general",
+  profileName: "General",
   note: "",
   status: "completed",
   errorKind: null,

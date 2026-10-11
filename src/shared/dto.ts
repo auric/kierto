@@ -34,6 +34,31 @@ export type TaskRule = z.infer<typeof taskRuleInput>;
 // timedOut: the rule ran past the budget. Sync skips it until the user edits it.
 export type TaskRuleDto = TaskRule & { timedOut: boolean };
 
+export const MAX_NOTE = 20_000;
+export const MAX_PROFILES = 20;
+// Seconds between sync cycles.
+export const CHECK_CHOICES = [30, 60, 120, 300, 600, 900] as const;
+
+const profileId = z.string().regex(/^[a-z0-9-]{1,40}$/);
+
+// prompt: the profile part of both agent prompts. docs: the run gets the documentation servers.
+export const profileInput = z.object({
+  id: profileId,
+  name: z.string().trim().min(1).max(60),
+  note: z.string().trim().max(200),
+  prompt: z.string().trim().min(1).max(MAX_NOTE),
+  explain: z.boolean(),
+  docs: z.boolean(),
+  maxTurns: z.number().int().min(2).max(200),
+});
+export type ProfileInput = z.infer<typeof profileInput>;
+
+export const profileList = z
+  .array(profileInput)
+  .min(1)
+  .max(MAX_PROFILES)
+  .refine((l) => new Set(l.map((p) => p.id)).size === l.length, "Profile IDs must be unique.");
+
 export const settingsInput = z.object({
   baseUrl: z.string().trim().min(1),
   // Absent or empty keeps the stored token. A new origin needs a token.
@@ -47,6 +72,13 @@ export const settingsInput = z.object({
   taskRules: z.array(taskRuleInput).max(MAX_TASK_RULES).optional(),
   // Absent keeps the stored template. Empty clears it.
   taskLink: z.string().trim().max(2048).optional(),
+  // Absent keeps the stored value.
+  checkSeconds: z
+    .number()
+    .refine((n) => (CHECK_CHOICES as readonly number[]).includes(n))
+    .optional(),
+  // Absent keeps the stored profiles. null restores the shipped profiles.
+  profiles: profileList.nullable().optional(),
 });
 
 export type SettingsInput = z.infer<typeof settingsInput>;
@@ -64,6 +96,9 @@ export type SettingsDto = {
   markAi: boolean;
   taskRules: TaskRuleDto[];
   taskLink: string | null;
+  checkSeconds: number;
+  // With prompts. Meta lists them without.
+  profiles: ProfileInput[];
 };
 
 export type ApiError = { error: string };
@@ -173,7 +208,7 @@ export type ClaimedEvent = {
   kind: "comment_new" | "commits_pushed" | "reviewer_added";
   ref: string;
   createdAt: number;
-  // true: the event came after a sync gap of more than 2 minutes. Show one summary per PR.
+  // true: the event came after a sync gap of more than 2 check intervals. Show one summary per PR.
   digest: boolean;
   project: string;
   repo: string;
@@ -194,12 +229,10 @@ export const followUrlInput = z.object({ url: z.string().trim().min(1).max(2048)
 
 // ---------- Review (plan v3 WP10) ----------
 
-export const profileIds = ["general", "over", "security", "explain"] as const;
-export type ProfileId = (typeof profileIds)[number];
-export const MAX_NOTE = 20_000;
+export type ProfileId = string;
 
 // PUT /api/prs/:id/brief. POST /api/prs/:id/review runs the stored brief.
-export const briefInput = z.object({ note: z.string().max(MAX_NOTE), profile: z.enum(profileIds) });
+export const briefInput = z.object({ note: z.string().max(MAX_NOTE), profile: profileId });
 export type BriefInput = z.infer<typeof briefInput>;
 // updatedAt: null for a PR without a stored brief. The defaults then apply.
 export type BriefDto = BriefInput & { updatedAt: number | null };
@@ -219,6 +252,8 @@ export type RunDto = {
   pr: number;
   kind: RunKind;
   profile: ProfileId;
+  // The profile name at the start of the run.
+  profileName: string;
   note: string;
   status: RunStatus;
   errorKind: RunErrorKind | null;

@@ -18,6 +18,7 @@ import { createBitbucketProvider, type ForgeProvider } from "./bitbucket/provide
 import { type Config, dataDir, dbPath, readConfig, writeConfig } from "./config";
 import { listPrs } from "./inbox/queries";
 import { log } from "./log";
+import { type Profile, SHIPPED_PROFILES } from "./review/catalog";
 import { createSecrets, type Secrets } from "./secrets";
 import { openDb } from "./storage/db";
 import {
@@ -43,6 +44,10 @@ type StoredRule = TaskRule & { timedOut?: boolean };
 
 const rulesOf = (c: Config | null): StoredRule[] => c?.taskRules ?? DEFAULT_TASK_RULES;
 const activeRules = (c: Config): TaskRule[] => rulesOf(c).flatMap(({ timedOut, ...r }) => (timedOut ? [] : [r]));
+
+const DEFAULT_CHECK_SECONDS = 60;
+const profilesOf = (c: Config | null): Profile[] => c?.profiles ?? SHIPPED_PROFILES;
+const checkSecondsOf = (c: Config | null) => c?.checkSeconds ?? DEFAULT_CHECK_SECONDS;
 
 const originOf = (url: string) => new URL(url).origin;
 
@@ -100,6 +105,8 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
       markAi: c?.markAi ?? true,
       taskRules: rulesOf(c).map(({ timedOut, ...r }) => ({ ...r, timedOut: timedOut === true })),
       taskLink: c?.taskLink ?? null,
+      checkSeconds: checkSecondsOf(c),
+      profiles: profilesOf(c),
     };
   }
 
@@ -222,18 +229,20 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
           }
           const prev = current();
           const old = rulesOf(prev);
-          const taskFields = {
+          const localFields = {
             taskRules: input.taskRules
               ? input.taskRules.map((r): StoredRule => (old.some((o) => o.timedOut && sameRule(o, r)) ? { ...r, timedOut: true } : r))
               : prev?.taskRules,
             taskLink: input.taskLink === undefined ? prev?.taskLink : input.taskLink || undefined,
             markAi: input.markAi ?? prev?.markAi,
+            checkSeconds: input.checkSeconds ?? prev?.checkSeconds,
+            profiles: input.profiles === undefined ? prev?.profiles : (input.profiles ?? undefined),
           };
           const caFile = input.caFile || undefined;
           const notifications = input.notifications ?? prev?.notifications ?? false;
           // Same connection settings: save without a Bitbucket request, so the notifications toggle works offline.
           if (prev && prev.baseUrl === baseUrl && prev.caFile === caFile && !input.token) {
-            config = { ...prev, notifications, ...taskFields };
+            config = { ...prev, notifications, ...localFields };
             writeConfig(dir, config);
             void recompute();
             return c.json(await dto());
@@ -259,7 +268,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
           }
 
           if (input.token) await secrets.set(token);
-          const next: Config = { baseUrl, userSlug, caFile, notifications, ...taskFields };
+          const next: Config = { baseUrl, userSlug, caFile, notifications, ...localFields };
           writeConfig(dir, next);
           const oldDb = sameOrigin ? null : db;
           config = next;
@@ -328,6 +337,10 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
   return {
     routes,
     config: current,
+    // The configured profiles, else SHIPPED_PROFILES. Never empty.
+    profiles: () => profilesOf(current()),
+    // The time between sync cycles.
+    checkMs: () => checkSecondsOf(current()) * 1000,
     // The database of the configured origin, or null before the first valid PUT.
     db: currentDb,
     // A provider for the current settings, or null without config or token. Throws a plain Error for an unreadable CA file.

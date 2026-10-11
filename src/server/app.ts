@@ -52,7 +52,7 @@ export function createApp(opts: AppOptions) {
     .use(csrf({ origin: allowedOrigins(opts) }))
     .get("/api/live", (c) => opts.live.handler(c))
     .route("/api/settings", settings.routes)
-    .route("/api/meta", createMeta(review))
+    .route("/api/meta", createMeta(review, settings))
     .post("/api/sync", (c) => {
       void sync.syncNow();
       return c.json(sync.status(), 202);

@@ -1,7 +1,9 @@
 // Runner names, run log labels, and the shipped review profiles (plan v3 WP10). GET /api/meta gives them to the UI.
+
+import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { ProfileDto, ProfileId } from "../../shared/dto";
+import type { ProfileId, ProfileInput } from "../../shared/dto";
 import { type AgentSpec, type McpServerSpec, NAME } from "./claude";
 
 // login: `claude auth login --help` (CLI 2.1.295) names --claudeai for the subscription.
@@ -32,10 +34,10 @@ export const TOOL_LABELS: Record<string, string> = {
   mcp__deepwiki__read_wiki_structure: "DeepWiki structure",
 };
 
-// focus: the profile part of both agent prompts. D6: 40 turns for reviews, 12 for Explain. docs: the run gets DOC_SERVERS.
-export type Profile = ProfileDto & { focus: string; docs: boolean };
+// prompt: the profile part of both agent prompts. D6: 40 turns for reviews, 12 for Explain. docs: the run gets DOC_SERVERS.
+export type Profile = ProfileInput;
 
-export const PROFILES: Profile[] = [
+export const SHIPPED_PROFILES: Profile[] = [
   {
     id: "general",
     name: "General",
@@ -43,7 +45,7 @@ export const PROFILES: Profile[] = [
     explain: false,
     maxTurns: 40,
     docs: true,
-    focus:
+    prompt:
       "Find defects in the change: wrong logic, missed edge cases, races and lock order, resource leaks, error handling, and effects on callers outside the diff.",
   },
   {
@@ -53,7 +55,7 @@ export const PROFILES: Profile[] = [
     explain: false,
     maxTurns: 40,
     docs: true,
-    focus:
+    prompt:
       "Find code that the change can delete or simplify: abstractions with one use, code that the standard library or the platform already gives, unneeded dependencies, settings for fixed values, and dead code.",
   },
   {
@@ -63,7 +65,7 @@ export const PROFILES: Profile[] = [
     explain: false,
     maxTurns: 40,
     docs: true,
-    focus:
+    prompt:
       "Find security defects: trust boundaries, input validation, injection, secrets in code or logs, authentication and authorization, unsafe memory use, and unsafe defaults.",
   },
   {
@@ -73,12 +75,18 @@ export const PROFILES: Profile[] = [
     explain: true,
     maxTurns: 12,
     docs: false,
-    focus:
+    prompt:
       "Explain the change for a reviewer: what it does, why, and which parts need attention. Ask a question where the intent is not clear. Report no findings.",
   },
 ];
 
-export const profileOf = (id: string): Profile => PROFILES.find((p) => p.id === id) ?? (PROFILES[0] as Profile);
+// list: at least one profile (profileList).
+export const profileOf = (list: Profile[], id: string): Profile => list.find((p) => p.id === id) ?? (list[0] as Profile);
+// The replacer array fixes the key order.
+export const profileRevision = (p: Profile) =>
+  createHash("sha256")
+    .update(JSON.stringify(p, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
+    .digest("hex");
 export const DEFAULT_PROFILE: ProfileId = "general";
 
 // Returns the tool names of a remote MCP server. It throws when the server does not answer.
@@ -155,7 +163,7 @@ export function mainAgent(p: Profile): AgentSpec {
     description: "Read-only review of one pull request.",
     prompt: [
       "You are a read-only code reviewer. You cannot change files, and you post nothing.",
-      p.focus,
+      p.prompt,
       ...TRUST,
       ...RESULT_RULES,
       "Put open points into questions, not into findings.",
@@ -177,7 +185,7 @@ export function replyAgent(p: Profile): AgentSpec {
       'Write each reply as short Markdown in the user\'s voice. Set action to "none" and leave body empty when the user need not answer.',
       'Check each claim about the code in ./repo before you rely on it. Set evidenceStatus to "unverified" when you did not check it.',
       "Never put secrets, tokens, passwords, or credentials into a reply.",
-      p.focus,
+      p.prompt,
       ...TRUST,
       "In coverage, list what you read, what you skipped, and what was not available.",
       ...docsRule(p),
@@ -190,7 +198,7 @@ export function reviewerAgent(p: Profile): AgentSpec {
     description: "Read-only reviewer for one part of a change.",
     prompt: [
       "You review one part of a change, read-only.",
-      p.focus,
+      p.prompt,
       ...TRUST,
       ...RESULT_RULES,
       ...docsRule(p),

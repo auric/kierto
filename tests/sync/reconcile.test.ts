@@ -143,14 +143,20 @@ describe("prEvents", () => {
 
 describe("scheduling math", () => {
   test("a normal delay is 60 s times 0.9 to 1.1", () => {
-    expect(nextDelay(0, () => 0)).toBeCloseTo(54_000);
-    expect(nextDelay(0, () => 1)).toBeCloseTo(66_000);
+    expect(nextDelay(0, () => 0, 60_000)).toBeCloseTo(54_000);
+    expect(nextDelay(0, () => 1, 60_000)).toBeCloseTo(66_000);
+  });
+
+  test("the delay follows the configured interval", () => {
+    expect(nextDelay(0, () => 0, 300_000)).toBeCloseTo(270_000);
+    expect(nextDelay(0, () => 1, 30_000)).toBeCloseTo(33_000);
+    expect([1, 2].map((n) => nextDelay(n, () => 1, 300_000))).toEqual([600_000, 900_000]);
   });
 
   test("offline delays double with full jitter up to 15 min", () => {
-    expect([1, 2, 3, 4, 5].map((n) => nextDelay(n, () => 1))).toEqual([120_000, 240_000, 480_000, 900_000, 900_000]);
-    expect(nextDelay(2, () => 0.5)).toBe(120_000);
-    expect(nextDelay(3, () => 0)).toBe(0);
+    expect([1, 2, 3, 4, 5].map((n) => nextDelay(n, () => 1, 60_000))).toEqual([120_000, 240_000, 480_000, 900_000, 900_000]);
+    expect(nextDelay(2, () => 0.5, 60_000)).toBe(120_000);
+    expect(nextDelay(3, () => 0, 60_000)).toBe(0);
   });
 
   test("Retry-After accepts delta seconds only", () => {

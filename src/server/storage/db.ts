@@ -15,6 +15,7 @@ const MIGRATIONS = [
   "008_post.sql",
   "009_reply.sql",
   "006_forge.sql",
+  "010_profiles.sql",
 ].map((f) => readFileSync(join(import.meta.dir, "migrations", f), "utf8"));
 
 export function openDb(path: string): Database {

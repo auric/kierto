@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { MAX_TASK_RULES, taskRuleInput } from "../shared/dto";
+import { MAX_TASK_RULES, profileList, settingsInput, taskRuleInput } from "../shared/dto";
 import { log } from "./log";
 
 // No secret goes into this file.
@@ -20,6 +20,11 @@ const config = z.object({
     .max(MAX_TASK_RULES)
     .optional(),
   taskLink: z.string().optional(),
+  // A broken value reads as absent, so the rest of the config stays in use.
+  // Absent: 60 s.
+  checkSeconds: settingsInput.shape.checkSeconds.catch(undefined),
+  // Absent: SHIPPED_PROFILES (src/server/review/catalog.ts).
+  profiles: profileList.optional().catch(undefined),
 });
 
 export type Config = z.infer<typeof config>;

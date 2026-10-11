@@ -40,9 +40,11 @@ import {
   mainAgent,
   type Profile,
   profileOf,
+  profileRevision,
   REVIEWER,
   replyAgent,
   reviewerAgent,
+  SHIPPED_PROFILES,
 } from "./catalog";
 import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude";
 import { type DiffFile, parseDiff } from "./diffmap";
@@ -99,6 +101,8 @@ type RunRow = {
   pr: number;
   kind: RunDto["kind"];
   profile: string;
+  // null for runs made before M4.
+  profile_name: string | null;
   note: string;
   source_head: string;
   target_head: string;
@@ -148,8 +152,17 @@ type Ending = {
   result?: { summary: RunSummary; items: NewItem[] };
 };
 
-// threads: the threads of a reply run. null for a review run.
-type Job = { id: number; pr: number; key: string; db: Database; threads: ReplyThread[] | null; cancelled: boolean; done: Promise<void> };
+// threads: the threads of a reply run. null for a review run. profile: the profile as it was at the start.
+type Job = {
+  id: number;
+  pr: number;
+  key: string;
+  db: Database;
+  profile: Profile;
+  threads: ReplyThread[] | null;
+  cancelled: boolean;
+  done: Promise<void>;
+};
 
 export type StartResult =
   | { status: 200 | 202; run: RunDto }
@@ -165,9 +178,9 @@ const SQL = {
   brief: "SELECT note, profile, updated_at FROM pr_brief WHERE pr = $pr",
   saveBrief: `INSERT INTO pr_brief (pr, note, profile, updated_at) VALUES ($pr, $note, $profile, $now)
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
-  insert: `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, started_at)
-    VALUES ($pr, $kind, $profile, $note, $key, $source, $target, 'running', $now) RETURNING id`,
-  run: `SELECT r.id, r.pr, r.kind, r.profile, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
+  insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, note, idem_key, source_head, target_head, status, started_at)
+    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $note, $key, $source, $target, 'running', $now) RETURNING id`,
+  run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
       p.source_head AS pr_source, p.target_head AS pr_target
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
@@ -416,7 +429,8 @@ function toRunDto(r: RunRow): RunDto {
     id: r.id,
     pr: r.pr,
     kind: r.kind,
-    profile: profileOf(r.profile).id,
+    profile: r.profile,
+    profileName: r.profile_name ?? SHIPPED_PROFILES.find((p) => p.id === r.profile)?.name ?? r.profile,
     note: r.note,
     status: r.status,
     errorKind: r.error_kind,
@@ -591,7 +605,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     notify(j.id);
     if (j.cancelled) return cancelled();
 
-    const profile = profileOf(brief.profile);
+    const profile = j.profile;
     const docs = await docServers(profile);
     if (j.cancelled) return cancelled();
     const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...docs.servers };
@@ -663,7 +677,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   });
 
   // The one run slot (A14). The same key returns the running run.
-  function launch(db: Database, pr: Heads, brief: BriefInput, key: string, threads: ReplyThread[] | null): StartResult {
+  function launch(db: Database, pr: Heads, brief: BriefInput, profile: Profile, key: string, threads: ReplyThread[] | null): StartResult {
     if (job) {
       const running = runRow(job.db, job.id);
       if (job.key === key && job.db === db && running) return { status: 200, run: toRunDto(running) };
@@ -672,14 +686,16 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const { id: runId } = db.query(SQL.insert).get({
       pr: pr.id,
       kind: threads ? "reply" : "review",
-      profile: brief.profile,
+      profile: profile.id,
+      profile_name: profile.name,
+      profile_revision: profileRevision(profile),
       note: brief.note,
       key,
       source: pr.source_head,
       target: pr.target_head,
       now: now(),
     }) as { id: number };
-    const j: Job = { id: runId, pr: pr.id, key, db, threads, cancelled: false, done: Promise.resolve() };
+    const j: Job = { id: runId, pr: pr.id, key, db, profile, threads, cancelled: false, done: Promise.resolve() };
     job = j;
     j.done = execute(j, pr, brief).finally(() => {
       if (job === j) job = null;
@@ -714,9 +730,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
 
   function briefOf(db: Database, pr: number): BriefDto {
     const b = db.query(SQL.brief).get({ pr }) as { note: string; profile: string; updated_at: number } | null;
-    return b
-      ? { note: b.note, profile: profileOf(b.profile).id, updatedAt: b.updated_at }
-      : { note: "", profile: DEFAULT_PROFILE, updatedAt: null };
+    // A deleted profile falls back to the first profile.
+    const profile = profileOf(settings.profiles(), b?.profile ?? DEFAULT_PROFILE).id;
+    return b ? { note: b.note, profile, updatedAt: b.updated_at } : { note: "", profile, updatedAt: null };
   }
 
   return {
@@ -736,6 +752,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // Resolves when no run is active.
     wait: () => job?.done ?? Promise.resolve(),
     runnerCheck: (): RunnerCheckDto | null => (checked ? toCheckDto(checked) : null),
+    hasProfile: (id: string) => settings.profiles().some((p) => p.id === id),
 
     brief(db: Database, pr: number): BriefDto | null {
       return prRow(db, pr) ? briefOf(db, pr) : null;
@@ -753,8 +770,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const { source_head, target_head } = pr;
       if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
       const brief = briefOf(db, id);
-      const key = [id, source_head, target_head, brief.profile, sha256(brief.note)].join(":");
-      return launch(db, { ...pr, source_head, target_head }, brief, key, null);
+      const profile = profileOf(settings.profiles(), brief.profile);
+      const key = [id, source_head, target_head, brief.profile, profileRevision(profile), sha256(brief.note)].join(":");
+      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, null);
     },
 
     // Starts a reply-draft run of the stored brief (plan replies.md WP17). It shares the run slot with reviews.
@@ -766,9 +784,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const threads = replyThreads(db, pr, list);
       if (!Array.isArray(threads)) return threads;
       const brief = briefOf(db, id);
+      const profile = profileOf(settings.profiles(), brief.profile);
       const at = threads.map((t) => `${t.thread}@${t.replyTo}`);
-      const key = [id, "reply", source_head, target_head, brief.profile, sha256(brief.note), ...at].join(":");
-      return launch(db, { ...pr, source_head, target_head }, brief, key, threads);
+      const key = [id, "reply", source_head, target_head, brief.profile, profileRevision(profile), sha256(brief.note), ...at].join(":");
+      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, threads);
     },
 
     // The newest reply item of each thread, unless it is posted. null for an unknown PR.

@@ -7,14 +7,14 @@ import { join } from "node:path";
 import { createApp } from "../../src/server/app";
 import { writeConfig } from "../../src/server/config";
 import { createLive, type LiveEvent } from "../../src/server/live";
-import { DOC_SERVERS, DOCS_RULE, type ListTools } from "../../src/server/review/catalog";
+import { DOC_SERVERS, DOCS_RULE, type ListTools, profileRevision, SHIPPED_PROFILES } from "../../src/server/review/catalog";
 import { git, gitEnv } from "../../src/server/review/git";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import type { GitRemote } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import type { SyncEngine } from "../../src/server/sync/engine";
-import type { BriefDto, MetaDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
+import type { BriefDto, MetaDto, ProfileInput, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
 import { FAKE_TOKEN, FAKE_USER, type FakeBitbucket, key, startFakeBitbucket } from "../support/fake-bitbucket";
 import type { FakeScenario } from "../support/fake-claude";
 
@@ -771,4 +771,88 @@ describe("brief and meta", () => {
     expect(meta.tools["mcp__rl-git__git_log"]).toBe("Git log");
     expect(meta.context).toEqual([]);
   });
+});
+
+describe("editable profiles (M4)", () => {
+  const general = SHIPPED_PROFILES[0] as ProfileInput;
+  const putProfiles = (h: Awaited<ReturnType<typeof setup>>, profiles: ProfileInput[]) =>
+    h.json(`/api/settings`, { method: "PUT", body: { baseUrl: h.fake.url, profiles } });
+
+  test(
+    "a run uses the edited profile and stores its name and revision; an edit during the run gives 409",
+    async () => {
+      const h = await setup();
+      const edited = { ...general, name: "General v2", prompt: "EDITED-PROMPT-CANARY: check the flush.", maxTurns: 7 };
+      expect((await putProfiles(h, [edited, ...SHIPPED_PROFILES.slice(1)])).status).toBe(200);
+      h.scenario({ fixture: subagentRun(), hang: true });
+      await h.brief(NOTE, "general");
+      const a = await h.start();
+      expect(a.status).toBe(202);
+      expect(a.body.profileName).toBe("General v2");
+      expect(await waitFor(() => h.runCall() !== undefined)).toBe(true);
+      const c = h.runCall() as Call;
+      expect(flag(c.argv, "--max-turns")).toBe("7");
+      const agents = JSON.parse(readFileSync(flag(c.argv, "--agents") as string, "utf8"));
+      for (const name of ["rl-main", "rl-reviewer"]) {
+        expect(agents[name].prompt).toContain(edited.prompt);
+        expect(agents[name].prompt).not.toContain(general.prompt);
+      }
+      expect(h.db.query("SELECT profile, profile_name, profile_revision FROM review_run WHERE id = $id").get({ id: a.body.id })).toEqual({
+        profile: "general",
+        profile_name: "General v2",
+        profile_revision: profileRevision(edited),
+      });
+
+      // Same revision: the start joins the running run.
+      const same = await h.start();
+      expect(same.status).toBe(200);
+      expect(same.body.id).toBe(a.body.id);
+      // A new revision of the same profile does not join it.
+      expect((await putProfiles(h, [{ ...edited, prompt: "Another prompt." }])).status).toBe(200);
+      const other = await h.json<RunConflict>(`/api/prs/${h.pr}/review`, { method: "POST" });
+      expect(other.status).toBe(409);
+      expect(other.body.running).toEqual({ run: a.body.id, pr: h.pr });
+
+      await h.call(`/api/runs/${a.body.id}/cancel`, { method: "POST" });
+      expect((await h.finish(a.body.id)).run.profileName).toBe("General v2");
+    },
+    SLOW,
+  );
+
+  test(
+    "a deleted profile in a stored brief falls back to the first profile; PUT brief refuses an unknown ID",
+    async () => {
+      const h = await setup();
+      await h.brief(NOTE, "security");
+      const perf = { id: "perf", name: "Performance", note: "", prompt: "PERF-CANARY", explain: false, docs: false, maxTurns: 9 };
+      expect((await putProfiles(h, [perf, general])).status).toBe(200);
+      expect((await h.json<BriefDto>(`/api/prs/${h.pr}/brief`)).body.profile).toBe("perf");
+      expect((await h.brief(NOTE, "security")).status).toBe(400);
+      expect((await h.brief(NOTE, "no-such-id")).status).toBe(400);
+      const meta = (await h.json<MetaDto>("/api/meta")).body;
+      expect(meta.profiles).toEqual([
+        { id: "perf", name: "Performance", note: "", explain: false, maxTurns: 9 },
+        { id: "general", name: "General", note: general.note, explain: false, maxTurns: 40 },
+      ]);
+      const d = await h.finish((await h.start()).body.id);
+      expect(d.run).toMatchObject({ profile: "perf", profileName: "Performance" });
+      expect(flag(h.runCall()?.argv ?? [], "--max-turns")).toBe("9");
+    },
+    SLOW,
+  );
+
+  test(
+    "a run made before M4 takes its name from the shipped profile ID",
+    async () => {
+      const h = await setup();
+      const { id } = h.db
+        .query(
+          `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, started_at)
+            VALUES ($pr, 'review', 'over', '', 'old', 'a', 'b', 'completed', 1) RETURNING id`,
+        )
+        .get({ pr: h.pr }) as { id: number };
+      expect((await h.json<RunDetail>(`/api/runs/${id}`)).body.run).toMatchObject({ profile: "over", profileName: "Over-engineering" });
+    },
+    SLOW,
+  );
 });

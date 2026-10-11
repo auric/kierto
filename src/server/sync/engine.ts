@@ -9,7 +9,6 @@ import { log } from "../log";
 import type { Settings, TaskPlan } from "../settings";
 import { type NewEvent, nextDelay, parseRetryAfter, prEvents, reconcile, roleOf, type StoredComment } from "./reconcile";
 
-const DIGEST_GAP_MS = 120_000;
 const NETWORK = new Set(["network", "timeout"]);
 
 export type Timers = { set(fn: () => unknown, ms: number): unknown; clear(handle: unknown): void };
@@ -122,7 +121,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
     }
     const forge = provider;
     const me = config.userSlug;
-    const digest = status.lastCompleteAt === null || tally.startedAt - status.lastCompleteAt > DIGEST_GAP_MS ? 1 : 0;
+    const digest = status.lastCompleteAt === null || tally.startedAt - status.lastCompleteAt > 2 * settings.checkMs() ? 1 : 0;
     const problems: { kind: string; retryAfter?: string }[] = [];
     let reached = false;
     let broken: string | null = null;
@@ -435,7 +434,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
     }
     status.state = out.state;
     status.error = out.error ?? null;
-    if (started && !out.pause) schedule(out.retryAfterMs ?? nextDelay(failures, random));
+    if (started && !out.pause) schedule(out.retryAfterMs ?? nextDelay(failures, random, settings.checkMs()));
   }
 
   function clearTimer() {

@@ -1,11 +1,12 @@
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server/app";
-import { dbPath } from "../src/server/config";
+import { dbPath, readConfig } from "../src/server/config";
 import { createLive } from "../src/server/live";
 import { log } from "../src/server/log";
+import { SHIPPED_PROFILES } from "../src/server/review/catalog";
 import { createSecrets, type SecretBackend } from "../src/server/secrets";
 import { createSettings, type Settings } from "../src/server/settings";
 import type { SettingsDto } from "../src/shared/dto";
@@ -70,6 +71,8 @@ describe("settings API", () => {
       markAi: true,
       taskRules: DEFAULT_RULES,
       taskLink: null,
+      checkSeconds: 60,
+      profiles: SHIPPED_PROFILES,
     });
     expect(existsSync(dir)).toBe(false);
   });
@@ -90,6 +93,8 @@ describe("settings API", () => {
       markAi: true,
       taskRules: DEFAULT_RULES,
       taskLink: null,
+      checkSeconds: 60,
+      profiles: SHIPPED_PROFILES,
     };
     expect(await res.json()).toEqual(expected);
     expect(await s.get()).toEqual(expected);
@@ -160,6 +165,82 @@ describe("settings API", () => {
     const again = setup();
     expect(await again.get()).toMatchObject({ markAi: false, notifications: true });
     expect(again.settings.config()?.markAi).toBe(false);
+  });
+
+  test("GET gives the four shipped profiles with their full prompts", async () => {
+    const { profiles } = await setup().get();
+    expect(profiles.map((p) => p.id)).toEqual(["general", "over", "security", "explain"]);
+    expect(profiles[0]?.prompt).toStartWith("Find defects in the change");
+    expect(profiles).toEqual(SHIPPED_PROFILES);
+  });
+
+  const custom = {
+    id: "perf",
+    name: "Performance",
+    note: "Hot paths",
+    prompt: "Find slow code.",
+    explain: false,
+    docs: false,
+    maxTurns: 20,
+  };
+
+  test("saved profiles and checkSeconds persist offline, with no secret in config.json", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
+    const before = fake.requests.length;
+    fake.stop();
+    const res = await s.put({ baseUrl: fake.url, profiles: [custom], checkSeconds: 300 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ profiles: [custom], checkSeconds: 300 });
+    expect(fake.requests.length).toBe(before);
+    const text = readFileSync(join(dir, "config.json"), "utf8");
+    expect(text).not.toContain(FAKE_TOKEN);
+    expect(JSON.parse(text)).toMatchObject({ profiles: [custom], checkSeconds: 300 });
+    expect(s.settings.profiles()).toEqual([custom]);
+    expect(s.settings.checkMs()).toBe(300_000);
+    // A PUT without the fields keeps them.
+    expect((await s.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
+    s.settings.close();
+    const again = setup();
+    expect(await again.get()).toMatchObject({ profiles: [custom], checkSeconds: 300 });
+  });
+
+  test("invalid profile lists and intervals give 400 and store nothing", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
+    for (const body of [
+      { profiles: [custom, { ...custom, name: "Other" }] },
+      { profiles: [{ ...custom, maxTurns: 1 }] },
+      { profiles: [] },
+      { profiles: [{ ...custom, id: "Bad ID" }] },
+      { checkSeconds: 45 },
+    ]) {
+      const res = await s.put({ baseUrl: fake.url, ...body });
+      expect(res.status).toBe(400);
+    }
+    expect(readConfig(dir)).not.toHaveProperty("profiles");
+    expect(readConfig(dir)).not.toHaveProperty("checkSeconds");
+  });
+
+  test("profiles null restores the shipped profiles", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN, profiles: [custom] })).status).toBe(200);
+    expect((await s.get()).profiles).toEqual([custom]);
+    const res = await s.put({ baseUrl: fake.url, profiles: null });
+    expect(res.status).toBe(200);
+    expect((await res.json()).profiles).toEqual(SHIPPED_PROFILES);
+    expect(readConfig(dir)).not.toHaveProperty("profiles");
+  });
+
+  test("a hand-broken profiles block falls back to the shipped profiles and keeps the rest", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN, notifications: true })).status).toBe(200);
+    s.settings.close();
+    const file = join(dir, "config.json");
+    const broken = { ...JSON.parse(readFileSync(file, "utf8")), profiles: [{ id: "x" }], checkSeconds: "fast" };
+    writeFileSync(file, JSON.stringify(broken));
+    const again = setup();
+    expect(await again.get()).toMatchObject({ baseUrl: fake.url, notifications: true, profiles: SHIPPED_PROFILES, checkSeconds: 60 });
   });
 
   test("401 gives 400 and stores nothing", async () => {

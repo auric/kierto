@@ -37,7 +37,9 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
         const db = review.open();
         if (!db) return c.json(unconfigured, 409);
         const id = c.req.valid("param").id;
-        const brief = review.saveBrief(db, id, c.req.valid("json"));
+        const input = c.req.valid("json");
+        if (!review.hasProfile(input.profile)) return c.json<ApiError>({ error: "Unknown review profile." }, 400);
+        const brief = review.saveBrief(db, id, input);
         if (!brief) return c.json(notFound("Pull request"), 404);
         live.broadcast("changed", { prs: [id] });
         return c.json(brief, 200);

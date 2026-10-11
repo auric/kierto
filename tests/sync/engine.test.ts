@@ -113,8 +113,17 @@ type Checkpoint = { last_complete_at: number | null; incomplete_reason: string |
 
 let n = 0;
 // token: false is a memory-mode restart: config.json exists, but the token is gone.
-async function setup(dir = join(root, `case-${n++}`), opts: { token?: boolean; caFile?: string; user?: string } = {}) {
-  writeConfig(dir, { baseUrl: fake.url, userSlug: opts.user ?? FAKE_USER, notifications: false, caFile: opts.caFile });
+async function setup(
+  dir = join(root, `case-${n++}`),
+  opts: { token?: boolean; caFile?: string; user?: string; checkSeconds?: number } = {},
+) {
+  writeConfig(dir, {
+    baseUrl: fake.url,
+    userSlug: opts.user ?? FAKE_USER,
+    notifications: false,
+    caFile: opts.caFile,
+    checkSeconds: opts.checkSeconds,
+  });
   const secrets = createSecrets(null);
   if (opts.token !== false) await secrets.set(FAKE_TOKEN);
   const settings = createSettings({ dir, secrets });
@@ -734,6 +743,31 @@ describe("scheduling", () => {
     const restarted = await setup(h.dir);
     await restarted.cycle();
     expect(restarted.events().at(-1)).toEqual({ kind: "comment_new", ref: "1000012", digest: 1 });
+  });
+
+  test("the digest gap is two check intervals", async () => {
+    const base = byUser(inline(), 1000003, OTHER);
+    world.own = base;
+    const h = await setup(undefined, { checkSeconds: 300 });
+    await h.cycle();
+    world.own = addReply(base, 1000003, 1000010, OTHER);
+    h.clock.t += 4 * 60_000;
+    await h.engine.syncNow();
+    world.own = addReply(world.own, 1000003, 1000011, OTHER);
+    h.clock.t += 11 * 60_000;
+    await h.engine.syncNow();
+    expect(h.events()).toEqual([
+      { kind: "comment_new", ref: "1000010", digest: 0 },
+      { kind: "comment_new", ref: "1000011", digest: 1 },
+    ]);
+  });
+
+  test("the next cycle follows the check interval", async () => {
+    const h = await setup(undefined, { checkSeconds: 300 });
+    h.engine.start();
+    await h.timers.fire();
+    expect(h.engine.status().state).toBe("ok");
+    expect(h.timers.delays.at(-1)).toBeCloseTo(300_000);
   });
 
   test("a 401 pauses polling until the settings change", async () => {
