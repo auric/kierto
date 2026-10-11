@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import type { MetaDto, PrTask, RunDetail } from "../../shared/dto";
+import type { MetaDto, RunDetail, RunDto } from "../../shared/dto";
 import type { RunEvent, RunEventStatus } from "../../shared/run-log";
 import { agoLong } from "../pr/threads";
 import { useRaw } from "./data";
@@ -53,17 +53,17 @@ const dur = (e: RunEvent) => {
   return s === null || e.status === "running" || e.status === "stopped" ? "" : callDur(s);
 };
 
-// Brief of a run: the task IDs of the pull request, then your note as plain text, never as Markdown.
-export function BriefLine({ tasks, note, className }: { tasks: PrTask[]; note: string; className?: string }) {
+// Brief of a run: the tasks whose text the run read (plan r3 Feature C), then your note as plain text, never as Markdown.
+// The run records its tasks at its start. A run from before Release 3 has no record, so it shows no task.
+export function BriefLine({ run, className }: { run: RunDto; className?: string }) {
+  const tasks = run.tasks ?? [];
+  const note = run.note;
   if (!tasks.length && !note.trim()) return null;
   const ids = tasks.map((t) => t.key).join(", ");
   return (
     <p className={cn("m-0 flex min-w-0 items-center gap-x-3.5 gap-y-1 text-sm text-ink-2", className)}>
       {tasks.length > 0 && (
-        <span
-          className="inline-flex flex-none items-center gap-1.5"
-          title={`${tasks.length > 1 ? "Tasks" : "Task"} from the pull request: ${ids}`}
-        >
+        <span className="inline-flex flex-none items-center gap-1.5" title={`Task text that this run read: ${ids}`}>
           <Ticket aria-hidden className={cn(icon, "text-muted-foreground")} />
           <span className="sr-only">{tasks.length > 1 ? "Tasks" : "Task"}: </span>
           <code translate="no" className="font-mono text-xs">
@@ -89,7 +89,6 @@ export function RunLog(props: {
   detail: RunDetail | undefined;
   meta: MetaDto;
   prKey: string;
-  tasks: PrTask[];
   now: number;
   // n changes with each open request, so a second "from <agent>" click focuses the row again.
   target: LogTarget;
@@ -177,7 +176,7 @@ export function RunLog(props: {
               </code>
               , {agoLong(run.finishedAt ?? run.startedAt, props.now)}
             </p>
-            <BriefLine tasks={props.tasks} note={run.note} className="col-span-full text-xs" />
+            <BriefLine run={run} className="col-span-full text-xs" />
           </>
         )}
       </header>

@@ -1,7 +1,8 @@
 // Plan r2 UI-JIRA browser acceptance: the Jira settings, the task chips of the review brief, and the imported task text.
+// Plan r3 UI-TASKS: the same chips next to the run buttons and in the Ask section. UI-ATT: the task attachments.
 // Runs against serve.ts only: the fake Bitbucket, the fake Jira on JIRA_URL, and the fake Claude Code CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_JIRA_TOKEN, E2E_TOKEN, FAKE_URL, JIRA_ISSUE, JIRA_URL } from "./control";
+import { APP_PORT, control, E2E_JIRA_TOKEN, E2E_TOKEN, FAKE_URL, JIRA_ISSUE, JIRA_URL, jiraRequests, runAttachments } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -35,6 +36,8 @@ const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
 const brief = (page: Page) => page.locator("#brief");
 const fold = (page: Page, key: string) => page.locator(`details[data-task="${key}"]`);
 const fetchBtn = (page: Page, key: string) => brief(page).getByRole("button", { name: `Fetch ${key} from Jira` });
+// The one live region of the detail.
+const status = (page: Page) => page.locator("p[role='status'].sr-only");
 const openSettings = (page: Page) => page.getByRole("button", { name: "Settings" }).click();
 const closeSettings = (page: Page) => page.getByRole("button", { name: "Close the settings" }).click();
 
@@ -95,7 +98,7 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
   await expect(task.locator("summary")).toContainText(SUMMARY);
   // The Fetch button stays in place with its new name, so focus stays on it.
   await expect(brief(page).getByRole("button", { name: `Fetch ${JIRA_ISSUE} again` })).toBeFocused();
-  await expect(task.locator("summary")).toContainText("In Progress, 3 comments, fetched today");
+  await expect(task.locator("summary")).toContainText("In Progress, 3 comments, 2 attachments, fetched today");
   await expect(task).toHaveJSProperty("open", false);
   const description = task.getByText("The sync worker writes each cache entry on its own.", { exact: false });
   await expect(description).toBeHidden();
@@ -103,7 +106,7 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
   await expect(description).toBeVisible();
   // Markdown from the rendered HTML (plan r3 S-JMD).
   await expect(task.getByRole("heading", { level: 3, name: "Acceptance criteria" })).toBeVisible();
-  await expect(task.getByRole("listitem")).toHaveText(["Batch the writes.", "Flush the cache before the write lock."]);
+  await expect(task.locator(".rl-md").getByRole("listitem")).toHaveText(["Batch the writes.", "Flush the cache before the write lock."]);
   await expect(task.locator("pre code")).toHaveText('String fence = "``` is not a fence";');
   // A GFM table. A wide table scrolls in its own box, and the panes keep their width.
   const table = task.getByRole("table");
@@ -140,7 +143,7 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
   await fetchBtn(page, MISSING).click();
   const failed = `${MISSING}: Jira has no such issue, or the token may not see it.`;
   await expect(brief(page).locator("span", { hasText: failed })).toBeVisible();
-  await expect(brief(page).getByRole("status")).toHaveText(failed);
+  await expect(status(page)).toHaveText(failed);
   await expect(fold(page, MISSING)).toHaveCount(0);
   await expect(fetchBtn(page, MISSING)).toBeVisible();
 
@@ -177,4 +180,181 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
   await openBrief(page);
   await expect(brief(page).getByRole("button", { name: "Set up Jira" })).toBeVisible();
   await expect(brief(page).getByRole("button", { name: /^Fetch / })).toHaveCount(0);
+});
+
+// ---------- Plan r3 UI-TASKS and UI-ATT ----------
+
+const RUN_MS = 60_000;
+const runLine = (page: Page) => page.locator("#runline");
+// The task row next to the run buttons while the brief is closed, and the one of the Ask section.
+const runChips = (page: Page) => page.locator("[data-task-chips='tk-runs']");
+const askChips = (page: Page) => page.locator("[data-task-chips='tk-ask']");
+const runTasks = (page: Page, ids: string) => page.getByTitle(`Task text that this run read: ${ids}`);
+const downloads = async () => (await jiraRequests()).filter((r) => r.includes("/secure/attachment/"));
+
+async function connectJira(page: Page) {
+  await openSettings(page);
+  await page.getByLabel("Jira URL").fill(JIRA_URL);
+  await page.getByLabel("Personal access token").fill(E2E_JIRA_TOKEN);
+  await page.getByRole("button", { name: "Save Jira settings" }).click();
+  await expect(page.getByText("Saved. Jira accepted the token.")).toBeVisible();
+  await closeSettings(page);
+}
+
+test("the run buttons and the Ask section share the task chips of the brief, and each run line keeps the tasks of its run", async ({
+  page,
+}) => {
+  await open(page);
+  // Without Jira there is nothing to fetch, so no task row shows outside the brief.
+  await expect(runChips(page)).toHaveCount(0);
+  await connectJira(page);
+
+  // Next to Draft replies: the keys that Jira can fetch, with their fetch state in words.
+  const runs = runChips(page);
+  await expect(runs).toContainText(`${JIRA_ISSUE} · not fetched`);
+  await expect(runs).toContainText(`${MISSING} · not fetched`);
+  await runs.getByRole("button", { name: `Fetch ${JIRA_ISSUE} from Jira` }).click();
+  await expect(runs).toContainText(`${JIRA_ISSUE} · fetched today`);
+  await expect(runs.getByRole("button", { name: `Fetch ${JIRA_ISSUE} again` })).toBeFocused();
+  await expect(status(page)).toHaveText(`Fetched ${JIRA_ISSUE} from Jira.`);
+
+  // The brief takes the place of the row and shows the same chip and the fetched text.
+  await page.keyboard.press("Shift+R");
+  await expect(page.getByLabel("Your note")).toBeFocused();
+  await expect(runChips(page)).toHaveCount(0);
+  await expect(brief(page).getByRole("button", { name: `Fetch ${JIRA_ISSUE} again` })).toBeVisible();
+  await expect(fold(page, JIRA_ISSUE).locator("summary")).toContainText(SUMMARY);
+
+  // A review records the fetched tasks at its start.
+  await page.getByLabel("Your note").press("Control+Enter");
+  await expect(runLine(page)).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runTasks(page, JIRA_ISSUE)).toBeVisible();
+
+  // Remove changes the PR tasks, not the record of the run.
+  await runs.getByRole("button", { name: `Remove the ${JIRA_ISSUE} text` }).click();
+  await expect(runs).toContainText(`${JIRA_ISSUE} · not fetched`);
+  await expect(runs.getByRole("button", { name: `Fetch ${JIRA_ISSUE} from Jira` })).toBeFocused();
+  await expect(runTasks(page, JIRA_ISSUE)).toBeVisible();
+  await page.locator("#runline-log").click();
+  await expect(page.locator("#run-log").getByTitle(`Task text that this run read: ${JIRA_ISSUE}`)).toBeVisible();
+  await page.getByRole("button", { name: "Close the run log" }).click();
+
+  // The Ask section shares the query: a fetch there shows next to the run buttons too.
+  await page.keyboard.press("q");
+  const ask = askChips(page);
+  await expect(ask).toContainText(`${JIRA_ISSUE} · not fetched`);
+  await ask.getByRole("button", { name: `Fetch ${MISSING} from Jira` }).click();
+  await expect(ask.getByText(`${MISSING}: Jira has no such issue, or the token may not see it.`)).toBeVisible();
+  await ask.getByRole("button", { name: `Fetch ${JIRA_ISSUE} from Jira` }).click();
+  await expect(runs).toContainText(`${JIRA_ISSUE} · fetched today`);
+  await expect(ask).toContainText(`${JIRA_ISSUE} · fetched today`);
+  await page.getByLabel("Your question").fill("Which callers of the flush need the lock?");
+  await page.getByLabel("Your question").press("Control+Enter");
+  await expect(runLine(page)).toContainText(/Claude answered a question on [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runTasks(page, JIRA_ISSUE)).toBeVisible();
+});
+
+test("attachments: download all, the inline image, save, include after the policy confirm, a run gets the image, open folder, delete", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: APP });
+  await open(page);
+  await connectJira(page);
+  await openBrief(page);
+  await fetchBtn(page, JIRA_ISSUE).click();
+  const task = fold(page, JIRA_ISSUE);
+  await expect(task.locator("summary")).toContainText("2 attachments");
+  await task.locator("summary").click();
+
+  const files = task.getByRole("region", { name: "Attachments (2)" });
+  const png = files.locator("li[data-att='10100']");
+  const log = files.locator("li[data-att='10101']");
+  await expect(png).toContainText("screenshot.png");
+  await expect(png).toContainText("2 KB, image/png. Not downloaded.");
+  await expect(log).toContainText("sync-worker.log");
+  await expect(log).toContainText("512 B, text/plain. Not downloaded.");
+  // The fetch lists the files and downloads none. The image token shows its alt text.
+  expect(await downloads()).toEqual([]);
+  await expect(task.locator("img")).toHaveCount(0);
+  await expect(task.getByText("image 10100", { exact: true })).toBeVisible();
+
+  // Download all gets one file after the other through the server.
+  await files.getByRole("button", { name: "Download all (2)" }).click();
+  await expect(png).toContainText("2 KB, image/png. Downloaded.");
+  await expect(log).toContainText("512 B, text/plain. Downloaded.");
+  expect(await downloads()).toEqual(["GET /secure/attachment/10100/screenshot.png", "GET /secure/attachment/10101/sync-worker.log"]);
+  await expect(files.getByRole("button", { name: "Open folder" })).toBeFocused();
+  await expect(status(page)).toHaveText("Downloaded 2 files.");
+
+  // The image shows in the description. It comes from the local image route.
+  const img = task.locator("img");
+  await expect(img).toHaveAttribute("src", /^\/api\/prs\/\d+\/task-context\/ABC-42\/files\/10100\/image$/);
+  await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth)).toBe(8);
+
+  // Save is a real download with the file name.
+  const saved = page.waitForEvent("download");
+  await png.getByRole("link", { name: "Save screenshot.png" }).click();
+  expect((await saved).suggestedFilename()).toBe("screenshot.png");
+
+  // Include asks first. Esc keeps the file out of runs, and the focus goes back to the switch.
+  const include = png.getByRole("switch", { name: "Include screenshot.png in runs" });
+  await expect(include).not.toBeChecked();
+  await include.click();
+  const dialog = page.getByRole("dialog", { name: "Include screenshot.png in runs?" });
+  await expect(dialog).toContainText("Company AI policy");
+  const policy = dialog.getByRole("checkbox", { name: "My company AI policy allows sending this file to an AI service." });
+  await expect(policy).toBeFocused();
+  await expect(dialog.getByRole("button", { name: "Include in runs" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(include).toBeFocused();
+  await expect(include).not.toBeChecked();
+  await expect(brief(page)).toBeVisible();
+  await include.click();
+  await policy.check();
+  await dialog.getByRole("button", { name: "Include in runs" }).click();
+  await expect(include).toBeChecked();
+  await expect(png).toContainText("Included in runs.");
+  await expect(status(page)).toHaveText("screenshot.png is included in runs.");
+  await expect(log.getByRole("switch", { name: "Include sync-worker.log in runs" })).not.toBeChecked();
+
+  // A run gets the included image only.
+  await control("claude", { stream: "tree", hang: true });
+  await page.getByLabel("Your note").press("Control+Enter");
+  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect.poll(runAttachments, { timeout: RUN_MS }).toEqual(["10100.png"]);
+  await runLine(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(runLine(page)).toContainText("You cancelled the review", { timeout: RUN_MS });
+
+  // Open folder without a file manager shows the path with Copy. The route stub keeps the e2e run from opening a window.
+  await page.keyboard.press("Shift+R");
+  await task.locator("summary").click();
+  const path = "C:\\data\\attachments\\review-loop\\1\\ABC-42";
+  await page.route("**/task-context/ABC-42/open-folder", (r) =>
+    r.fulfill({
+      status: 501,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "No file manager opened the folder. Copy the path.", path }),
+    }),
+  );
+  await files.getByRole("button", { name: "Open folder" }).click();
+  await expect(files).toContainText("No file manager opened the folder. Copy the path.");
+  await expect(files.getByText(path, { exact: true })).toBeVisible();
+  const copy = files.getByRole("button", { name: "Copy the folder path" });
+  await expect(copy).toBeFocused();
+  await copy.click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(path);
+  await page.route("**/task-context/ABC-42/open-folder", (r) => r.fulfill({ status: 204 }));
+  await files.getByRole("button", { name: "Open folder" }).click();
+  await expect(status(page)).toHaveText(`Opened the folder of ${JIRA_ISSUE}.`);
+  await expect(files.getByText(path, { exact: true })).toHaveCount(0);
+
+  // Delete removes the local copy. The image goes back to its alt text, and focus goes to Download.
+  await png.getByRole("button", { name: "Delete screenshot.png" }).click();
+  await expect(png).toContainText("2 KB, image/png. Not downloaded.");
+  await expect(png.getByRole("button", { name: "Download screenshot.png" })).toBeFocused();
+  await expect(task.locator("img")).toHaveCount(0);
+  await expect(task.getByText("image 10100", { exact: true })).toBeVisible();
+  expect(await downloads()).toHaveLength(2);
 });

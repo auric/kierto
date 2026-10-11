@@ -8,7 +8,6 @@ import type { AnchoredFinding, Question } from "../../shared/review";
 import { Text } from "../pr/Thread";
 import { snippet, splitExcerpt } from "../pr/threads";
 import { type Hints, HintTrigger } from "../shell/Hint";
-import { useTaskContext } from "./Brief";
 import {
   anchorNote,
   carriedNote,
@@ -21,6 +20,7 @@ import {
   plural,
   SEVERITY,
 } from "./model";
+import { useTaskContext } from "./TaskChips";
 import { Acts, Editor, Mover, RestoreButton, type TriageCtx, type TriageMode } from "./Triage";
 import { contextLines, trackerOf } from "./tasks";
 

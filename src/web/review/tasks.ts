@@ -1,5 +1,15 @@
-// Imported task text (plan r2, task context UI): the pure rules. Brief.tsx holds the requests.
-import { JIRA_KEY, type MetaDto, type PrTask, type RunDto, type TaskContextDto } from "../../shared/dto";
+// Imported task text (plan r2, task context UI): the pure rules. TaskChips.tsx and Brief.tsx hold the requests.
+import {
+  type AttachmentDto,
+  JIRA_KEY,
+  MAX_ATTACHMENT_BYTES,
+  type MetaDto,
+  type PrTask,
+  RUN_IMAGE_BYTES,
+  RUN_TEXT_BYTES,
+  type RunDto,
+  type TaskContextDto,
+} from "../../shared/dto";
 import { visitText } from "../pr/threads";
 
 // The issue tracker is the only context source in Release 2. Meta lists it, set up or not. Its id is also the name of its
@@ -64,3 +74,95 @@ export function contextLines(rows: TaskContextDto[], run: RunDto, source: string
       : `${t.key} from ${source}, ${fetchedText(t, now)}`,
   );
 }
+
+// ---------- Attachments (plan r3 UI-ATT) ----------
+
+const KB = 1024;
+const MB = KB * KB;
+
+// type: the media type that the task listing names, for display only. listed: Download can get the file.
+// A fetch again can drop a file from the listing. A downloaded copy then stays until the user deletes it.
+export type AttachmentRow = {
+  id: string;
+  filename: string;
+  size: number;
+  type: string | null;
+  file: AttachmentDto | null;
+  listed: boolean;
+};
+
+// The same list and order as task.md (task-file.ts): the listing, then the downloaded files that the listing no longer names.
+export function attachmentRows(t: TaskContextDto): AttachmentRow[] {
+  const files = new Map((t.files ?? []).map((f) => [f.id, f]));
+  const listed = t.attachments ?? [];
+  const named = new Set(listed.map((a) => a.id));
+  return [
+    ...listed.map((a) => ({ id: a.id, filename: a.filename, size: a.size, type: a.mimeType, file: files.get(a.id) ?? null, listed: true })),
+    ...(t.files ?? [])
+      .filter((f) => !named.has(f.id))
+      .map((f) => ({ id: f.id, filename: f.filename, size: f.size, type: null, file: f, listed: false })),
+  ];
+}
+
+export const attachmentsText = (n: number) => (n === 1 ? "1 attachment" : `${n} attachments`);
+
+// Binary units, as the server caps count them.
+export function sizeText(bytes: number): string {
+  if (bytes < KB) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let n = bytes / KB;
+  let i = 0;
+  while (n >= KB && i < units.length - 1) {
+    n /= KB;
+    i++;
+  }
+  return `${n < 10 ? Number(n.toFixed(1)) : Math.round(n)} ${units[i]}`;
+}
+
+// A downloaded file has its kind from its bytes. Before the download, only the listed media type can name it.
+export function fileKind(r: AttachmentRow): "image" | "text" | "file" {
+  if (r.file) return r.file.image ? "image" : r.file.text ? "text" : "file";
+  return r.type?.startsWith("image/") ? "image" : r.type?.startsWith("text/") ? "text" : "file";
+}
+
+export const typeText = (r: AttachmentRow) => r.type ?? (r.file?.image ? "image" : r.file?.text ? "text" : "unknown type");
+
+export const canDownload = (r: AttachmentRow) => !r.file && r.listed && r.size <= MAX_ATTACHMENT_BYTES;
+
+// Same rules as task-file.ts: runs get raster images up to RUN_IMAGE_BYTES and text files. The run caps can still leave one out.
+export const includable = (f: AttachmentDto) => (f.image ? f.size <= RUN_IMAGE_BYTES : f.text);
+
+export function fileState(r: AttachmentRow): string {
+  const f = r.file;
+  const gone = r.listed ? "" : " The task no longer lists it.";
+  if (!f) return r.size > MAX_ATTACHMENT_BYTES ? `Over ${MAX_ATTACHMENT_BYTES / MB} MB, too large to download.` : `Not downloaded.${gone}`;
+  if (f.image && f.size > RUN_IMAGE_BYTES) return `Downloaded. Runs list images over ${RUN_IMAGE_BYTES / MB} MB by name only.${gone}`;
+  if (!includable(f)) return `Downloaded. Runs list it by name only.${gone}`;
+  if (!f.include) return `Downloaded.${gone}`;
+  return `Included in runs${f.text && f.size > RUN_TEXT_BYTES ? `, cut at ${RUN_TEXT_BYTES / KB} KB` : ""}.${gone}`;
+}
+
+// The routes of S-ATT. GET needs no session header, so a link and an image can use them.
+export const saveRoute = (pr: number, key: string, id: string) => `/api/prs/${pr}/task-context/${encodeURIComponent(key)}/files/${id}`;
+export const imageRoute = (pr: number, key: string, id: string) => `${saveRoute(pr, key, id)}/image`;
+
+const ATTACHMENT_SRC = /^attachment:([0-9]{1,18})$/;
+
+// The downloaded raster images of a task. The image route serves only these.
+export const imageIds = (files: AttachmentDto[] | undefined) => (files ?? []).flatMap((f) => (f.image ? [f.id] : []));
+
+// The Markdown images resolver of a task. Only a downloaded raster image gets a local URL. All else shows its alt text,
+// so the browser never sends a request to the tracker.
+export function attachmentImages(pr: number, key: string, images: readonly string[]): (src: string) => string | null {
+  const ids = new Set(images);
+  return (src) => {
+    const id = ATTACHMENT_SRC.exec(src)?.[1];
+    return id && ids.has(id) ? imageRoute(pr, key, id) : null;
+  };
+}
+
+export const putFile = (rows: TaskContextDto[] | undefined, key: string, f: AttachmentDto) =>
+  rows?.map((t) => (t.key === key ? { ...t, files: [...(t.files ?? []).filter((x) => x.id !== f.id), f] } : t));
+
+export const dropFile = (rows: TaskContextDto[] | undefined, key: string, id: string) =>
+  rows?.map((t) => (t.key === key ? { ...t, files: (t.files ?? []).filter((x) => x.id !== id) } : t));

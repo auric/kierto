@@ -1,0 +1,232 @@
+// Task chips (plan r2 task context UI, plan r3 Feature C): the task IDs of the PR with Fetch, Fetch again, and Remove.
+// Every run kind reads the fetched task text. So the brief, the run buttons, and the Ask section show the chips.
+// All places share one query, so a fetch in one place shows in all.
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CircleAlert, Download, LoaderCircle, RefreshCw, Settings2, X } from "lucide-react";
+import { useState } from "react";
+import { cn } from "@/lib/utils";
+import type { MetaDto, PrTask, TaskContextDto } from "../../shared/dto";
+import { api } from "../api";
+import { webLink } from "../pr/Header";
+import { ApiError, read } from "../shell/data";
+import { Hint } from "../shell/Hint";
+import { taskHint } from "../shell/model";
+import { fetchedText, mergeTask, offerSetup, taskChips, trackerOf } from "./tasks";
+
+const icon = "size-[15px] shrink-0";
+const SOURCE: Record<PrTask["source"], string> = { branch: "branch", title: "title", description: "description" };
+
+export const taskKey = (pr: number) => ["pr", pr, "task-context"] as const;
+export const keyParam = (pr: number, key: string) => ({ param: { id: String(pr), key } });
+
+// GET reads the local database. live.ts refetches it when SSE `changed` names the PR.
+// The server shares one param validator with the :key routes, so the client type asks for a key. This path has no key.
+export const useTaskContext = (pr: number) =>
+  useQuery({
+    queryKey: taskKey(pr),
+    queryFn: async () => read<TaskContextDto[]>(await api.api.prs[":id"]["task-context"].$get(keyParam(pr, ""))),
+  });
+
+// The chips of the PR tasks and the fetched rows. Without a tracker, no row shows.
+export function useTaskChips(pr: number, tasks: PrTask[], meta: MetaDto) {
+  const tracker = trackerOf(meta);
+  const data = useTaskContext(pr).data;
+  const on = tracker?.configured === true;
+  return { tracker, on, source: tracker?.name ?? "", chips: taskChips(tasks, (tracker && data) || [], on) };
+}
+
+// The only request of the chips that reaches the tracker, through the server.
+async function fetchTask(qc: QueryClient, pr: number, key: string) {
+  const dto = await read<TaskContextDto>(await api.api.prs[":id"]["task-context"][":key"].$post(keyParam(pr, key)));
+  qc.setQueryData<TaskContextDto[]>(taskKey(pr), (old) => mergeTask(old, dto));
+}
+
+async function removeTask(qc: QueryClient, pr: number, key: string) {
+  const res = await api.api.prs[":id"]["task-context"][":key"].$delete(keyParam(pr, key));
+  if (!res.ok) await read(res);
+  qc.setQueryData<TaskContextDto[]>(taskKey(pr), (old) => old?.filter((t) => t.key !== key));
+}
+
+// setup: the server has no tracker source (409), so the error offers the settings.
+type TaskError = { key: string; message: string; setup: boolean };
+
+const chipBtn =
+  "inline-grid w-6 cursor-pointer place-items-center border-l text-ink-2 last:rounded-r-[4px] hover:bg-hover hover:text-foreground aria-busy:cursor-progress";
+
+// id: the prefix of the element IDs, one per place. focusTo: the element that takes the focus when Remove takes the chip away.
+// compact: a place outside the brief. It shows only the chips that can fetch or hold fetched text, with the fetch state
+// instead of the source. It shows nothing when no chip is left. onSettings absent: an error offers no settings link.
+export function TaskChips(props: {
+  pr: number;
+  tasks: PrTask[];
+  meta: MetaDto;
+  id: string;
+  focusTo: string;
+  compact?: boolean;
+  announce: (text: string) => void;
+  onSettings?: () => void;
+}) {
+  const { pr, tasks, meta, id, compact, announce, onSettings } = props;
+  const qc = useQueryClient();
+  const { tracker, on, source, chips: all } = useTaskChips(pr, tasks, meta);
+  const chips = compact ? all.filter((c) => c.fetchable || c.fetched) : all;
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const [errors, setErrors] = useState<TaskError[]>([]);
+  const now = Date.now();
+
+  const setUp = () => {
+    onSettings?.();
+    // The settings render in the same click. Focus then lands on the tracker URL field.
+    requestAnimationFrame(() => document.getElementById("tracker-url")?.focus());
+  };
+  const run = async (key: string, act: "fetch" | "remove") => {
+    if (busy.has(key)) return;
+    setBusy((b) => new Set(b).add(key));
+    setErrors((es) => es.filter((e) => e.key !== key));
+    try {
+      if (act === "fetch") await fetchTask(qc, pr, key);
+      else await removeTask(qc, pr, key);
+      announce(act === "fetch" ? `Fetched ${key} from ${source}.` : `Removed the ${key} text.`);
+      // Remove takes its own button away, and the chip too when the PR no longer names the task.
+      if (act === "remove")
+        requestAnimationFrame(() => (document.getElementById(`${id}-fetch-${key}`) ?? document.getElementById(props.focusTo))?.focus());
+    } catch (e) {
+      const message = (e as Error).message;
+      const setup = !!onSettings && e instanceof ApiError && e.status === 409;
+      setErrors((es) => [...es.filter((x) => x.key !== key), { key, message, setup }]);
+      announce(`${key}: ${message}`);
+    } finally {
+      setBusy((b) => {
+        const n = new Set(b);
+        n.delete(key);
+        return n;
+      });
+    }
+  };
+
+  if (!chips.length) {
+    if (compact) return null;
+    return (
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
+        <span className="mr-1.5 font-semibold">Task</span>
+        <span className="text-ink-2">No task ID found.</span>
+        <button type="button" className="cursor-pointer rounded text-sm font-medium text-pen hover:underline" onClick={onSettings}>
+          Set up task IDs
+        </button>
+      </div>
+    );
+  }
+  const chip = "inline-flex items-baseline gap-1.5 px-2 py-0.5 text-xs whitespace-nowrap text-muted-foreground";
+  return (
+    <div data-task-chips={id} className="grid gap-1.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
+        <span className="mr-1.5 font-semibold">Task</span>
+        {chips.map((t) => {
+          const url = webLink(t.url);
+          const state = compact
+            ? t.fetched
+              ? fetchedText(t.fetched, now)
+              : "not fetched"
+            : t.source
+              ? `from ${SOURCE[t.source]}`
+              : "no longer in this pull request";
+          const body = (
+            <>
+              <code translate="no" className={cn("font-mono text-xs", url ? "text-pen" : "text-ink-2")}>
+                {t.key}
+              </code>{" "}
+              {/* Flex ignores the space. It keeps the key and the state apart in the text and in the accessible name. */}
+              <span>· {state}</span>
+            </>
+          );
+          const wait = busy.has(t.key);
+          return (
+            <span key={t.key} className="inline-flex items-stretch rounded-[5px] border has-[a:hover]:border-rule-strong">
+              {url ? (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`Open ${t.key} in a new tab`}
+                  className={cn(chip, "rounded-[4px] [&:hover>code]:underline")}
+                >
+                  {body}
+                  <span className="sr-only">, opens a new tab</span>
+                </a>
+              ) : (
+                <span
+                  className={chip}
+                  title={t.source ? taskHint({ key: t.key, source: t.source }) : "The pull request no longer names this task."}
+                >
+                  {body}
+                </span>
+              )}
+              {t.fetchable && (
+                <Hint label={t.fetched ? `Fetch ${t.key} again` : `Fetch ${t.key} from ${source}`}>
+                  <button
+                    id={`${id}-fetch-${t.key}`}
+                    type="button"
+                    className={chipBtn}
+                    aria-label={t.fetched ? `Fetch ${t.key} again` : `Fetch ${t.key} from ${source}`}
+                    aria-busy={wait || undefined}
+                    onClick={() => void run(t.key, "fetch")}
+                  >
+                    {wait ? (
+                      <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
+                    ) : t.fetched ? (
+                      <RefreshCw aria-hidden className={icon} />
+                    ) : (
+                      <Download aria-hidden className={icon} />
+                    )}
+                  </button>
+                </Hint>
+              )}
+              {t.fetched && (
+                <Hint label={`Remove the ${t.key} text`}>
+                  <button
+                    type="button"
+                    className={chipBtn}
+                    aria-label={`Remove the ${t.key} text`}
+                    aria-busy={wait || undefined}
+                    onClick={() => void run(t.key, "remove")}
+                  >
+                    <X aria-hidden className={icon} />
+                  </button>
+                </Hint>
+              )}
+            </span>
+          );
+        })}
+        {!compact && tracker && offerSetup(tasks, on) && (
+          <button
+            type="button"
+            className="inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-[5px] px-1.5 text-xs text-ink-2 hover:bg-hover hover:text-foreground"
+            onClick={setUp}
+          >
+            <Settings2 aria-hidden className={icon} />
+            Set up {source}
+          </button>
+        )}
+      </div>
+      {errors.map((e) => (
+        <p key={e.key} className="m-0 flex items-start gap-1.5 text-xs text-destructive">
+          <CircleAlert aria-hidden className={icon} />
+          <span>
+            <code translate="no" className="font-mono">
+              {e.key}
+            </code>
+            : {e.message}
+            {e.setup && (
+              <>
+                {" "}
+                <button type="button" className="cursor-pointer rounded font-medium text-pen hover:underline" onClick={setUp}>
+                  Set up {source}
+                </button>
+              </>
+            )}
+          </span>
+        </p>
+      ))}
+    </div>
+  );
+}

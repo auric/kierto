@@ -46,6 +46,7 @@ import {
 import { DraftRepliesButton, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft";
 import { RunLine } from "./RunLine";
 import { BriefLine, type LogTarget, RunLog } from "./RunLog";
+import { TaskChips } from "./TaskChips";
 import type { TriageAction, TriageCtx } from "./Triage";
 
 export type Focus = { id: string; block: ScrollLogicalPosition; flash: boolean };
@@ -509,9 +510,10 @@ export function useReview(
         onClick={() => (composer ? closeBrief() : openBrief())}
       />
     ),
-    brief:
-      composer &&
-      (brief.data ? (
+    // Plan r3 Feature C: every run kind reads the fetched task text. While the brief is closed, its task row shows here,
+    // next to Draft replies and Fix all valid.
+    brief: composer ? (
+      brief.data ? (
         <BriefComposer
           pr={pr.id}
           brief={brief.data}
@@ -522,10 +524,23 @@ export function useReview(
           onStart={runNow}
           onClose={closeBrief}
           onSettings={o.onSettings}
+          announce={o.announce}
         />
       ) : (
         <Skeleton className="mt-1.5 h-40 w-full rounded-lg" />
-      )),
+      )
+    ) : (
+      <TaskChips
+        pr={pr.id}
+        tasks={pr.tasks}
+        meta={meta}
+        id="tk-runs"
+        focusTo="review-btn"
+        compact
+        announce={o.announce}
+        onSettings={o.onSettings}
+      />
+    ),
     run: line && lineState && (
       <>
         <RunLine
@@ -540,7 +555,7 @@ export function useReview(
           // Only a review run has a summary section. The log of a reply or ask run lists the gaps.
           onGaps={() => (line.run.kind === "review" ? openSummary() : openLog(null))}
         />
-        <BriefLine tasks={pr.tasks} note={line.run.note} />
+        <BriefLine run={line.run} />
       </>
     ),
     summary: detail?.run.summary && (
@@ -553,7 +568,6 @@ export function useReview(
         detail={[run.data, other.data, pinned.data].find((d) => d && d.run.id === logRun)}
         meta={meta}
         prKey={prKey(pr)}
-        tasks={pr.tasks}
         now={o.now}
         target={log}
         onRaw={(show) => setLog((l) => l && { ...l, agent: null, raw: show, n: show ? l.n + 1 : l.n })}

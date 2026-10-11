@@ -1,23 +1,69 @@
 // Review button and review brief (prototype/v3 reviewBtn, briefHtml): task IDs, your note, the profile, then Start.
 // The note is the user's instruction. The server keeps the pull request text out of the prompt (plan v3 WP10).
-import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, CircleAlert, Download, LoaderCircle, RefreshCw, Settings2, X } from "lucide-react";
-import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { type QueryClient, useQueryClient } from "@tanstack/react-query";
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Copy,
+  Download,
+  File,
+  FileImage,
+  FileText,
+  FolderOpen,
+  LoaderCircle,
+  Paperclip,
+  Save,
+  ShieldAlert,
+  Trash2,
+} from "lucide-react";
+import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
+import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { type BriefDto, type BriefInput, MAX_NOTE, type MetaDto, type ProfileId, type PrTask, type TaskContextDto } from "../../shared/dto";
+import {
+  type AttachmentDto,
+  type BriefDto,
+  type BriefInput,
+  MAX_NOTE,
+  type MetaDto,
+  type ProfileId,
+  type PrTask,
+  type TaskContextDto,
+} from "../../shared/dto";
 import { api } from "../api";
-import { webLink } from "../pr/Header";
+import { dialogKeys } from "../fix/CloneDialog";
 import { Markdown } from "../pr/Markdown";
-import { ApiError, read } from "../shell/data";
+import { read } from "../shell/data";
 import { Hint } from "../shell/Hint";
-import { taskHint } from "../shell/model";
 import { putBrief } from "./data";
 import type { BriefState } from "./model";
-import { commentsText, fetchedText, mergeTask, offerSetup, sourceTime, taskChips, trackerOf } from "./tasks";
+import { keyParam, TaskChips, taskKey, useTaskChips } from "./TaskChips";
+import {
+  type AttachmentRow,
+  attachmentImages,
+  attachmentRows,
+  attachmentsText,
+  canDownload,
+  commentsText,
+  dropFile,
+  fetchedText,
+  fileKind,
+  fileState,
+  imageIds,
+  includable,
+  putFile,
+  saveRoute,
+  sizeText,
+  sourceTime,
+  typeText,
+} from "./tasks";
 
 // The note saves this long after the last key. Start, Cancel, Esc, and a profile change save at once.
 const SAVE_MS = 600;
@@ -66,215 +112,26 @@ export function ReviewButton(props: { state: BriefState; open: boolean; meta: Me
   );
 }
 
-const SOURCE: Record<PrTask["source"], string> = { branch: "branch", title: "title", description: "description" };
-
-const taskKey = (pr: number) => ["pr", pr, "task-context"] as const;
-const keyParam = (pr: number, key: string) => ({ param: { id: String(pr), key } });
-
-// GET reads the local database. live.ts refetches it when SSE `changed` names the PR.
-// The server shares one param validator with the :key routes, so the client type asks for a key. This path has no key.
-export const useTaskContext = (pr: number) =>
-  useQuery({
-    queryKey: taskKey(pr),
-    queryFn: async () => read<TaskContextDto[]>(await api.api.prs[":id"]["task-context"].$get(keyParam(pr, ""))),
-  });
-
-// The only request from the brief that reaches the tracker, through the server.
-async function fetchTask(qc: QueryClient, pr: number, key: string) {
-  const dto = await read<TaskContextDto>(await api.api.prs[":id"]["task-context"][":key"].$post(keyParam(pr, key)));
-  qc.setQueryData<TaskContextDto[]>(taskKey(pr), (old) => mergeTask(old, dto));
-}
-
-async function removeTask(qc: QueryClient, pr: number, key: string) {
-  const res = await api.api.prs[":id"]["task-context"][":key"].$delete(keyParam(pr, key));
-  if (!res.ok) await read(res);
-  qc.setQueryData<TaskContextDto[]>(taskKey(pr), (old) => old?.filter((t) => t.key !== key));
-}
-
-// setup: the server has no tracker source (409), so the error offers the settings.
-type TaskError = { key: string; message: string; setup: boolean };
-
-const chipBtn =
-  "inline-grid w-6 cursor-pointer place-items-center border-l text-ink-2 last:rounded-r-[4px] hover:bg-hover hover:text-foreground aria-busy:cursor-progress";
-
-// The Task row of the brief: task ID chips with Fetch, Fetch again and Remove, then the imported text folds (plan r2, task context UI).
-function TaskChips({ pr, tasks, meta, onSettings }: { pr: number; tasks: PrTask[]; meta: MetaDto; onSettings: () => void }) {
-  const qc = useQueryClient();
-  const tracker = trackerOf(meta);
-  const data = useTaskContext(pr).data;
-  const rows = (tracker && data) || [];
-  const on = tracker?.configured === true;
-  const source = tracker?.name ?? "";
-  const chips = taskChips(tasks, rows, on);
-  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
-  const [errors, setErrors] = useState<TaskError[]>([]);
-  const [said, setSaid] = useState("");
-  const now = Date.now();
-
-  const setUp = () => {
-    onSettings();
-    // The settings render in the same click. Focus then lands on the tracker URL field.
-    requestAnimationFrame(() => document.getElementById("tracker-url")?.focus());
-  };
-  const run = async (key: string, act: "fetch" | "remove") => {
-    if (busy.has(key)) return;
-    setBusy((b) => new Set(b).add(key));
-    setErrors((es) => es.filter((e) => e.key !== key));
-    try {
-      if (act === "fetch") await fetchTask(qc, pr, key);
-      else await removeTask(qc, pr, key);
-      setSaid(act === "fetch" ? `Fetched ${key} from ${source}.` : `Removed the ${key} text.`);
-      // Remove takes its own button away, and the chip too when the PR no longer names the task.
-      if (act === "remove")
-        requestAnimationFrame(() => (document.getElementById(`tk-fetch-${key}`) ?? document.getElementById("brief-note"))?.focus());
-    } catch (e) {
-      const message = (e as Error).message;
-      const setup = e instanceof ApiError && e.status === 409;
-      setErrors((es) => [...es.filter((x) => x.key !== key), { key, message, setup }]);
-      setSaid(`${key}: ${message}`);
-    } finally {
-      setBusy((b) => {
-        const n = new Set(b);
-        n.delete(key);
-        return n;
-      });
-    }
-  };
-
-  if (!chips.length) {
-    return (
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
-        <span className="mr-1.5 font-semibold">Task</span>
-        <span className="text-ink-2">No task ID found.</span>
-        <button type="button" className="cursor-pointer rounded text-sm font-medium text-pen hover:underline" onClick={onSettings}>
-          Set up task IDs
-        </button>
-      </div>
-    );
-  }
-  const chip = "inline-flex items-baseline gap-1.5 px-2 py-0.5 text-xs whitespace-nowrap text-muted-foreground";
-  const fetched = chips.flatMap((c) => (c.fetched ? [c.fetched] : []));
-  return (
-    <div className="grid gap-1.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
-        <span className="mr-1.5 font-semibold">Task</span>
-        {chips.map((t) => {
-          const url = webLink(t.url);
-          const body = (
-            <>
-              <code translate="no" className={cn("font-mono text-xs", url ? "text-pen" : "text-ink-2")}>
-                {t.key}
-              </code>
-              <span>{t.source ? `· from ${SOURCE[t.source]}` : "· no longer in this pull request"}</span>
-            </>
-          );
-          const wait = busy.has(t.key);
-          return (
-            <span key={t.key} className="inline-flex items-stretch rounded-[5px] border has-[a:hover]:border-rule-strong">
-              {url ? (
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={`Open ${t.key} in a new tab`}
-                  className={cn(chip, "rounded-[4px] [&:hover>code]:underline")}
-                >
-                  {body}
-                  <span className="sr-only">, opens a new tab</span>
-                </a>
-              ) : (
-                <span
-                  className={chip}
-                  title={t.source ? taskHint({ key: t.key, source: t.source }) : "The pull request no longer names this task."}
-                >
-                  {body}
-                </span>
-              )}
-              {t.fetchable && (
-                <Hint label={t.fetched ? `Fetch ${t.key} again` : `Fetch ${t.key} from ${source}`}>
-                  <button
-                    id={`tk-fetch-${t.key}`}
-                    type="button"
-                    className={chipBtn}
-                    aria-label={t.fetched ? `Fetch ${t.key} again` : `Fetch ${t.key} from ${source}`}
-                    aria-busy={wait || undefined}
-                    onClick={() => void run(t.key, "fetch")}
-                  >
-                    {wait ? (
-                      <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
-                    ) : t.fetched ? (
-                      <RefreshCw aria-hidden className={icon} />
-                    ) : (
-                      <Download aria-hidden className={icon} />
-                    )}
-                  </button>
-                </Hint>
-              )}
-              {t.fetched && (
-                <Hint label={`Remove the ${t.key} text`}>
-                  <button
-                    type="button"
-                    className={chipBtn}
-                    aria-label={`Remove the ${t.key} text`}
-                    aria-busy={wait || undefined}
-                    onClick={() => void run(t.key, "remove")}
-                  >
-                    <X aria-hidden className={icon} />
-                  </button>
-                </Hint>
-              )}
-            </span>
-          );
-        })}
-        {tracker && offerSetup(tasks, on) && (
-          <button
-            type="button"
-            className="inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-[5px] px-1.5 text-xs text-ink-2 hover:bg-hover hover:text-foreground"
-            onClick={setUp}
-          >
-            <Settings2 aria-hidden className={icon} />
-            Set up {source}
-          </button>
-        )}
-      </div>
-      {errors.map((e) => (
-        <p key={e.key} className="m-0 flex items-start gap-1.5 text-xs text-destructive">
-          <CircleAlert aria-hidden className={icon} />
-          <span>
-            <code translate="no" className="font-mono">
-              {e.key}
-            </code>
-            : {e.message}
-            {e.setup && (
-              <>
-                {" "}
-                <button type="button" className="cursor-pointer rounded font-medium text-pen hover:underline" onClick={setUp}>
-                  Set up {source}
-                </button>
-              </>
-            )}
-          </span>
-        </p>
-      ))}
-      {/* One live region for fetch results and errors. It stays in the page, so each change is read. */}
-      <p role="status" className="sr-only">
-        {said}
-      </p>
-      {fetched.map((t) => (
-        <TaskFold key={t.key} t={t} source={source} now={now} />
-      ))}
+// Text converted from the rendered HTML shows as Markdown. Rows from before Release 3 hold plain text: wiki markup shows as typed.
+// A downloaded attachment image shows in the text, never wider than the text.
+function TaskText({ t, text, images }: { t: TaskContextDto; text: string; images: (src: string) => string | null }) {
+  return t.format === "markdown" ? (
+    <div className="[&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-md [&_img]:border">
+      <Markdown text={text} images={images} />
     </div>
+  ) : (
+    <p className="m-0 whitespace-pre-wrap">{text}</p>
   );
 }
 
-// Text converted from the rendered HTML shows as Markdown. Rows from before Release 3 hold plain text: wiki markup shows as typed.
-function TaskText({ t, text }: { t: TaskContextDto; text: string }) {
-  return t.format === "markdown" ? <Markdown text={text} /> : <p className="m-0 whitespace-pre-wrap">{text}</p>;
-}
-
 // The imported text, read-only. Closed until the user opens it.
-function TaskFold({ t, source, now }: { t: TaskContextDto; source: string; now: number }) {
-  const meta = [t.status, commentsText(t), fetchedText(t, now)].filter(Boolean).join(", ");
+function TaskFold(props: { pr: number; t: TaskContextDto; source: string; now: number; runner: string; announce: (text: string) => void }) {
+  const { pr, t, source, now } = props;
+  const files = attachmentRows(t).length;
+  const meta = [t.status, commentsText(t), files ? attachmentsText(files) : "", fetchedText(t, now)].filter(Boolean).join(", ");
+  // Markdown remounts its images on a new resolver. So the resolver changes only with the downloaded image IDs.
+  const ids = imageIds(t.files).join(",");
+  const images = useMemo(() => attachmentImages(pr, t.key, ids ? ids.split(",") : []), [pr, t.key, ids]);
   return (
     <details data-task={t.key} className="group min-w-0 text-sm">
       <summary className="-ml-1.5 flex min-w-0 items-center gap-2 rounded px-1.5 py-1 hover:bg-hover">
@@ -292,18 +149,366 @@ function TaskFold({ t, source, now }: { t: TaskContextDto; source: string; now: 
           <span className="hidden @max-[560px]/detail:inline">, {meta}</span>.
           {t.truncated && " Review Loop cut this text at its size limits."}
         </p>
-        <TaskText t={t} text={t.description?.trim() || "No description."} />
+        <TaskText t={t} text={t.description?.trim() || "No description."} images={images} />
+        {/* The tracker shows the files after the description, before the comments. */}
+        <Attachments pr={pr} t={t} runner={props.runner} announce={props.announce} />
         {t.comments.map((c, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: the comments of one fetch keep their order.
           <div key={i} className="grid gap-0.5">
             <p className="m-0 text-xs text-muted-foreground">
               <span className="font-medium text-ink-2">{c.author}</span>, {sourceTime(c.created)}
             </p>
-            <TaskText t={t} text={c.body} />
+            <TaskText t={t} text={c.body} images={images} />
           </div>
         ))}
       </div>
     </details>
+  );
+}
+
+// ---------- Attachments (plan r3 UI-ATT) ----------
+
+const fileParam = (pr: number, key: string, att: string) => ({ param: { id: String(pr), key, att } });
+const fileApi = () => api.api.prs[":id"]["task-context"][":key"].files[":att"];
+
+// One file per request. The server gets it from the tracker; the browser never calls the tracker.
+async function downloadFile(qc: QueryClient, pr: number, key: string, att: string) {
+  const f = await read<AttachmentDto>(await fileApi().$post(fileParam(pr, key, att)));
+  qc.setQueryData<TaskContextDto[]>(taskKey(pr), (old) => putFile(old, key, f));
+}
+
+async function includeFile(qc: QueryClient, pr: number, key: string, att: string, include: boolean) {
+  const f = await read<AttachmentDto>(await fileApi().$put({ ...fileParam(pr, key, att), json: { include } }));
+  qc.setQueryData<TaskContextDto[]>(taskKey(pr), (old) => putFile(old, key, f));
+}
+
+async function deleteFile(qc: QueryClient, pr: number, key: string, att: string) {
+  const res = await fileApi().$delete(fileParam(pr, key, att));
+  if (!res.ok) await read(res);
+  qc.setQueryData<TaskContextDto[]>(taskKey(pr), (old) => dropFile(old, key, att));
+}
+
+// null: the folder opened. path: no file manager opened it (501), so the user copies the path.
+async function openFolder(pr: number, key: string): Promise<{ error: string; path: string } | null> {
+  const res = await api.api.prs[":id"]["task-context"][":key"]["open-folder"].$post(keyParam(pr, key));
+  if (res.status === 501) return (await res.json()) as { error: string; path: string };
+  if (!res.ok) await read(res);
+  return null;
+}
+
+type FileAct = "download" | "include" | "exclude" | "delete";
+const DONE: Record<FileAct, (name: string) => string> = {
+  download: (n) => `Downloaded ${n}.`,
+  include: (n) => `${n} is included in runs.`,
+  exclude: (n) => `${n} is no longer included in runs.`,
+  delete: (n) => `Deleted the downloaded ${n}.`,
+};
+const KIND_ICON = { image: FileImage, text: FileText, file: File } as const;
+
+// The files of one fetched task: Download, Download all, Save, Include in runs, Delete, and Open folder.
+function Attachments({ pr, t, runner, announce }: { pr: number; t: TaskContextDto; runner: string; announce: (text: string) => void }) {
+  const qc = useQueryClient();
+  const rows = attachmentRows(t);
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const [errors, setErrors] = useState<ReadonlyMap<string, string>>(new Map());
+  // The words of the Download all button while it runs.
+  const [all, setAll] = useState<string | null>(null);
+  const [folder, setFolder] = useState<{ error: string; path: string | null } | null>(null);
+  const [asking, setAsking] = useState<AttachmentRow | null>(null);
+  // The last asked file stays while the dialog plays its close transition.
+  const asked = useRef<AttachmentRow | null>(null);
+  if (asking) asked.current = asking;
+  // The user ticks the policy box each time. The dialog opens with focus on it.
+  const [allowed, setAllowed] = useState(false);
+  const allow = useRef<HTMLInputElement>(null);
+  const base = `att-${t.key}`;
+  if (!rows.length) return null;
+
+  const focus = (...ids: string[]) =>
+    requestAnimationFrame(() => {
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (el) return el.focus();
+      }
+    });
+  const act = async (r: AttachmentRow, what: FileAct, quiet = false) => {
+    setBusy((b) => new Set(b).add(r.id));
+    setErrors((m) => {
+      const n = new Map(m);
+      n.delete(r.id);
+      return n;
+    });
+    try {
+      if (what === "download") await downloadFile(qc, pr, t.key, r.id);
+      else if (what === "delete") await deleteFile(qc, pr, t.key, r.id);
+      else await includeFile(qc, pr, t.key, r.id, what === "include");
+      if (!quiet) announce(DONE[what](r.filename));
+      return true;
+    } catch (e) {
+      const message = (e as Error).message;
+      setErrors((m) => new Map(m).set(r.id, message));
+      if (!quiet) announce(`${r.filename}: ${message}`);
+      return false;
+    } finally {
+      setBusy((b) => {
+        const n = new Set(b);
+        n.delete(r.id);
+        return n;
+      });
+    }
+  };
+  // Download and Delete take their own button away.
+  const download = async (r: AttachmentRow) => {
+    if (await act(r, "download")) focus(`${base}-${r.id}-save`);
+  };
+  const remove = async (r: AttachmentRow) => {
+    if (await act(r, "delete")) focus(`${base}-${r.id}-dl`, `${base}-h`);
+  };
+  // One request after the other, so the tracker never gets parallel downloads from the app.
+  const downloadAll = async () => {
+    const todo = rows.filter(canDownload);
+    let ok = 0;
+    for (const [i, r] of todo.entries()) {
+      setAll(`Downloading ${i + 1} of ${todo.length}…`);
+      if (await act(r, "download", true)) ok++;
+    }
+    setAll(null);
+    announce(
+      ok === todo.length
+        ? `Downloaded ${todo.length} files.`
+        : `Downloaded ${ok} of ${todo.length} files. Each failed file shows its error.`,
+    );
+    focus(`${base}-open`, `${base}-h`);
+  };
+  const open = async () => {
+    setFolder(null);
+    try {
+      const r = await openFolder(pr, t.key);
+      if (!r) return announce(`Opened the folder of ${t.key}.`);
+      setFolder(r);
+      announce(r.error);
+      focus(`${base}-copy`);
+    } catch (e) {
+      const error = (e as Error).message;
+      setFolder({ error, path: null });
+      announce(error);
+    }
+  };
+  const copyPath = (path: string) =>
+    copyText(path).then((ok) =>
+      ok ? announce("Copied the folder path.") : toast.add({ title: "The clipboard is blocked here. Select the path and press Ctrl+C." }),
+    );
+  const confirm = () => {
+    const r = asking;
+    setAsking(null);
+    if (r && allowed) void act(r, "include");
+  };
+
+  const todo = rows.filter(canDownload).length;
+  const shown = asked.current;
+  return (
+    <section aria-labelledby={`${base}-h`} className="grid gap-1.5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <h3 id={`${base}-h`} tabIndex={-1} className="m-0 inline-flex items-center gap-1.5 text-xs font-semibold text-ink-2">
+          <Paperclip aria-hidden className={cn(icon, "text-muted-foreground")} />
+          Attachments ({rows.length})
+        </h3>
+        <span className="ml-auto flex flex-wrap items-center gap-1">
+          {(todo > 1 || all) && (
+            <Button
+              id={`${base}-all`}
+              variant="outline"
+              size="xs"
+              disabled={!!all || busy.size > 0}
+              focusableWhenDisabled
+              className="aria-disabled:cursor-default aria-disabled:opacity-50"
+              aria-busy={!!all || undefined}
+              onClick={() => void downloadAll()}
+            >
+              {all ? (
+                <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin" />
+              ) : (
+                <Download aria-hidden data-icon="inline-start" />
+              )}
+              {all ?? `Download all (${todo})`}
+            </Button>
+          )}
+          {rows.some((r) => r.file) && (
+            <Button id={`${base}-open`} variant="ghost" size="xs" onClick={() => void open()}>
+              <FolderOpen aria-hidden data-icon="inline-start" />
+              Open folder
+            </Button>
+          )}
+        </span>
+      </div>
+      {folder && (
+        <div className="grid gap-1">
+          <p className={cn("m-0 flex items-start gap-1.5 text-xs", folder.path ? "text-ink-2" : "text-destructive")}>
+            <CircleAlert aria-hidden className={icon} />
+            {folder.error}
+          </p>
+          {folder.path && (
+            <div className="flex min-w-0 items-center gap-1 rounded-md bg-sunken py-0.5 pr-0.5 pl-2.5">
+              <code translate="no" className="min-w-0 flex-1 font-mono text-xs [overflow-wrap:anywhere]">
+                {folder.path}
+              </code>
+              <Hint label="Copy the folder path">
+                <Button
+                  id={`${base}-copy`}
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Copy the folder path"
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={() => void copyPath(folder.path ?? "")}
+                >
+                  <Copy aria-hidden />
+                </Button>
+              </Hint>
+            </div>
+          )}
+        </div>
+      )}
+      <ul className="m-0 grid list-none rounded-md border p-0">
+        {rows.map((r) => {
+          const f = r.file;
+          const Icon = KIND_ICON[fileKind(r)];
+          const wait = busy.has(r.id);
+          const error = errors.get(r.id);
+          const name = <span className="sr-only"> {r.filename}</span>;
+          return (
+            <li key={r.id} data-att={r.id} className="grid gap-1 border-b px-2.5 py-1.5 last:border-b-0">
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <Icon aria-hidden className={cn(icon, "text-muted-foreground")} />
+                <span className="grid min-w-0 flex-[1_1_18ch]">
+                  <span translate="no" className="truncate font-medium" title={r.filename}>
+                    {r.filename}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {sizeText(r.size)}, {typeText(r)}. {fileState(r)}
+                  </span>
+                </span>
+                {f ? (
+                  <span className="rl-fade flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <a
+                      id={`${base}-${r.id}-save`}
+                      href={saveRoute(pr, t.key, r.id)}
+                      download
+                      className={buttonVariants({ variant: "ghost", size: "xs" })}
+                    >
+                      <Save aria-hidden data-icon="inline-start" />
+                      Save{name}
+                    </a>
+                    {(includable(f) || f.include) && (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Switch
+                          id={`${base}-${r.id}-inc`}
+                          size="sm"
+                          checked={f.include}
+                          disabled={wait}
+                          onCheckedChange={(on) => {
+                            if (!on) return void act(r, "exclude");
+                            setAllowed(false);
+                            setAsking(r);
+                          }}
+                        />
+                        <label htmlFor={`${base}-${r.id}-inc`} className="cursor-pointer text-xs text-ink-2">
+                          Include{name} in runs
+                        </label>
+                      </span>
+                    )}
+                    <Hint label={`Delete the downloaded ${r.filename}`}>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Delete ${r.filename}`}
+                        disabled={wait}
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() => void remove(r)}
+                      >
+                        <Trash2 aria-hidden />
+                      </Button>
+                    </Hint>
+                  </span>
+                ) : (
+                  canDownload(r) && (
+                    <Button
+                      id={`${base}-${r.id}-dl`}
+                      variant="outline"
+                      size="xs"
+                      disabled={wait || !!all}
+                      focusableWhenDisabled
+                      className="aria-disabled:cursor-default aria-disabled:opacity-50"
+                      aria-busy={wait || undefined}
+                      onClick={() => void download(r)}
+                    >
+                      {wait ? (
+                        <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin" />
+                      ) : (
+                        <Download aria-hidden data-icon="inline-start" />
+                      )}
+                      Download{name}
+                    </Button>
+                  )
+                )}
+              </div>
+              {error && (
+                <p className="m-0 flex items-start gap-1.5 text-xs text-destructive">
+                  <CircleAlert aria-hidden className={icon} />
+                  {error}
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <Dialog open={asking !== null} onOpenChange={(on) => !on && setAsking(null)}>
+        <DialogContent
+          className="sm:max-w-[480px]"
+          initialFocus={allow}
+          finalFocus={() => (shown ? document.getElementById(`${base}-${shown.id}-inc`) : null)}
+          onKeyDown={dialogKeys(() => setAsking(null))}
+        >
+          {shown && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Include {shown.filename} in runs?</DialogTitle>
+                <DialogDescription>
+                  {shown.file?.image
+                    ? `${runner} can then open this image in every run on this pull request: reviews, reply drafts, questions, and fixes.`
+                    : `${runner} can then read this text in every run on this pull request: reviews, reply drafts, questions, and fixes. It reads it as untrusted data.`}
+                </DialogDescription>
+              </DialogHeader>
+              <Alert role="note">
+                <ShieldAlert aria-hidden />
+                <AlertTitle>Company AI policy</AlertTitle>
+                <AlertDescription>
+                  {runner} sends the content of the files that it reads to its AI model. Check that your company AI policy allows this for
+                  task attachments.
+                </AlertDescription>
+              </Alert>
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <input
+                  ref={allow}
+                  type="checkbox"
+                  className="mt-0.5 size-4 shrink-0 accent-primary"
+                  checked={allowed}
+                  onChange={(e) => setAllowed(e.target.checked)}
+                />
+                <span>My company AI policy allows sending this file to an AI service.</span>
+              </label>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setAsking(null)}>
+                  Cancel
+                </Button>
+                <Button disabled={!allowed} onClick={confirm}>
+                  Include in runs
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </section>
   );
 }
 
@@ -318,9 +523,12 @@ export function BriefComposer(props: {
   onStart: () => void;
   onClose: () => void;
   onSettings: () => void;
+  announce: (text: string) => void;
 }) {
   const { pr, meta } = props;
   const qc = useQueryClient();
+  const { source, chips } = useTaskChips(pr, props.tasks, meta);
+  const now = Date.now();
   const [note, setNote] = useState(props.brief.note);
   const [profile, setProfile] = useState<ProfileId>(props.brief.profile);
   const latest = useRef<BriefInput>({ note: props.brief.note, profile: props.brief.profile });
@@ -395,7 +603,23 @@ export function BriefComposer(props: {
       <h2 id="brief-title" className="m-0 text-[15px] font-bold">
         Review brief
       </h2>
-      <TaskChips pr={pr} tasks={props.tasks} meta={meta} onSettings={props.onSettings} />
+      <div className="grid gap-1.5">
+        <TaskChips
+          pr={pr}
+          tasks={props.tasks}
+          meta={meta}
+          id="tk"
+          focusTo="brief-note"
+          announce={props.announce}
+          onSettings={props.onSettings}
+        />
+        {chips.map(
+          (c) =>
+            c.fetched && (
+              <TaskFold key={c.key} pr={pr} t={c.fetched} source={source} now={now} runner={meta.runner.name} announce={props.announce} />
+            ),
+        )}
+      </div>
       <div className="rl-bf-main grid gap-x-7 gap-y-3.5">
         <Field className="content-start gap-1.5">
           <FieldLabel htmlFor="brief-note" className="text-sm font-semibold">

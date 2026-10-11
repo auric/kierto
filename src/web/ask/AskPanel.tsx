@@ -18,6 +18,7 @@ import { AiAvatar } from "../review/Drafts";
 import { useBrief, useCancelRun, useRuns } from "../review/data";
 import { clockDur, profileOf, shortHash, tokenText } from "../review/model";
 import { RunStatus } from "../review/RunLine";
+import { TaskChips } from "../review/TaskChips";
 import { Hint } from "../shell/Hint";
 import { prKey } from "../shell/model";
 import { useNow } from "../shell/Sidebar";
@@ -134,6 +135,8 @@ export function AskPanel(props: {
           ask();
         }}
       >
+        {/* Plan r3 Feature C: an ask run reads the fetched task text too. */}
+        <TaskChips pr={pr.id} tasks={pr.tasks} meta={meta} id="tk-ask" focusTo="ask-q" compact announce={props.announce} />
         <Field className="gap-1.5">
           <FieldLabel htmlFor="ask-q" className="text-sm font-semibold">
             Your question
