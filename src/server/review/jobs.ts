@@ -1,4 +1,5 @@
-// Review jobs (plan v3 WP10) and reply-draft jobs (replies.md WP17): one run from the stored brief to stored drafts. One run at a time.
+// Review jobs (plan v3 WP10), re-reviews (r2 S-RR), and reply-draft jobs (replies.md WP17): one run from the stored brief to stored drafts.
+// One run at a time.
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -16,12 +17,16 @@ import type {
 } from "../../shared/dto";
 import {
   type AnchoredFinding,
+  type Carried,
   type Finding,
   MAX_REPLY_THREADS,
   type Question,
   type ReplyPayload,
+  type RereviewResult,
   replyJsonSchema,
   replyResult,
+  rereviewJsonSchema,
+  rereviewResult,
   reviewJsonSchema,
   reviewResult,
 } from "../../shared/review";
@@ -51,9 +56,19 @@ import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude"
 import { type DiffFile, parseDiff } from "./diffmap";
 import { git, gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
-import { buildPrompt, buildReplyPrompt, type ReplyThread } from "./prompt";
-import { MAX_FILE_CHARS, repoPath, type ValidatedReply, validate, validateReplies } from "./validate";
-import { type GitRemote, noUrl, prepareWorkspace, pruneWorkspaces, type Workspace } from "./workspace";
+import { buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
+import {
+  type CheckedEarlier,
+  type EarlierItem,
+  earlierCases,
+  MAX_FILE_CHARS,
+  repoPath,
+  type ValidatedReply,
+  validate,
+  validateEarlier,
+  validateReplies,
+} from "./validate";
+import { type ContextFile, type GitRemote, noUrl, prepareWorkspace, pruneWorkspaces, type Workspace } from "./workspace";
 
 const RAW_MAX = 2 * 1024 * 1024;
 // Plan v3 WP10: at most 2 `changed` events with runs per second.
@@ -146,16 +161,21 @@ export type ItemRow = {
   // Reply items only: the root comment ID.
   thread: number | null;
 };
-type NewItem = Omit<ItemRow, "id" | "run" | "revision" | "edited">;
+type NewItem = Omit<ItemRow, "id" | "run" | "revision">;
 
+// checked: the earlier findings of a re-review.
 type Ending = {
   status: Exclude<RunStatus, "running">;
   kind: RunErrorKind | null;
   text: string | null;
   raw: string;
   outcome?: RunOutcome;
-  result?: { summary: RunSummary; items: NewItem[] };
+  result?: { summary: RunSummary; items: NewItem[]; checked?: CheckedEarlier[] };
 };
+
+// A re-review (plan r2 S-RR). since: the source head of the base run. sinceBase: its merge base.
+// items: the findings and questions of the base run with status new or accepted at the start.
+type Carry = { base: number; since: string; sinceBase: string | null; incomplete: boolean; items: ItemRow[] };
 
 // threads: the threads of a reply run. null for a review run. profile: the profile as it was at the start.
 type Job = {
@@ -165,6 +185,7 @@ type Job = {
   db: Database;
   profile: Profile;
   threads: ReplyThread[] | null;
+  carry: Carry | null;
   cancelled: boolean;
   done: Promise<void>;
 };
@@ -183,8 +204,9 @@ const SQL = {
   brief: "SELECT note, profile, updated_at FROM pr_brief WHERE pr = $pr",
   saveBrief: `INSERT INTO pr_brief (pr, note, profile, updated_at) VALUES ($pr, $note, $profile, $now)
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
-  insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, status, started_at)
-    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now) RETURNING id`,
+  insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, status, started_at,
+      since_head)
+    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since) RETURNING id`,
   run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
       p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question
@@ -200,9 +222,16 @@ const SQL = {
     ON CONFLICT (run, id) DO UPDATE SET status = excluded.status, note = excluded.note, agent = excluded.agent, ended_at = excluded.ended_at`,
   events: `SELECT id, seq, parent, tool, target, status, note, agent, started_at AS startedAt, ended_at AS endedAt FROM run_event
     WHERE run = $run ORDER BY seq`,
-  item: `INSERT INTO review_item (run, kind, payload_json, body, path, side, line, line_end, anchor_state, excerpt_json, status, thread)
-    VALUES ($run, $kind, $payload_json, $body, $path, $side, $line, $line_end, $anchor_state, $excerpt_json, $status, $thread)`,
+  item: `INSERT INTO review_item (run, kind, payload_json, body, path, side, line, line_end, anchor_state, excerpt_json, status, thread, edited)
+    VALUES ($run, $kind, $payload_json, $body, $path, $side, $line, $line_end, $anchor_state, $excerpt_json, $status, $thread, $edited)`,
   items: "SELECT * FROM review_item WHERE run = $run ORDER BY id",
+  itemById: "SELECT * FROM review_item WHERE id = $id",
+  // Plan r2 S-RR. An Explain run has no findings. A run from before M4 has no explain value.
+  baseRun: `WHERE r.pr = $pr AND r.kind = 'review' AND r.status IN ('completed', 'incomplete') AND COALESCE(r.explain, r.profile = 'explain') = 0
+    ORDER BY r.id DESC LIMIT 1`,
+  carry: "SELECT * FROM review_item WHERE run = $run AND kind IN ('finding', 'question') AND status IN ('new', 'accepted') ORDER BY id",
+  // The copy in the re-review replaces the source.
+  carried: "UPDATE review_item SET status = 'discarded', revision = revision + 1 WHERE id = $id",
   // A new reply draft replaces the open drafts of its thread. Posted drafts stay.
   supersede: `UPDATE review_item SET status = 'discarded', revision = revision + 1
     WHERE kind = 'reply' AND thread = $thread AND status IN ('new', 'accepted') AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
@@ -352,6 +381,7 @@ const findingItem = (f: AnchoredFinding): NewItem => ({
   excerpt_json: JSON.stringify(f.anchor.excerpt),
   status: "new",
   thread: null,
+  edited: 0,
 });
 
 const NO_ANCHOR = { path: null, side: null, line: null, line_end: null, anchor_state: null, excerpt_json: null } as const;
@@ -363,6 +393,7 @@ const questionItem = (q: Question): NewItem => ({
   ...NO_ANCHOR,
   status: "new",
   thread: null,
+  edited: 0,
 });
 
 const replyItem = (r: ValidatedReply): NewItem => ({
@@ -372,6 +403,7 @@ const replyItem = (r: ValidatedReply): NewItem => ({
   ...NO_ANCHOR,
   status: r.status,
   thread: r.payload.thread,
+  edited: 0,
 });
 
 function schemaFailure(issues: { path: PropertyKey[]; message: string }[], what: string, raw: string, o: RunOutcome): Ending {
@@ -397,21 +429,127 @@ function ended(raw: string, o: RunOutcome, result: NonNullable<Ending["result"]>
 }
 
 // Turns a runner outcome into the run end. servers: the MCP servers of the spec. gaps: the servers left out of the spec.
-async function judge(o: RunOutcome, ws: Workspace, profile: Profile, servers: string[], gaps: string[]): Promise<Ending> {
+// rereview: the earlier findings of a re-review at their current lines.
+async function judge(
+  o: RunOutcome,
+  ws: Workspace,
+  profile: Profile,
+  servers: string[],
+  gaps: string[],
+  rereview: { carry: Carry; items: EarlierItem[] } | null,
+): Promise<Ending> {
   const raw = rawOutput(o);
   if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
-  const parsed = reviewResult.safeParse(o.result?.structured_output);
-  if (!parsed.success) return schemaFailure(parsed.error.issues, "review", raw, o);
+  const parsed = rereview ? rereviewResult.safeParse(o.result?.structured_output) : reviewResult.safeParse(o.result?.structured_output);
+  if (!parsed.success) return schemaFailure(parsed.error.issues, rereview ? "re-review" : "review", raw, o);
+  const earlier = rereview ? (parsed.data as RereviewResult).earlier : [];
+  const items = rereview?.items ?? [];
   // Only a finished Agent call returned a report.
   const agents = o.events.filter((e) => e.tool === "Agent" && e.agent !== null && e.status === "ok").map((e) => e.agent as string);
-  const blobs = await readBlobs(ws, parsed.data.findings);
+  const blobs = await readBlobs(ws, [...parsed.data.findings, ...earlierCases(earlier, items).cases.map((c) => c.finding)]);
   const v = validate({ result: parsed.data, diff: ws.diff, ...blobs, agents, explain: profile.explain });
+  const e = rereview ? validateEarlier({ earlier, items, diff: ws.diff, ...blobs }) : null;
   const dropped = v.dropped.map((d) => (d.reason === "file" && blobs.oversized(d) ? { ...d, reason: "size" as const } : d));
-  const coverage = { ...v.coverage, unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)] };
+  const base = rereview?.carry.incomplete ? [`Run ${rereview.carry.base}, the base of this re-review, was incomplete.`] : [];
+  const coverage = {
+    ...v.coverage,
+    skipped: [...v.coverage.skipped, ...(e?.skipped ?? [])],
+    unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)],
+    notChecked: [...v.coverage.notChecked, ...base],
+  };
   return ended(raw, o, {
     summary: { summary: v.summary, risks: v.risks, coverage, dropped },
     items: [...v.findings.map(findingItem), ...v.questions.map(questionItem)],
+    ...(e && { checked: e.checked }),
   });
+}
+
+const current = (db: Database, rows: ItemRow[]) => rows.flatMap((r) => (db.query(SQL.itemById).get({ id: r.id }) as ItemRow | null) ?? []);
+
+// An earlier finding at the current place of its item. A user move changes the line.
+function earlierItem(r: ItemRow): EarlierItem {
+  const { anchor: _anchor, carried: _carried, ...f } = JSON.parse(r.payload_json) as AnchoredFinding & { carried?: Carried };
+  const at = r.path !== null && r.side !== null && r.line !== null;
+  return {
+    id: r.id,
+    finding: at ? { ...f, path: r.path as string, side: r.side as Finding["side"], line: r.line as number, lineEnd: r.line_end } : f,
+  };
+}
+
+const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ");
+const indent = (s: string) =>
+  s
+    .split("\n")
+    .map((l) => `    ${l}`)
+    .join("\n");
+
+// context/findings.md of a re-review. Indented blocks, so no stored text can start a heading.
+function findingsFile(rows: ItemRow[], carry: Carry): ContextFile {
+  const out = rows.flatMap((r) => {
+    const { finding: f } = earlierItem(r);
+    const end = f.lineEnd !== null && f.lineEnd !== f.line ? `-${f.lineEnd}` : "";
+    const at = f.side === "new" ? carry.since : (carry.sinceBase ?? "the earlier merge base");
+    return [
+      `## Finding ${r.id}`,
+      "",
+      `- Path: ${oneLine(f.path)}`,
+      `- Side: ${f.side}`,
+      `- Lines: ${f.line}${end} at ${at}`,
+      `- Severity: ${f.severity}`,
+      "",
+      "Code at the finding:",
+      "",
+      indent(f.anchorText),
+      "",
+      "Text:",
+      "",
+      indent(r.body),
+      "",
+    ];
+  });
+  return { name: "findings.md", text: out.join("\n") };
+}
+
+// Plan r2 S-RR: the copies of the carried items, inside the run-end transaction. Each source becomes discarded.
+// A source whose status changed during the run stays as it is.
+function carryOver(db: Database, carry: Carry, checked: CheckedEarlier[]) {
+  const byId = new Map(checked.map((c) => [c.id, c]));
+  const out = { open: [] as NewItem[], questions: [] as NewItem[], closed: [] as NewItem[] };
+  for (const was of carry.items) {
+    const r = db.query(SQL.itemById).get({ id: was.id }) as ItemRow | null;
+    if (!r || r.status !== was.status) continue;
+    const c = byId.get(r.id);
+    const payload = JSON.parse(r.payload_json) as object;
+    const keep = { body: r.body, edited: r.edited, thread: null };
+    if (r.kind === "question") {
+      const carried: Carried = { from: r.id, verdict: "open", reason: "", since: carry.since };
+      out.questions.push({
+        kind: "question",
+        payload_json: JSON.stringify({ ...payload, carried }),
+        ...NO_ANCHOR,
+        status: r.status,
+        ...keep,
+      });
+    } else if (c) {
+      const carried: Carried = { from: r.id, verdict: c.verdict, reason: c.reason, since: carry.since };
+      const a = c.anchor;
+      const at = a
+        ? {
+            payload_json: JSON.stringify({ ...c.finding, anchor: a, carried }),
+            path: a.path,
+            side: c.finding.side,
+            line: a.line,
+            line_end: a.lineEnd,
+            anchor_state: a.state,
+            excerpt_json: JSON.stringify(a.excerpt),
+          }
+        : { payload_json: JSON.stringify({ ...payload, carried }), ...NO_ANCHOR };
+      const open = c.verdict === "open";
+      (open ? out.open : out.closed).push({ kind: "finding", ...at, status: open ? r.status : "discarded", ...keep });
+    } else continue;
+    db.query(SQL.carried).run({ id: r.id });
+  }
+  return out;
 }
 
 function judgeReplies(o: RunOutcome, threads: ReplyThread[], servers: string[], gaps: string[]): Ending {
@@ -554,12 +692,12 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       });
   }
 
-  // One transaction for the run, its log, and its items.
-  function end(j: Job, e: Ending) {
+  // One transaction for the run, its log, and its items. Returns false when restart recovery ended the run first.
+  function end(j: Job, e: Ending): boolean {
     const o = e.outcome;
     const r = o?.result;
     const usage: RunUsage | null = r ? { costUsd: r.total_cost_usd, turns: r.num_turns, durationMs: r.duration_ms, tokens: r.usage } : null;
-    j.db.transaction(() => {
+    const ok = j.db.transaction(() => {
       if (o) upsertEvents(j.db, j.id, o.events);
       const done = j.db.query(SQL.end).run({
         id: j.id,
@@ -575,14 +713,28 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         now: now(),
       });
       // Restart recovery can end the row first. Then no item goes in.
-      if (!done.changes) return;
+      if (!done.changes) return false;
       const items = e.result?.items ?? [];
       const supersede = j.db.query(SQL.supersede);
       for (const thread of new Set(items.map((it) => it.thread))) if (thread !== null) supersede.run({ thread, pr: j.pr });
       const q = j.db.query(SQL.item);
-      for (const it of items) q.run({ run: j.id, ...it });
+      const add = (list: NewItem[]) => {
+        for (const it of list) q.run({ run: j.id, ...it });
+      };
+      if (!j.carry || !e.result) {
+        add(items);
+        return true;
+      }
+      const c = carryOver(j.db, j.carry, e.result.checked ?? []);
+      add(items.filter((it) => it.kind === "finding"));
+      add(c.open);
+      add(items.filter((it) => it.kind !== "finding"));
+      add(c.questions);
+      add(c.closed);
+      return true;
     })();
     notify(j.id, j.pr);
+    return ok;
   }
 
   async function steps(j: Job, pr: Heads, brief: BriefInput, held: { ws?: Workspace }) {
@@ -600,6 +752,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     await prune();
     let ws: Workspace;
     const files = taskFiles(j.db, j.pr);
+    const carry = j.carry;
+    const earlier = carry?.items.filter((r) => r.kind === "finding") ?? [];
     try {
       ws = await prepareWorkspace({
         dataDir,
@@ -607,7 +761,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         pr: toPullRequest(pr),
         comments: commentsOf(j.db, j.pr),
         remote: await remote({ project: pr.project, repo: pr.repo, id: pr.pr_id }),
-        files,
+        files: carry && earlier.length ? [...files, findingsFile(current(j.db, earlier), carry)] : files,
+        ...(carry && { since: carry.since }),
       });
     } catch (e) {
       return failure("workspace", noUrl((e as Error).message));
@@ -631,12 +786,17 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       taskFile: files.length > 0,
     };
     const reply = j.threads;
+    const prompt = reply
+      ? buildReplyPrompt({ ...input, threads: reply })
+      : carry
+        ? buildRereviewPrompt({ ...input, since: carry.since, rangeBase: ws.rangeBase, earlier: earlier.map((r) => r.id) })
+        : buildPrompt(input);
     const o = await runner.run(
       {
         cwd: ws.work,
         appDir: ws.app,
-        prompt: reply ? buildReplyPrompt({ ...input, threads: reply }) : buildPrompt(input),
-        schema: reply ? replyJsonSchema() : reviewJsonSchema(),
+        prompt,
+        schema: reply ? replyJsonSchema() : carry ? rereviewJsonSchema() : reviewJsonSchema(),
         maxTurns: profile.maxTurns,
         main: reply ? replyAgent(profile) : mainAgent(profile),
         agents: reply || profile.explain ? {} : { [REVIEWER]: reviewerAgent(profile) },
@@ -650,7 +810,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // The runner ignores a cancel that comes after the process ended.
     if (j.cancelled) return cancelled(o);
     const servers = Object.keys(mcpServers);
-    return reply ? judgeReplies(o, reply, servers, docs.unavailable) : judge(o, ws, profile, servers, docs.unavailable);
+    if (reply) return judgeReplies(o, reply, servers, docs.unavailable);
+    const rereview = carry && { carry, items: current(j.db, earlier).map(earlierItem) };
+    return judge(o, ws, profile, servers, docs.unavailable, rereview);
   }
 
   // The git remote of a PR: the test remote, else the forge provider.
@@ -664,7 +826,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   async function execute(j: Job, pr: Heads, brief: BriefInput) {
     const held: { ws?: Workspace } = {};
     try {
-      end(j, await steps(j, pr, brief, held));
+      const e = await steps(j, pr, brief, held);
+      // A later re-review merges from this head. The ref keeps it after a force push.
+      if (end(j, e) && e.result && !j.threads && !j.profile.explain)
+        await held.ws?.keep().catch((err) => log(`Could not keep the head of review run ${j.id}: ${noUrl((err as Error).message)}`));
     } catch (e) {
       const message = (e as Error).message;
       log(`Review run ${j.id} failed: ${message}`);
@@ -692,7 +857,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   });
 
   // The one run slot (A14). The same key returns the running run.
-  function launch(db: Database, pr: Heads, brief: BriefInput, profile: Profile, key: string, threads: ReplyThread[] | null): StartResult {
+  function launch(
+    db: Database,
+    pr: Heads,
+    brief: BriefInput,
+    profile: Profile,
+    key: string,
+    threads: ReplyThread[] | null,
+    carry: Carry | null = null,
+  ): StartResult {
     if (job) {
       const running = runRow(job.db, job.id);
       if (job.key === key && job.db === db && running) return { status: 200, run: toRunDto(running) };
@@ -710,8 +883,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       source: pr.source_head,
       target: pr.target_head,
       now: now(),
+      since: carry?.since ?? null,
     }) as { id: number };
-    const j: Job = { id: runId, pr: pr.id, key, db, profile, threads, cancelled: false, done: Promise.resolve() };
+    const j: Job = { id: runId, pr: pr.id, key, db, profile, threads, carry, cancelled: false, done: Promise.resolve() };
     job = j;
     j.done = execute(j, pr, brief).finally(() => {
       if (job === j) job = null;
@@ -791,6 +965,31 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const profile = profileOf(settings.profiles(), brief.profile);
       const key = [id, source_head, target_head, brief.profile, profileRevision(profile), sha256(brief.note)].join(":");
       return launch(db, { ...pr, source_head, target_head }, brief, profile, key, null);
+    },
+
+    // Plan r2 S-RR: reviews the commits after the base run and checks its open findings. It shares the run slot.
+    rereview(db: Database, id: number): StartResult {
+      const pr = prRow(db, id);
+      if (!pr) return { status: 404, error: "Pull request not found." };
+      const { source_head, target_head } = pr;
+      if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
+      const brief = briefOf(db, id);
+      const profile = profileOf(settings.profiles(), brief.profile);
+      if (profile.explain) return { status: 409, error: "The Explain profile gives no findings. Pick a review profile first." };
+      const base = db.query(`${SQL.run} ${SQL.baseRun}`).get({ pr: id }) as RunRow | null;
+      if (!base) return { status: 409, error: "Review the pull request first." };
+      if (base.source_head === source_head) return { status: 409, error: `Run ${base.id} reviewed this source head. No new commits.` };
+      const key = [id, "rereview", base.id, source_head, target_head, brief.profile, profileRevision(profile), sha256(brief.note)].join(
+        ":",
+      );
+      const carry: Carry = {
+        base: base.id,
+        since: base.source_head,
+        sinceBase: base.merge_base,
+        incomplete: base.status === "incomplete",
+        items: db.query(SQL.carry).all({ run: base.id }) as ItemRow[],
+      };
+      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, null, carry);
     },
 
     // Starts a reply-draft run of the stored brief (plan replies.md WP17). It shares the run slot with reviews.

@@ -1,4 +1,5 @@
-// Review API (plan v3 WP10, WP12, replies.md WP17): brief, start, reply drafts, cancel, run, raw output, item triage. Every mutation broadcasts `changed`.
+// Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR): brief, start, re-review, reply drafts, cancel, run, raw output, item triage.
+// Every mutation broadcasts `changed`.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
 import { type ApiError, briefInput, itemActionInput, replyRunInput } from "../../shared/dto";
@@ -49,6 +50,14 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       const db = review.open();
       if (!db) return c.json(unconfigured, 409);
       const r = review.review(db, c.req.valid("param").id);
+      if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
+      if ("conflict" in r) return c.json(r.conflict, 409);
+      return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
+    })
+    .post("/prs/:id/rereview", prParam, (c) => {
+      const db = review.open();
+      if (!db) return c.json(unconfigured, 409);
+      const r = review.rereview(db, c.req.valid("param").id);
       if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
       if ("conflict" in r) return c.json(r.conflict, 409);
       return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);

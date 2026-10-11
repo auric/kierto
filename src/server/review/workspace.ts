@@ -19,6 +19,15 @@ const REMOVE = new Set([".claude", ".mcp.json"]);
 const RENAME = new Set(["claude.md", "claude.local.md", "agents.md"]);
 // Names of the extra context files. pr.md, changes.patch, and files.txt belong to the workspace.
 const FILE_NAME = /^[a-z-]+\.md$/;
+// A fixed identity and date give the same range base commit for the same inputs.
+const RANGE_IDENTITY = {
+  GIT_AUTHOR_NAME: "Review Loop",
+  GIT_AUTHOR_EMAIL: "review-loop@example.invalid",
+  GIT_AUTHOR_DATE: "@0 +0000",
+  GIT_COMMITTER_NAME: "Review Loop",
+  GIT_COMMITTER_EMAIL: "review-loop@example.invalid",
+  GIT_COMMITTER_DATE: "@0 +0000",
+};
 
 // The first lines of every untrusted text file in context/.
 export const UNTRUSTED =
@@ -60,6 +69,8 @@ export type WorkspaceInput = {
   remote: GitRemote;
   // Names match FILE_NAME and are not pr.md.
   files?: ContextFile[];
+  // A re-review: the head that its base run reviewed.
+  since?: string;
 };
 
 export type Workspace = {
@@ -78,6 +89,8 @@ export type Workspace = {
   via: "pull-request-ref" | "branch";
   // `git diff -M -U3 <mergeBase> <sourceHead>` for the validator.
   diff: string;
+  // Points refs/rl/<PR ID>/reviewed at the source head. gc then keeps the head after a force push.
+  keep: () => Promise<void>;
   // Deletes the run folder and its worktree entry.
   remove: () => Promise<void>;
 };
@@ -351,6 +364,21 @@ export async function syncCache(input: {
   });
 }
 
+// Plan r2 S-RR: the reviewed head merged with the new merge base. The diff from it to the head holds only the new commits.
+// null: use the full range. A conflict, a missing object, or a git without merge-tree --write-tree (before 2.38) gives null.
+async function rangeBaseOf(g: (args: string[], extra?: Record<string, string>) => Promise<string>, since: string, mergeBase: string) {
+  try {
+    if (!HEAD.test(since)) throw new Error(`Invalid commit hash: ${since}`);
+    const tree = (await g(["merge-tree", "--write-tree", "--no-messages", since, mergeBase])).split("\n")[0]?.trim() ?? "";
+    if (!HEAD.test(tree)) throw new Error("git merge-tree gave no tree.");
+    if (tree === (await g(["rev-parse", "--verify", "--quiet", `${since}^{tree}`])).trim()) return since;
+    return (await g(["commit-tree", tree, "-p", since, "-p", mergeBase, "-m", "Range base"], RANGE_IDENTITY)).trim();
+  } catch (e) {
+    log(`The re-review uses the full range. ${noUrl((e as Error).message)}`);
+    return null;
+  }
+}
+
 export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace> {
   const { pr } = input;
   const runId = name(input.runId, "run ID");
@@ -358,7 +386,10 @@ export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace
   for (const f of files)
     if (!FILE_NAME.test(f.name) || f.name === "pr.md") throw new WorkspaceError(`Invalid context file name: ${f.name}`);
   const { dataDir, cache, env, via, mergeBase } = await syncCache({ dataDir: input.dataDir, pr, remote: input.remote });
-  const g = (args: string[]) => git([`--git-dir=${cache}`, ...args], { env });
+  const g = (args: string[], extra: Record<string, string> = {}) => git([`--git-dir=${cache}`, ...args], { env: { ...env, ...extra } });
+  const keep = async () => {
+    await locked(cache, () => g(["update-ref", `refs/rl/${pr.ref.id}/reviewed`, pr.sourceHead]));
+  };
 
   const run = join(dataDir, "runs", runId);
   const work = join(run, "work");
@@ -385,13 +416,15 @@ export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace
       .map((r) => r.slice(r.indexOf("\t") + 1));
     sanitize(repo, links);
 
+    const rangeBase = input.since === undefined ? mergeBase : ((await rangeBaseOf(g, input.since, mergeBase)) ?? mergeBase);
     const diff = await g(["diff", ...diffArgs, mergeBase, pr.sourceHead]);
-    writeFileSync(join(context, "changes.patch"), numberPatch(diff));
-    writeFileSync(join(context, "files.txt"), fileList(diff));
+    const changes = rangeBase === mergeBase ? diff : await g(["diff", ...diffArgs, rangeBase, pr.sourceHead]);
+    writeFileSync(join(context, "changes.patch"), numberPatch(changes));
+    writeFileSync(join(context, "files.txt"), fileList(changes));
     writeFileSync(join(context, "pr.md"), prText(pr, input.comments));
     for (const f of files) writeFileSync(join(context, f.name), UNTRUSTED + f.text);
     const heads = { sourceHead: pr.sourceHead, targetHead: pr.targetHead };
-    return { run, work, repo, context, app, cache, ...heads, mergeBase, rangeBase: mergeBase, via, diff, remove };
+    return { run, work, repo, context, app, cache, ...heads, mergeBase, rangeBase, via, diff, keep, remove };
   } catch (e) {
     await remove();
     throw e;

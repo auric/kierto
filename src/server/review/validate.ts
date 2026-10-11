@@ -1,9 +1,11 @@
-// Anchor validator (plan v3 WP9) and reply validator (replies.md WP17). Pure: the caller passes the file contents, the diff, and the run's agent names.
+// Anchor validator (plan v3 WP9), earlier-finding validator (r2 S-RR), and reply validator (replies.md WP17).
+// Pure: the caller passes the file contents, the diff, and the run's agent names.
 import { MAX_NOTE } from "../../shared/dto";
 import type {
   Anchor,
   Coverage,
   DropReason,
+  EarlierVerdict,
   ExcerptLine,
   Finding,
   ReplyPayload,
@@ -11,6 +13,7 @@ import type {
   ReviewResult,
   Side,
   ValidatedResult,
+  Verdict,
 } from "../../shared/review";
 import { type DiffFile, parseDiff } from "./diffmap";
 import type { ReplyThread } from "./prompt";
@@ -134,10 +137,8 @@ function excerpt(t: Text, file: DiffFile | undefined, side: Side, s: number, e: 
   return out;
 }
 
-export function validate(input: ValidateInput): ValidatedResult {
-  const { findings, ...rest } = input.result;
-  if (input.explain) return { ...rest, findings: [], dropped: [] };
-
+// The anchor of one finding against the diff and the file contents, or the reason to drop it.
+function anchorer(input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles">): (f: Finding) => Anchor | DropReason {
   const files = parseDiff(input.diff);
   const byNew = new Map<string, DiffFile>();
   const byOld = new Map<string, DiffFile>();
@@ -145,7 +146,6 @@ export function validate(input: ValidateInput): ValidatedResult {
     if (f.path !== null) byNew.set(f.path, f);
     if (f.oldPath !== null) byOld.set(f.oldPath, f);
   }
-  const agents = new Set(input.agents);
   const texts = new Map<string, Text>();
   const text = (key: string, content: string) => {
     const t = texts.get(key) ?? prepare(content);
@@ -153,7 +153,7 @@ export function validate(input: ValidateInput): ValidatedResult {
     return t;
   };
 
-  const anchor = (f: Finding): Anchor | DropReason => {
+  return (f: Finding): Anchor | DropReason => {
     const p = repoPath(f.path);
     if (p === null) return "path";
     const file = byNew.get(p) ?? byOld.get(p);
@@ -186,7 +186,13 @@ export function validate(input: ValidateInput): ValidatedResult {
     for (let k = s; k <= e; k++) if (!lines?.has(k)) state = "outside";
     return { state, path, oldPath, line: s, lineEnd: e, excerpt: excerpt(t, file, f.side, s, e) };
   };
+}
 
+export function validate(input: ValidateInput): ValidatedResult {
+  const { findings, ...rest } = input.result;
+  if (input.explain) return { ...rest, findings: [], dropped: [] };
+  const anchor = anchorer(input);
+  const agents = new Set(input.agents);
   const out: ValidatedResult = { ...rest, findings: [], dropped: [] };
   for (const raw of findings) {
     const f: Finding = { ...raw, agent: raw.agent !== null && agents.has(raw.agent) ? raw.agent : null };
@@ -195,6 +201,55 @@ export function validate(input: ValidateInput): ValidatedResult {
     else out.findings.push({ ...f, anchor: a });
   }
   return out;
+}
+
+// ---------- Earlier findings of a re-review (plan r2 S-RR) ----------
+
+// id: the source item ID. finding: the stored finding at the item's current path and lines.
+export type EarlierItem = { id: number; finding: Finding };
+// finding: the stored finding with the verdict path and line. anchor: null when its code is not at the head.
+export type EarlierCase = { id: number; verdict: Verdict; reason: string; finding: Finding };
+export type CheckedEarlier = EarlierCase & { anchor: Anchor | null };
+
+export const NO_VERDICT = "The run gave no verdict.";
+export const CODE_GONE = "The code of the finding is gone.";
+
+// One case per item. An unknown or a second verdict goes to skipped. An item without a verdict stays open and goes to skipped.
+export function earlierCases(earlier: readonly EarlierVerdict[], items: readonly EarlierItem[]) {
+  const ids = new Set(items.map((i) => i.id));
+  const got = new Map<number, EarlierVerdict>();
+  const skipped: string[] = [];
+  for (const v of earlier) {
+    if (!ids.has(v.id)) skipped.push(`Verdict for finding ${v.id} dropped: the ID is not an earlier finding.`);
+    else if (got.has(v.id)) skipped.push(`Verdict for finding ${v.id} dropped: a second verdict for the finding.`);
+    else got.set(v.id, v);
+  }
+  const cases = items.map(({ id, finding: f }): EarlierCase => {
+    const v = got.get(id);
+    if (!v) {
+      skipped.push(`Finding ${id} has no verdict. It stays open.`);
+      return { id, verdict: "open", reason: NO_VERDICT, finding: f };
+    }
+    const line = v.line ?? f.line;
+    const lineEnd = f.lineEnd === null ? null : line + (f.lineEnd - f.line);
+    return { id, verdict: v.status, reason: v.reason, finding: { ...f, path: v.path ?? f.path, line, lineEnd } };
+  });
+  return { cases, skipped };
+}
+
+// Anchors each earlier finding against MB..head. An open finding without an anchor becomes outdated.
+// A fixed or outdated finding keeps its anchor when its code is still there.
+export function validateEarlier(
+  input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles"> & { earlier: readonly EarlierVerdict[]; items: readonly EarlierItem[] },
+): { checked: CheckedEarlier[]; skipped: string[] } {
+  const anchor = anchorer(input);
+  const { cases, skipped } = earlierCases(input.earlier, input.items);
+  const checked = cases.map((c): CheckedEarlier => {
+    const a = anchor(c.finding);
+    const at = typeof a === "string" ? null : a;
+    return c.verdict === "open" && at === null ? { ...c, verdict: "outdated", reason: CODE_GONE, anchor: null } : { ...c, anchor: at };
+  });
+  return { checked, skipped };
 }
 
 // ---------- Reply drafts (plan replies.md WP17) ----------

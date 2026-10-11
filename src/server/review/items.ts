@@ -26,6 +26,9 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
   if (row.status === "posted") return conflict("The item is posted.");
   if (row.revision !== input.revision) return conflict("The item changed on another page. Check it again.");
 
+  // Plan r2 S-RR: a carried finding whose code is gone has no anchor. The post plan cannot place it.
+  if (row.kind === "finding" && input.action !== "discard" && (row.path === null || row.side === null || row.line === null))
+    return { status: 400, error: "The finding has no place in the code." };
   const next = { ...row };
   switch (input.action) {
     case "accept":
