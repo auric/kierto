@@ -8,11 +8,13 @@ import { Toaster } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { VIEW_LABEL, VIEWS, type View } from "../shared/views";
-import { type Effect, type KeyState, reduceKey } from "./keys";
+import { type Effect, type KeyState, type Layer, reduceKey } from "./keys";
 import { useLive } from "./live";
 import { useMeta } from "./meta";
 import { useClaims } from "./notify";
 import { type DetailApi, PrDetail } from "./pr/PrDetail";
+import { useReadyToPost } from "./publish/data";
+import { destText } from "./publish/model";
 import { useRuns } from "./review/data";
 import { latestByPr, runRows } from "./review/model";
 import { Settings } from "./settings/Settings";
@@ -35,6 +37,7 @@ import {
   followCandidate,
   groupRows,
   incompleteText,
+  matches,
   navIds,
   repoTree,
   statusInfo,
@@ -69,10 +72,10 @@ export function App() {
 
 const INITIAL: KeyState = { focus: "list", mobile: "list", selected: null, help: false, settings: false, chord: null };
 
-// "runs": the Review runs view of the AI review group (prototype/v3 AIVIEWS).
-type ListView = View | "runs";
+// "runs" and "post": the Review runs and Ready to post views of the AI review group (prototype/v3 AIVIEWS).
+type ListView = View | "runs" | "post";
 
-const EMPTY: Record<ListView, string> = {
+const EMPTY: Record<Exclude<ListView, "post">, string> = {
   needs: "Nothing needs you. New replies and review requests show here.",
   reviewing: "No open pull requests to review.",
   mine: "You have no open pull requests.",
@@ -105,9 +108,16 @@ function Shell({ stale }: { stale: boolean }) {
   const runs = useRuns().data;
   const latest = useMemo(() => latestByPr(runs ?? []), [runs]);
   const running = runs?.some((r) => r.status === "running") ?? false;
+  // Accepted items sit in review runs, so only PRs with a run can have a post plan.
+  const ready = useReadyToPost([...latest.keys()]);
+  const readyWhy = useMemo(() => new Map([...ready].map(([id, posts]) => [id, destText(posts)])), [ready]);
   // A repository replaces the view (prototype/v3 aiMode), so filterRows then ignores the view argument.
-  const aiView = view === "runs" && !repo;
-  const rows = aiView ? runRows(all, latest, query) : filterRows(all, view === "runs" ? "following" : view, repo, query);
+  const aiView = (view === "runs" || view === "post") && !repo;
+  const rows = !aiView
+    ? filterRows(all, view === "runs" || view === "post" ? "following" : view, repo, query)
+    : view === "runs"
+      ? runRows(all, latest, query)
+      : all.filter((p) => ready.has(p.id) && matches(p, query));
   const groups = aiView ? (rows.length ? [{ id: "runs" as const, label: "", rows }] : []) : groupRows(rows);
   const ids = navIds(groups, doneOpen);
   // The first open row is the default. A row of the folded Done group stays selected only after a click.
@@ -161,7 +171,10 @@ function Shell({ stale }: { stale: boolean }) {
       else if (effect === "log") api?.log();
       else if (effect === "rerun") api?.rerun();
       else if (effect === "brief") api?.brief();
-      else if (effect === "close-brief" || effect === "close-log") api?.close(effect === "close-brief" ? "brief" : "log");
+      else if (effect === "accept" || effect === "edit" || effect === "discard") api?.triage(effect);
+      else if (effect === "post") api?.post();
+      else if (effect === "close-brief" || effect === "close-confirm" || effect === "close-log")
+        api?.close(effect.slice(6) as Exclude<Layer, null>);
     }
   });
 
@@ -220,6 +233,7 @@ function Shell({ stale }: { stale: boolean }) {
         view={showSettings || repo ? null : view}
         counts={viewCounts(all)}
         runs={{ count: all.filter((p) => latest.has(p.id)).length, running }}
+        post={all.filter((p) => ready.has(p.id)).length}
         repos={repoTree(all)}
         repo={repo}
         status={info}
@@ -238,18 +252,21 @@ function Shell({ stale }: { stale: boolean }) {
         settingsOpen={showSettings}
       />
       <ListPane
-        title={repo ?? (view === "runs" ? "Review runs" : VIEW_LABEL[view])}
+        title={repo ?? (view === "runs" ? "Review runs" : view === "post" ? "Ready to post" : VIEW_LABEL[view])}
         count={rows.length}
         groups={groups}
         loading={prs.isPending}
         repo={repo}
         query={query}
-        empty={EMPTY[view]}
+        empty={
+          view === "post" ? `Nothing is ready to post. Accept drafts from ${meta.data.runner.short} to post them to ${forge}.` : EMPTY[view]
+        }
         selected={showSettings ? null : selected}
         focused={ks.focus === "list" && !showSettings}
         doneOpen={doneOpen}
         forge={forge}
-        runs={aiView ? latest : null}
+        runs={aiView && view === "runs" ? latest : null}
+        ready={aiView && view === "post" ? readyWhy : null}
         profiles={meta.data.profiles}
         candidate={candidate}
         following={follow.isPending}
@@ -299,7 +316,8 @@ function Shell({ stale }: { stale: boolean }) {
         ) : current ? (
           <>
             <BackBar onBack={() => go({ mobile: "list", focus: "list" }, "focus-list")} />
-            <div data-scroll className="relative flex-1 overflow-auto overscroll-contain">
+            {/* The sticky post bar covers the bottom of the pane, so focus and scroll targets stop above it. */}
+            <div data-scroll className="relative flex-1 overflow-auto overscroll-contain has-[[data-postbar]]:scroll-pb-16">
               <PrDetail
                 key={current.id}
                 ref={detailApi}

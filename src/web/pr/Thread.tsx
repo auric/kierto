@@ -5,10 +5,12 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import type { ExcerptLine } from "../../shared/dto";
+import type { ExcerptLine, PostDto } from "../../shared/dto";
+import { type PostCtx, ReplyPosts } from "../publish/Outbox";
 import type { Hints } from "../shell/Hint";
 import { HintTrigger } from "../shell/Hint";
 import { ago, initials } from "../shell/model";
+import { ReplyComposer, type ReplyTarget } from "./ReplyComposer";
 import {
   agoLong,
   type FoldRow,
@@ -37,14 +39,22 @@ export function Text({ text }: { text: string }) {
 }
 
 export type ThreadCtx = {
+  pr: number;
   hints: Hints;
   now: number;
   forge: string;
+  // The runner name, for "Posted from a <runner> review".
+  runner: string;
+  // I, for the avatar of my replies on the way.
+  me: Person;
   ackRef: (el: HTMLElement | null) => (() => void) | undefined;
   onToggle: (thread: number) => void;
   onFold: (thread: number, row: FoldRow) => void;
   onQuote: (thread: number, msg: number) => void;
   announce: (text: string) => void;
+  // msg null: the reply box of the thread answers the newest live message again.
+  onReply: (thread: number, msg: number | null) => void;
+  posts: PostCtx;
 };
 
 export const fullTime = (ms: number) =>
@@ -97,12 +107,16 @@ const placeOf = (t: ThreadModel) =>
   t.anchor ? `${t.anchor.path}${t.anchor.line === undefined ? "" : `:${t.anchor.line}`}` : "General comment";
 
 // A collapsed thread is one line that sums it up. An open thread shows the same facts in its messages, so the line drops them.
+// posts: my replies on the way. target: the message that the reply box answers. draft: the AI reply draft card (WP18).
 export const Thread = memo(function Thread({
   t,
   open,
   cur,
   spine,
   branches,
+  posts,
+  target,
+  draft,
   ctx,
 }: {
   t: ThreadModel;
@@ -110,6 +124,9 @@ export const Thread = memo(function Thread({
   cur: boolean;
   spine: boolean;
   branches: ReadonlySet<number>;
+  posts?: readonly PostDto[];
+  target?: ReplyTarget;
+  draft?: ReactNode;
   ctx: ThreadCtx;
 }) {
   const a = t.anchor;
@@ -177,7 +194,21 @@ export const Thread = memo(function Thread({
         <span className="w-[30px] flex-none" />
       </div>
       <div id={`tb-${t.id}`} hidden={!open} className="px-1.5 pt-0.5 pb-4">
-        {open && <Body t={t} spine={spine} branches={branches} ctx={ctx} />}
+        {open && (
+          <Body
+            t={t}
+            spine={spine}
+            branches={branches}
+            ctx={ctx}
+            after={
+              <>
+                {posts && <ReplyPosts posts={posts} avatar={<Avatar p={ctx.me} />} forge={ctx.forge} ctx={ctx.posts} />}
+                {draft}
+                <ReplyComposer t={t} target={target} ctx={ctx} />
+              </>
+            }
+          />
+        )}
       </div>
     </article>
   );
@@ -199,13 +230,18 @@ function Lines({ lines }: { lines: ExcerptLine[] }) {
 }
 
 // An inline thread splits its excerpt after the commented line. The discussion sits in the gap.
-function Body({ t, spine, branches, ctx }: { t: ThreadModel; spine: boolean; branches: ReadonlySet<number>; ctx: ThreadCtx }) {
+// after: my replies on the way, the draft card, and the reply box, under the tree.
+function Body(props: { t: ThreadModel; spine: boolean; branches: ReadonlySet<number>; ctx: ThreadCtx; after: ReactNode }) {
+  const { t, spine, branches, ctx } = props;
   const tree = (
-    <ol className="rl-tree">
-      {layout(t, { spine, branches }).map((li) => (
-        <Item key={li.msg?.id ?? `f${li.fold?.at}`} li={li} t={t} ctx={ctx} />
-      ))}
-    </ol>
+    <>
+      <ol className="rl-tree">
+        {layout(t, { spine, branches }).map((li) => (
+          <Item key={li.msg?.id ?? `f${li.fold?.at}`} li={li} t={t} ctx={ctx} />
+        ))}
+      </ol>
+      {props.after}
+    </>
   );
   const a = t.anchor;
   const lines = t.root.excerpt;
@@ -306,6 +342,8 @@ function FoldButton({ row, tid, ctx }: { row: FoldRow; tid: number; ctx: ThreadC
   );
 }
 
+const msgBtn = "-my-1 text-muted-foreground hover:bg-hover hover:text-foreground";
+
 function CopyButton({ text, ctx }: { text: string; ctx: ThreadCtx }) {
   // A count, so a second copy within 1.5 s starts the time again.
   const [copied, setCopied] = useState(0);
@@ -323,13 +361,7 @@ function CopyButton({ text, ctx }: { text: string; ctx: ThreadCtx }) {
     });
   return (
     <HintTrigger hints={ctx.hints} label={label}>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label={label}
-        onClick={copy}
-        className="-my-1 ml-auto text-muted-foreground hover:bg-hover hover:text-foreground"
-      >
+      <Button variant="ghost" size="icon-sm" aria-label={label} onClick={copy} className={msgBtn}>
         {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
       </Button>
     </HintTrigger>
@@ -357,7 +389,23 @@ const Message = memo(function Message({ m, quote, tid, ctx }: { m: Node; quote: 
         </HintTrigger>
         {m.task && <TaskMark hints={ctx.hints} task={m.task} />}
         {m.isNew && <NewMark text="new" />}
-        {!m.deleted && m.text !== null && <CopyButton text={m.text} ctx={ctx} />}
+        {m.posted === "run" && <span>Posted from a {ctx.runner} review</span>}
+        {!m.deleted && m.text !== null && (
+          <span className="ml-auto flex items-center gap-0.5">
+            <HintTrigger hints={ctx.hints} label={`Reply to ${m.who.me ? "your message" : m.who.name}`}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Reply to ${m.who.me ? "your message" : m.who.name}`}
+                onClick={() => ctx.onReply(tid, m.id)}
+                className={msgBtn}
+              >
+                <Reply aria-hidden />
+              </Button>
+            </HintTrigger>
+            <CopyButton text={m.text} ctx={ctx} />
+          </span>
+        )}
       </div>
       {quote && p && (
         <button

@@ -1,4 +1,4 @@
-// Drafts and the runner's summary (prototype/v3 threadsSec drafts, draft, draftBody, aiSummary). Read-only here: triage comes in WP14.
+// Drafts and the runner's summary (prototype/v3 threadsSec drafts, draft, draftBody, aiSummary, question), with triage (WP14a).
 import { Bot, Check, ChevronRight, CircleAlert, User } from "lucide-react";
 import { Fragment, memo, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -8,6 +8,7 @@ import { Text } from "../pr/Thread";
 import { snippet, splitExcerpt } from "../pr/threads";
 import { type Hints, HintTrigger } from "../shell/Hint";
 import { anchorNote, coverageRows, DROP_REASON, draftExcerpt, EVIDENCE, lineText, plural, SEVERITY } from "./model";
+import { Acts, Editor, Mover, RestoreButton, type TriageCtx, type TriageMode } from "./Triage";
 
 const icon = "size-[15px] shrink-0";
 const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
@@ -58,9 +59,28 @@ function Lines({ lines }: { lines: ReturnType<typeof draftExcerpt> }) {
   ));
 }
 
-export type DraftCtx = { meta: MetaDto; hints: Hints; onToggle: (id: number) => void; onFrom: (agent: string) => void };
+export type DraftCtx = {
+  meta: MetaDto;
+  hints: Hints;
+  onToggle: (id: number) => void;
+  onFrom: (agent: string) => void;
+  triage: TriageCtx;
+};
 
-export const Draft = memo(function Draft({ it, open, ctx }: { it: ReviewItemDto; open: boolean; ctx: DraftCtx }) {
+// mode: the open editor or line field of this draft. busy: a triage request of this draft is out.
+export const Draft = memo(function Draft({
+  it,
+  open,
+  mode,
+  busy,
+  ctx,
+}: {
+  it: ReviewItemDto;
+  open: boolean;
+  mode: TriageMode;
+  busy: boolean;
+  ctx: DraftCtx;
+}) {
   const f = it.payload as AnchoredFinding;
   const a = it.anchor;
   const path = a?.path ?? f.path;
@@ -68,13 +88,23 @@ export const Draft = memo(function Draft({ it, open, ctx }: { it: ReviewItemDto;
   const short = ctx.meta.runner.short;
   if (it.status === "discarded") {
     return (
-      <article id={`d-${it.id}`} tabIndex={-1} aria-label={`Discarded draft. ${where}.`} className="scroll-mt-3 border-b">
-        <p className="m-0 flex min-w-0 items-center gap-3 px-1.5 py-2 text-sm text-muted-foreground">
-          <span translate="no" className="shrink-0 font-mono">
-            {where}
-          </span>
-          <span className="min-w-0 truncate">Discarded: {snippet(it.body, 140)}</span>
-        </p>
+      <article
+        id={`d-${it.id}`}
+        data-draft={it.id}
+        data-item={it.id}
+        tabIndex={-1}
+        aria-label={`Discarded draft. ${where}.`}
+        className="scroll-mt-3 border-b"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <p className="m-0 flex min-w-0 flex-1 items-center gap-3 px-1.5 py-2 text-sm text-muted-foreground">
+            <span translate="no" className="shrink-0 font-mono">
+              {where}
+            </span>
+            <span className="min-w-0 truncate">Discarded: {snippet(it.body, 140)}</span>
+          </p>
+          <RestoreButton it={it} busy={busy} ctx={ctx.triage} />
+        </div>
       </article>
     );
   }
@@ -88,6 +118,7 @@ export const Draft = memo(function Draft({ it, open, ctx }: { it: ReviewItemDto;
     <article
       id={`d-${it.id}`}
       data-draft={it.id}
+      data-item={it.id}
       tabIndex={-1}
       aria-label={`Draft from ${short}. ${SEVERITY[f.severity]}. ${where}.${it.status === "accepted" ? " Accepted." : ""}`}
       className="scroll-mt-3 border-b"
@@ -119,13 +150,13 @@ export const Draft = memo(function Draft({ it, open, ctx }: { it: ReviewItemDto;
         <span className="w-[30px] flex-none" />
       </div>
       <div id={`db-${it.id}`} hidden={!open} className="px-1.5 pt-0.5 pb-4">
-        {open && <DraftBody it={it} ctx={ctx} />}
+        {open && <DraftBody it={it} mode={mode} busy={busy} ctx={ctx} />}
       </div>
     </article>
   );
 });
 
-function DraftBody({ it, ctx }: { it: ReviewItemDto; ctx: DraftCtx }) {
+function DraftBody({ it, mode, busy, ctx }: { it: ReviewItemDto; mode: TriageMode; busy: boolean; ctx: DraftCtx }) {
   const f = it.payload as AnchoredFinding;
   const a = it.anchor;
   const lines = a ? draftExcerpt(a) : [];
@@ -155,13 +186,22 @@ function DraftBody({ it, ctx }: { it: ReviewItemDto; ctx: DraftCtx }) {
             )}
             {it.edited && <span>edited by you</span>}
           </div>
-          <div className="rl-indent mt-px max-w-[72ch] [overflow-wrap:anywhere]">
-            <Text text={it.body} />
-          </div>
-          <div className="rl-indent mt-2 max-w-[72ch] text-xs text-muted-foreground [overflow-wrap:anywhere]">
-            <Text text={`${EVIDENCE[f.evidenceStatus]}, ${f.confidence} confidence.${f.evidence.trim() ? ` ${f.evidence.trim()}` : ""}`} />
-          </div>
-          {note && <p className="rl-indent m-0 mt-2 text-xs text-muted-foreground">{note}</p>}
+          {mode === "edit" ? (
+            <Editor it={it} busy={busy} ctx={ctx.triage} />
+          ) : (
+            <>
+              <div className="rl-indent mt-px max-w-[72ch] [overflow-wrap:anywhere]">
+                <Text text={it.body} />
+              </div>
+              <div className="rl-indent mt-2 max-w-[72ch] text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                <Text
+                  text={`${EVIDENCE[f.evidenceStatus]}, ${f.confidence} confidence.${f.evidence.trim() ? ` ${f.evidence.trim()}` : ""}`}
+                />
+              </div>
+              {note && <p className="rl-indent m-0 mt-2 text-xs text-muted-foreground">{note}</p>}
+              {mode === "move" ? <Mover it={it} busy={busy} ctx={ctx.triage} /> : <Acts it={it} busy={busy} ctx={ctx.triage} />}
+            </>
+          )}
         </article>
       </li>
     </ol>
@@ -190,7 +230,21 @@ function DraftBody({ it, ctx }: { it: ReviewItemDto; ctx: DraftCtx }) {
 }
 
 // The drafts group sits above the threads. Only you see drafts until you post them.
-export function Drafts({ items, isOpen, ctx }: { items: ReviewItemDto[]; isOpen: (it: ReviewItemDto) => boolean; ctx: DraftCtx }) {
+// open: the item with an open editor or line field. busy: items with a triage request out.
+export type TriageState = { open: { id: number; mode: Exclude<TriageMode, null> } | null; busy: ReadonlySet<number> };
+export const modeOf = (s: TriageState, id: number): TriageMode => (s.open?.id === id ? s.open.mode : null);
+
+export function Drafts({
+  items,
+  isOpen,
+  triage,
+  ctx,
+}: {
+  items: ReviewItemDto[];
+  isOpen: (it: ReviewItemDto) => boolean;
+  triage: TriageState;
+  ctx: DraftCtx;
+}) {
   if (!items.length) return null;
   return (
     <div id="g-drafts" className="mt-5">
@@ -202,9 +256,10 @@ export function Drafts({ items, isOpen, ctx }: { items: ReviewItemDto[]; isOpen:
         <span className="font-medium text-muted-foreground">{items.length}</span>
         <span className="ml-auto text-xs font-normal text-muted-foreground">Only you see drafts until you post them.</span>
       </h3>
-      {items.map((it) => (
-        <Draft key={it.id} it={it} open={isOpen(it)} ctx={ctx} />
-      ))}
+      {items.map((it) => {
+        const mode = modeOf(triage, it.id);
+        return <Draft key={it.id} it={it} open={isOpen(it) || mode !== null} mode={mode} busy={triage.busy.has(it.id)} ctx={ctx} />;
+      })}
     </div>
   );
 }
@@ -219,6 +274,8 @@ export function AiSummary(props: {
   meta: MetaDto;
   open: boolean;
   onOpen: (open: boolean) => void;
+  triage: TriageState;
+  ctx: TriageCtx;
 }) {
   const { run, meta, pr } = props;
   const s = run.summary;
@@ -299,30 +356,52 @@ export function AiSummary(props: {
           <>
             <h3 className={h3}>Questions for {asker}</h3>
             <div>
-              {qs.map((q) => {
-                const p = q.payload as Question;
-                return (
-                  <article
-                    key={q.id}
-                    id={`q-${q.id}`}
-                    tabIndex={-1}
-                    aria-label={`Question from ${meta.runner.short}`}
-                    className="border-b px-1.5 py-2.5 first:border-t"
-                  >
-                    <p className="m-0 text-base font-medium">
-                      <Inline text={p.text} />
-                    </p>
-                    <p className="m-0 mt-0.5 text-ink-2">
-                      <Inline text={p.why} />
-                    </p>
-                  </article>
-                );
-              })}
+              {qs.map((q) => (
+                <QuestionItem
+                  key={q.id}
+                  q={q}
+                  meta={meta}
+                  mode={modeOf(props.triage, q.id)}
+                  busy={props.triage.busy.has(q.id)}
+                  ctx={props.ctx}
+                />
+              ))}
             </div>
           </>
         )}
       </div>
     </details>
+  );
+}
+
+// prototype/v3 question(). The body is the question as it will post. why stays as the runner wrote it.
+function QuestionItem({ q, meta, mode, busy, ctx }: { q: ReviewItemDto; meta: MetaDto; mode: TriageMode; busy: boolean; ctx: TriageCtx }) {
+  const p = q.payload as Question;
+  const head = { id: `q-${q.id}`, "data-item": q.id, tabIndex: -1, className: "scroll-mt-3 border-b px-1.5 py-2.5 first:border-t" };
+  if (q.status === "discarded") {
+    return (
+      <article {...head} aria-label="Discarded question" className={cn(head.className, "flex items-center gap-2 py-1.5")}>
+        <p className="m-0 min-w-0 flex-1 truncate text-sm text-muted-foreground">Discarded: {snippet(q.body, 140)}</p>
+        <RestoreButton it={q} busy={busy} ctx={ctx} />
+      </article>
+    );
+  }
+  return (
+    <article {...head} aria-label={`Question from ${meta.runner.short}${q.status === "accepted" ? ", accepted" : ""}`}>
+      {mode === "edit" ? (
+        <Editor it={q} busy={busy} flush ctx={ctx} />
+      ) : (
+        <>
+          <p className="m-0 text-base font-medium">
+            <Inline text={q.body} />
+          </p>
+          <p className="m-0 mt-0.5 text-ink-2">
+            <Inline text={p.why} />
+          </p>
+          <Acts it={q} busy={busy} showState flush ctx={ctx} />
+        </>
+      )}
+    </article>
   );
 }
 

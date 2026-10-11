@@ -1,7 +1,7 @@
 // Review server state through TanStack Query. Keys: ['brief', pr], ['runs'], ['runs', 'pr', pr], ['run', id], ['raw', id].
 // live.ts invalidates ['runs'] and ['run', id] when SSE `changed` names the run.
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BriefDto, BriefInput, RunConflict, RunDetail, RunDto } from "../../shared/dto";
+import type { BriefDto, BriefInput, ItemActionInput, ItemConflict, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../shared/dto";
 import { api } from "../api";
 import { ApiError, read } from "../shell/data";
 
@@ -68,6 +68,21 @@ export function useStartReview(pr: number) {
       qc.invalidateQueries({ queryKey: ["runs"] });
     },
   });
+}
+
+export type ItemResult = { item: ReviewItemDto } | { conflict: ItemConflict };
+
+// POST /api/items/:id (WP12). 409 with `item`: the item changed in another page. The page then shows that item.
+export async function sendItem(id: number, input: ItemActionInput): Promise<ItemResult> {
+  const res = await api.api.items[":id"].$post({ ...param(id), json: input });
+  if (res.status !== 409) return { item: await read<ReviewItemDto>(res) };
+  const text = await res.text();
+  let body: Partial<ItemConflict> = {};
+  try {
+    body = JSON.parse(text);
+  } catch {}
+  if (body.item) return { conflict: body as ItemConflict };
+  throw new ApiError(409, body.error ?? text);
 }
 
 export function useCancelRun() {

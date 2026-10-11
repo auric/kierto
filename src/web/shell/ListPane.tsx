@@ -38,6 +38,8 @@ export function ListPane(props: {
   forge: string;
   // The Review runs view: the newest run of each row. Its why-line names the run, not the inbox reason.
   runs: ReadonlyMap<number, RunDto> | null;
+  // The Ready to post view: what each row posts. Its why-line names the comments (prototype/v3 whyPost).
+  ready: ReadonlyMap<number, string> | null;
   profiles: ProfileDto[];
   candidate: PrRef | null;
   following: boolean;
@@ -65,6 +67,7 @@ export function ListPane(props: {
           forge={props.forge}
           hints={hints}
           run={props.runs?.get(p.id)}
+          ready={props.ready?.get(p.id)}
           profile={props.profiles.find((x) => x.id === props.runs?.get(p.id)?.profile)?.name ?? ""}
           selected={p.id === props.selected}
           onSelect={props.onSelect}
@@ -234,6 +237,7 @@ const Row = memo(function Row({
   forge,
   hints,
   run,
+  ready,
   profile,
   selected,
   onSelect,
@@ -244,6 +248,7 @@ const Row = memo(function Row({
   forge: string;
   hints: Hints;
   run: RunDto | undefined;
+  ready: string | undefined;
   profile: string;
   selected: boolean;
   onSelect: (id: number) => void;
@@ -301,7 +306,11 @@ const Row = memo(function Row({
             {p.title}
           </span>
         )}
-        {run ? (
+        {ready ? (
+          <span className="min-w-0 truncate text-sm text-ink-2">
+            <b className="font-semibold text-foreground">Ready:</b> {ready}
+          </span>
+        ) : run ? (
           <RunWhyLine run={run} profile={profile} />
         ) : (
           <span className="flex min-w-0 items-baseline gap-2 text-sm text-ink-2">

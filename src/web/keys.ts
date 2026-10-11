@@ -25,11 +25,12 @@ export type KeyContext = {
   settingsLocked: boolean;
   // ms.
   now: number;
-  // The open layer of the detail that Esc closes first: the review brief, or the run log (prototype/v3 Esc order).
+  // The open layer of the detail that Esc closes first: the review brief, the post confirm, or the run log (prototype/v3 Esc order).
+  // A triage edit, a line field, and a reply box close themselves on Esc.
   layer?: Layer;
 };
 
-export type Layer = "brief" | "log" | null;
+export type Layer = "brief" | "confirm" | "log" | null;
 
 export type Effect =
   | "focus-filter"
@@ -48,7 +49,12 @@ export type Effect =
   | "log"
   | "rerun"
   | "brief"
+  | "accept"
+  | "edit"
+  | "discard"
+  | "post"
   | "close-brief"
+  | "close-confirm"
   | "close-log"
   | null;
 
@@ -76,6 +82,10 @@ const DETAIL: Record<string, Effect> = {
   "3": "log",
   r: "rerun",
   R: "brief",
+  a: "accept",
+  e: "edit",
+  d: "discard",
+  p: "post",
 };
 const CHORD: Record<string, Effect> = { f: "files", c: "commits" };
 
@@ -88,7 +98,7 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
 
   if (key === "Escape") {
     if (s.help) return done({ ...s, help: false });
-    if (ctx.layer) return done(s, ctx.layer === "brief" ? "close-brief" : "close-log");
+    if (ctx.layer) return done(s, `close-${ctx.layer}`);
     if (ctx.typing) return done({ ...s, focus: "list" }, "focus-list");
     if (s.mobile === "side") return done({ ...s, mobile: "list", focus: "list" }, "focus-list");
     return back(s, ctx);
@@ -129,7 +139,7 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
   }
 }
 
-// Only the keys that work now. Triage and post keys come in M3.
+// Only the keys that work now.
 export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string[]; text: string }[] }[] = [
   {
     group: "Move",
@@ -157,7 +167,18 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
       { keys: ["r"], text: "Run the brief of this pull request again. With no brief yet, open the review brief." },
       { keys: ["Shift", "R"], text: "Open the review brief: task, your note, and profile" },
       { keys: ["Ctrl", "Enter"], text: "Start the review from the brief" },
-      { keys: ["Esc"], text: "Close the review brief or the run log" },
+      { keys: ["Esc"], text: "Close an edit, the review brief, the post confirm, or the run log" },
+    ],
+  },
+  {
+    group: "Triage and post",
+    keys: [
+      {
+        keys: ["a", "e", "d"],
+        text: "Accept, edit, or discard the current draft or question. a again undoes an accept, d again restores.",
+      },
+      { keys: ["p"], text: "Post the accepted items, after a confirm" },
+      { keys: ["Ctrl", "Enter"], text: "In a reply box: show the reply and its destination before it posts" },
     ],
   },
 ];

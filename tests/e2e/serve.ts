@@ -15,7 +15,7 @@ import { createSyncEngine } from "../../src/server/sync/engine";
 import { FAKE_USER, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
 import { claudeStream, fakeRunner, REVIEW_RESULT, reviewRemote, stubListTools } from "../support/review-fixture";
 import * as S from "../support/scenarios";
-import { APP_PORT, type ClaudeScenario, E2E_TOKEN, FAKE_URL, type Scenario } from "./control";
+import { APP_PORT, type ClaudeScenario, E2E_TOKEN, FAKE_URL, type PostControl, type Scenario } from "./control";
 
 const dataDir = mkdtempSync(join(tmpdir(), "review-loop-e2e-"));
 process.env.REVIEW_LOOP_DATA_DIR = dataDir;
@@ -121,7 +121,7 @@ const withReply = () =>
 
 function activitiesA(): S.Activity[] {
   if (sc.reply === "none" || sc.reply === "absent" || sc.reply === "deleted") return base();
-  const out = withReply();
+  const out = sc.reply === "two" ? addReply(withReply(), ROOT, 1000011, maria, "One more point: keep the flush order.") : withReply();
   const dup = out.find((a) => a.comment);
   // The same activity twice, in reversed order.
   return sc.reply === "dup" && dup ? [...out, S.clone(dup)].reverse() : out;
@@ -177,10 +177,19 @@ r[key("GET", S.DASHBOARD_PATH)] = (req) => {
 r[key("GET", A.path)] = ok(A.pr);
 r[key("GET", B.path)] = ok(B.pr);
 r[key("GET", C.path)] = () => ok(sc.merge === "merged" ? { ...C.pr, state: "MERGED" } : C.pr);
-r[key("GET", `${A.path}/activities`)] = (req) => paged(postsA.activities(), req, "null");
+// PR A posts (plan v3 WP14a): fail answers the next comment POST with this status. hide drops the activities of PR A.
+const postA = { fail: null as number | null, hide: false };
+r[key("GET", `${A.path}/activities`)] = (req) => (postA.hide ? DROP : paged(postsA.activities(), req, "null"));
 r[key("GET", `${B.path}/activities`)] = () => ok(S.onePage(postsB.activities()));
 r[key("GET", `${C.path}/activities`)] = (req) => paged(postsC.activities(), req, "absent");
 Object.assign(r, postsA.routes, postsB.routes, postsC.routes);
+const sendA = r[key("POST", `${A.path}/comments`)];
+r[key("POST", `${A.path}/comments`)] = async (req) => {
+  if (postA.fail === null) return typeof sendA === "function" ? sendA(req) : NOT_FOUND;
+  const status = postA.fail;
+  postA.fail = null;
+  return { status, body: { errors: [{ message: "Refused by the e2e scenario." }] } };
+};
 r[key("GET", `${A.path}/comments/1000010`)] = () => (sc.reply === "deleted" ? NOT_FOUND : ok(S.findComment(withReply(), 1000010)));
 
 // The app. A restart keeps the data folder and the secret store, as a process restart with the OS store does.
@@ -226,6 +235,7 @@ r[key("POST", "/__control/reset")] = async () => {
   secrets = createSecrets(null);
   sc = { ...INITIAL };
   for (const p of [postsA, postsB, postsC]) p.reset();
+  Object.assign(postA, { fail: null, hide: false });
   setClaude({ stream: "tree" });
   app = boot();
   return NO_CONTENT;
@@ -239,6 +249,14 @@ r[key("POST", "/__control/restart")] = async () => {
   await halt();
   app = boot();
   return NO_CONTENT;
+};
+// Changes the PR A post scenario. Answers with the comment POST bodies that PR A got so far.
+r[key("POST", "/__control/posts")] = async (req) => {
+  const change = (await req.json()) as PostControl;
+  if (change.drop !== undefined) postsA.drop = change.drop;
+  if (change.fail !== undefined) postA.fail = change.fail;
+  if (change.hide !== undefined) postA.hide = change.hide;
+  return ok({ bodies: postsA.bodies });
 };
 // Lets the running cycle end, changes the scenario, then runs one full cycle.
 r[key("POST", "/__control/state")] = async (req) => {

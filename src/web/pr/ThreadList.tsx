@@ -1,8 +1,11 @@
-// Threads section (prototype/v3 threadsSec): the filter, the drafts of the newest review, then your turn, waiting, others, and resolved threads.
+// Threads section (prototype/v3 threadsSec): the filter, the posts on the way, the drafts of the newest review,
+// then your turn, waiting, others, and resolved threads.
 import { CircleCheck, Hourglass, Reply, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import type { PostDto } from "../../shared/dto";
 import type { Turn } from "../../shared/turn";
+import type { ReplyTarget } from "./ReplyComposer";
 import { Thread, type ThreadCtx } from "./Thread";
 import { ordered, type ThreadModel, TURN_ORDER } from "./threads";
 
@@ -22,6 +25,12 @@ export function Threads(props: {
   spines: ReadonlySet<number>;
   branches: ReadonlySet<number>;
   ctx: ThreadCtx;
+  // Per thread: my replies on the way, the message that the reply box answers, and the AI reply draft card (WP18).
+  posts: ReadonlyMap<number, readonly PostDto[]>;
+  targets: ReadonlyMap<number, ReplyTarget>;
+  cards?: ReadonlyMap<number, ReactNode>;
+  // The posts group and the drafts group above the threads.
+  outbox?: ReactNode;
   drafts?: ReactNode;
   onNeedMe: (on: boolean) => void;
   onShowResolved: () => void;
@@ -48,6 +57,7 @@ export function Threads(props: {
           </label>
         )}
       </div>
+      {props.outbox}
       {props.drafts}
       {groups.length ? (
         groups.map(({ k, ts }) => {
@@ -82,6 +92,9 @@ export function Threads(props: {
                   cur={props.cur === t.id}
                   spine={props.spines.has(t.id)}
                   branches={props.branches}
+                  posts={props.posts.get(t.id)}
+                  target={props.targets.get(t.id)}
+                  draft={props.cards?.get(t.id)}
                   ctx={props.ctx}
                 />
               ))}

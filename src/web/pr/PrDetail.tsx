@@ -5,17 +5,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommentDto, PrRow } from "../../shared/dto";
 import type { Layer } from "../keys";
-import { useForge } from "../meta";
+import { useMeta } from "../meta";
+import { PostsGroup, useOutbox } from "../publish/Outbox";
+import { usePostBar } from "../publish/PostBar";
 import { type Focus, useReview } from "../review/useReview";
 import { ApiError, sendSeen, usePr } from "../shell/data";
 import { createHints, SharedHint } from "../shell/Hint";
 import { useMinute } from "../shell/ListPane";
 import { Calm } from "../states";
 import { Header, webLink } from "./Header";
+import type { ReplyTarget } from "./ReplyComposer";
 import { CommitsFold, FilesFold, Overview } from "./Sections";
 import type { ThreadCtx } from "./Thread";
 import { Threads } from "./ThreadList";
-import { buildThreads, mergeHighlights, newMessages, ordered, passes, reveal, shownThreads, summary } from "./threads";
+import { buildThreads, mergeHighlights, newMessages, ordered, type Person, passes, reveal, shownThreads, summary } from "./threads";
 import { useAck } from "./useAck";
 
 // The shell calls these for the detail keys (keys.ts effects).
@@ -32,6 +35,9 @@ export type DetailApi = {
   brief(): void;
   drafts(): void;
   log(): void;
+  // Plan v3 WP14a: a, e, d, and p.
+  triage(key: "accept" | "edit" | "discard"): void;
+  post(): void;
   layer(target: EventTarget | null): Layer;
   close(layer: Exclude<Layer, null>): void;
 };
@@ -74,7 +80,9 @@ export function PrDetail({
   const data = q.data;
   const pr = data?.pr ?? row;
   const comments = data?.comments ?? NO_COMMENTS;
-  const forge = useForge();
+  const meta = useMeta().data;
+  const forge = meta?.forge.name ?? "";
+  const runner = meta?.runner.name ?? "";
   const now = useMinute();
   const [hints] = useState(createHints);
   // The last visit before this one. The POST below moves the stored value to now.
@@ -102,6 +110,7 @@ export function PrDetail({
   const [showResolved, setShowResolved] = useState(false);
   const [cur, setCur] = useState<number | null>(null);
   const [secs, setSecs] = useState<ReadonlySet<string>>(new Set());
+  const [targets, setTargets] = useState<ReadonlyMap<number, ReplyTarget>>(new Map());
   // n gives each text a new node, so a screen reader reads the same text again.
   const [said, setSaid] = useState({ text: "", n: 0 });
 
@@ -141,11 +150,31 @@ export function PrDetail({
     [focusAfter],
   );
 
+  const outbox = useOutbox(row.id, comments, forge);
+  // My avatar comes from my own messages. Without one, the slug stands in.
+  const mine = useMemo<Person>(
+    () => threads.flatMap((t) => t.msgs).find((m) => m.who.me)?.who ?? { slug: me ?? "", name: me ?? "You", me: true },
+    [threads, me],
+  );
+  const onReply = useCallback(
+    (tid: number, msg: number | null) =>
+      setTargets((m) => {
+        const out = new Map(m);
+        if (msg === null) out.delete(tid);
+        else out.set(tid, { msg, n: (m.get(tid)?.n ?? 0) + 1 });
+        return out;
+      }),
+    [],
+  );
+
   const ctx = useMemo<ThreadCtx>(
     () => ({
+      pr: row.id,
       hints,
       now,
       forge,
+      runner,
+      me: mine,
       ackRef,
       onToggle: (tid) => {
         const t = latest.current.find((x) => x.id === tid);
@@ -161,11 +190,19 @@ export function PrDetail({
       },
       onQuote: jump,
       announce: (text) => setSaid((s) => ({ text, n: s.n + 1 })),
+      onReply,
+      posts: outbox.ctx,
     }),
-    [hints, now, forge, ackRef, focusAfter, jump],
+    [row.id, hints, now, forge, runner, mine, ackRef, focusAfter, jump, onReply, outbox.ctx],
   );
 
   const review = useReview(pr, { commits: data?.commits, hints, now, focusAfter, onSettings });
+  const bar = usePostBar(pr, {
+    comments,
+    forge,
+    announce: ctx.announce,
+    onPosted: (rows) => rows[0] && focusAfter({ id: `p-${rows[0].id}`, block: "nearest", flash: false }),
+  });
 
   const isOpen = (t: { id: number; open: boolean }) => open.get(t.id) ?? t.open;
   // The cause waits for the data. Cached data from an earlier visit can miss it, so the first fetch after mount must end too.
@@ -221,6 +258,7 @@ export function PrDetail({
     },
     nextNew,
     nextYour,
+    post: bar.api.open,
     section(id) {
       if (!(id === "files" ? data?.files : data?.commits)?.length) {
         toast.add({ title: id === "files" ? "No file list for this pull request yet." : "No commit list for this pull request yet." });
@@ -230,6 +268,15 @@ export function PrDetail({
       focusAfter({ id: `s-${id}-sum`, block: "start", flash: false });
     },
     ...review.api,
+    // prototype/v3 Esc order: an edit, the brief, the post confirm, the run log.
+    layer(target) {
+      const l = review.api.layer(target);
+      return l === "brief" ? l : bar.api.isOpen ? "confirm" : l;
+    },
+    close(layer) {
+      if (layer === "confirm") bar.api.close();
+      else review.api.close(layer);
+    },
   }));
 
   const openSec = (id: string) => (on: boolean) => setSecs((s) => (on === s.has(id) ? s : toggled(s, id)));
@@ -263,6 +310,9 @@ export function PrDetail({
               spines={spines}
               branches={branches}
               ctx={ctx}
+              posts={outbox.threads}
+              targets={targets}
+              outbox={<PostsGroup posts={outbox.rest} comments={comments} forge={forge} ctx={outbox.ctx} />}
               drafts={review.drafts}
               onNeedMe={setNeedMe}
               onShowResolved={() => {
@@ -309,6 +359,7 @@ export function PrDetail({
           </div>
         )}
       </div>
+      {data && bar.node}
       <SharedHint hints={hints} />
       <p role="status" className="sr-only">
         <span key={said.n}>{said.text}</span>

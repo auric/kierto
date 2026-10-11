@@ -138,3 +138,23 @@ describe("detail keys", () => {
     expect(reduceKey({ ...S, selected: 20, settings: true }, "n", { ...C, settingsLocked: true }).handled).toBe(false);
   });
 });
+
+// Plan v3 WP14a, prototype/v3 2744-2745: a, e, d, and p. Esc closes the post confirm after the brief.
+describe("triage and post keys", () => {
+  test("a, e, d, and p act on the selected PR in the detail", () => {
+    const pr = { ...S, selected: 20 };
+    const effects = ["a", "e", "d", "p"].map((k) => reduceKey(pr, k, C));
+    expect(effects.map((r) => r.effect)).toEqual(["accept", "edit", "discard", "post"]);
+    for (const r of effects) expect(r.state).toMatchObject({ focus: "detail", mobile: "detail" });
+  });
+
+  test("they do nothing while typing, so a reply box takes the letters", () => {
+    for (const k of ["a", "e", "d", "p"]) expect(reduceKey({ ...S, selected: 20 }, k, { ...C, typing: true }).handled).toBe(false);
+    expect(reduceKey(S, "p", C).handled).toBe(false);
+  });
+
+  test("Esc closes the post confirm", () => {
+    const detail = { ...S, selected: 20, focus: "detail" as const, mobile: "detail" as const };
+    expect(reduceKey(detail, "Escape", { ...C, layer: "confirm" })).toMatchObject({ effect: "close-confirm", state: detail });
+  });
+});

@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Rows3,
   Rows4,
+  Send,
   Settings2,
   Star,
   Sun,
@@ -52,16 +53,18 @@ const current = "bg-pane font-semibold text-foreground shadow-[inset_0_0_0_1px_v
 const heading = "rl-lbl m-0 px-2 py-1 text-xs font-semibold text-muted-foreground";
 
 export function Sidebar(props: {
-  // null: a repository or the settings take the list or the detail. "runs": the Review runs view.
-  view: View | "runs" | null;
+  // null: a repository or the settings take the list or the detail. "runs" and "post": the AI review views.
+  view: View | "runs" | "post" | null;
   counts: Record<View, number>;
   // The PRs with a review run, and whether a review runs now.
   runs: { count: number; running: boolean };
+  // The PRs with accepted items (prototype/v3 AIVIEWS.post).
+  post: number;
   repos: ProjectRepos[];
   repo: string | null;
   status: StatusInfo | null;
   checking: boolean;
-  onView: (v: View | "runs") => void;
+  onView: (v: View | "runs" | "post") => void;
   onRepo: (r: string | null) => void;
   onCheck: () => void;
   onSettings: () => void;
@@ -116,6 +119,20 @@ export function Sidebar(props: {
         <div className="grid gap-px">
           <h2 className={heading}>AI review</h2>
           <RunsItem {...props.runs} rail={rail} current={props.view === "runs"} onClick={() => props.onView("runs")} />
+          <Hint label={`Ready to post: ${props.post}`} disabled={!rail} side="right">
+            <button
+              type="button"
+              id="nav-post"
+              className={cn(navItem, props.view === "post" && current)}
+              aria-current={props.view === "post" ? "page" : undefined}
+              aria-label={`Ready to post: ${props.post}`}
+              onClick={() => props.onView("post")}
+            >
+              <Send aria-hidden className="size-[15px] shrink-0" />
+              <span className="rl-lbl truncate">Ready to post</span>
+              <span className="rl-lbl ml-auto text-xs font-medium text-muted-foreground">{props.post || ""}</span>
+            </button>
+          </Hint>
         </div>
         {props.repos.length > 0 && (
           <div className="rl-repos grid gap-px">
