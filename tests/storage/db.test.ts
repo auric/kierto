@@ -198,6 +198,23 @@ test("migration from a version-11 database keeps every run, event, item, and pos
   expect(second).toEqual(first);
 });
 
+test("an orphan row in a table that no migration touches does not block the upgrade", () => {
+  const path = join(dir, "orphan.sqlite");
+  const old = v11(path);
+  old.exec("INSERT INTO pr_task (pr, key, source, url, ord) VALUES (99, 'ABC-1', 'branch', NULL, 0)");
+  old.close();
+
+  const db = openDb(path);
+  try {
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(13);
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([
+      { table: "pr_task", rowid: expect.anything(), parent: "pull_request", fkid: 0 },
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
 test("a migration that leaves a broken foreign key rolls back and throws", () => {
   const path = join(dir, "broken.sqlite");
   const old = v11(path);

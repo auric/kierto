@@ -30,6 +30,25 @@ const MIGRATIONS = [
   m013_task_context,
 ];
 
+const tables = (db: Database) =>
+  new Map(
+    (db.query("SELECT name, sql FROM sqlite_master WHERE type = 'table'").all() as { name: string; sql: string }[]).map((r) => [
+      r.name,
+      r.sql,
+    ]),
+  );
+
+// The tables that a migration created or changed, and their child tables. An orphan row elsewhere is older than the migration.
+function touched(db: Database, before: Map<string, string>) {
+  const after = tables(db);
+  const changed = new Set([...after].filter(([n, sql]) => before.get(n) !== sql).map(([n]) => n.toLowerCase()));
+  const out = new Set(changed);
+  for (const n of after.keys())
+    for (const k of db.query('SELECT "table" FROM pragma_foreign_key_list(?)').all(n) as { table: string }[])
+      if (changed.has(k.table.toLowerCase())) out.add(n.toLowerCase());
+  return out;
+}
+
 export function openDb(path: string): Database {
   const db = new Database(path, { create: true, strict: true });
   // journal_mode cannot change inside a transaction.
@@ -42,8 +61,9 @@ export function openDb(path: string): Database {
     const { user_version } = db.query("PRAGMA user_version").get() as { user_version: number };
     for (let v = user_version; v < MIGRATIONS.length; v++) {
       db.transaction(() => {
+        const before = tables(db);
         db.exec(MIGRATIONS[v] as string);
-        const broken = db.query("PRAGMA foreign_key_check").all();
+        const broken = [...touched(db, before)].flatMap((t) => db.query(`PRAGMA foreign_key_check("${t.replaceAll('"', '""')}")`).all());
         if (broken.length)
           throw new Error(`Migration ${v + 1} breaks ${broken.length} foreign keys: ${JSON.stringify(broken.slice(0, 3))}`);
         db.exec(`PRAGMA user_version = ${v + 1}`);
