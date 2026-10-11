@@ -4,6 +4,7 @@
 import type { Database } from "bun:sqlite";
 import type { PlannedPost, PostDestination, PostDto, PostState, ReplyConflict, ReplyPostInput } from "../../shared/dto";
 import { isMe } from "../../shared/me";
+import type { ReplyPayload } from "../../shared/review";
 import { newestLive, type TurnMsg } from "../../shared/turn";
 import type { Comment, PrRef } from "../../shared/types";
 import { ForgeError } from "../bitbucket/client";
@@ -47,6 +48,11 @@ const SQL = {
   ref: "SELECT project, repo, pr_id AS id FROM pull_request WHERE id = $pr",
   heads: "SELECT source_head, target_head FROM review_run WHERE id = $run",
   parent: "SELECT root_id, tombstoned_at FROM comment WHERE pr = $pr AND comment_id = $id",
+  fixItem: "SELECT payload_json FROM review_item WHERE id = $id AND kind = 'reply'",
+  // Plan r3: sync writes pr_commit and meta_head together, after a complete commits fetch for the current heads.
+  fixed: `SELECT 1 FROM pull_request p JOIN pr_commit c ON c.pr = p.id AND c.hash = $hash
+    WHERE p.id = $pr AND p.meta_head = p.source_head || ':' || p.target_head`,
+  fixShort: "SELECT short_hash FROM fix_commit WHERE id = $id",
   thread: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr AND root_id = $root`,
   insert: `INSERT INTO post (pr, run, kind, idem_key, body, destination_json, items_json, state, created_at, updated_at)
@@ -323,6 +329,18 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     return null;
   }
 
+  // Plan r3: a "Fixed in" reply posts only when the stored PR commits hold its commit and belong to the current heads.
+  function fixCheck(db: Database, pr: number, items: number[]): string | null {
+    for (const id of items) {
+      const row = db.query(SQL.fixItem).get({ id }) as { payload_json: string } | null;
+      const fix = row ? (JSON.parse(row.payload_json) as ReplyPayload).fix : undefined;
+      if (!fix || db.query(SQL.fixed).get({ pr, hash: fix.commit })) continue;
+      const short = (db.query(SQL.fixShort).get({ id: fix.id }) as { short_hash: string | null } | null)?.short_hash;
+      return `Commit ${short ?? fix.commit.slice(0, 7)} is not on the PR source branch yet. Push it. The next sync finds it.`;
+    }
+    return null;
+  }
+
   // The rows of an earlier confirm with exactly these items and revisions (A14), else null.
   function existing(db: Database, pr: number, want: Map<number, number>): PostDto[] | null {
     const rows = (db.query(SQL.runPosts).all({ pr }) as PostRow[]).filter((r) => {
@@ -349,6 +367,7 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     wait: () => busy ?? Promise.resolve(),
     headCheck,
     replyCheck,
+    fixCheck,
     existing,
 
     posts(db: Database, pr: number): PostDto[] | null {

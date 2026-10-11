@@ -85,6 +85,9 @@ export function createPublishRoutes(opts: { review: ReviewJobs; settings: Settin
         const parents = chosen.flatMap((p) => (p.destination.kind === "reply" ? [p.destination.parentId] : []));
         const stale = outbox.replyCheck(db, pr, parents);
         if (stale) return c.json({ error: stale }, 409);
+        const replyItems = chosen.flatMap((p) => (p.destination.kind === "reply" ? p.items.map((i) => i.id) : []));
+        const unpushed = outbox.fixCheck(db, pr, replyItems);
+        if (unpushed) return c.json({ error: unpushed }, 409);
         const runs = [...new Set(chosen.filter((p) => p.destination.kind !== "reply").map((p) => p.run))];
         const heads = runs.length ? await outbox.headCheck(db, pr, runs) : { warning: null };
         if ("error" in heads) return heads.status === 409 ? c.json({ error: heads.error }, 409) : c.json({ error: heads.error }, 502);

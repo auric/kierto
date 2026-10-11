@@ -1,8 +1,375 @@
 // Fix it API (plan r3 S-APPLY): the clone routes, commit, and undo. Git in the user's clone runs no network command.
+import type { Database } from "bun:sqlite";
+import { realpathSync } from "node:fs";
 import { Hono } from "hono";
+import { validator } from "hono/validator";
+import {
+  type ApiError,
+  type CloneDto,
+  type CloneProblem,
+  cloneInput,
+  type FixCommitDto,
+  type FixCommitInput,
+  type FixConflict,
+  fixCommitInput,
+} from "../../shared/dto";
+import type { ReplyPayload } from "../../shared/review";
+import { newestLive, type TurnMsg } from "../../shared/turn";
+import type { PullRequest } from "../../shared/types";
 import type { Settings } from "../settings";
+import {
+  applyCheck,
+  applyIndex,
+  buildPatch,
+  CLONE_TEXT,
+  cacheCommit,
+  checkClone,
+  clonePath,
+  cloneProblem,
+  commitIndex,
+  type FixCommitRow,
+  fixRef,
+  hooksFolder,
+  identity,
+  indexEntries,
+  type PatchEdit,
+  resetKeep,
+  stagedPaths,
+  toFixCommitDto,
+  treeEntries,
+} from "./clone";
+import { GitError, git } from "./git";
 import type { ReviewJobs } from "./jobs";
+import { cachePath, gitSetup, locked } from "./workspace";
 
-export function createFixRoutes(_opts: { review: ReviewJobs; settings: Settings }) {
-  return new Hono();
+type PrRow = { id: number; project: string; repo: string; pr_id: number; source_branch: string | null; source_head: string | null };
+// source: the source head S of the run.
+type RunRow = { run: number; kind: string; source: string; pr: number; project: string; repo: string; pr_id: number };
+type EditRow = PatchEdit & { thread: number };
+type CommitRow = FixCommitRow & { project: string; repo: string };
+
+const SQL = {
+  pr: "SELECT id, project, repo, pr_id, source_branch, source_head FROM pull_request WHERE id = $id",
+  clone: "SELECT path FROM repo_clone WHERE project = $project AND repo = $repo",
+  saveClone: `INSERT INTO repo_clone (project, repo, path, updated_at) VALUES ($project, $repo, $path, $now)
+    ON CONFLICT (project, repo) DO UPDATE SET path = excluded.path, updated_at = excluded.updated_at`,
+  dropClone: "DELETE FROM repo_clone WHERE project = $project AND repo = $repo",
+  run: `SELECT r.id AS run, r.kind, r.source_head AS source, p.id AS pr, p.project, p.repo, p.pr_id
+    FROM review_run r JOIN pull_request p ON p.id = r.pr WHERE r.id = $id`,
+  edits: "SELECT id, thread, path, old, new FROM fix_edit WHERE run = $run ORDER BY ord",
+  byKey: "SELECT id FROM fix_commit WHERE idem_key = $key AND state <> 'undone'",
+  commit: "SELECT c.*, p.pr_id, p.project, p.repo FROM fix_commit c JOIN pull_request p ON p.id = c.pr WHERE c.id = $id",
+  insert: `INSERT INTO fix_commit (pr, run, idem_key, edits_json, mode, clone_path, branch, before_head, state, message, created_at, updated_at)
+    VALUES ($pr, $run, $key, $edits, $mode, $clone, $branch, $before, 'staged', $message, $now, $now) RETURNING id`,
+  committed: "UPDATE fix_commit SET state = 'committed', commit_hash = $hash, short_hash = $short, updated_at = $now WHERE id = $id",
+  undone: "UPDATE fix_commit SET state = 'undone', updated_at = $now WHERE id = $id",
+  remove: "DELETE FROM fix_commit WHERE id = $id",
+  // jobs.ts supersede: a new reply draft replaces the open drafts of its thread. Posted drafts stay.
+  supersede: `UPDATE review_item SET status = 'discarded', revision = revision + 1
+    WHERE kind = 'reply' AND thread = $thread AND status IN ('new', 'accepted') AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
+  thread: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
+      tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr AND root_id = $root`,
+  item: `INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited)
+    VALUES ($run, 'reply', $payload, $body, 'new', $thread, 0)`,
+  discard: `UPDATE review_item SET status = 'discarded', revision = revision + 1
+    WHERE kind = 'reply' AND status IN ('new', 'accepted') AND json_extract(payload_json, '$.fix.id') = $id`,
+  pushed: "SELECT 1 FROM pr_commit WHERE pr = $pr AND hash = $hash",
+};
+
+const positiveId = (what: string) =>
+  validator("param", (v: Record<string, string>, c) => {
+    const id = Number(v.id);
+    return Number.isSafeInteger(id) && id > 0 ? { id } : c.json<ApiError>({ error: `Invalid ${what} ID.` }, 400);
+  });
+const prParam = positiveId("pull request");
+const runParam = positiveId("run");
+const commitParam = positiveId("fix commit");
+
+const unconfigured = { error: "Configure the Bitbucket URL and token first." } satisfies ApiError;
+const notFound = (what: string) => ({ error: `${what} not found.` }) satisfies ApiError;
+// Undo refuses a clone that moved. Only problems that a reset can break count.
+const UNDO_BLOCKS: CloneProblem[] = ["missing", "not_repo", "detached", "branch", "dirty", "busy"];
+
+type Out = { status: 200 | 201; dto: FixCommitDto } | { status: 404 | 409 | 502; body: ApiError | FixConflict };
+const conflict = (error: string, problems: FixConflict["problems"] = []): Out => ({ status: 409, body: { error, problems } });
+
+export function createFixRoutes(opts: { review: ReviewJobs; settings: Settings }) {
+  const { review, settings } = opts;
+  // syncCache keys the cache and its lock by the long path of the data folder.
+  const dataDir = () => {
+    try {
+      return realpathSync.native(review.dataDir);
+    } catch {
+      return review.dataDir;
+    }
+  };
+  const env = () => gitSetup(dataDir()).env;
+  const cacheOf = (p: { project: string; repo: string; pr_id: number }) =>
+    cachePath(dataDir(), { project: p.project, repo: p.repo, id: p.pr_id });
+  const prRow = (db: Database, id: number) => db.query(SQL.pr).get({ id }) as PrRow | null;
+  const cloneOf = (db: Database, p: { project: string; repo: string }) =>
+    (db.query(SQL.clone).get({ project: p.project, repo: p.repo }) as { path: string } | null)?.path ?? null;
+  const commitRow = (db: Database, id: number) => db.query(SQL.commit).get({ id }) as CommitRow | null;
+  const dtoOf = (db: Database, id: number) => {
+    const r = commitRow(db, id) as CommitRow;
+    return toFixCommitDto(r, cacheOf(r));
+  };
+  // GET and PUT: no network. The synced source head stands for the live head.
+  const cloneState = (db: Database, pr: PrRow): Promise<CloneDto> =>
+    checkClone(cloneOf(db, pr), { branch: pr.source_branch ?? "", ...(pr.source_head ? { live: pr.source_head } : {}) });
+
+  function insert(
+    db: Database,
+    run: RunRow,
+    key: string,
+    ids: number[],
+    input: FixCommitInput,
+    at: { clone: string | null; branch: string | null; before: string },
+  ) {
+    const now = Date.now();
+    const v = { pr: run.pr, run: run.run, key, edits: JSON.stringify(ids), mode: input.mode, message: input.message, now, ...at };
+    return (db.query(SQL.insert).get(v) as { id: number }).id;
+  }
+
+  // One transaction: the commit, the superseded drafts of each thread, and one "Fixed in" reply draft per thread.
+  function finish(db: Database, run: RunRow, id: number, edits: EditRow[], made: { commit: string; short: string }) {
+    db.transaction(() => {
+      db.query(SQL.committed).run({ id, hash: made.commit, short: made.short, now: Date.now() });
+      for (const thread of new Set(edits.map((e) => e.thread))) {
+        db.query(SQL.supersede).run({ thread, pr: run.pr });
+        const last = newestLive(db.query(SQL.thread).all({ pr: run.pr, root: thread }) as TurnMsg[]);
+        if (!last) continue;
+        const body = `Fixed in ${made.short}.`;
+        const payload: ReplyPayload = {
+          thread,
+          action: "reply",
+          body,
+          reason: "The app committed the fix.",
+          evidenceStatus: "code",
+          judgement: null,
+          replyTo: last.id,
+          fix: { id, commit: made.commit },
+        };
+        db.query(SQL.item).run({ run: run.run, payload: JSON.stringify(payload), body, thread });
+      }
+    })();
+  }
+
+  async function intoClone(db: Database, run: RunRow, clone: string, edits: EditRow[], key: string, ids: number[], input: FixCommitInput) {
+    const forge = await settings.provider().catch(() => null);
+    if (!forge) return { status: 409, body: unconfigured } satisfies Out;
+    let live: PullRequest;
+    try {
+      live = await forge.getPullRequest({ project: run.project, repo: run.repo, id: run.pr_id });
+    } catch {
+      return { status: 502, body: { error: "Could not read the pull request on Bitbucket." } } satisfies Out;
+    }
+    const state = await checkClone(clone, { branch: live.sourceBranch, base: run.source, live: live.sourceHead });
+    if (state.problems.length || !state.head) return conflict("The clone is not ready for the fix.", state.problems);
+    const hooks = await hooksFolder(clone);
+    const cache = cacheOf(run);
+    const patch = await locked(cache, () => buildPatch(cache, env(), run.source, edits, hooks));
+    if ("error" in patch) return conflict(patch.error);
+    if (!(await applyCheck(clone, patch.patch))) return conflict(CLONE_TEXT.patch, [cloneProblem("patch")]);
+    const id = insert(db, run, key, ids, input, { clone, branch: state.branch, before: state.head });
+    try {
+      await applyIndex(clone, patch.patch);
+    } catch {
+      db.query(SQL.remove).run({ id });
+      return conflict(CLONE_TEXT.patch, [cloneProblem("patch")]);
+    }
+    let made: { commit: string; short: string };
+    try {
+      made = await commitIndex(clone, input.message);
+      if (made.commit === state.head) throw new GitError("git commit made no commit.");
+    } catch (e) {
+      return conflict(
+        `The commit failed. The edits stay staged. Fix the problem, then commit in your clone, or Undo. ${(e as Error).message}`,
+      );
+    }
+    finish(db, run, id, edits, made);
+    return { status: 201, dto: dtoOf(db, id) } satisfies Out;
+  }
+
+  // Runs under the cache lock.
+  async function intoCache(
+    db: Database,
+    run: RunRow,
+    clone: string | null,
+    edits: EditRow[],
+    key: string,
+    ids: number[],
+    input: FixCommitInput,
+  ) {
+    const cache = cacheOf(run);
+    const patch = await buildPatch(cache, env(), run.source, edits);
+    if ("error" in patch) return conflict(patch.error);
+    const who = await identity(clone);
+    if (!who) return conflict(CLONE_TEXT.identity, [cloneProblem("identity")]);
+    const id = insert(db, run, key, ids, input, { clone: null, branch: null, before: run.source });
+    try {
+      const made = await cacheCommit(cache, env(), { base: run.source, tree: patch.tree }, input.message, who);
+      await git([`--git-dir=${cache}`, "update-ref", fixRef(run.pr_id, id), made.commit, ""], { env: env() });
+      finish(db, run, id, edits, made);
+    } catch (e) {
+      db.query(SQL.remove).run({ id });
+      return conflict((e as Error).message);
+    }
+    return { status: 201, dto: dtoOf(db, id) } satisfies Out;
+  }
+
+  async function commit(db: Database, runId: number, input: FixCommitInput): Promise<Out> {
+    const run = db.query(SQL.run).get({ id: runId }) as RunRow | null;
+    if (run?.kind !== "fix") return { status: 404, body: notFound("Fix run") };
+    const ids = [...new Set(input.edits)].sort((a, b) => a - b);
+    const edits = (db.query(SQL.edits).all({ run: runId }) as EditRow[]).filter((e) => ids.includes(e.id));
+    if (edits.length !== ids.length) return { status: 404, body: notFound("Fix edit") };
+    const key = `${runId}:${input.mode}:${ids.join(",")}`;
+    const clone = cloneOf(db, run);
+    if (input.mode === "clone" && clone === null) return conflict(CLONE_TEXT.not_set, [cloneProblem("not_set")]);
+    // Plan r3: apply, commit, and undo run under a per-clone lock, not in the run slot.
+    return locked(input.mode === "clone" ? `clone:${clone}` : cacheOf(run), async (): Promise<Out> => {
+      const done = db.query(SQL.byKey).get({ key }) as { id: number } | null;
+      if (done) return { status: 200, dto: dtoOf(db, done.id) };
+      return clone !== null && input.mode === "clone"
+        ? intoClone(db, run, clone, edits, key, ids, input)
+        : intoCache(db, run, clone, edits, key, ids, input);
+    });
+  }
+
+  // A committed clone fix: HEAD still at the commit on its branch and a clean tree. Returns the refusal text.
+  async function undoCommitted(r: CommitRow): Promise<string | null> {
+    const path = r.clone_path as string;
+    const state = await checkClone(path, { branch: r.branch ?? "" });
+    const block = state.problems.find((p) => UNDO_BLOCKS.includes(p.kind));
+    if (block) return block.text;
+    if (state.head !== r.commit_hash) return "The clone HEAD moved since the fix commit. Undo it in your clone.";
+    await resetKeep(path, r.before_head);
+    return null;
+  }
+
+  // A staged clone fix: HEAD at the head before, and the index holds exactly the patch. Reverse-applies the patch.
+  async function undoStaged(db: Database, r: CommitRow): Promise<string | null> {
+    const path = r.clone_path as string;
+    const run = db.query(SQL.run).get({ id: r.run }) as RunRow;
+    const ids = JSON.parse(r.edits_json) as number[];
+    const edits = (db.query(SQL.edits).all({ run: r.run }) as EditRow[]).filter((e) => ids.includes(e.id));
+    const cache = cacheOf(r);
+    const patch = await locked(cache, () => buildPatch(cache, env(), run.source, edits));
+    if ("error" in patch) return patch.error;
+    const state = await checkClone(path, { branch: r.branch ?? "" });
+    const block = state.problems.find((p) => p.kind === "missing" || p.kind === "not_repo");
+    if (block) return block.text;
+    const differ = "The staged changes differ from the fix. Undo them in your clone.";
+    if (state.head !== r.before_head) return differ;
+    const staged = await stagedPaths(path);
+    const want = await treeEntries(cache, env(), patch.tree, patch.paths);
+    const have = await indexEntries(path, patch.paths);
+    if (staged.length !== patch.paths.length || patch.paths.some((p) => !staged.includes(p) || have.get(p) !== want.get(p))) return differ;
+    if (!(await applyCheck(path, patch.patch, true))) return differ;
+    await applyIndex(path, patch.patch, true);
+    return null;
+  }
+
+  async function undo(db: Database, id: number): Promise<Out> {
+    const first = commitRow(db, id);
+    if (!first) return { status: 404, body: notFound("Fix commit") };
+    const cache = cacheOf(first);
+    return locked(first.mode === "clone" ? `clone:${first.clone_path}` : cache, async (): Promise<Out> => {
+      const r = commitRow(db, id) as CommitRow;
+      if (r.state === "undone") return { status: 200, dto: toFixCommitDto(r, cache) };
+      if (r.commit_hash && db.query(SQL.pushed).get({ pr: r.pr, hash: r.commit_hash }))
+        return conflict("The commit is on the pull request already. Revert it in your clone.");
+      if (r.mode === "cache") await git([`--git-dir=${cache}`, "update-ref", "-d", fixRef(r.pr_id, r.id)], { env: env() }).catch(() => "");
+      else {
+        const why = r.state === "committed" ? await undoCommitted(r) : await undoStaged(db, r);
+        if (why) return conflict(why);
+      }
+      db.transaction(() => {
+        db.query(SQL.undone).run({ id, now: Date.now() });
+        db.query(SQL.discard).run({ id });
+      })();
+      return { status: 200, dto: dtoOf(db, id) };
+    });
+  }
+
+  // A git failure in the clone is a conflict with its stderr tail, not a server error.
+  const guarded = async (f: () => Promise<Out>): Promise<Out> => {
+    try {
+      return await f();
+    } catch (e) {
+      if (e instanceof GitError) return conflict(e.message);
+      throw e;
+    }
+  };
+
+  return new Hono()
+    .get("/prs/:id/clone", prParam, async (c) => {
+      const db = review.open();
+      if (!db) return c.json(unconfigured, 409);
+      const pr = prRow(db, c.req.valid("param").id);
+      if (!pr) return c.json(notFound("Pull request"), 404);
+      c.header("Cache-Control", "no-store");
+      try {
+        return c.json(await cloneState(db, pr), 200);
+      } catch (e) {
+        if (e instanceof GitError) return c.json<ApiError>({ error: e.message }, 409);
+        throw e;
+      }
+    })
+    .put(
+      "/prs/:id/clone",
+      prParam,
+      validator("json", (v, c) => {
+        const r = cloneInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid clone path." }, 400);
+      }),
+      async (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const pr = prRow(db, c.req.valid("param").id);
+        if (!pr) return c.json(notFound("Pull request"), 404);
+        const r = await clonePath(c.req.valid("json").path, review.dataDir);
+        if ("error" in r) return c.json<ApiError>({ error: r.error }, 400);
+        db.query(SQL.saveClone).run({ project: pr.project, repo: pr.repo, path: r.path, now: Date.now() });
+        try {
+          return c.json(await cloneState(db, pr), 200);
+        } catch (e) {
+          if (e instanceof GitError) return c.json<ApiError>({ error: e.message }, 409);
+          throw e;
+        }
+      },
+    )
+    .delete("/prs/:id/clone", prParam, (c) => {
+      const db = review.open();
+      if (!db) return c.json(unconfigured, 409);
+      const pr = prRow(db, c.req.valid("param").id);
+      if (!pr) return c.json(notFound("Pull request"), 404);
+      db.query(SQL.dropClone).run({ project: pr.project, repo: pr.repo });
+      return c.body(null, 204);
+    })
+    .post(
+      "/fix-runs/:id/commit",
+      runParam,
+      validator("json", (v, c) => {
+        const r = fixCommitInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid fix commit." }, 400);
+      }),
+      async (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const r = await guarded(() => commit(db, c.req.valid("param").id, c.req.valid("json")));
+        if ("dto" in r) return r.status === 201 ? c.json(r.dto, 201) : c.json(r.dto, 200);
+        if (r.status === 404) return c.json(r.body, 404);
+        return r.status === 502 ? c.json(r.body, 502) : c.json(r.body, 409);
+      },
+    )
+    .post("/fix-commits/:id/undo", commitParam, async (c) => {
+      const db = review.open();
+      if (!db) return c.json(unconfigured, 409);
+      const r = await guarded(() => undo(db, c.req.valid("param").id));
+      if ("dto" in r) return c.json(r.dto, 200);
+      if (r.status === 404) return c.json(r.body, 404);
+      return r.status === 502 ? c.json(r.body, 502) : c.json(r.body, 409);
+    });
 }

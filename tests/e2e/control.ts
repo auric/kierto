@@ -31,6 +31,9 @@ export type Scenario = {
   forge: boolean;
   // PR 1001: the description names the tasks ABC-42 (the fake Jira serves it) and ABC-404 (the fake Jira gives 404).
   task: boolean;
+  // PR 1004 (PROJ1/sample-repo-4, source branch fix/flush-lock): the PR of the token owner joins the author dashboard.
+  // The reviewer asks for code changes in threads 5000001 and 5000002. makeClone(1004) gives a clone on its source branch.
+  author: boolean;
 };
 
 // The next fake Claude Code run. tree: a subagent run with drafts. schema: a result that fails the schema. limit: a usage limit.

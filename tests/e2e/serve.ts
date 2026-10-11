@@ -42,7 +42,7 @@ console.log(`Fake claude CLI: ${runnerCommand.join(" ")}`);
 
 // ---------- Review data (plan v3 WP11) ----------
 // Every e2e PR has its source head at refs/pull-requests/<id>/from and its target head at main.
-const remote = await reviewRemote(claudeDir, { 1001: "source", 210: "source", 77: "source" });
+const remote = await reviewRemote(claudeDir, { 1001: "source", 210: "source", 77: "source", 1004: "source" });
 
 const STREAMS: Record<ClaudeScenario["stream"], string> = {
   // b9: the main agent, two refused agents, and one rl-reviewer subagent with three calls.
@@ -99,6 +99,7 @@ const INITIAL: Scenario = {
   down: false,
   forge: false,
   task: false,
+  author: false,
 };
 let sc: Scenario = { ...INITIAL };
 
@@ -153,7 +154,11 @@ Object.assign(B.pr.fromRef, {
   displayId: "feature/release_pipeline_observability_dashboard_rollout",
 });
 const C = makePr("PROJ1", "sample-repo-3", 77, "Drop the legacy export endpoint", kenji, "APPROVED");
-const PRS: Record<number, typeof A> = { 1001: A, 210: B, 77: C };
+// Plan r3 UI-FIX: a PR of the token owner. The other user asks for code changes in two threads.
+const D = makePr("PROJ1", "sample-repo-4", 1004, "Release the write lock after each entry", me, "UNAPPROVED");
+Object.assign(D.pr, { reviewers: [{ user: alex, role: "REVIEWER", approved: false, status: "NEEDS_WORK" }] });
+Object.assign(D.pr.fromRef, { id: "refs/heads/fix/flush-lock", displayId: "fix/flush-lock" });
+const PRS: Record<number, typeof A> = { 1001: A, 210: B, 77: C, 1004: D };
 // Plan r3: the source head of a PR after /__control/push, with the commits and changes that the fake lists for it. A reset clears it.
 const pushed = new Map<number, { head: string; commits: unknown[]; changes: unknown[] }>();
 const remoteEnv = gitEnv(join(claudeDir, "empty.gitconfig"));
@@ -227,6 +232,19 @@ function activitiesB(): S.Activity[] {
 const baseC = () => (sc.forge ? [...base(), ...S.activities("activities-v3-after-write.json").filter((a) => a.comment)] : base());
 const activitiesC = () => (sc.merge === "open" ? baseC() : addReply(baseC(), ROOT, 3000001, kenji, "Merged. Thanks for the quick review."));
 
+// PR 1004: two general threads by the reviewer. Each newest message is theirs, so both wait for the author.
+const D_THREADS = [
+  [5000001, "Release the lock in a `finally` block, so a throwing `write()` cannot leave it held."],
+  [5000002, "Take the lock once, before the loop. Another writer can run between two entries."],
+] as const;
+function activitiesD(): S.Activity[] {
+  return D_THREADS.map(([id, text], i) => {
+    const root = S.clone(S.findComment(base(), ROOT));
+    Object.assign(root, { id, version: 0, text, author: alex, comments: [], createdDate: T0 + i, updatedDate: T0 + i });
+    return { id: 50000000 + i, action: "COMMENTED", commentAction: "ADDED", comment: root };
+  });
+}
+
 const ok = (body: unknown): Reply => ({ status: 200, body });
 const DROP: Reply = { drop: true };
 const NOT_FOUND: Reply = { status: 404, body: { errors: [{ message: "Not found." }] } };
@@ -245,6 +263,7 @@ const paged = <T>(values: T[], req: Request, last: "absent" | "null") => {
 const postsA = S.commentPosts(A.path, activitiesA, me, 4_000_001);
 const postsB = S.commentPosts(B.path, activitiesB, me, 4_100_001);
 const postsC = S.commentPosts(C.path, activitiesC, me, 4_200_001);
+const postsD = S.commentPosts(D.path, activitiesD, me, 4_300_001);
 
 const fake = startFakeBitbucket({ port: Number(new URL(FAKE_URL).port) });
 fake.token = E2E_TOKEN;
@@ -253,7 +272,7 @@ jira.token = E2E_JIRA_TOKEN;
 jira.addIssue(JIRA_ISSUE);
 const r = fake.routes;
 r[key("GET", S.DASHBOARD_PATH)] = (req) => {
-  if (new URL(req.url).searchParams.get("role") === "AUTHOR") return sc.down ? DROP : ok(S.onePage([]));
+  if (new URL(req.url).searchParams.get("role") === "AUTHOR") return sc.down ? DROP : ok(S.onePage(sc.author ? [D.pr] : []));
   if (sc.down && start(req) > 0) return DROP;
   return paged(sc.merge === "merged" ? [A.pr, B.pr] : [A.pr, B.pr, C.pr], req, "absent");
 };
@@ -265,11 +284,13 @@ const postA = { fail: null as number | null, hide: false };
 r[key("GET", `${A.path}/activities`)] = (req) => (postA.hide ? DROP : paged(postsA.activities(), req, "null"));
 r[key("GET", `${B.path}/activities`)] = () => ok(S.onePage(postsB.activities()));
 r[key("GET", `${C.path}/activities`)] = (req) => paged(postsC.activities(), req, "absent");
+r[key("GET", D.path)] = () => ok(D.pr);
+r[key("GET", `${D.path}/activities`)] = () => ok(S.onePage(postsD.activities()));
 // The commits and changes of PR 77 only exist in the forge scenario. Other PRs get 404, so their detail has no Files or Commits.
 const forgeOnly = (name: string) => (): Reply => (sc.forge ? fixture(name) : NOT_FOUND);
 r[key("GET", `${C.path}/commits`)] = forgeOnly("pull-request-commits-page.json");
 r[key("GET", `${C.path}/changes`)] = forgeOnly("pull-request-changes.json");
-Object.assign(r, postsA.routes, postsB.routes, postsC.routes);
+Object.assign(r, postsA.routes, postsB.routes, postsC.routes, postsD.routes);
 const sendA = r[key("POST", `${A.path}/comments`)];
 r[key("POST", `${A.path}/comments`)] = async (req) => {
   if (postA.fail === null) return typeof sendA === "function" ? sendA(req) : NOT_FOUND;
@@ -432,7 +453,7 @@ r[key("POST", "/__control/reset")] = async () => {
   sc = { ...INITIAL };
   await resetClones();
   await headA();
-  for (const p of [postsA, postsB, postsC]) p.reset();
+  for (const p of [postsA, postsB, postsC, postsD]) p.reset();
   fake.requests.length = 0;
   Object.assign(postA, { fail: null, hide: false });
   setClaude({ stream: "tree" });

@@ -10,15 +10,25 @@ export class GitError extends Error {
   override name = "GitError";
 }
 
-// The env of every git child. Only fetch gets extra config, for example the auth header.
-// emptyGlobal: an empty file. It replaces ~/.gitconfig and the XDG config, so no user filter, hook, or helper runs.
-export function gitEnv(emptyGlobal: string, config: [string, string][] = []): Record<string, string> {
+function baseEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     // Inherited GIT_* variables can name another config, repository, or trace file. git runs SSH_ASKPASS before it reads GIT_TERMINAL_PROMPT.
     if (v === undefined || /^GIT_/i.test(k) || /^SSH_ASKPASS$/i.test(k) || RUNTIME_ENV.test(k)) continue;
     env[k] = v;
   }
+  return env;
+}
+
+// The env of git in the user's clone (plan r3): the user's own config, identity, signing, and hooks.
+export function userGitEnv(): Record<string, string> {
+  return { ...baseEnv(), GIT_TERMINAL_PROMPT: "0" };
+}
+
+// The env of every git child. Only fetch gets extra config, for example the auth header.
+// emptyGlobal: an empty file. It replaces ~/.gitconfig and the XDG config, so no user filter, hook, or helper runs.
+export function gitEnv(emptyGlobal: string, config: [string, string][] = []): Record<string, string> {
+  const env = baseEnv();
   const all: [string, string][] = [["credential.helper", ""], ["http.followRedirects", "false"], ...config];
   env.GIT_CONFIG_NOSYSTEM = "1";
   env.GIT_CONFIG_GLOBAL = emptyGlobal;
