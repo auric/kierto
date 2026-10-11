@@ -1,8 +1,8 @@
-// Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR): brief, start, re-review, reply drafts, cancel, run, raw output, item triage.
+// Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR, S-ASK): brief, start, re-review, ask, reply drafts, cancel, run, raw output, item triage.
 // Every mutation broadcasts `changed`.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import { type ApiError, briefInput, itemActionInput, replyRunInput } from "../../shared/dto";
+import { type ApiError, askInput, briefInput, itemActionInput, replyRunInput } from "../../shared/dto";
 import type { Live } from "../live";
 import { triage } from "./items";
 import type { ReviewJobs } from "./jobs";
@@ -61,6 +61,28 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
       if ("conflict" in r) return c.json(r.conflict, 409);
       return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
+    })
+    .post(
+      "/prs/:id/ask",
+      prParam,
+      validator("json", (v, c) => {
+        const r = askInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid question." }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const r = review.ask(db, c.req.valid("param").id, c.req.valid("json").question);
+        if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
+        if ("conflict" in r) return c.json(r.conflict, 409);
+        return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
+      },
+    )
+    .get("/prs/:id/asks", prParam, (c) => {
+      const db = review.open();
+      if (!db) return c.json([], 200);
+      const asks = review.asks(db, c.req.valid("param").id);
+      return asks ? c.json(asks, 200) : c.json(notFound("Pull request"), 404);
     })
     .post(
       "/prs/:id/reply-run",

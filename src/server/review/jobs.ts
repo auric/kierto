@@ -1,9 +1,10 @@
-// Review jobs (plan v3 WP10), re-reviews (r2 S-RR), and reply-draft jobs (replies.md WP17): one run from the stored brief to stored drafts.
+// Review jobs (plan v3 WP10), re-reviews (r2 S-RR), ask runs (r2 S-ASK), and reply-draft jobs (replies.md WP17): one run from the stored brief to stored drafts.
 // One run at a time.
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type {
+  AskDto,
   BriefDto,
   BriefInput,
   PrTask,
@@ -17,6 +18,8 @@ import type {
 } from "../../shared/dto";
 import {
   type AnchoredFinding,
+  askJsonSchema,
+  askResult,
   type Carried,
   type Finding,
   MAX_REPLY_THREADS,
@@ -39,6 +42,7 @@ import type { Live } from "../live";
 import { log } from "../log";
 import type { Settings } from "../settings";
 import {
+  askAgent,
   createDocServers,
   DEFAULT_PROFILE,
   GIT_SERVER,
@@ -56,7 +60,7 @@ import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude"
 import { type DiffFile, parseDiff } from "./diffmap";
 import { git, gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
-import { buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
+import { buildAskPrompt, buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
 import {
   type CheckedEarlier,
   type EarlierItem,
@@ -141,6 +145,7 @@ type RunRow = {
   since_head: string | null;
   range_base: string | null;
   question: string | null;
+  answer: string | null;
 };
 
 export type ItemRow = {
@@ -170,14 +175,14 @@ type Ending = {
   text: string | null;
   raw: string;
   outcome?: RunOutcome;
-  result?: { summary: RunSummary; items: NewItem[]; checked?: CheckedEarlier[] };
+  result?: { summary: RunSummary; items: NewItem[]; checked?: CheckedEarlier[]; answer?: string };
 };
 
 // A re-review (plan r2 S-RR). since: the source head of the base run. sinceBase: its merge base.
 // items: the findings and questions of the base run with status new or accepted at the start.
 type Carry = { base: number; since: string; sinceBase: string | null; incomplete: boolean; items: ItemRow[] };
 
-// threads: the threads of a reply run. null for a review run. profile: the profile as it was at the start.
+// threads: the threads of a reply run. null for a review run. question: the question of an ask run, else null. profile: the profile as it was at the start.
 type Job = {
   id: number;
   pr: number;
@@ -186,6 +191,7 @@ type Job = {
   profile: Profile;
   threads: ReplyThread[] | null;
   carry: Carry | null;
+  question: string | null;
   cancelled: boolean;
   done: Promise<void>;
 };
@@ -205,15 +211,16 @@ const SQL = {
   saveBrief: `INSERT INTO pr_brief (pr, note, profile, updated_at) VALUES ($pr, $note, $profile, $now)
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
   insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, status, started_at,
-      since_head)
-    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since) RETURNING id`,
+      since_head, question)
+    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since, $question)
+    RETURNING id`,
   run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
-      p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question
+      p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
   workspace: "UPDATE review_run SET merge_base = $base, range_base = $range, fetch_via = $via WHERE id = $id",
   end: `UPDATE review_run SET status = $status, error_kind = $kind, error_text = $text, session_id = $session, cli_version = $cli, model = $model,
-      usage_json = $usage, summary_json = $summary, raw_output = $raw, finished_at = $now WHERE id = $id AND status = 'running'`,
+      usage_json = $usage, summary_json = $summary, answer = $answer, raw_output = $raw, finished_at = $now WHERE id = $id AND status = 'running'`,
   // A run that was running at the last stop has no process now.
   recover: `UPDATE review_run SET status = 'failed', error_kind = 'restart', error_text = $text, raw_output = COALESCE(raw_output, $text),
       finished_at = $now WHERE status = 'running'`,
@@ -240,6 +247,7 @@ const SQL = {
   turns: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr`,
   raw: "SELECT raw_output FROM review_run WHERE id = $id",
+  asks: "WHERE r.pr = $pr AND r.kind = 'ask' ORDER BY r.id DESC LIMIT 20",
 };
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -562,6 +570,30 @@ function judgeReplies(o: RunOutcome, threads: ReplyThread[], servers: string[], 
   return ended(raw, o, { summary: { summary: v.summary, risks: [], coverage, dropped: [] }, items: v.replies.map(replyItem) });
 }
 
+// Plan r2 S-ASK: an ask run makes no items, so nothing of it can post.
+function judgeAsk(o: RunOutcome, servers: string[], gaps: string[]): Ending {
+  const raw = rawOutput(o);
+  if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
+  const parsed = askResult.safeParse(o.result?.structured_output);
+  if (!parsed.success) return schemaFailure(parsed.error.issues, "ask", raw, o);
+  const { answer, coverage } = parsed.data;
+  const summary =
+    answer
+      .split("\n")
+      .find((l) => l.trim())
+      ?.trim() ?? "";
+  return ended(raw, o, {
+    summary: {
+      summary,
+      risks: [],
+      coverage: { ...coverage, unavailable: [...coverage.unavailable, ...unavailable(o, servers, gaps)] },
+      dropped: [],
+    },
+    items: [],
+    answer,
+  });
+}
+
 function toRunDto(r: RunRow): RunDto {
   const source = r.pr_source !== null && r.pr_source !== r.source_head;
   const target = r.pr_target !== null && r.pr_target !== r.target_head;
@@ -709,6 +741,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         model: o?.init?.model ?? null,
         usage: usage ? JSON.stringify(usage) : null,
         summary: e.result ? JSON.stringify(e.result.summary) : null,
+        answer: e.result?.answer ?? null,
         raw: e.raw,
         now: now(),
       });
@@ -786,20 +819,23 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       taskFile: files.length > 0,
     };
     const reply = j.threads;
+    const question = j.question;
     const prompt = reply
       ? buildReplyPrompt({ ...input, threads: reply })
-      : carry
-        ? buildRereviewPrompt({ ...input, since: carry.since, rangeBase: ws.rangeBase, earlier: earlier.map((r) => r.id) })
-        : buildPrompt(input);
+      : question !== null
+        ? buildAskPrompt({ ...input, question })
+        : carry
+          ? buildRereviewPrompt({ ...input, since: carry.since, rangeBase: ws.rangeBase, earlier: earlier.map((r) => r.id) })
+          : buildPrompt(input);
     const o = await runner.run(
       {
         cwd: ws.work,
         appDir: ws.app,
         prompt,
-        schema: reply ? replyJsonSchema() : carry ? rereviewJsonSchema() : reviewJsonSchema(),
+        schema: reply ? replyJsonSchema() : question !== null ? askJsonSchema() : carry ? rereviewJsonSchema() : reviewJsonSchema(),
         maxTurns: profile.maxTurns,
-        main: reply ? replyAgent(profile) : mainAgent(profile),
-        agents: reply || profile.explain ? {} : { [REVIEWER]: reviewerAgent(profile) },
+        main: reply ? replyAgent(profile) : question !== null ? askAgent(profile) : mainAgent(profile),
+        agents: reply || question !== null || profile.explain ? {} : { [REVIEWER]: reviewerAgent(profile) },
         mcpServers,
       },
       (events) => {
@@ -811,6 +847,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (j.cancelled) return cancelled(o);
     const servers = Object.keys(mcpServers);
     if (reply) return judgeReplies(o, reply, servers, docs.unavailable);
+    if (question !== null) return judgeAsk(o, servers, docs.unavailable);
     const rereview = carry && { carry, items: current(j.db, earlier).map(earlierItem) };
     return judge(o, ws, profile, servers, docs.unavailable, rereview);
   }
@@ -828,7 +865,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     try {
       const e = await steps(j, pr, brief, held);
       // A later re-review merges from this head. The ref keeps it after a force push.
-      if (end(j, e) && e.result && !j.threads && !j.profile.explain)
+      if (end(j, e) && e.result && !j.threads && j.question === null && !j.profile.explain)
         await held.ws?.keep().catch((err) => log(`Could not keep the head of review run ${j.id}: ${noUrl((err as Error).message)}`));
     } catch (e) {
       const message = (e as Error).message;
@@ -865,6 +902,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     key: string,
     threads: ReplyThread[] | null,
     carry: Carry | null = null,
+    question: string | null = null,
   ): StartResult {
     if (job) {
       const running = runRow(job.db, job.id);
@@ -873,7 +911,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     }
     const { id: runId } = db.query(SQL.insert).get({
       pr: pr.id,
-      kind: threads ? "reply" : "review",
+      kind: question !== null ? "ask" : threads ? "reply" : "review",
       profile: profile.id,
       profile_name: profile.name,
       profile_revision: profileRevision(profile),
@@ -884,8 +922,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       target: pr.target_head,
       now: now(),
       since: carry?.since ?? null,
+      question,
     }) as { id: number };
-    const j: Job = { id: runId, pr: pr.id, key, db, profile, threads, carry, cancelled: false, done: Promise.resolve() };
+    const j: Job = { id: runId, pr: pr.id, key, db, profile, threads, carry, question, cancelled: false, done: Promise.resolve() };
     job = j;
     j.done = execute(j, pr, brief).finally(() => {
       if (job === j) job = null;
@@ -990,6 +1029,24 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         items: db.query(SQL.carry).all({ run: base.id }) as ItemRow[],
       };
       return launch(db, { ...pr, source_head, target_head }, brief, profile, key, null, carry);
+    },
+
+    // Plan r2 S-ASK: answers one question with the brief profile and an empty note. It shares the run slot.
+    ask(db: Database, id: number, question: string): StartResult {
+      const pr = prRow(db, id);
+      if (!pr) return { status: 404, error: "Pull request not found." };
+      const { source_head, target_head } = pr;
+      if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
+      const brief = briefOf(db, id);
+      const profile = profileOf(settings.profiles(), brief.profile);
+      const key = [id, "ask", source_head, target_head, brief.profile, profileRevision(profile), sha256(question)].join(":");
+      return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, null, null, question);
+    },
+
+    // The newest ask runs of a PR with their answers. null for an unknown PR.
+    asks(db: Database, pr: number): AskDto[] | null {
+      if (!prRow(db, pr)) return null;
+      return (db.query(`${SQL.run} ${SQL.asks}`).all({ pr }) as RunRow[]).map((r) => ({ run: toRunDto(r), answer: r.answer }));
     },
 
     // Starts a reply-draft run of the stored brief (plan replies.md WP17). It shares the run slot with reviews.

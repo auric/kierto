@@ -193,6 +193,21 @@ export function replyAgent(p: Profile): AgentSpec {
   };
 }
 
+// Plan r2 S-ASK: an ask run gets no subagents, so the caller passes agents {} and the CLI gets no Agent tool.
+export function askAgent(p: Profile): AgentSpec {
+  return {
+    description: "Read-only answers to the user's questions about one pull request.",
+    prompt: [
+      "You answer the user's question about one pull request. You cannot change files, and you post nothing.",
+      "Answer only the question in the user message. Write the answer as short Markdown.",
+      "Base each claim about the code on code that you read. Say so when you did not check a claim.",
+      ...TRUST,
+      "In coverage, list what you read, what you skipped, and what was not available.",
+      ...docsRule(p),
+    ].join("\n"),
+  };
+}
+
 export function reviewerAgent(p: Profile): AgentSpec {
   return {
     description: "Read-only reviewer for one part of a change.",
