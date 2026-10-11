@@ -166,6 +166,9 @@ export function PrDetail({
       }),
     [],
   );
+  const announce = useCallback((text: string) => setSaid((s) => ({ text, n: s.n + 1 })), []);
+  // The review hook comes after the thread context, so the context reads its action through this ref.
+  const draftReply = useRef((_: number) => {});
 
   const ctx = useMemo<ThreadCtx>(
     () => ({
@@ -189,14 +192,16 @@ export function PrDetail({
         focusAfter({ id: `fold-${fold.at}`, block: "nearest", flash: false });
       },
       onQuote: jump,
-      announce: (text) => setSaid((s) => ({ text, n: s.n + 1 })),
+      announce,
       onReply,
+      onDraftReply: (tid) => draftReply.current(tid),
       posts: outbox.ctx,
     }),
-    [row.id, hints, now, forge, runner, mine, ackRef, focusAfter, jump, onReply, outbox.ctx],
+    [row.id, hints, now, forge, runner, mine, ackRef, focusAfter, jump, announce, onReply, outbox.ctx],
   );
 
-  const review = useReview(pr, { commits: data?.commits, hints, now, focusAfter, onSettings });
+  const review = useReview(pr, { commits: data?.commits, threads, hints, now, focusAfter, announce, onSettings });
+  draftReply.current = review.api.draftReply;
   const bar = usePostBar(pr, {
     comments,
     forge,
@@ -312,6 +317,7 @@ export function PrDetail({
               ctx={ctx}
               posts={outbox.threads}
               targets={targets}
+              cards={review.cards}
               outbox={<PostsGroup posts={outbox.rest} comments={comments} forge={forge} ctx={outbox.ctx} />}
               drafts={review.drafts}
               onNeedMe={setNeedMe}

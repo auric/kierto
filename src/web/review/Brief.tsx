@@ -2,7 +2,7 @@
 // The note is the user's instruction. The server keeps the pull request text out of the prompt (plan v3 WP10).
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, CircleAlert, Download, LoaderCircle } from "lucide-react";
-import { type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,7 +28,8 @@ function runnerNote(meta: MetaDto): { short: string; message: string } | null {
     : { short: `${meta.runner.name} is not available`, message: c.message };
 }
 
-export function ReviewButton(props: { state: BriefState; open: boolean; meta: MetaDto; onClick: () => void }) {
+// extra: buttons before the Review button, such as Draft replies (WP18).
+export function ReviewButton(props: { state: BriefState; open: boolean; meta: MetaDto; extra?: ReactNode; onClick: () => void }) {
   const note = runnerNote(props.meta);
   return (
     <div className="mt-px flex flex-wrap items-center justify-end gap-2">
@@ -41,6 +42,7 @@ export function ReviewButton(props: { state: BriefState; open: boolean; meta: Me
           </span>
         </Hint>
       )}
+      {props.extra}
       <Hint label={props.state.hint}>
         <Button
           id="review-btn"

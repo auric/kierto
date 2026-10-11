@@ -324,10 +324,14 @@ function Foot({ detail, meta, raw, onRaw }: { detail: RunDetail; meta: MetaDto; 
       const time = r.usage ? clockDur(r.usage.durationMs / 1000) : r.finishedAt ? clockDur((r.finishedAt - r.startedAt) / 1000) : "";
       return (
         <span>
-          Result: {countText(detail.items, r.status === "incomplete")}.{" "}
+          Result: {countText(detail.items, r.status === "incomplete", r.kind)}.{" "}
           {[tokens === null ? "" : tokenText(tokens), time].filter(Boolean).join(", ")}
           {tokens !== null || time ? "." : ""}
-          {r.status === "incomplete" && " Coverage has gaps. The summary lists them."}
+          {/* A reply run has no summary section, so its gaps show here. */}
+          {r.status === "incomplete" &&
+            (r.kind === "reply"
+              ? ` Coverage has gaps. ${r.summary ? [...r.summary.coverage.skipped, ...r.summary.coverage.unavailable, ...r.summary.coverage.notChecked].join(" ") : ""}`
+              : " Coverage has gaps. The summary lists them.")}
         </span>
       );
     }

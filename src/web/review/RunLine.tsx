@@ -1,4 +1,5 @@
-// Run line (prototype/v3 runLine): one line under the title for the newest run of the PR. Failed, usage-limit, and cancelled runs are one line each.
+// Run line (prototype/v3 runLine): one line under the title for the newest run of the PR, of any kind. The words name the kind (R14).
+// Failed, usage-limit, and cancelled runs are one line each.
 import { Bot, Braces, CircleAlert, CircleStop, LoaderCircle, ScrollText } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -7,7 +8,7 @@ import { fullTime } from "../pr/Thread";
 import { agoLong } from "../pr/threads";
 import { Hint } from "../shell/Hint";
 import { useNow } from "../shell/Sidebar";
-import { clockDur, limitText, plural, type RunLineState, tokenText } from "./model";
+import { clockDur, limitText, plural, RUN_TEXT, type RunLineState, tokenText } from "./model";
 
 const icon = "size-[15px] shrink-0";
 const linkish =
@@ -39,6 +40,7 @@ export function RunLine(props: {
   onGaps: () => void;
 }) {
   const { state: s, run, meta } = props;
+  const words = RUN_TEXT[run.kind];
   const log = (
     <Hint label="Key: 3">
       <button id="runline-log" type="button" className={linkish} aria-keyshortcuts="3" onClick={props.onLog}>
@@ -54,7 +56,7 @@ export function RunLine(props: {
         <>
           <span role="status" className="inline-flex items-center gap-1.5">
             <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
-            Reviewing…
+            {words.running}
           </span>
           {s.agents > 0 && <span>{plural(s.agents, "agent")}</span>}
           <span>{plural(s.calls, "tool call")}</span>
@@ -101,7 +103,9 @@ export function RunLine(props: {
       parts = (
         <>
           <span role="status" className="rl-full">
-            <Err>Review failed. {s.text}</Err>
+            <Err>
+              {words.failed} {s.text}
+            </Err>
           </span>
           {s.raw && (
             <button type="button" className={linkish} onClick={props.onRaw}>
@@ -128,7 +132,7 @@ export function RunLine(props: {
         <>
           <span role="status" className="inline-flex items-center gap-1.5">
             <CircleStop aria-hidden className={icon} />
-            You cancelled the review after {plural(s.calls, "tool call")}.
+            You cancelled {words.cancelled} after {plural(s.calls, "tool call")}.
           </span>
           {log}
         </>

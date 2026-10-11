@@ -1,5 +1,5 @@
-// Review server state through TanStack Query. Keys: ['brief', pr], ['runs'], ['runs', 'pr', pr], ['run', id], ['raw', id].
-// live.ts invalidates ['runs'] and ['run', id] when SSE `changed` names the run.
+// Review server state through TanStack Query. Keys: ['brief', pr], ['runs'], ['runs', 'pr', pr], ['run', id], ['raw', id],
+// ['pr', pr, 'reply-drafts']. live.ts invalidates ['runs'] and ['run', id] when SSE `changed` names the run, and ['pr', pr] when it names the PR.
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BriefDto, BriefInput, ItemActionInput, ItemConflict, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../shared/dto";
 import { api } from "../api";
@@ -43,11 +43,19 @@ export const useRaw = (id: number, enabled: boolean) =>
     },
   });
 
+export const replyKey = (pr: number) => ["pr", pr, "reply-drafts"] as const;
+
+// GET /api/prs/:id/reply-drafts (replies.md WP17): the newest unposted reply draft of each thread.
+export const useReplyDrafts = (pr: number) =>
+  useQuery({
+    queryKey: replyKey(pr),
+    queryFn: async () => read<ReviewItemDto[]>(await api.api.prs[":id"]["reply-drafts"].$get(param(pr))),
+  });
+
 export type StartResult = { run: RunDto } | { conflict: RunConflict };
 
-// POST /api/prs/:id/review runs the stored brief. 409 with `running` names the review that holds the only slot (A14).
-async function postReview(pr: number): Promise<StartResult> {
-  const res = await api.api.prs[":id"].review.$post(param(pr));
+// 409 with `running` names the run that holds the only slot (A14). Any other 409 is an error.
+async function started(res: { status: number; ok: boolean; json(): Promise<unknown>; text(): Promise<string> }): Promise<StartResult> {
   if (res.status !== 409) return { run: await read<RunDto>(res) };
   const text = await res.text();
   let body: Partial<RunConflict> = {};
@@ -58,10 +66,10 @@ async function postReview(pr: number): Promise<StartResult> {
   throw new ApiError(409, body.error ?? text);
 }
 
-export function useStartReview(pr: number) {
+function useStart<A>(pr: number, post: (a: A) => Promise<StartResult>) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => postReview(pr),
+    mutationFn: post,
     onSuccess: (r) => {
       if (!("run" in r)) return;
       qc.setQueryData<RunDto[]>(["runs", "pr", pr], (old) => [r.run, ...(old ?? []).filter((x) => x.id !== r.run.id)]);
@@ -69,6 +77,15 @@ export function useStartReview(pr: number) {
     },
   });
 }
+
+// POST /api/prs/:id/review runs the stored brief.
+export const useStartReview = (pr: number) => useStart(pr, async () => started(await api.api.prs[":id"].review.$post(param(pr))));
+
+// POST /api/prs/:id/reply-run runs the stored brief as reply drafts. Absent threads: every thread where it is my turn.
+export const useStartReplies = (pr: number) =>
+  useStart(pr, async (threads: number[] | undefined) =>
+    started(await api.api.prs[":id"]["reply-run"].$post({ ...param(pr), json: threads ? { threads } : {} })),
+  );
 
 export type ItemResult = { item: ReviewItemDto } | { conflict: ItemConflict };
 

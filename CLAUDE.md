@@ -40,7 +40,7 @@ Commands:
 - `bun run lint`: run Biome lint and format checks. `bun run format` applies the fixes.
 - `bun run demo`: serve the built UI on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. It uses a temp data folder and memory secrets.
 - `bun test`: run the tests under `tests/`. Each group ends green on typecheck, lint, and test.
-- `bun run test:e2e`: build the UI, then run the Playwright suite `tests/e2e/*.e2e.ts` with Node. `tests/e2e/serve.ts` starts the fake Bitbucket on 7398 and the app on 7399. Stop `bun run demo` first, because it uses port 7399.
+- `bun run test:e2e`: build the UI, then run the Playwright suite `tests/e2e/*.e2e.ts` with Node. `tests/e2e/serve.ts` starts the fake Bitbucket on `E2E_FAKE_PORT` (default 7398) and the app on `E2E_APP_PORT` (default 7399). Stop `bun run demo` first, because it uses port 7399.
 
 ## Skills
 
@@ -72,6 +72,7 @@ Add or update a project skill:
 ## Testing notes
 
 - Run e2e only through `bun run test:e2e`. A plain `npx playwright` can resolve a global Playwright of another version.
+- A parallel worktree runs e2e on its own ports, for example `E2E_FAKE_PORT=7458 E2E_APP_PORT=7459`. The `E2E code:` line of `serve.ts` shows which checkout the run serves.
 - The e2e control routes (`/__control/*`) live on the fake Bitbucket in `tests/e2e/serve.ts`, never in the app.
 - The detail pane shows the first row and acknowledges its visible messages after about 1 s. A test that needs a message to stay unread selects another PR first.
 - Headless Chromium denies notifications. The e2e tests grant the permission and replace `window.Notification` with a recorder.

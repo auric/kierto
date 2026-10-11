@@ -1,18 +1,32 @@
-// The review half of the detail (plan v3 WP11): button, brief, run line, summary, drafts, and run log for one PR.
+// The review half of the detail (plan v3 WP11, replies.md WP18): buttons, brief, run line, summary, drafts, reply drafts,
+// and run log for one PR.
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
-import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunDetail } from "../../shared/dto";
+import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../shared/dto";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
+import type { ThreadModel } from "../pr/threads";
 import { planKey } from "../publish/data";
 import type { Hints } from "../shell/Hint";
 import { prKey } from "../shell/model";
 import { BriefComposer, ReviewButton } from "./Brief";
-import { AiSummary, type DraftCtx, Drafts, type TriageState } from "./Drafts";
-import { sendItem, useBrief, useCancelRun, usePrRuns, useRun, useRuns, useStartReview } from "./data";
-import { briefState, drafts, questions, runLine } from "./model";
+import { AiSummary, type DraftCtx, Drafts, modeOf, type TriageState } from "./Drafts";
+import {
+  replyKey,
+  sendItem,
+  useBrief,
+  useCancelRun,
+  usePrRuns,
+  useReplyDrafts,
+  useRun,
+  useRuns,
+  useStartReplies,
+  useStartReview,
+} from "./data";
+import { briefState, drafts, latestReview, plural, questions, replyCard, replyMap, replyOf, runLine } from "./model";
+import { DraftRepliesButton, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft";
 import { RunLine } from "./RunLine";
 import { BriefLine, type LogTarget, RunLog } from "./RunLog";
 import type { TriageAction, TriageCtx } from "./Triage";
@@ -24,8 +38,10 @@ export type ReviewApi = {
   brief(): void;
   drafts(): void;
   log(): void;
-  // Keys a, e, and d act on the draft or question that holds the focus (prototype/v3 triageKey).
+  // Keys a, e, and d act on the draft, question, or reply draft that holds the focus (prototype/v3 triageKey).
   triage(key: "accept" | "edit" | "discard"): void;
+  // A reply-draft run for one thread (replies.md step 6).
+  draftReply(thread: number): void;
   // The layer that Esc closes first, for focus at target.
   layer(target: EventTarget | null): Layer;
   close(layer: Exclude<Layer, null>): void;
@@ -37,58 +53,99 @@ export type ReviewUi = {
   run: ReactNode;
   summary: ReactNode;
   drafts: ReactNode;
+  // The reply draft card of each thread, keyed by thread ID.
+  cards: ReadonlyMap<number, ReactNode>;
   sheet: ReactNode;
   api: ReviewApi;
 };
 
+const NO_ITEMS: ReviewItemDto[] = [];
+
+// A new run shows its line at once. Its log and items come with the next fetch.
+const detailOf = (r: RunDto | null, d: RunDetail | undefined): RunDetail | null =>
+  r ? (d?.run.id === r.id ? d : { run: r, events: [], items: [] }) : null;
+
+const doing = (r: RunDto | null) => (r?.kind === "reply" ? "drafting replies for" : "reviewing");
+
 export function useReview(
   pr: PrRow,
-  o: { commits: CommitDto[] | undefined; hints: Hints; now: number; focusAfter: (f: Focus) => void; onSettings: () => void },
+  o: {
+    commits: CommitDto[] | undefined;
+    threads: ThreadModel[];
+    hints: Hints;
+    now: number;
+    focusAfter: (f: Focus) => void;
+    announce: (text: string) => void;
+    onSettings: () => void;
+  },
 ): ReviewUi {
   const meta = useMeta().data as MetaDto;
   const qc = useQueryClient();
   const brief = useBrief(pr.id);
-  const prRuns = usePrRuns(pr.id);
-  const latest = prRuns.data?.[0] ?? null;
+  const prRuns = usePrRuns(pr.id).data;
+  // R14: the newest run of any kind drives the run line. The newest review run drives the drafts, the summary, and the brief.
+  const newest = prRuns?.[0] ?? null;
+  const latest = latestReview(prRuns);
   const run = useRun(latest?.id ?? null);
+  const other = useRun(newest && newest.id !== latest?.id ? newest.id : null);
+  const replies = useReplyDrafts(pr.id);
   const active = useRuns().data?.find((r) => r.status === "running") ?? null;
   const start = useStartReview(pr.id);
+  const startReplies = useStartReplies(pr.id);
   const cancel = useCancelRun();
   const [composer, setComposer] = useState(false);
-  const [log, setLog] = useState<LogTarget | null>(null);
+  // of: "line" follows the run of the run line. "review" stays on the newest review run, for its drafts.
+  const [log, setLog] = useState<(LogTarget & { of: "line" | "review" }) | null>(null);
   const [sumOpen, setSumOpen] = useState(false);
   const [openDrafts, setOpenDrafts] = useState<ReadonlyMap<number, boolean>>(new Map());
   const [triage, setTriage] = useState<TriageState>({ open: null, busy: new Set() });
+  // The threads of the reply run that this page started. They show a pending card while it runs.
+  const [asked, setAsked] = useState<{ run: number; threads: number[] } | null>(null);
   const opener = useRef<HTMLElement | null>(null);
 
-  // A new run shows its line at once. Its log and items come with the next fetch.
-  const detail: RunDetail | null =
-    latest && run.data?.run.id === latest.id ? run.data : latest ? { run: latest, events: [], items: [] } : null;
-  const items = detail?.items ?? [];
+  const detail = detailOf(latest, run.data);
+  const line = newest && newest.id !== latest?.id ? detailOf(newest, other.data) : detail;
+  const items = detail?.items ?? NO_ITEMS;
+  const replyItems = replies.data ?? NO_ITEMS;
   const state = briefState(brief.data, latest, active, pr.id, meta.profiles);
   const { focusAfter } = o;
 
   const busy = (() => {
     if (!active || active.pr === pr.id) return null;
     const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === active.pr);
-    return `${meta.runner.short} is reviewing ${other ? prKey(other) : "another pull request"}. One review runs at a time.`;
+    return `${meta.runner.short} is ${doing(active)} ${other ? prKey(other) : "another pull request"}. One review runs at a time.`;
   })();
+
+  const slotTaken = (c: RunConflict) => {
+    const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === c.running.pr);
+    const kind = active?.id === c.running.run ? active : null;
+    toast.add({
+      title: `One review runs at a time. ${meta.runner.short} is ${doing(kind)} ${other ? prKey(other) : "another pull request"}.`,
+    });
+  };
 
   const runNow = () =>
     start.mutate(undefined, {
       onSuccess: (r) => {
-        if ("conflict" in r) {
-          const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === r.conflict.running.pr);
-          toast.add({
-            title: `One review runs at a time. ${meta.runner.short} is reviewing ${other ? prKey(other) : "another pull request"}.`,
-          });
-          return;
-        }
+        if ("conflict" in r) return slotTaken(r.conflict);
         setComposer(false);
         focusAfter({ id: "runline-log", block: "nearest", flash: false });
       },
       onError: (e) => toast.add({ title: "The review did not start", description: e.message }),
     });
+
+  // threads absent: every thread where it is my turn, as the server selects them (WP17).
+  const draftReplies = (threads?: number[]) => {
+    const ids = threads ?? o.threads.filter((t) => t.turn === "your").map((t) => t.id);
+    startReplies.mutate(threads, {
+      onSuccess: (r) => {
+        if ("conflict" in r) return slotTaken(r.conflict);
+        setAsked({ run: r.run.id, threads: ids });
+        o.announce(threads ? "Drafting a reply." : `Drafting replies for ${plural(ids.length, "thread")}.`);
+      },
+      onError: (e) => toast.add({ title: "The reply drafts did not start", description: e.message }),
+    });
+  };
 
   const openBrief = () => {
     if (composer) document.getElementById("brief-note")?.focus();
@@ -99,14 +156,14 @@ export function useReview(
     focusAfter({ id: "review-btn", block: "nearest", flash: false });
   };
 
-  const openLog = (agent: string | null, raw = false) => {
-    if (!latest) {
+  const openLog = (agent: string | null, raw = false, of: "line" | "review" = "line") => {
+    if (!(of === "review" ? latest : newest)) {
       toast.add({ title: "No review has run on this pull request yet. Press r to start one." });
       return;
     }
     const at = document.activeElement;
     if (at instanceof HTMLElement && !at.closest("#run-log")) opener.current = at;
-    setLog((l) => ({ agent, raw, n: (l?.n ?? 0) + 1 }));
+    setLog((l) => ({ agent, raw, n: (l?.n ?? 0) + 1, of }));
   };
   const closeLog = () => {
     setLog(null);
@@ -120,14 +177,17 @@ export function useReview(
   };
 
   const ds = drafts(items);
-  const latestItems = useRef(items);
-  latestItems.current = items;
+  const all = [...items, ...replyItems];
+  const latestItems = useRef(all);
+  latestItems.current = all;
   const isDraftOpen = (it: ReviewItemDto) => openDrafts.get(it.id) ?? it.status === "new";
   const onLog = useRef(openLog);
   onLog.current = openLog;
+  const onDraft = useRef(draftReplies);
+  onDraft.current = draftReplies;
 
   // ---------- Triage (plan v3 WP14a) ----------
-  const domId = (it: ReviewItemDto) => (it.kind === "question" ? `q-${it.id}` : `d-${it.id}`);
+  const domId = (it: ReviewItemDto) => (it.kind === "question" ? `q-${it.id}` : it.kind === "reply" ? `rd-${it.id}` : `d-${it.id}`);
   const setBusy = (id: number, on: boolean) =>
     setTriage((s) => {
       const busy = new Set(s.busy);
@@ -135,12 +195,17 @@ export function useReview(
       else busy.delete(id);
       return { ...s, busy };
     });
-  const putItem = (it: ReviewItemDto) =>
+  const putItem = (it: ReviewItemDto) => {
     qc.setQueryData<RunDetail>(["run", it.run], (old) => old && { ...old, items: old.items.map((x) => (x.id === it.id ? it : x)) });
+    if (it.kind === "reply") qc.setQueryData<ReviewItemDto[]>(replyKey(pr.id), (old) => old?.map((x) => (x.id === it.id ? it : x)));
+  };
 
   // prototype/v3 setItem: accept and discard close the item and go to the next untriaged one of the same kind.
+  // A reply draft stays under its thread, so the focus stays on it.
   const advance = (it: ReviewItemDto) => {
-    if (it.status === "accepted" || it.status === "discarded") {
+    if (it.kind === "reply") {
+      focusAfter({ id: domId(it), block: "nearest", flash: false });
+    } else if (it.status === "accepted" || it.status === "discarded") {
       setOpenDrafts((m) => new Map(m).set(it.id, false));
       const same = latestItems.current.filter((x) => x.kind === it.kind && x.status !== "posted");
       const fresh = (x: ReviewItemDto) => x.id !== it.id && x.status === "new";
@@ -220,11 +285,41 @@ export function useReview(
           const it = latestItems.current.find((x) => x.id === id);
           return new Map(m).set(id, !(m.get(id) ?? it?.status === "new"));
         }),
-      onFrom: (agent) => onLog.current(agent),
+      onFrom: (agent) => onLog.current(agent, false, "review"),
       triage: triageCtx,
     }),
     [meta, o.hints, triageCtx],
   );
+
+  // ---------- Reply drafts (replies.md step 6) ----------
+  const replyCtx = useMemo<ReplyCtx>(
+    () => ({ meta, hints: o.hints, announce: o.announce, triage: triageCtx, again: (thread) => onDraft.current([thread]) }),
+    [meta, o.hints, o.announce, triageCtx],
+  );
+  const byThread = useMemo(() => replyMap(replies.data), [replies.data]);
+  const pending = asked && newest?.id === asked.run && newest.status === "running" ? asked : null;
+  // Per thread, so a memo thread renders again only when its own card changes.
+  const cards = useMemo(() => {
+    const out = new Map<number, ReactNode>();
+    for (const t of o.threads) {
+      const card = replyCard(byThread.get(t.id), t.last?.id ?? null, !!pending?.threads.includes(t.id));
+      if (!card) continue;
+      const it = card.kind === "pending" ? null : card.it;
+      const to = it && t.msgs.find((m) => m.id === replyOf(it).replyTo);
+      out.set(
+        t.id,
+        <ReplyDraftCard
+          card={card}
+          thread={t.id}
+          to={to ? (to.who.me ? "your message" : to.who.name) : null}
+          mode={it ? modeOf(triage, it.id) : null}
+          busy={!!it && triage.busy.has(it.id)}
+          ctx={replyCtx}
+        />,
+      );
+    }
+    return out;
+  }, [o.threads, byThread, pending, triage, replyCtx]);
 
   const api: ReviewApi = {
     // The open brief can hold an unsaved note. There, Ctrl+Enter saves and starts, so r only focuses the note.
@@ -242,7 +337,7 @@ export function useReview(
     log: () => openLog(null),
     triage(key) {
       const at = Number(document.activeElement?.closest("[data-item]")?.getAttribute("data-item"));
-      const it = items.find((x) => x.id === at && x.status !== "posted");
+      const it = all.find((x) => x.id === at && x.status !== "posted");
       if (!it) {
         toast.add({ title: `Move to a draft or a question first. Key 2 goes to the drafts from ${meta.runner.short}.` });
         return;
@@ -252,6 +347,7 @@ export function useReview(
       else if (key === "discard") triageFns.act(it, it.status === "discarded" ? "restore" : "discard");
       else if (it.status !== "discarded") triageFns.edit(it);
     },
+    draftReply: (thread) => draftReplies([thread]),
     layer(target) {
       const inSheet = target instanceof Node && !!document.getElementById("run-log")?.contains(target);
       if (composer && !inSheet) return "brief";
@@ -260,9 +356,19 @@ export function useReview(
     close: (layer) => (layer === "brief" ? closeBrief() : closeLog()),
   };
 
-  const lineState = detail ? runLine(detail, meta.profiles, o.commits) : null;
+  const lineState = line ? runLine(line, meta.profiles, o.commits) : null;
+  const logRun = log?.of === "review" ? latest : newest;
+  const your = o.threads.filter((t) => t.turn === "your").length;
   return {
-    action: <ReviewButton state={state} open={composer} meta={meta} onClick={() => (composer ? closeBrief() : openBrief())} />,
+    action: (
+      <ReviewButton
+        state={state}
+        open={composer}
+        meta={meta}
+        extra={<DraftRepliesButton your={your} profile={state.name} onClick={() => draftReplies()} />}
+        onClick={() => (composer ? closeBrief() : openBrief())}
+      />
+    ),
     brief:
       composer &&
       (brief.data ? (
@@ -280,35 +386,37 @@ export function useReview(
       ) : (
         <Skeleton className="mt-1.5 h-40 w-full rounded-lg" />
       )),
-    run: detail && lineState && (
+    run: line && lineState && (
       <>
         <RunLine
           state={lineState}
-          run={detail.run}
+          run={line.run}
           meta={meta}
           now={o.now}
           cancelling={cancel.isPending}
           onLog={() => openLog(null)}
           onRaw={() => openLog(null, true)}
-          onCancel={() => cancel.mutate(detail.run.id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
-          onGaps={() => openSummary()}
+          onCancel={() => cancel.mutate(line.run.id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
+          // A reply run has no summary section. Its log lists the gaps.
+          onGaps={() => (line.run.kind === "reply" ? openLog(null) : openSummary())}
         />
-        <BriefLine tasks={pr.tasks} note={detail.run.note} />
+        <BriefLine tasks={pr.tasks} note={line.run.note} />
       </>
     ),
     summary: detail?.run.summary && (
       <AiSummary run={detail.run} items={items} pr={pr} meta={meta} open={sumOpen} onOpen={setSumOpen} triage={triage} ctx={triageCtx} />
     ),
     drafts: <Drafts items={ds} isOpen={isDraftOpen} triage={triage} ctx={draftCtx} />,
+    cards,
     sheet: log && (
       <RunLog
-        detail={run.data?.run.id === latest?.id ? run.data : undefined}
+        detail={[run.data, other.data].find((d) => d && d.run.id === logRun?.id)}
         meta={meta}
         prKey={prKey(pr)}
         tasks={pr.tasks}
         now={o.now}
         target={log}
-        onRaw={(show) => setLog((l) => l && { agent: null, raw: show, n: show ? l.n + 1 : l.n })}
+        onRaw={(show) => setLog((l) => l && { ...l, agent: null, raw: show, n: show ? l.n + 1 : l.n })}
         onClose={closeLog}
       />
     ),

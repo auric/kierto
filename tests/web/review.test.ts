@@ -1,7 +1,8 @@
-// Plan v3 WP11: the pure review UI rules. The log tree, the run line, the brief state, and the Review runs view.
+// Plan v3 WP11 and replies.md WP18: the pure review UI rules. The log tree, the run line, the brief state, the Review runs view,
+// and the reply drafts.
 import { describe, expect, test } from "bun:test";
 import type { BriefDto, ProfileDto, PrRow, ReviewItemDto, RunDetail, RunDto } from "../../src/shared/dto";
-import type { AnchoredFinding, Question } from "../../src/shared/review";
+import type { AnchoredFinding, Question, ReplyPayload } from "../../src/shared/review";
 import type { RunEvent } from "../../src/shared/run-log";
 import {
   agentInfo,
@@ -11,8 +12,13 @@ import {
   countText,
   draftExcerpt,
   latestByPr,
+  latestReview,
   limitText,
   logTree,
+  RUN_TEXT,
+  repliesButton,
+  replyCard,
+  replyMap,
   runLine,
   runRows,
   runWhy,
@@ -317,5 +323,99 @@ describe("Review runs view", () => {
     });
     expect(runWhy(run({ status: "failed", errorKind: "schema", errorText: "Bad." }), "General").error).toBe("Failed");
     expect(runWhy(run({ status: "cancelled" }), "General").text).toBe("General: you cancelled it.");
+  });
+});
+
+describe("reply drafts", () => {
+  const reply = (
+    id: number,
+    thread: number,
+    replyTo: number,
+    o: Partial<ReviewItemDto> = {},
+    p: Partial<ReplyPayload> = {},
+  ): ReviewItemDto => {
+    const payload: ReplyPayload = {
+      thread,
+      action: "reply",
+      body: "Fixed.",
+      reason: "It asks for a change.",
+      evidenceStatus: "code",
+      replyTo,
+      ...p,
+    };
+    return { id, run: 2, kind: "reply", body: payload.body, payload, anchor: null, status: "new", revision: 0, edited: false, ...o };
+  };
+
+  test("R14: the newest review run drives the drafts, even after a newer reply run", () => {
+    const runs = [run({ id: 9, kind: "reply" }), run({ id: 8, kind: "reply" }), run({ id: 7 }), run({ id: 3 })];
+    expect(latestReview(runs)?.id).toBe(7);
+    expect(latestReview([run({ id: 9, kind: "reply" })])).toBeNull();
+    expect(latestReview(undefined)).toBeNull();
+  });
+
+  test("the run line names the kind of the newest run", () => {
+    const items = [
+      reply(1, 101, 105),
+      reply(2, 102, 205),
+      reply(3, 103, 305, { body: "", status: "discarded" }, { action: "none", body: "" }),
+    ];
+    expect(runLine(detail(run({ kind: "reply" }), [], items), PROFILES)).toMatchObject({
+      kind: "done",
+      verb: "drafted replies on",
+      count: "2 reply drafts, 1 thread needs no reply",
+    });
+    // An explain profile explains a review, but a reply run still drafts replies.
+    expect(runLine(detail(run({ kind: "reply", profile: "explain" })), PROFILES)).toMatchObject({
+      verb: "drafted replies on",
+      count: "No reply drafts",
+    });
+    expect(countText([reply(3, 103, 305, {}, { action: "none" }), reply(4, 104, 405, {}, { action: "none" })], false, "reply")).toBe(
+      "No reply drafts, 2 threads need no reply",
+    );
+    expect(RUN_TEXT.reply).toEqual({ running: "Drafting replies…", failed: "Reply drafts failed.", cancelled: "the reply drafts" });
+    expect(RUN_TEXT.review.running).toBe("Reviewing…");
+    expect(runWhy(run({ kind: "reply", status: "running" }), "General").text).toBe("General: drafting replies now.");
+  });
+
+  test("the thread-to-draft map keys reply items by thread and skips other kinds", () => {
+    const m = replyMap([reply(1, 101, 105), finding(2), reply(3, 103, 305), question(4)]);
+    expect([...m.keys()]).toEqual([101, 103]);
+    expect(m.get(103)?.id).toBe(3);
+    expect(replyMap(undefined).size).toBe(0);
+  });
+
+  test("a draft is stale when its parent is no longer the newest live message", () => {
+    const it = reply(1, 101, 105);
+    expect(replyCard(it, 105, false)).toEqual({ kind: "draft", it, stale: false });
+    expect(replyCard(it, 106, false)).toEqual({ kind: "draft", it, stale: true });
+    // Every message deleted: no newest message, so nothing to compare.
+    expect(replyCard(it, null, false)).toEqual({ kind: "draft", it, stale: false });
+  });
+
+  test("card kinds: pending wins, none has no body, discarded folds, no item gives no card", () => {
+    const none = reply(2, 101, 105, { body: "", status: "discarded" }, { action: "none", body: "" });
+    const gone = reply(3, 101, 105, { status: "discarded" });
+    expect(replyCard(reply(1, 101, 105), 105, true)).toEqual({ kind: "pending" });
+    expect(replyCard(undefined, 105, true)).toEqual({ kind: "pending" });
+    expect(replyCard(none, 106, false)).toEqual({ kind: "none", it: none, stale: true });
+    expect(replyCard(gone, 106, false)).toEqual({ kind: "discarded", it: gone });
+    // An edited none draft has a body, so it can be accepted.
+    const written = reply(4, 101, 105, { body: "My answer.", status: "accepted" }, { action: "none", body: "" });
+    expect(replyCard(written, 105, false)).toMatchObject({ kind: "draft", stale: false });
+    expect(replyCard(undefined, 105, false)).toBeNull();
+  });
+
+  test("the Draft replies button: disabled at 0 and above the run cap, with the reason", () => {
+    expect(repliesButton(0, "General")).toEqual({ disabled: true, hint: "No thread waits for your reply." });
+    expect(repliesButton(1, "General")).toEqual({
+      disabled: false,
+      hint: "Draft a reply for the thread where it is your turn. Profile: General.",
+    });
+    expect(repliesButton(3, "Security").hint).toBe("Draft a reply for each of the 3 threads where it is your turn. Profile: Security.");
+    expect(repliesButton(25, "General").disabled).toBe(false);
+    expect(repliesButton(26, "General")).toEqual({
+      disabled: true,
+      hint: "26 threads wait for your reply. Draft at most 25 at a time: use Draft reply in each thread.",
+    });
   });
 });

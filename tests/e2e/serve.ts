@@ -49,7 +49,7 @@ if (!existsSync(index)) {
 }
 const indexHtml = readFileSync(index, "utf8");
 
-const INITIAL: Scenario = { reply: "none", tall: 0, merge: "open", down: false };
+const INITIAL: Scenario = { reply: "none", turns: 0, tall: 0, merge: "open", down: false };
 let sc: Scenario = { ...INITIAL };
 
 // Scenario data.
@@ -119,12 +119,25 @@ const withReply = () =>
     ? addReply(base(), ROOT, 1000010, alex, "Edited: the flush order is fixed now.", 1)
     : addReply(base(), ROOT, 1000010, alex, "Can you check the flush order again?");
 
-function activitiesA(): S.Activity[] {
+function repliesA(): S.Activity[] {
   if (sc.reply === "none" || sc.reply === "absent" || sc.reply === "deleted") return base();
   const out = sc.reply === "two" ? addReply(withReply(), ROOT, 1000011, maria, "One more point: keep the flush order.") : withReply();
   const dup = out.find((a) => a.comment);
   // The same activity twice, in reversed order.
   return sc.reply === "dup" && dup ? [...out, S.clone(dup)].reverse() : out;
+}
+
+function activitiesA(): S.Activity[] {
+  let out = repliesA();
+  for (let i = 1; i <= sc.turns; i++) {
+    const root = S.clone(S.findComment(base(), ROOT));
+    const at = T0 + i * 10;
+    Object.assign(root, { id: 1000100 + i, version: 0, text: `Point ${i}: the flush must run first.`, author: me, comments: [] });
+    Object.assign(root, { createdDate: at, updatedDate: at });
+    out = [...out, { id: 10000100 + i, action: "COMMENTED", commentAction: "ADDED", comment: root }];
+    out = addReply(out, 1000100 + i, 1000200 + i, alex, `Why must point ${i} run first?`);
+  }
+  return out;
 }
 
 function activitiesB(): S.Activity[] {
@@ -286,3 +299,5 @@ process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 
 console.log(`E2E app: http://127.0.0.1:${APP_PORT}/ (pid ${process.pid}). Fake Bitbucket: ${fake.url}. Data: ${dataDir}`);
+// A run from a worktree must show which checkout it serves.
+console.log(`E2E code: ${import.meta.dir}. UI: ${WEB_DIR}`);

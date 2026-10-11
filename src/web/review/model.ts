@@ -1,6 +1,25 @@
-// Pure review UI rules (plan v3 WP11, prototype/v3). No DOM access, so bun test runs them directly.
-import type { BriefDto, CommitDto, ExcerptLine, ProfileDto, PrRow, ReviewItemDto, RunDetail, RunDto, RunUsage } from "../../shared/dto";
-import type { Anchor, AnchoredFinding, Coverage, DropReason, Side } from "../../shared/review";
+// Pure review UI rules (plan v3 WP11, prototype/v3, replies.md step 6). No DOM access, so bun test runs them directly.
+import type {
+  BriefDto,
+  CommitDto,
+  ExcerptLine,
+  ProfileDto,
+  PrRow,
+  ReviewItemDto,
+  RunDetail,
+  RunDto,
+  RunKind,
+  RunUsage,
+} from "../../shared/dto";
+import {
+  type Anchor,
+  type AnchoredFinding,
+  type Coverage,
+  type DropReason,
+  MAX_REPLY_THREADS,
+  type ReplyPayload,
+  type Side,
+} from "../../shared/review";
 import type { RunEvent } from "../../shared/run-log";
 import { matches } from "../shell/model";
 
@@ -89,7 +108,18 @@ export function tokenTotal(u: RunUsage | null): number | null {
 export const tokenText = (n: number) => (n < 1000 ? `${n} tokens` : `${Math.round(n / 1000)}k tokens`);
 
 // Plan v3 section 7: an incomplete run says "No findings in what it read", never "No issues".
-export function countText(items: ReviewItemDto[], incomplete: boolean) {
+// A reply run counts its drafts and the threads where it found no reply needed.
+export function countText(items: ReviewItemDto[], incomplete: boolean, kind: RunKind = "review") {
+  if (kind === "reply") {
+    const none = items.filter((i) => (i.payload as ReplyPayload).action === "none").length;
+    const r = items.length - none;
+    return [
+      r ? plural(r, "reply draft") : "No reply drafts",
+      none ? `${plural(none, "thread")} ${none === 1 ? "needs" : "need"} no reply` : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+  }
   const f = items.filter((i) => i.kind === "finding").length;
   const q = items.length - f;
   const none = incomplete ? "No findings in what it read" : q ? "" : "No findings";
@@ -100,7 +130,7 @@ export type RunLineState =
   | { kind: "running"; agents: number; calls: number; startedAt: number }
   | {
       kind: "done";
-      verb: "reviewed" | "explained";
+      verb: "reviewed" | "explained" | "drafted replies on";
       head: string;
       at: number;
       count: string;
@@ -134,10 +164,10 @@ export function runLine(d: RunDetail, profiles: ProfileDto[], commits?: CommitDt
       const gaps = r.status === "incomplete";
       return {
         kind: "done",
-        verb: profiles.find((p) => p.id === r.profile)?.explain ? "explained" : "reviewed",
+        verb: r.kind === "reply" ? "drafted replies on" : profiles.find((p) => p.id === r.profile)?.explain ? "explained" : "reviewed",
         head: shortHash(r.sourceHead),
         at: r.finishedAt ?? r.startedAt,
-        count: countText(d.items, gaps),
+        count: countText(d.items, gaps, r.kind),
         tokens: tokenTotal(r.usage),
         gaps,
         since: staleText(r, commits),
@@ -145,6 +175,15 @@ export function runLine(d: RunDetail, profiles: ProfileDto[], commits?: CommitDt
     }
   }
 }
+
+// The kind label of the run line (R14): the newest run of any kind shows there.
+export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancelled: string }> = {
+  review: { running: "Reviewing…", failed: "Review failed.", cancelled: "the review" },
+  reply: { running: "Drafting replies…", failed: "Reply drafts failed.", cancelled: "the reply drafts" },
+};
+
+// R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, and the brief.
+export const latestReview = (runs: RunDto[] | undefined) => runs?.find((r) => r.kind === "review") ?? null;
 
 // Plan v3 section 7, Usage limit: one line with the CLI message. No automatic retry.
 export const limitText = (runner: string, text: string | null) =>
@@ -221,6 +260,46 @@ export function anchorNote(it: ReviewItemDto): string | null {
   return null;
 }
 
+// ---------- Reply drafts (docs/plans/replies.md step 6) ----------
+
+export const replyOf = (it: ReviewItemDto) => it.payload as ReplyPayload;
+
+// GET /api/prs/:id/reply-drafts gives the newest unposted draft of each thread. Keys are thread IDs.
+export function replyMap(items: ReviewItemDto[] | undefined): Map<number, ReviewItemDto> {
+  const out = new Map<number, ReviewItemDto>();
+  for (const it of items ?? []) if (it.kind === "reply") out.set(replyOf(it).thread, it);
+  return out;
+}
+
+// none: action none, or no body yet. Accept needs a body (WP17), so it offers only a reply of your own.
+// stale: the draft answers a message that is no longer the newest live message of the thread.
+export type ReplyCard =
+  | { kind: "pending" }
+  | { kind: "none"; it: ReviewItemDto; stale: boolean }
+  | { kind: "draft"; it: ReviewItemDto; stale: boolean }
+  | { kind: "discarded"; it: ReviewItemDto };
+
+// newest: the newest live message of the thread. pending: a reply run that this page started for the thread runs now.
+export function replyCard(it: ReviewItemDto | undefined, newest: number | null, pending: boolean): ReplyCard | null {
+  if (pending) return { kind: "pending" };
+  if (!it) return null;
+  const stale = newest !== null && replyOf(it).replyTo !== newest;
+  if (!it.body.trim()) return { kind: "none", it, stale };
+  return it.status === "discarded" ? { kind: "discarded", it } : { kind: "draft", it, stale };
+}
+
+// The Draft replies button. D12: the server refuses more than MAX_REPLY_THREADS threads in one run.
+export function repliesButton(your: number, profile: string): { disabled: boolean; hint: string } {
+  if (!your) return { disabled: true, hint: "No thread waits for your reply." };
+  if (your > MAX_REPLY_THREADS)
+    return {
+      disabled: true,
+      hint: `${your} threads wait for your reply. Draft at most ${MAX_REPLY_THREADS} at a time: use Draft reply in each thread.`,
+    };
+  const which = your === 1 ? "the thread" : `each of the ${your} threads`;
+  return { disabled: false, hint: `Draft a reply for ${which} where it is your turn. Profile: ${profile}.` };
+}
+
 export const coverageRows = (c: Coverage): [string, string[]][] =>
   (
     [
@@ -255,7 +334,7 @@ export type RunWhy = { error: string | null; lead: string | null; text: string |
 export function runWhy(r: RunDto, profile: string): RunWhy {
   switch (r.status) {
     case "running":
-      return { error: null, lead: null, text: `${profile}: reviewing now.` };
+      return { error: null, lead: null, text: `${profile}: ${r.kind === "reply" ? "drafting replies" : "reviewing"} now.` };
     case "cancelled":
       return { error: null, lead: null, text: `${profile}: you cancelled it.` };
     case "failed":

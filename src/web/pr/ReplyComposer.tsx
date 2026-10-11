@@ -2,7 +2,7 @@
 // and "Reply to <name> in <place>". Unsent text stays in localStorage under rl:reply:<pr>:<thread>.
 import { useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, CornerDownRight, Eye, Reply, Send } from "lucide-react";
-import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { MAX_NOTE, type PostDto } from "../../shared/dto";
@@ -46,7 +46,18 @@ const nameOf = (m: Node) => (m.who.me ? "your message" : m.who.name);
 
 type Pending = { parent: Node; seen: number; text: string };
 
-export function ReplyComposer({ t, target, ctx }: { t: ThreadModel; target: ReplyTarget | undefined; ctx: ThreadCtx }) {
+// aside: more actions at the end of the composer row, such as Draft reply (WP18).
+export function ReplyComposer({
+  t,
+  target,
+  ctx,
+  aside,
+}: {
+  t: ThreadModel;
+  target: ReplyTarget | undefined;
+  ctx: ThreadCtx;
+  aside?: ReactNode;
+}) {
   const qc = useQueryClient();
   const k = draftKey(ctx.pr, t.id);
   const [d, setD] = useState<ReplyDraft>(() => readDraft(k) ?? fresh());
@@ -175,17 +186,20 @@ export function ReplyComposer({ t, target, ctx }: { t: ThreadModel; target: Repl
 
   if (!open) {
     return (
-      <button
-        type="button"
-        className="mt-3.5 flex w-full max-w-[72ch] cursor-text items-center gap-2 rounded-lg border bg-pane px-2.5 py-1.5 text-left text-sm text-muted-foreground hover:border-rule-strong"
-        onClick={() => {
-          setOpen(true);
-          focusNext.current = `rc-ta-${t.id}`;
-        }}
-      >
-        <Reply aria-hidden className="size-[15px] shrink-0" />
-        Write a reply
-      </button>
+      <div className="mt-3.5 flex max-w-[72ch] items-center gap-2">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 cursor-text items-center gap-2 rounded-lg border bg-pane px-2.5 py-1.5 text-left text-sm text-muted-foreground hover:border-rule-strong"
+          onClick={() => {
+            setOpen(true);
+            focusNext.current = `rc-ta-${t.id}`;
+          }}
+        >
+          <Reply aria-hidden className="size-[15px] shrink-0" />
+          Write a reply
+        </button>
+        {aside}
+      </div>
     );
   }
 
@@ -288,6 +302,7 @@ export function ReplyComposer({ t, target, ctx }: { t: ThreadModel; target: Repl
           <span id={`rc-h-${t.id}`} className="ml-1 text-xs text-muted-foreground">
             Ctrl+Enter shows the reply before it posts. Esc keeps the text.
           </span>
+          {aside && <span className="ml-auto">{aside}</span>}
         </div>
       )}
     </section>

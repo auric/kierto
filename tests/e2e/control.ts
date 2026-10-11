@@ -9,6 +9,8 @@ export const E2E_TOKEN = "e2e-token-7f3a9c1d5b2e8f40";
 export type Scenario = {
   // PR 1001: the reply 1000010 by another user under my comment 1000003. "two": then the reply 1000011 by a third user.
   reply: "none" | "new" | "two" | "dup" | "edit" | "absent" | "deleted";
+  // PR 1001: this many more threads 1000101, 1000102, …: my general comment, then a reply 1000201, 1000202, … by another user.
+  turns: number;
   // PR 210: a new thread by another user with this many long replies.
   tall: number;
   // PR 77: "reply" adds an unread reply; "merged" also takes the PR off the dashboard as MERGED.

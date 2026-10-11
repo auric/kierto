@@ -1,5 +1,17 @@
 // One thread of the detail pane (prototype/v3 thread, threadBody, tree, msg). A collapsed thread renders no message, so it acks nothing.
-import { Check, ChevronRight, Copy, CornerDownRight, History, Hourglass, MessageSquare, Reply, Square, SquareCheckBig } from "lucide-react";
+import {
+  Bot,
+  Check,
+  ChevronRight,
+  Copy,
+  CornerDownRight,
+  History,
+  Hourglass,
+  MessageSquare,
+  Reply,
+  Square,
+  SquareCheckBig,
+} from "lucide-react";
 import { lazy, memo, type ReactNode, Suspense, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
@@ -54,6 +66,8 @@ export type ThreadCtx = {
   announce: (text: string) => void;
   // msg null: the reply box of the thread answers the newest live message again.
   onReply: (thread: number, msg: number | null) => void;
+  // Starts a reply-draft run for this thread only (replies.md step 6, D13).
+  onDraftReply: (thread: number) => void;
   posts: PostCtx;
 };
 
@@ -204,7 +218,17 @@ export const Thread = memo(function Thread({
               <>
                 {posts && <ReplyPosts posts={posts} avatar={<Avatar p={ctx.me} />} forge={ctx.forge} ctx={ctx.posts} />}
                 {draft}
-                <ReplyComposer t={t} target={target} ctx={ctx} />
+                <ReplyComposer
+                  t={t}
+                  target={target}
+                  ctx={ctx}
+                  aside={
+                    <Button size="sm" variant="ghost" className="text-ink-2" onClick={() => ctx.onDraftReply(t.id)}>
+                      <Bot aria-hidden data-icon="inline-start" />
+                      Draft reply
+                    </Button>
+                  }
+                />
               </>
             }
           />
@@ -344,7 +368,8 @@ function FoldButton({ row, tid, ctx }: { row: FoldRow; tid: number; ctx: ThreadC
 
 const msgBtn = "-my-1 text-muted-foreground hover:bg-hover hover:text-foreground";
 
-function CopyButton({ text, ctx }: { text: string; ctx: ThreadCtx }) {
+// WP16: copies the raw Markdown. The reply draft card (WP18) uses it too.
+export function CopyButton({ text, ctx }: { text: string; ctx: Pick<ThreadCtx, "hints" | "announce"> }) {
   // A count, so a second copy within 1.5 s starts the time again.
   const [copied, setCopied] = useState(0);
   useEffect(() => {

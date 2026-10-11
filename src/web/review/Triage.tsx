@@ -22,8 +22,6 @@ export type TriageCtx = {
   moveTo: (it: ReviewItemDto, line: number) => void;
 };
 
-const noun = (it: ReviewItemDto) => (it.kind === "question" ? "question" : "finding");
-
 // Esc in a triage field closes only that field. The shell key handler never sees it.
 function onEscape(e: KeyboardEvent, close: () => void) {
   if (e.key !== "Escape") return false;
@@ -122,7 +120,7 @@ export function Editor({ it, busy, flush, ctx }: { it: ReviewItemDto; busy: bool
   const save = () => {
     const v = ref.current?.value.trim() ?? "";
     if (!v) {
-      toast.add({ title: `The text is empty. Discard the ${noun(it)} instead.` });
+      toast.add({ title: `The text is empty. Discard the ${it.kind} instead.` });
       return;
     }
     ctx.save(it, v);
@@ -131,7 +129,7 @@ export function Editor({ it, busy, flush, ctx }: { it: ReviewItemDto; busy: bool
   return (
     <div ref={box} className={cn("mt-1 max-w-[72ch]", !flush && "rl-indent")}>
       <label className="sr-only" htmlFor={id}>
-        Edit the {noun(it)}
+        Edit the {it.kind}
       </label>
       <Textarea
         ref={ref}
