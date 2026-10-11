@@ -65,30 +65,31 @@
 
 /* prototype/v3/index.html:7-54. Hue rule: --turn marks only "your turn", --destructive (prototype --err) marks only errors, --pen marks links and focus. The primary action is an ink fill. */
 :root {
-  --frame: #e8ebee;
-  --pane-2: #f3f5f7;
-  --pane: #fcfcfd;
-  --sunken: #eff1f4;
-  --hover: #e9ecf0;
-  --sel: #dde2e8;
-  --foreground: #161a21;
-  --ink-2: #4b5563;
-  --muted-foreground: #5a6573;
-  --border: #d9dee4;
-  --rule-strong: #b6bec9;
-  --pen: #2a45b0;
-  --turn: #a3420a;
-  --destructive: #b42318;
-  --ok: #2b7a45;
-  --warn: #b8650c;
+  --frame: #dadee3;
+  --pane-2: #edeff2;
+  --pane: #fdfdfe;
+  --sunken: #edf0f4;
+  --hover: #e2e7eb;
+  --sel: #ccd9e9;
+  --foreground: #11171c;
+  --ink-2: #404952;
+  --muted-foreground: #545d67;
+  --border: #d4dae0;
+  --rule-strong: #abb2ba;
+  --input: #818891;
+  --pen: #194cb1;
+  --turn: #8c4a00;
+  --destructive: #b31b28;
+  --ok: #21763c;
+  --warn: #975700;
   --fs: 14px;
   --fs-s: 12.75px;
   --fs-xs: 11.75px;
   --fs-title: 21px;
   --row-y: 10px;
-  --add: #e4f2e7;
-  --del: #f9e4e4;
-  --hit: #dde2e8;
+  --add: #d1efd8;
+  --del: #ffdcdc;
+  --hit: #d6dfea;
   --shade: rgba(22, 26, 33, 0.14);
   /* Avatar lightness and chroma (prototype/v3:6-9). One hue per person names the person, never a state. */
   --av-bl: 0.92;
@@ -99,29 +100,30 @@
 
 .dark {
   color-scheme: dark;
-  --frame: #121519;
-  --pane-2: #171a1f;
-  --pane: #1c2027;
-  --sunken: #15181d;
-  --hover: #22272f;
-  --sel: #2b313b;
-  --foreground: #e4e8ed;
-  --ink-2: #a9b2be;
-  --muted-foreground: #97a0ab;
-  --border: #2c323b;
-  --rule-strong: #46505c;
-  --pen: #93a8ff;
-  --turn: #ffa364;
-  --destructive: #ff8b7e;
-  --ok: #63c483;
-  --warn: #e89c48;
-  --add: #15291b;
-  --del: #34191b;
-  --hit: #2f3640;
-  --shade: rgba(0, 0, 0, 0.5);
-  --av-bl: 0.36;
-  --av-bc: 0.04;
-  --av-fl: 0.88;
+  --frame: #08090a;
+  --pane-2: #121315;
+  --pane: #1e1f22;
+  --sunken: #151618;
+  --hover: #242629;
+  --sel: #283444;
+  --foreground: #e6e8ea;
+  --ink-2: #c0c3c6;
+  --muted-foreground: #a3a6ab;
+  --border: #2d2f32;
+  --rule-strong: #4b4d51;
+  --input: #696c70;
+  --pen: #82b9f6;
+  --turn: #f6bc5d;
+  --destructive: #f97f80;
+  --ok: #72cf8e;
+  --warn: #f9aa60;
+  --add: #152e1c;
+  --del: #3d1d1d;
+  --hit: #31373f;
+  --shade: rgba(0, 0, 0, 0.55);
+  --av-bl: 0.37;
+  --av-bc: 0.045;
+  --av-fl: 0.89;
   --av-fc: 0.05;
 }
 
@@ -148,7 +150,6 @@
   --muted: var(--sunken);
   --accent: var(--sel);
   --accent-foreground: var(--foreground);
-  --input: var(--rule-strong);
   --ring: var(--pen);
   --chart-1: var(--pen);
   --chart-2: var(--ok);

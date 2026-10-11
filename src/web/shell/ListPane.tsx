@@ -106,7 +106,7 @@ export function ListPane(props: {
             <span className="sr-only"> pull requests</span>
           </span>
         </div>
-        <div className="flex h-[34px] items-center gap-2 rounded-[7px] border bg-pane px-2.5 text-muted-foreground focus-within:border-pen focus-within:shadow-[0_0_0_1px_var(--pen)]">
+        <div className="flex h-[34px] items-center gap-2 rounded-[7px] border border-input bg-pane px-2.5 text-muted-foreground focus-within:border-pen focus-within:shadow-[0_0_0_1px_var(--pen)]">
           <Search aria-hidden className="size-[15px] shrink-0" />
           <input
             ref={props.filterRef}
