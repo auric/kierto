@@ -11,6 +11,7 @@ import { createSecrets, type SecretBackend } from "../src/server/secrets";
 import { createSettings, type Settings } from "../src/server/settings";
 import type { SettingsDto } from "../src/shared/dto";
 import { FAKE_TOKEN, type FakeBitbucket, fixture, key, startFakeBitbucket, TEST_CA_FILE } from "./support/fake-bitbucket";
+import { type FakeJira, JIRA_TOKEN, startFakeJira } from "./support/fake-jira";
 import { DASHBOARD_PATH } from "./support/scenarios";
 
 const DEFAULT_RULES = (["branch", "title", "description"] as const).map((source) => ({
@@ -73,6 +74,7 @@ describe("settings API", () => {
       taskLink: null,
       checkSeconds: 60,
       profiles: SHIPPED_PROFILES,
+      jira: { baseUrl: null, caFile: null, tokenStored: false },
     });
     expect(existsSync(dir)).toBe(false);
   });
@@ -95,6 +97,7 @@ describe("settings API", () => {
       taskLink: null,
       checkSeconds: 60,
       profiles: SHIPPED_PROFILES,
+      jira: { baseUrl: null, caFile: null, tokenStored: false },
     };
     expect(await res.json()).toEqual(expected);
     expect(await s.get()).toEqual(expected);
@@ -327,4 +330,102 @@ test("after a PUT the token is absent from the data dir and the log", async () =
   } finally {
     for (const s of spies) s.mockRestore();
   }
+});
+
+describe("Jira settings (plan r2 S-JIRA)", () => {
+  let jira: FakeJira;
+  beforeEach(() => {
+    jira = startFakeJira();
+  });
+  afterEach(() => jira.stop());
+
+  function jiraSetup(backend?: SecretBackend) {
+    const settings = createSettings({ dir, secrets: createSecrets(null), jiraSecrets: createSecrets(backend ?? null, "jira-token") });
+    opened.push(settings);
+    const app = createApp({ port: PORT, token: SESSION, live: createLive(), settings });
+    const call = async (method: string, path: string, body?: unknown) => {
+      const res = await app.request(`${ORIGIN}/api/settings${path}`, {
+        method,
+        headers: { host: `127.0.0.1:${PORT}`, origin: ORIGIN, "x-rl-session": SESSION, "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      return { status: res.status, body: (await res.json()) as SettingsDto & { error?: string } };
+    };
+    const config = () => JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
+    return { settings, call, config, bitbucket: () => call("PUT", "", { baseUrl: fake.url, token: FAKE_TOKEN }) };
+  }
+
+  test("Jira needs the Bitbucket settings first", async () => {
+    const s = jiraSetup();
+    expect((await s.call("PUT", "/jira", { baseUrl: jira.url, token: JIRA_TOKEN })).status).toBe(409);
+    expect(jira.requests).toEqual([]);
+  });
+
+  test("a Bitbucket PUT keeps the jira block", async () => {
+    const s = jiraSetup();
+    await s.bitbucket();
+    expect((await s.call("PUT", "/jira", { baseUrl: `${jira.url}/`, token: JIRA_TOKEN })).body.jira).toEqual({
+      baseUrl: jira.url,
+      caFile: null,
+      tokenStored: true,
+    });
+    expect((await s.call("PUT", "", { baseUrl: fake.url, notifications: true })).status).toBe(200);
+    expect((await s.call("PUT", "", { baseUrl: fake.url, token: FAKE_TOKEN, markAi: false })).status).toBe(200);
+    expect(s.config().jira).toEqual({ baseUrl: jira.url });
+    expect((await s.call("GET", "")).body.jira.tokenStored).toBe(true);
+  });
+
+  test("same origin reuses the stored token; a new origin needs one", async () => {
+    const s = jiraSetup();
+    await s.bitbucket();
+    await s.call("PUT", "/jira", { baseUrl: jira.url, token: JIRA_TOKEN });
+    const r = await s.call("PUT", "/jira", { baseUrl: `${jira.url}/jira` });
+    expect(r.status).toBe(400);
+    jira.routes[key("GET", "/jira/rest/api/2/myself")] = { status: 200, body: { name: "jdoe" } };
+    expect((await s.call("PUT", "/jira", { baseUrl: `${jira.url}/jira` })).status).toBe(200);
+    expect(s.config().jira).toEqual({ baseUrl: `${jira.url}/jira` });
+    const other = startFakeJira();
+    try {
+      expect((await s.call("PUT", "/jira", { baseUrl: other.url })).body.error).toContain("A new Jira URL needs a new token.");
+      expect(other.requests).toEqual([]);
+    } finally {
+      other.stop();
+    }
+  });
+
+  test("a wrong token, http to a non-loopback host, a redirect, and a missing CA file give 400 and store nothing", async () => {
+    const s = jiraSetup();
+    await s.bitbucket();
+    expect((await s.call("PUT", "/jira", { baseUrl: jira.url, token: "wrong" })).body.error).toBe("Jira rejected the token.");
+    expect((await s.call("PUT", "/jira", { baseUrl: "http://jira.example.test", token: JIRA_TOKEN })).body.error).toBe(
+      "The Jira URL must use https.",
+    );
+    expect((await s.call("PUT", "/jira", { baseUrl: jira.url, token: JIRA_TOKEN, caFile: join(dir, "none.pem") })).status).toBe(400);
+    jira.routes[key("GET", "/rest/api/2/myself")] = { status: 302, headers: { Location: "https://sso.example.test/" } };
+    expect((await s.call("PUT", "/jira", { baseUrl: jira.url, token: JIRA_TOKEN })).body.error).toBe(
+      "Jira check failed: redirect 302: /rest/api/2/myself",
+    );
+    expect(s.config().jira).toBeUndefined();
+    expect((await s.call("GET", "")).body.jira).toEqual({ baseUrl: null, caFile: null, tokenStored: false });
+  });
+
+  test("an empty baseUrl disconnects Jira and deletes the token from the store", async () => {
+    const store = new Map<string, string>();
+    const backend: SecretBackend = {
+      get: async (o) => store.get(o.name) ?? null,
+      set: async (o) => void store.set(o.name, o.value),
+      delete: async (o) => store.delete(o.name),
+    };
+    const s = jiraSetup(backend);
+    await s.bitbucket();
+    await s.call("PUT", "/jira", { baseUrl: jira.url, token: JIRA_TOKEN });
+    expect([...store.entries()]).toEqual([["jira-token", JIRA_TOKEN]]);
+    const r = await s.call("PUT", "/jira", { baseUrl: "" });
+    expect(r.status).toBe(200);
+    expect(r.body.jira).toEqual({ baseUrl: null, caFile: null, tokenStored: false });
+    expect(store.size).toBe(0);
+    expect(s.config().jira).toBeUndefined();
+    expect(s.config().baseUrl).toBe(fake.url);
+    expect(await s.settings.jira()).toBeNull();
+  });
 });

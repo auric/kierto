@@ -102,6 +102,8 @@ export type SettingsDto = {
   checkSeconds: number;
   // With prompts. Meta lists them without.
   profiles: ProfileInput[];
+  // baseUrl: null when Jira is not connected.
+  jira: { baseUrl: string | null; caFile: string | null; tokenStored: boolean };
 };
 
 export type ApiError = { error: string };

@@ -1,4 +1,4 @@
-// E2E server: the fake Bitbucket on FAKE_URL and the app on APP_PORT in one process (control.ts). Test code only.
+// E2E server: the fake Bitbucket on FAKE_URL, the fake Jira on JIRA_URL, and the app on APP_PORT in one process (control.ts). Test code only.
 // The app gets a temp data folder and memory secrets. It never sees the real data folder or the credential store.
 import "../support/no-real-claude";
 import { randomBytes } from "node:crypto";
@@ -14,9 +14,20 @@ import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { createSyncEngine } from "../../src/server/sync/engine";
 import { FAKE_USER, fixture, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
+import { startFakeJira } from "../support/fake-jira";
 import { claudeStream, fakeRunner, REVIEW_RESULT, reviewRemote, stubListTools } from "../support/review-fixture";
 import * as S from "../support/scenarios";
-import { APP_PORT, type ClaudeScenario, E2E_TOKEN, FAKE_URL, type PostControl, type Scenario } from "./control";
+import {
+  APP_PORT,
+  type ClaudeScenario,
+  E2E_JIRA_TOKEN,
+  E2E_TOKEN,
+  FAKE_URL,
+  JIRA_ISSUE,
+  JIRA_URL,
+  type PostControl,
+  type Scenario,
+} from "./control";
 
 const dataDir = mkdtempSync(join(tmpdir(), "review-loop-e2e-"));
 process.env.REVIEW_LOOP_DATA_DIR = dataDir;
@@ -76,7 +87,17 @@ if (!existsSync(index)) {
 }
 const indexHtml = readFileSync(index, "utf8");
 
-const INITIAL: Scenario = { reply: "none", turns: 0, inject: false, push: false, tall: 0, merge: "open", down: false, forge: false };
+const INITIAL: Scenario = {
+  reply: "none",
+  turns: 0,
+  inject: false,
+  push: false,
+  tall: 0,
+  merge: "open",
+  down: false,
+  forge: false,
+  task: false,
+};
 let sc: Scenario = { ...INITIAL };
 
 // Scenario data.
@@ -130,9 +151,10 @@ Object.assign(B.pr.fromRef, {
   displayId: "feature/release_pipeline_observability_dashboard_rollout",
 });
 const C = makePr("PROJ1", "sample-repo-3", 77, "Drop the legacy export endpoint", kenji, "APPROVED");
-// The dashboard and the PR route share the PR A object, so both report the pushed head.
+// The dashboard and the PR route share the PR A object, so both report the pushed head and the description.
 const headA = () => {
   A.pr.fromRef.latestCommit = sc.push ? remote.next : remote.source;
+  A.pr.description = sc.task ? `Synthetic e2e data. Implements ${JIRA_ISSUE}. See ABC-404.` : "Synthetic e2e data.";
 };
 
 const base = () => S.activities("activities-nested-reply.json");
@@ -216,6 +238,9 @@ const postsC = S.commentPosts(C.path, activitiesC, me, 4_200_001);
 
 const fake = startFakeBitbucket({ port: Number(new URL(FAKE_URL).port) });
 fake.token = E2E_TOKEN;
+const jira = startFakeJira({ port: Number(new URL(JIRA_URL).port) });
+jira.token = E2E_JIRA_TOKEN;
+jira.addIssue(JIRA_ISSUE);
 const r = fake.routes;
 r[key("GET", S.DASHBOARD_PATH)] = (req) => {
   if (new URL(req.url).searchParams.get("role") === "AUTHOR") return sc.down ? DROP : ok(S.onePage([]));
@@ -246,9 +271,10 @@ r[key("GET", `${A.path}/comments/1000010`)] = () => (sc.reply === "deleted" ? NO
 
 // The app. A restart keeps the data folder and the secret store, as a process restart with the OS store does.
 let secrets = createSecrets(null);
+let jiraSecrets = createSecrets(null, "jira-token");
 function boot() {
   const live = createLive();
-  const settings = createSettings({ dir: dataDir, secrets });
+  const settings = createSettings({ dir: dataDir, secrets, jiraSecrets });
   const sync = createSyncEngine({ settings, live });
   const review = createReviewJobs({ settings, live, dataDir, runnerCommand, listTools: stubListTools, gitRemote: remote.gitRemote });
   const outbox = createOutbox({ settings, live });
@@ -285,6 +311,7 @@ r[key("POST", "/__control/reset")] = async () => {
   rmSync(dataDir, { recursive: true, force: true });
   mkdirSync(dataDir);
   secrets = createSecrets(null);
+  jiraSecrets = createSecrets(null, "jira-token");
   sc = { ...INITIAL };
   headA();
   for (const p of [postsA, postsB, postsC]) p.reset();
@@ -331,6 +358,7 @@ async function stop() {
   stopping = true;
   await halt();
   fake.stop();
+  jira.stop();
   rmSync(dataDir, { recursive: true, force: true });
   rmSync(claudeDir, { recursive: true, force: true });
   process.exit(0);
@@ -339,6 +367,8 @@ async function stop() {
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 
-console.log(`E2E app: http://127.0.0.1:${APP_PORT}/ (pid ${process.pid}). Fake Bitbucket: ${fake.url}. Data: ${dataDir}`);
+console.log(
+  `E2E app: http://127.0.0.1:${APP_PORT}/ (pid ${process.pid}). Fake Bitbucket: ${fake.url}. Fake Jira: ${jira.url}. Data: ${dataDir}`,
+);
 // A run from a worktree must show which checkout it serves.
 console.log(`E2E code: ${import.meta.dir}. UI: ${WEB_DIR}`);

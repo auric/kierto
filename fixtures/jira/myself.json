@@ -1,0 +1,20 @@
+{
+  "self": "https://jira.example.test/rest/api/2/user?username=jdoe",
+  "key": "JIRAUSER10100",
+  "name": "jdoe",
+  "emailAddress": "jdoe@example.test",
+  "avatarUrls": {
+    "48x48": "https://jira.example.test/secure/useravatar?size=large&ownerId=jdoe",
+    "24x24": "https://jira.example.test/secure/useravatar?size=small&ownerId=jdoe",
+    "16x16": "https://jira.example.test/secure/useravatar?size=xsmall&ownerId=jdoe",
+    "32x32": "https://jira.example.test/secure/useravatar?size=medium&ownerId=jdoe"
+  },
+  "displayName": "Jordan Doe",
+  "active": true,
+  "deleted": false,
+  "timeZone": "Etc/UTC",
+  "locale": "en_US",
+  "groups": { "size": 1, "items": [{ "name": "jira-users", "self": "https://jira.example.test/rest/api/2/group?groupname=jira-users" }] },
+  "applicationRoles": { "size": 1, "items": [] },
+  "expand": "groups,applicationRoles"
+}

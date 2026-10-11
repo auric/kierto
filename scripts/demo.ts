@@ -1,6 +1,6 @@
 // Demo: the app on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. No real server, data folder, or credential store.
 // Reviews run the fake Claude Code CLI against a temp git remote. No real CLI and no network.
-// The data covers every inbox group and every thread turn. Task IDs use the fictional key ABC.
+// The data covers every inbox group and every thread turn. Task IDs use the fictional key ABC. A fake Jira serves each ABC task.
 import "../tests/support/no-real-claude";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -16,6 +16,7 @@ import { createSecrets } from "../src/server/secrets";
 import { createSettings } from "../src/server/settings";
 import { createSyncEngine } from "../src/server/sync/engine";
 import { FAKE_TOKEN, FAKE_USER, fixture, key, startFakeBitbucket } from "../tests/support/fake-bitbucket";
+import { JIRA_TOKEN, startFakeJira } from "../tests/support/fake-jira";
 import { claudeStream, fakeRunner, REVIEW_RESULT, reviewRemote, stubListTools } from "../tests/support/review-fixture";
 import * as S from "../tests/support/scenarios";
 
@@ -505,6 +506,13 @@ fake.routes[key("GET", S.DASHBOARD_PATH)] = (req) => {
   return { status: 200, body: S.onePage(role === "AUTHOR" ? [own, prs.authored] : open) };
 };
 
+// The fake Jira serves every ABC task of the listed PRs, with the PR title as the summary.
+const jira = startFakeJira();
+for (const p of Object.values(prs)) {
+  const k = JSON.stringify(p).match(/ABC-\d+/)?.[0];
+  if (k) jira.addIssue(k, String(p.title).replace(/^\[ABC-\d+\]\s*/, ""));
+}
+
 // The prototype rules: every source, the default pattern, only the fictional key ABC.
 const pattern = String.raw`[A-Z][A-Z0-9]+-\d+`;
 writeConfig(dataDir, {
@@ -513,10 +521,13 @@ writeConfig(dataDir, {
   notifications: false,
   taskRules: (["branch", "title", "description"] as const).map((source) => ({ source, pattern, keys: ["ABC"] })),
   taskLink: "https://tracker.example.test/browse/{key}",
+  jira: { baseUrl: jira.url },
 });
 const secrets = createSecrets(null);
 await secrets.set(FAKE_TOKEN);
-const settings = createSettings({ dir: dataDir, secrets });
+const jiraSecrets = createSecrets(null, "jira-token");
+await jiraSecrets.set(JIRA_TOKEN);
+const settings = createSettings({ dir: dataDir, secrets, jiraSecrets });
 const live = createLive();
 const sync = createSyncEngine({ settings, live });
 const review = createReviewJobs({
@@ -549,7 +560,7 @@ sync.start();
 void review.start();
 
 console.log(`Review Loop demo: http://127.0.0.1:${server.port}/ (pid ${process.pid})`);
-console.log(`Fake Bitbucket: ${fake.url}. Data: ${dataDir}`);
+console.log(`Fake Bitbucket: ${fake.url}. Fake Jira: ${jira.url}. Data: ${dataDir}`);
 console.log(`Follow by URL: paste ${fake.url}/projects/PROJ3/repos/tools/pull-requests/5 into the filter.`);
 
 async function stop() {
@@ -557,6 +568,7 @@ async function stop() {
   await review.stop();
   server.stop(true);
   fake.stop();
+  jira.stop();
   db?.close();
   for (const dir of [dataDir, claudeDir])
     try {

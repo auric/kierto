@@ -1,0 +1,24 @@
+{
+  "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+  "id": "10002",
+  "self": "https://jira.example.test/rest/api/2/issue/10002",
+  "key": "ABC-42",
+  "fields": {
+    "summary": "Flush the cache before the write lock",
+    "description": "The sync worker writes each cache entry on its own.\r\n\r\nh3. Acceptance criteria\r\n* Batch the writes.\r\n* Flush the cache before the write lock.",
+    "status": {
+      "self": "https://jira.example.test/rest/api/2/status/10000",
+      "description": "The issue is currently being worked on.",
+      "iconUrl": "https://jira.example.test/images/icons/progress.gif",
+      "name": "In Progress",
+      "id": "10000",
+      "statusCategory": {
+        "self": "https://jira.example.test/rest/api/2/statuscategory/4",
+        "id": 4,
+        "key": "indeterminate",
+        "colorName": "yellow",
+        "name": "In Progress"
+      }
+    }
+  }
+}

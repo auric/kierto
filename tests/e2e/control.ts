@@ -6,6 +6,9 @@ export const FAKE_URL = `http://127.0.0.1:${Number(process.env.E2E_FAKE_PORT || 
 export const JIRA_URL = `http://127.0.0.1:${Number(process.env.E2E_JIRA_PORT || 7397)}`;
 // The fake Bitbucket accepts only this token. serve.ts sets it on the fake.
 export const E2E_TOKEN = "e2e-token-7f3a9c1d5b2e8f40";
+// The fake Jira on JIRA_URL accepts only this token. It serves JIRA_ISSUE (fixtures/jira) and gives 404 for other keys.
+export const E2E_JIRA_TOKEN = "e2e-jira-token-3c9d1f7a2b5e8d60";
+export const JIRA_ISSUE = "ABC-42";
 // src/server/publish/plan.ts AI_MARK. The default markAi setting puts it before each post of an AI item.
 export const MARK = "🤖 ";
 
@@ -26,6 +29,8 @@ export type Scenario = {
   down: boolean;
   // PR 77: the Gate v3 inline threads with their diffs, the resolved BLOCKER task, and the commits and changes (plan v3 WP4).
   forge: boolean;
+  // PR 1001: the description names the tasks ABC-42 (the fake Jira serves it) and ABC-404 (the fake Jira gives 404).
+  task: boolean;
 };
 
 // The next fake Claude Code run. tree: a subagent run with drafts. schema: a result that fails the schema. limit: a usage limit.

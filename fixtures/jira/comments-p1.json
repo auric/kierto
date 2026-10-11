@@ -1,0 +1,16 @@
+{
+  "startAt": 2,
+  "maxResults": 2,
+  "total": 3,
+  "comments": [
+    {
+      "self": "https://jira.example.test/rest/api/2/issue/10002/comment/10002",
+      "id": "10002",
+      "author": { "self": "https://jira.example.test/rest/api/2/user?username=kito", "name": "kito", "displayName": "Kenji Ito", "active": false },
+      "body": "QA: test with an empty cache too.",
+      "updateAuthor": { "self": "https://jira.example.test/rest/api/2/user?username=kito", "name": "kito", "displayName": "Kenji Ito", "active": false },
+      "created": "2026-01-07T08:45:00.000+0000",
+      "updated": "2026-01-07T08:45:00.000+0000"
+    }
+  ]
+}

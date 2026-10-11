@@ -25,6 +25,8 @@ const config = z.object({
   checkSeconds: settingsInput.shape.checkSeconds.catch(undefined),
   // Absent: SHIPPED_PROFILES (src/server/review/catalog.ts).
   profiles: profileList.optional().catch(undefined),
+  // Absent: no Jira connection. The Jira token lives in the secret store under "jira-token".
+  jira: z.object({ baseUrl: z.string(), caFile: z.string().optional() }).optional().catch(undefined),
 });
 
 export type Config = z.infer<typeof config>;

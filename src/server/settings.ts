@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { validator } from "hono/validator";
 import {
   type ApiError,
+  type JiraSettingsInput,
   MAX_TASK_RULES,
   type PrTask,
   type SettingsDto,
@@ -16,6 +17,8 @@ import type { PullRequest } from "../shared/types";
 import { ForgeError } from "./bitbucket/client";
 import { createBitbucketProvider, type ForgeProvider } from "./bitbucket/provider";
 import { type Config, dataDir, dbPath, readConfig, writeConfig } from "./config";
+import { createJiraSource } from "./context/jira";
+import { ContextError, type ContextSource } from "./context/source";
 import { listPrs } from "./inbox/queries";
 import { log } from "./log";
 import { type Profile, SHIPPED_PROFILES } from "./review/catalog";
@@ -63,9 +66,10 @@ function normalize(raw: string): string | null {
 }
 
 // Construction does no disk or secret-store access. The first request loads the state.
-export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
+export function createSettings(opts: { dir?: string; secrets?: Secrets; jiraSecrets?: Secrets } = {}) {
   const dir = opts.dir ?? dataDir();
   const secrets = opts.secrets ?? createSecrets();
+  const jiraSecrets = opts.jiraSecrets ?? createSecrets(undefined, "jira-token");
   const listeners: ((s: SettingsState) => void)[] = [];
   const taskListeners: ((prs: number[]) => void)[] = [];
   let loaded = false;
@@ -107,6 +111,11 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
       taskLink: c?.taskLink ?? null,
       checkSeconds: checkSecondsOf(c),
       profiles: profilesOf(c),
+      jira: {
+        baseUrl: c?.jira?.baseUrl ?? null,
+        caFile: c?.jira?.caFile ?? null,
+        tokenStored: c?.jira !== undefined && (await jiraSecrets.get()) !== null,
+      },
     };
   }
 
@@ -205,6 +214,47 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
     if (changed.length) for (const fn of taskListeners) fn(changed);
   }
 
+  type JiraSaveError = { status: 400 | 409; error: string };
+
+  // PUT /api/settings/jira (src/server/context/routes.ts). Checks the token with GET /rest/api/2/myself before it saves.
+  const saveJira = (input: JiraSettingsInput): Promise<SettingsDto | JiraSaveError> =>
+    serial(async () => {
+      const bad = (error: string): JiraSaveError => ({ status: 400, error });
+      const prev = current();
+      if (!prev) return { status: 409, error: "Configure the Bitbucket URL and token first." };
+      if (!input.baseUrl) {
+        config = { ...prev, jira: undefined };
+        writeConfig(dir, config);
+        await jiraSecrets.clear();
+        log("Jira disconnected.");
+        return dto();
+      }
+      const baseUrl = normalize(input.baseUrl);
+      if (!baseUrl) return bad("Give the Jira base URL only, for example https://host or https://host/context.");
+      const caFile = input.caFile || undefined;
+      const sameOrigin = prev.jira !== undefined && originOf(prev.jira.baseUrl) === originOf(baseUrl);
+      const token = input.token || (sameOrigin ? await jiraSecrets.get() : null);
+      if (!token) return bad("Enter the Jira token. A new Jira URL needs a new token.");
+      let source: ContextSource;
+      try {
+        source = createJiraSource({ baseUrl, token, caFile });
+      } catch (e) {
+        return bad((e as { code?: unknown }).code ? "Cannot read the CA file." : (e as Error).message);
+      }
+      try {
+        await source.check();
+      } catch (e) {
+        if (!(e instanceof ContextError)) throw e;
+        log(`Jira check failed: ${e.message}`);
+        return bad(e.kind === "auth" ? "Jira rejected the token." : `Jira check failed: ${e.message}`);
+      }
+      if (input.token) await jiraSecrets.set(token);
+      config = { ...prev, jira: { baseUrl, caFile } };
+      writeConfig(dir, config);
+      log(`Jira settings saved for ${originOf(baseUrl)}.`);
+      return dto();
+    });
+
   const routes = new Hono()
     .get("/", async (c) => c.json(await dto()))
     .put(
@@ -237,6 +287,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
             markAi: input.markAi ?? prev?.markAi,
             checkSeconds: input.checkSeconds ?? prev?.checkSeconds,
             profiles: input.profiles === undefined ? prev?.profiles : (input.profiles ?? undefined),
+            jira: prev?.jira,
           };
           const caFile = input.caFile || undefined;
           const notifications = input.notifications ?? prev?.notifications ?? false;
@@ -348,6 +399,13 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
       const c = current();
       const token = c && (await secrets.get());
       return c && token ? createBitbucketProvider({ baseUrl: c.baseUrl, token, caFile: c.caFile }) : null;
+    },
+    saveJira,
+    // A Jira source for the current settings, or null without Jira config or token. Throws for an unreadable CA file.
+    async jira(): Promise<ContextSource | null> {
+      const j = current()?.jira;
+      const token = j && (await jiraSecrets.get());
+      return j && token ? createJiraSource({ baseUrl: j.baseUrl, token, caFile: j.caFile }) : null;
     },
     // Runs after a successful PUT that changes baseUrl, token, or caFile, after the new config is written and its database is open.
     onSettingsChanged(fn: (s: SettingsState) => void) {
