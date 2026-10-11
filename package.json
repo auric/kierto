@@ -7,7 +7,7 @@
     "build": "vite build",
     "start": "bun src/server/main.ts",
     "demo": "bun scripts/demo.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
     "typecheck:5": "node node_modules/typescript-5/bin/tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",

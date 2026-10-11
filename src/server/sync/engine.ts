@@ -6,7 +6,7 @@ import { ForgeError } from "../bitbucket/client";
 import type { ForgeProvider } from "../bitbucket/provider";
 import type { Live } from "../live";
 import { log } from "../log";
-import type { Settings } from "../settings";
+import type { Settings, TaskPlan } from "../settings";
 import { type NewEvent, nextDelay, parseRetryAfter, prEvents, reconcile, roleOf, type StoredComment } from "./reconcile";
 
 const DIGEST_GAP_MS = 120_000;
@@ -137,7 +137,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
       for (const e of list) added += run(SQL.event, { pr, kind: e.kind, ref: e.ref, now: now(), digest }).changes;
       return added;
     };
-    const savePr = (pr: PullRequest, onDashboard: boolean, dashboardSeen: boolean) => {
+    const savePr = (pr: PullRequest, onDashboard: boolean, dashboardSeen: boolean, tasks: TaskPlan | null | undefined) => {
       const key = { project: pr.ref.project, repo: pr.ref.repo, pr_id: pr.ref.id };
       const row = db.query(SQL.prBefore).get(key) as {
         id: number;
@@ -176,6 +176,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
           })),
         ),
       }) as { id: number };
+      settings.applyTasks(db, id, tasks);
       const before = row && {
         role: row.my_role,
         sourceHead: row.source_head,
@@ -207,13 +208,14 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
       if (NETWORK.has(reason)) return outcome();
     } else {
       const items = lists.flatMap((l) => l.items);
+      const plans = await settings.planTasks(db, items);
       const written = tx(() => {
         const seen =
           (db.query(SQL.lastComplete).get({ scope: "dashboard" }) as { last_complete_at: number | null } | null)?.last_complete_at != null;
         const ids: number[] = [];
         let events = 0;
-        for (const pr of items) {
-          const r = savePr(pr, true, seen);
+        for (const [i, pr] of items.entries()) {
+          const r = savePr(pr, true, seen, plans[i]);
           ids.push(r.id);
           events += r.events;
         }
@@ -232,10 +234,11 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
       for (const row of tx(() => db.query(SQL.away).all({}) as PrKey[])) {
         if (gen !== generation) throw new Cancelled();
         try {
-          const pr = await forge.getPullRequest(refOf(row));
-          reached = true;
           // The stored key wins, so the update always hits this row.
-          const r = tx(() => savePr({ ...pr, ref: refOf(row) }, false, false));
+          const pr = { ...(await forge.getPullRequest(refOf(row))), ref: refOf(row) };
+          reached = true;
+          const [plan] = await settings.planTasks(db, [pr]);
+          const r = tx(() => savePr(pr, false, false, plan));
           tally.changed.add(r.id);
           tally.events += r.events;
         } catch (e) {
@@ -412,6 +415,8 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
     started = true;
     schedule(0);
   }
+
+  settings.onTasksChanged((prs) => live.broadcast("changed", { prs }));
 
   // Runs synchronously inside the settings PUT, before the old database closes.
   settings.onSettingsChanged(() => {

@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { MAX_TASK_RULES, taskRuleInput } from "../shared/dto";
 import { log } from "./log";
 
 // No secret goes into this file.
@@ -11,6 +12,12 @@ const config = z.object({
   userSlug: z.string(),
   caFile: z.string().optional(),
   notifications: z.boolean(),
+  // Absent: DEFAULT_TASK_RULES (src/server/tasks/rules.ts).
+  taskRules: z
+    .array(taskRuleInput.extend({ timedOut: z.boolean().optional() }))
+    .max(MAX_TASK_RULES)
+    .optional(),
+  taskLink: z.string().optional(),
 });
 
 export type Config = z.infer<typeof config>;

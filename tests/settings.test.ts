@@ -12,6 +12,12 @@ import type { SettingsDto } from "../src/shared/dto";
 import { FAKE_TOKEN, type FakeBitbucket, fixture, key, startFakeBitbucket, TEST_CA_FILE } from "./support/fake-bitbucket";
 import { DASHBOARD_PATH } from "./support/scenarios";
 
+const DEFAULT_RULES = (["branch", "title", "description"] as const).map((source) => ({
+  source,
+  pattern: String.raw`[A-Z][A-Z0-9]+-\d+`,
+  timedOut: false,
+}));
+
 process.env.REVIEW_LOOP_SECRETS = "memory";
 const root = mkdtempSync(join(tmpdir(), "rl-settings-"));
 process.env.REVIEW_LOOP_DATA_DIR = root;
@@ -61,6 +67,8 @@ describe("settings API", () => {
       tokenStorage: "memory",
       caFile: null,
       notifications: false,
+      taskRules: DEFAULT_RULES,
+      taskLink: null,
     });
     expect(existsSync(dir)).toBe(false);
   });
@@ -78,6 +86,8 @@ describe("settings API", () => {
       tokenStorage: "memory" as const,
       caFile: null,
       notifications: true,
+      taskRules: DEFAULT_RULES,
+      taskLink: null,
     };
     expect(await res.json()).toEqual(expected);
     expect(await s.get()).toEqual(expected);

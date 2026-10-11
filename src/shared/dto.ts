@@ -2,6 +2,26 @@
 import { z } from "zod";
 import type { IncompleteReason, Reviewer, Role } from "./types";
 
+export const taskSources = ["branch", "title", "description"] as const;
+
+export type TaskSource = (typeof taskSources)[number];
+
+// WP2 safety caps. The worker compiles the pattern, so a syntax check needs the worker too.
+export const MAX_TASK_RULES = 20;
+export const MAX_PATTERN = 200;
+
+export const taskRuleInput = z.object({
+  source: z.enum(taskSources),
+  pattern: z.string().min(1).max(MAX_PATTERN),
+  // Allowed parts before the dash. Absent: every key.
+  keys: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
+});
+
+export type TaskRule = z.infer<typeof taskRuleInput>;
+
+// timedOut: the rule ran past the budget. Sync skips it until the user edits it.
+export type TaskRuleDto = TaskRule & { timedOut: boolean };
+
 export const settingsInput = z.object({
   baseUrl: z.string().trim().min(1),
   // Absent or empty keeps the stored token. A new origin needs a token.
@@ -9,6 +29,10 @@ export const settingsInput = z.object({
   // Absent or empty means no CA file.
   caFile: z.string().trim().optional(),
   notifications: z.boolean().optional(),
+  // Absent keeps the stored rules.
+  taskRules: z.array(taskRuleInput).max(MAX_TASK_RULES).optional(),
+  // Absent keeps the stored template. Empty clears it.
+  taskLink: z.string().trim().max(2048).optional(),
 });
 
 export type SettingsInput = z.infer<typeof settingsInput>;
@@ -23,6 +47,8 @@ export type SettingsDto = {
   tokenStorage: TokenStorage;
   caFile: string | null;
   notifications: boolean;
+  taskRules: TaskRuleDto[];
+  taskLink: string | null;
 };
 
 export type ApiError = { error: string };
@@ -54,8 +80,6 @@ export type Group = "your" | "triage" | "review" | "commits" | "comments" | "wai
 // The thread that the row opens at. msg: the first unread message, else the newest live message.
 // author and snippet come from the newest live message. author: the display name, else the slug.
 export type Cause = { thread: number; msg: number; author: string; snippet: string };
-
-export type TaskSource = "branch" | "title" | "description";
 
 export type PrTask = { key: string; source: TaskSource; url: string | null };
 
@@ -90,7 +114,7 @@ export type PrRow = {
   waitSince: number | null;
   // ms: the last POST /api/prs/:id/seen. null before the first visit.
   seenAt: number | null;
-  // Empty until WP2 writes task IDs.
+  // D9: rule order, deduped, at most 10.
   tasks: PrTask[];
   // ms: the newest of the PR update and the comment updates.
   lastActivity: number;
@@ -147,3 +171,23 @@ export const followUrlInput = z.object({ url: z.string().trim().min(1).max(2048)
 
 // GET /api/meta. Product names only, never a setting value.
 export type MetaDto = { forge: { name: string } };
+
+// POST /api/settings/task-rules/preview. Absent prs: the first 20 listed PRs.
+export const taskPreviewInput = z.object({
+  rules: z.array(taskRuleInput).max(MAX_TASK_RULES),
+  sample: z.object({ branch: z.string().optional(), title: z.string().optional(), description: z.string().optional() }).optional(),
+  prs: z.array(positiveInt).max(20).optional(),
+});
+
+export type TaskPreviewInput = z.infer<typeof taskPreviewInput>;
+
+export type FoundTask = { key: string; source: TaskSource };
+
+// Index i of rules belongs to rule i of the request. A 400 carries the same rules array with the syntax errors.
+export type TaskPreviewDto = {
+  rules: { error: string | null; timedOut: boolean }[];
+  sample: FoundTask[] | null;
+  prs: { id: number; project: string; repo: string; prId: number; title: string | null; tasks: FoundTask[] }[];
+};
+
+export type TaskPreviewError = ApiError & { rules: TaskPreviewDto["rules"] };

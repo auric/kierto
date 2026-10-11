@@ -1,15 +1,48 @@
 import type { Database } from "bun:sqlite";
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import { type ApiError, type SettingsDto, settingsInput } from "../shared/dto";
+import {
+  type ApiError,
+  MAX_TASK_RULES,
+  type PrTask,
+  type SettingsDto,
+  settingsInput,
+  type TaskPreviewDto,
+  type TaskPreviewError,
+  type TaskRule,
+  taskPreviewInput,
+} from "../shared/dto";
+import type { PullRequest } from "../shared/types";
 import { ForgeError } from "./bitbucket/client";
 import { createBitbucketProvider, type ForgeProvider } from "./bitbucket/provider";
 import { type Config, dataDir, dbPath, readConfig, writeConfig } from "./config";
+import { listPrs } from "./inbox/queries";
 import { log } from "./log";
 import { createSecrets, type Secrets } from "./secrets";
 import { openDb } from "./storage/db";
+import {
+  createTaskRunner,
+  DEFAULT_TASK_RULES,
+  extractSkipping,
+  sameRule,
+  type TaskInput,
+  type TaskRunner,
+  taskHash,
+  taskInput,
+  taskUrl,
+  validTaskLink,
+  writeTasks,
+} from "./tasks/rules";
 
 export type SettingsState = { config: Config; db: Database };
+
+// config: the settings that produced the plan. A plan of replaced settings is stale.
+export type TaskPlan = { config: Config; hash: string; tasks: PrTask[] };
+
+type StoredRule = TaskRule & { timedOut?: boolean };
+
+const rulesOf = (c: Config | null): StoredRule[] => c?.taskRules ?? DEFAULT_TASK_RULES;
+const activeRules = (c: Config): TaskRule[] => rulesOf(c).flatMap(({ timedOut, ...r }) => (timedOut ? [] : [r]));
 
 const originOf = (url: string) => new URL(url).origin;
 
@@ -29,9 +62,15 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
   const dir = opts.dir ?? dataDir();
   const secrets = opts.secrets ?? createSecrets();
   const listeners: ((s: SettingsState) => void)[] = [];
+  const taskListeners: ((prs: number[]) => void)[] = [];
   let loaded = false;
   let config: Config | null = null;
   let db: Database | null = null;
+  let runner: TaskRunner | null = null;
+  const tasks = () => {
+    runner ??= createTaskRunner();
+    return runner;
+  };
 
   const current = () => {
     if (!loaded) {
@@ -56,6 +95,8 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
       tokenStorage: secrets.storage(),
       caFile: c?.caFile ?? null,
       notifications: c?.notifications ?? false,
+      taskRules: rulesOf(c).map(({ timedOut, ...r }) => ({ ...r, timedOut: timedOut === true })),
+      taskLink: c?.taskLink ?? null,
     };
   }
 
@@ -66,6 +107,90 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
     saving = run.catch(() => {});
     return run;
   };
+
+  // The user edits a rule to clear timedOut. A rule saved unchanged keeps it.
+  async function markTimedOut(rule: TaskRule) {
+    await serial(async () => {
+      const c = current();
+      const list = rulesOf(c);
+      if (!c || !list.some((r) => !r.timedOut && sameRule(r, rule))) return;
+      config = { ...c, taskRules: list.map((r) => (sameRule(r, rule) ? { ...r, timedOut: true } : r)) };
+      writeConfig(dir, config);
+      log(`Task rule ${rule.source} /${rule.pattern}/ ran past the time budget. Sync skips it until the rule changes.`);
+    });
+  }
+
+  // null: the stored hash is current. A timed-out rule is marked, and the run repeats without it.
+  async function planOne(input: TaskInput, stored: string | null): Promise<TaskPlan | null> {
+    for (let i = 0; i <= MAX_TASK_RULES; i++) {
+      const c = current();
+      if (!c) return null;
+      const rules = activeRules(c);
+      const link = c.taskLink ?? null;
+      const hash = taskHash(input, rules, link);
+      if (hash === stored) return null;
+      const r = await tasks().extract(rules, input);
+      if (r.timedOut === null) return { config: c, hash, tasks: r.tasks.map((t) => ({ ...t, url: taskUrl(link, t.key) })) };
+      await markTimedOut(rules[r.timedOut] as TaskRule);
+    }
+    return null;
+  }
+
+  // Task IDs never stop a sync. A worker failure keeps the stored IDs.
+  async function planTasks(db: Database, prs: PullRequest[]): Promise<(TaskPlan | null)[]> {
+    const out: (TaskPlan | null)[] = [];
+    try {
+      for (const pr of prs) {
+        const row = db
+          .query("SELECT task_input_hash FROM pull_request WHERE project = $project AND repo = $repo AND pr_id = $pr_id")
+          .get({ project: pr.ref.project, repo: pr.ref.repo, pr_id: pr.ref.id }) as { task_input_hash: string | null } | null;
+        out.push(await planOne(taskInput(pr.sourceBranch, pr.title, pr.description ?? null), row?.task_input_hash ?? null));
+      }
+    } catch (e) {
+      log(`Task IDs not updated: ${(e as Error).message}`);
+      return prs.map(() => null);
+    }
+    return out;
+  }
+
+  // Runs inside the PR transaction.
+  function applyTasks(db: Database, pr: number, plan: TaskPlan | null | undefined) {
+    if (plan && plan.config === current()) writeTasks(db, pr, plan.hash, plan.tasks);
+  }
+
+  // Background pass over every stored PR after a settings save.
+  async function recompute() {
+    const db = currentDb();
+    if (!db) return;
+    type Row = {
+      id: number;
+      source_branch: string | null;
+      title: string | null;
+      description: string | null;
+      task_input_hash: string | null;
+    };
+    const rows = db.query("SELECT id, source_branch, title, description, task_input_hash FROM pull_request ORDER BY id").all() as Row[];
+    const changed: number[] = [];
+    try {
+      for (const r of rows) {
+        const plan = await planOne(taskInput(r.source_branch, r.title, r.description), r.task_input_hash);
+        if (!plan || currentDb() !== db) continue;
+        // A sync can write the PR during the await. Its write wins.
+        const wrote = db.transaction(() => {
+          const now = db.query("SELECT task_input_hash FROM pull_request WHERE id = $id").get({ id: r.id }) as {
+            task_input_hash: string | null;
+          } | null;
+          if (!now || now.task_input_hash !== r.task_input_hash || plan.config !== current()) return false;
+          writeTasks(db, r.id, plan.hash, plan.tasks);
+          return true;
+        })();
+        if (wrote) changed.push(r.id);
+      }
+    } catch (e) {
+      log(`Task IDs not recomputed: ${(e as Error).message}`);
+    }
+    if (changed.length) for (const fn of taskListeners) fn(changed);
+  }
 
   const routes = new Hono()
     .get("/", async (c) => c.json(await dto()))
@@ -82,13 +207,28 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
 
           const baseUrl = normalize(input.baseUrl);
           if (!baseUrl) return bad("Give the base URL only, for example https://host or https://host/context.");
+          if (input.taskLink && !validTaskLink(input.taskLink))
+            return bad("The task link must be an https URL with {key}. Plain http works only on localhost or 127.0.0.1.");
+          if (input.taskRules) {
+            const errors = await tasks().check(input.taskRules.map((r) => r.pattern));
+            const i = errors.findIndex((e) => e !== null);
+            if (i >= 0) return bad(`Task rule ${i + 1} has a syntax error: ${errors[i]}`);
+          }
           const prev = current();
+          const old = rulesOf(prev);
+          const taskFields = {
+            taskRules: input.taskRules
+              ? input.taskRules.map((r): StoredRule => (old.some((o) => o.timedOut && sameRule(o, r)) ? { ...r, timedOut: true } : r))
+              : prev?.taskRules,
+            taskLink: input.taskLink === undefined ? prev?.taskLink : input.taskLink || undefined,
+          };
           const caFile = input.caFile || undefined;
           const notifications = input.notifications ?? prev?.notifications ?? false;
           // Same connection settings: save without a Bitbucket request, so the notifications toggle works offline.
           if (prev && prev.baseUrl === baseUrl && prev.caFile === caFile && !input.token) {
-            config = { ...prev, notifications };
+            config = { ...prev, notifications, ...taskFields };
             writeConfig(dir, config);
+            void recompute();
             return c.json(await dto());
           }
           const sameOrigin = prev !== null && originOf(prev.baseUrl) === originOf(baseUrl);
@@ -112,7 +252,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
           }
 
           if (input.token) await secrets.set(token);
-          const next: Config = { baseUrl, userSlug, caFile, notifications };
+          const next: Config = { baseUrl, userSlug, caFile, notifications, ...taskFields };
           writeConfig(dir, next);
           const oldDb = sameOrigin ? null : db;
           config = next;
@@ -121,8 +261,61 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
           log(`Settings saved for ${originOf(baseUrl)} as ${userSlug}.`);
           for (const fn of listeners) fn(state);
           oldDb?.close();
+          void recompute();
           return c.json(await dto());
         }),
+    )
+    .post(
+      "/task-rules/preview",
+      validator("json", (v, c) => {
+        const r = taskPreviewInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid task rules." }, 400);
+      }),
+      async (c) => {
+        const { rules, sample, prs } = c.req.valid("json");
+        const errors = await tasks().check(rules.map((r) => r.pattern));
+        const report: TaskPreviewDto["rules"] = errors.map((error) => ({ error, timedOut: false }));
+        if (errors.some((e) => e !== null))
+          return c.json<TaskPreviewError>({ error: "A task rule has a syntax error.", rules: report }, 400);
+        // A draft rule that times out is skipped for the rest of this preview.
+        const dead = new Set<number>();
+        const run = (input: TaskInput) => extractSkipping(tasks(), rules, input, dead);
+        const found: TaskPreviewDto = {
+          rules: report,
+          sample: sample ? await run(taskInput(sample.branch ?? null, sample.title ?? null, sample.description ?? null)) : null,
+          prs: [],
+        };
+        const db = currentDb();
+        const cfg = current();
+        if (db && cfg) {
+          const ids =
+            prs ??
+            listPrs(db, cfg.userSlug)
+              .slice(0, 20)
+              .map((p) => p.id);
+          type Row = {
+            id: number;
+            project: string;
+            repo: string;
+            pr_id: number;
+            title: string | null;
+            source_branch: string | null;
+            description: string | null;
+          };
+          const rows = db
+            .query(
+              `SELECT p.id, p.project, p.repo, p.pr_id, p.title, p.source_branch, p.description FROM json_each($ids) j
+                JOIN pull_request p ON p.id = j.value WHERE p.archived_at IS NULL AND (p.followed = 1 OR p.on_dashboard = 1) ORDER BY j.key`,
+            )
+            .all({ ids: JSON.stringify(ids) }) as Row[];
+          for (const r of rows) {
+            const t = await run(taskInput(r.source_branch, r.title, r.description));
+            found.prs.push({ id: r.id, project: r.project, repo: r.repo, prId: r.pr_id, title: r.title, tasks: t });
+          }
+        }
+        for (const i of dead) (report[i] as { timedOut: boolean }).timedOut = true;
+        return c.json(found, 200);
+      },
     );
 
   return {
@@ -139,6 +332,13 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
     // Runs after a successful PUT that changes baseUrl, token, or caFile, after the new config is written and its database is open.
     onSettingsChanged(fn: (s: SettingsState) => void) {
       listeners.push(fn);
+    },
+    // Task plans for forge PRs, in the same order. Await it before the PR transaction, then call applyTasks inside it.
+    planTasks,
+    applyTasks,
+    // Runs after a background pass wrote new task IDs.
+    onTasksChanged(fn: (prs: number[]) => void) {
+      taskListeners.push(fn);
     },
   };
 }

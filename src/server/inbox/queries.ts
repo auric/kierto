@@ -10,6 +10,7 @@ import type {
   Group,
   PrDetail,
   PrRow,
+  PrTask,
   Reason,
 } from "../../shared/dto";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
@@ -37,6 +38,7 @@ const SQL = {
   turns: `SELECT c.pr, c.comment_id, c.root_id, c.author_slug, c.author_name, c.author_login, c.text, c.thread_resolved, c.created_at,
       c.tombstoned_at IS NOT NULL AS deleted, p.followed = 1 AND c.tombstoned_at IS NULL AND (c.ack_version IS NULL OR c.ack_version < c.version) AS unread
     FROM comment c JOIN pull_request p ON p.id = c.pr WHERE ${LISTED}`,
+  tasks: `SELECT t.pr, t.key, t.source, t.url FROM pr_task t JOIN pull_request p ON p.id = t.pr WHERE ${LISTED} ORDER BY t.pr, t.ord`,
   comments: `SELECT comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json, thread_resolved, created_at, updated_at,
       ack_version, tombstoned_at FROM comment WHERE pr = $pr ORDER BY created_at, comment_id`,
   // A2: the ack never rises above the stored version, and never falls.
@@ -167,7 +169,7 @@ function reasonsOf(r: RawRow): Reason[] {
   return out;
 }
 
-const toRow = (r: RawRow, t: Turns): PrRow => ({
+const toRow = (r: RawRow, t: Turns, tasks: PrTask[]): PrRow => ({
   id: r.id,
   project: r.project,
   repo: r.repo,
@@ -194,7 +196,7 @@ const toRow = (r: RawRow, t: Turns): PrRow => ({
   cause: t.cause,
   waitSince: t.waitSince,
   seenAt: r.seen_at,
-  tasks: [],
+  tasks,
   lastActivity: r.last_activity,
   checkpoint: r.has_checkpoint ? toCheckpoint(r) : null,
 });
@@ -218,7 +220,14 @@ function selectRows(db: Database, me: string, id: number | null): PrRow[] {
     if (list) list.push(m);
     else msgs.set(c.pr, [m]);
   }
-  return (db.query(SQL.rows).all({ me, id }) as RawRow[]).map((r) => toRow(r, turnsOf(msgs.get(r.id) ?? [], me, r.my_role === "AUTHOR")));
+  const tasks = Map.groupBy(db.query(SQL.tasks).all({ id }) as (PrTask & { pr: number })[], (t) => t.pr);
+  return (db.query(SQL.rows).all({ me, id }) as RawRow[]).map((r) =>
+    toRow(
+      r,
+      turnsOf(msgs.get(r.id) ?? [], me, r.my_role === "AUTHOR"),
+      (tasks.get(r.id) ?? []).map(({ key, source, url }) => ({ key, source, url })),
+    ),
+  );
 }
 
 export function listPrs(db: Database, me: string): PrRow[] {
