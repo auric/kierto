@@ -19,6 +19,9 @@ export const MAX_BODY_BYTES = 10 * 1024 * 1024;
 // A larger rendered field uses the wiki text.
 export const MAX_HTML_BYTES = 1024 * 1024;
 export const MAX_ATTACHMENTS = 200;
+// Plan r3: an attachment download follows at most this many redirects, each inside the configured origin and base path.
+export const MAX_HOPS = 3;
+const ATTACHMENT_PATH = "/secure/attachment";
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 // Deep nesting keeps the converter busy for minutes (1 MB of nested div: over 90 s).
 // A field budget starts when its worker is ready. The total budget starts when the first worker is ready.
@@ -165,6 +168,13 @@ function kindOf(status: number): ContextErrorKind {
   return "server";
 }
 
+// A fetch or body read error as kind timeout or network, with the system error code only.
+function failed(e: unknown, endpoint: string, timedOut: boolean): ContextError {
+  const code = (e as { code?: unknown }).code;
+  const safe = typeof code === "string" && /^[A-Z][A-Z0-9_]*$/.test(code) ? code : undefined;
+  return new ContextError(timedOut ? "timeout" : "network", endpoint, undefined, safe);
+}
+
 // Throws a plain Error for a bad URL scheme, and an fs error with a `code` for an unreadable CA file.
 export function createJiraSource(opts: JiraOptions): ContextSource {
   const url = new URL(opts.baseUrl);
@@ -173,6 +183,7 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
     throw new Error("The Jira URL must use https.");
   }
   const base = opts.baseUrl.replace(/\/+$/, "");
+  const basePath = `${new URL(base).pathname.replace(/\/+$/, "")}/`;
   const ca = opts.caFile ? readFileSync(opts.caFile, "utf8") : undefined;
   const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
   const convertMs = opts.convertMs ?? { field: CONVERT_FIELD_MS, total: CONVERT_TOTAL_MS };
@@ -193,9 +204,7 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
       });
       text = await readBody(res);
     } catch (e) {
-      const code = (e as { code?: unknown }).code;
-      const safe = typeof code === "string" && /^[A-Z][A-Z0-9_]*$/.test(code) ? code : undefined;
-      throw new ContextError((e as Error).name === "TimeoutError" ? "timeout" : "network", endpoint, undefined, safe);
+      throw failed(e, endpoint, (e as Error).name === "TimeoutError");
     }
     if (res.status < 200 || res.status > 299) throw new ContextError(kindOf(res.status), endpoint, res.status);
     if (text === null) throw new ContextError("shape", endpoint, res.status);
@@ -283,6 +292,74 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
         format: "markdown",
         attachments,
       };
+    },
+    // The path never comes from the server (the content URL is not used). A token never leaves the configured origin.
+    // timeoutMs applies until the answer headers and then between two body chunks.
+    async download(att, write) {
+      if (!ATT_ID.test(att.id)) throw new ContextError("not_found", ATTACHMENT_PATH);
+      const endpoint = `${ATTACHMENT_PATH}/${att.id}`;
+      let target = new URL(`${base}${endpoint}/${encodeURIComponent(att.filename)}`);
+      for (let hop = 0; ; hop++) {
+        if (target.origin !== url.origin || !target.pathname.startsWith(basePath)) throw new ContextError("redirect", endpoint);
+        const abort = new AbortController();
+        let timedOut = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const arm = () => {
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            timedOut = true;
+            abort.abort();
+          }, timeoutMs);
+        };
+        arm();
+        try {
+          let res: Response;
+          try {
+            res = await fetch(target, {
+              method: "GET",
+              redirect: "manual",
+              signal: abort.signal,
+              headers: { Authorization: `Bearer ${opts.token}` },
+              tls: ca ? { ca } : undefined,
+            });
+          } catch (e) {
+            throw failed(e, endpoint, timedOut);
+          }
+          if (res.status < 200 || res.status > 299) {
+            await res.body?.cancel().catch(() => {});
+            const to = res.headers.get("location");
+            if (res.status < 300 || res.status > 399 || to === null || hop === MAX_HOPS)
+              throw new ContextError(kindOf(res.status), endpoint, res.status);
+            try {
+              target = new URL(to, target);
+            } catch {
+              throw new ContextError("redirect", endpoint, res.status);
+            }
+            continue;
+          }
+          const reader = res.body?.getReader();
+          let bytes = 0;
+          try {
+            for (;;) {
+              const chunk = await reader?.read().catch((e) => {
+                throw failed(e, endpoint, timedOut);
+              });
+              if (!chunk || chunk.done) break;
+              bytes += chunk.value.byteLength;
+              if (bytes > att.size) throw new ContextError("shape", endpoint, res.status);
+              await write(chunk.value);
+              arm();
+            }
+          } finally {
+            await reader?.cancel().catch(() => {});
+          }
+          // An SSO login page with status 200 has another size.
+          if (bytes !== att.size) throw new ContextError("shape", endpoint, res.status);
+          return;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
     },
   };
 }

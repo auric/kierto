@@ -7,6 +7,7 @@ export const TEST_CA_FILE = join(TLS_DIR, "ca.pem");
 export const FAKE_TOKEN = "fake-token-0123456789abcdef";
 export const FAKE_USER = "jdoe";
 
+// body: a Uint8Array goes out as these bytes. Other values go out as JSON.
 export type Reply =
   | { status: number; body?: unknown; headers?: Record<string, string>; delayMs?: number }
   // Holds the request until release() or stop().
@@ -81,6 +82,7 @@ export function startFakeBitbucket(opts: FakeOptions = {}) {
         if (reply.delayMs) await Bun.sleep(reply.delayMs);
         for (const [k, v] of Object.entries(reply.headers ?? {})) headers.set(k, v);
         if (reply.body === undefined) return new Response(null, { status: reply.status, headers });
+        if (reply.body instanceof Uint8Array) return new Response(reply.body as Uint8Array<ArrayBuffer>, { status: reply.status, headers });
         headers.set("Content-Type", "application/json");
         return new Response(JSON.stringify(reply.body), { status: reply.status, headers });
       } finally {

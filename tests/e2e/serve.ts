@@ -2,7 +2,7 @@
 // The app gets a temp data folder and memory secrets. It never sees the real data folder or the credential store.
 import "../support/no-real-claude";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
@@ -455,6 +455,7 @@ r[key("POST", "/__control/reset")] = async () => {
   await headA();
   for (const p of [postsA, postsB, postsC, postsD]) p.reset();
   fake.requests.length = 0;
+  jira.requests.length = 0;
   Object.assign(postA, { fail: null, hide: false });
   setClaude({ stream: "tree" });
   app = boot();
@@ -481,6 +482,24 @@ r[key("POST", "/__control/posts")] = async (req) => {
 // Every request to the fake Bitbucket since the last reset that is not a GET. The control routes do not count.
 r[key("POST", "/__control/writes")] = () =>
   ok({ writes: fake.requests.filter((x) => !x.startsWith("GET ") && !x.includes(" /__control/")) });
+// ---------- Jira attachments (plan r3 S-ATT) ----------
+// Every request to the fake Jira since the last reset.
+r[key("POST", "/__control/jira-requests")] = () => ok({ requests: jira.requests });
+// The names in context/attachments/ of the newest fake CLI run. null: no run. The run folder exists only while the run runs.
+r[key("POST", "/__control/run-attachments")] = () => {
+  const record = join(claudeDir, "calls.jsonl");
+  const runs = existsSync(record)
+    ? readFileSync(record, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as { argv?: string[]; cwd?: string })
+        .filter((c) => c.argv?.includes("-p"))
+    : [];
+  const cwd = runs.at(-1)?.cwd;
+  if (!cwd) return ok({ files: null });
+  const dir = join(cwd, "context", "attachments");
+  return ok({ files: existsSync(dir) ? readdirSync(dir).sort() : [] });
+};
 // Lets the running cycle end, changes the scenario, then runs one full cycle.
 r[key("POST", "/__control/state")] = async (req) => {
   const change = (await req.json()) as Partial<Scenario>;

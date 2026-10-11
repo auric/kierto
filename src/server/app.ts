@@ -40,19 +40,27 @@ export function createApp(opts: AppOptions) {
   const review = opts.review ?? createReviewJobs({ settings, live: opts.live });
   const outbox = opts.outbox ?? createOutbox({ settings, live: opts.live });
 
+  const headers = secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"],
+      frameAncestors: ["'none'"],
+    },
+  });
+
   const app = new Hono()
     .use(guard(opts))
-    .use(
-      secureHeaders({
-        contentSecurityPolicy: {
-          defaultSrc: ["'self'"],
-          scriptSrc: ["'self'"],
-          imgSrc: ["'self'", "data:"],
-          connectSrc: ["'self'"],
-          frameAncestors: ["'none'"],
-        },
-      }),
-    )
+    // A route with its own policy keeps it: the attachment files send "sandbox". secureHeaders sets its policy on every answer.
+    .use(async (c, next) => {
+      let own: string | null = null;
+      await headers(c, async () => {
+        await next();
+        own = c.res.headers.get("Content-Security-Policy");
+      });
+      if (own) c.res.headers.set("Content-Security-Policy", own);
+    })
     .use(csrf({ origin: allowedOrigins(opts) }))
     .get("/api/live", (c) => opts.live.handler(c))
     .route("/api/settings", settings.routes)

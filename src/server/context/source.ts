@@ -23,4 +23,7 @@ export type ContextSource = {
   check(): Promise<string>;
   // Throws a ContextError.
   fetchIssue(key: string): Promise<IssueContext>;
+  // Passes the bytes of one attachment to write, in order. size: the listed byte count. Another count throws kind shape.
+  // Throws a ContextError, or the error of write.
+  download(att: { id: string; filename: string; size: number }, write: (chunk: Uint8Array) => Promise<void>): Promise<void>;
 };

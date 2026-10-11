@@ -116,3 +116,21 @@ export async function posts(change: PostControl = {}): Promise<PostBody[]> {
   if (!res.ok) throw new Error(`control posts: ${res.status}`);
   return ((await res.json()) as { bodies: PostBody[] }).bodies;
 }
+
+// ---------- Jira attachments (plan r3 S-ATT) ----------
+// The fake Jira serves the attachments of JIRA_ISSUE: 10100 screenshot.png (a PNG) and 10101 sync-worker.log (text).
+
+// Every request to the fake Jira since the last reset, as "METHOD /path?query".
+export async function jiraRequests(): Promise<string[]> {
+  const res = await fetch(`${FAKE_URL}/__control/jira-requests`, { method: "POST", headers: auth });
+  if (!res.ok) throw new Error(`control jira-requests: ${res.status}`);
+  return ((await res.json()) as { requests: string[] }).requests;
+}
+
+// The file names in context/attachments/ of the newest fake CLI run, or null before the first run.
+// The run folder exists only while the run runs. Start the run with control("claude", { stream: "tree", hang: true }).
+export async function runAttachments(): Promise<string[] | null> {
+  const res = await fetch(`${FAKE_URL}/__control/run-attachments`, { method: "POST", headers: auth });
+  if (!res.ok) throw new Error(`control run-attachments: ${res.status}`);
+  return ((await res.json()) as { files: string[] | null }).files;
+}

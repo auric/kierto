@@ -4,7 +4,9 @@ import { join, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
 import { type AppOptions, createApp } from "./app";
 import { BUILD_COMMIT } from "./build";
+import { sweep } from "./context/attachments";
 import { createLive } from "./live";
+import { log } from "./log";
 import { createOutbox } from "./publish/outbox";
 import { runGitMcp } from "./review/git-mcp";
 import { createReviewJobs } from "./review/jobs";
@@ -54,6 +56,13 @@ if (import.meta.main && gitMcpAt >= 0) {
   const sync = createSyncEngine({ settings, live });
   const review = createReviewJobs({ settings, live });
   const outbox = createOutbox({ settings, live });
+  // Before the server starts, so no download runs.
+  const db = settings.db();
+  try {
+    if (db) sweep(db, review.dataDir);
+  } catch (e) {
+    log(`Could not clean up the attachments folder: ${(e as Error).message}`);
+  }
   try {
     const server = startServer({
       port,
