@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../shared/dto";
+import { useFix } from "../fix/FixBar";
+import { canFix, fixWaiting } from "../fix/model";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
 import { ordered, type ThreadModel } from "../pr/threads";
@@ -80,6 +82,8 @@ export type ReviewUi = {
   api: ReviewApi;
   // Plan r2 UI-DIFF: the finding drafts, the source head of their run, and the reply draft of each thread.
   diff: { drafts: ReviewItemDto[]; head: string | null; replies: ReadonlyMap<number, ReviewItemDto> };
+  // Plan r3 UI-FIX: the fix bar above the post bar, and the apply dialog.
+  fix: { bar: ReactNode; dialog: ReactNode };
 };
 
 const NO_ITEMS: ReviewItemDto[] = [];
@@ -364,35 +368,70 @@ export function useReview(
     [meta, o.hints, triageCtx],
   );
 
+  // ---------- Fix it (plan r3 UI-FIX) ----------
+  const fix = useFix(pr, {
+    meta,
+    hints: o.hints,
+    threads: o.threads,
+    replies: replies.data,
+    profile: state.name,
+    announce: o.announce,
+    focusAfter,
+    onLog: (id) => openLog(null, false, id),
+    slotTaken,
+  });
+  const onFix = useRef(fix);
+  onFix.current = fix;
+  const author = pr.role === "AUTHOR";
+
   // ---------- Reply drafts (replies.md step 6) ----------
   const replyCtx = useMemo<ReplyCtx>(
-    () => ({ meta, hints: o.hints, announce: o.announce, triage: triageCtx, again: (thread) => onDraft.current([thread]) }),
+    () => ({
+      meta,
+      hints: o.hints,
+      announce: o.announce,
+      triage: triageCtx,
+      again: (thread) => onDraft.current([thread]),
+      fix: (thread) => onFix.current.run([thread]),
+      copyPrompt: (thread) => onFix.current.copyPrompt(thread),
+    }),
     [meta, o.hints, o.announce, triageCtx],
   );
   const byThread = useMemo(() => replyMap(replies.data), [replies.data]);
   const pending = asked && newest?.id === asked.run && newest.status === "running" ? asked : null;
-  // Per thread, so a memo thread renders again only when its own card changes.
+  // Per thread, so a memo thread renders again only when its own card changes. The fix card follows the reply draft card.
+  const { cards: fixCards, fixes } = fix;
+  const { commits } = o;
   const cards = useMemo(() => {
     const out = new Map<number, ReactNode>();
     for (const t of o.threads) {
       const card = replyCard(byThread.get(t.id), t.last?.id ?? null, !!pending?.threads.includes(t.id));
-      if (!card) continue;
-      const it = card.kind === "pending" ? null : card.it;
-      const to = it && t.msgs.find((m) => m.id === replyOf(it).replyTo);
+      const fixCard = fixCards.get(t.id);
+      if (!card && !fixCard) continue;
+      const it = !card || card.kind === "pending" ? null : card.it;
+      const p = it && replyOf(it);
+      const to = p && t.msgs.find((m) => m.id === p.replyTo);
       out.set(
         t.id,
-        <ReplyDraftCard
-          card={card}
-          thread={t.id}
-          to={to ? (to.who.me ? "your message" : to.who.name) : null}
-          mode={it ? modeOf(triage, it.id) : null}
-          busy={!!it && triage.busy.has(it.id)}
-          ctx={replyCtx}
-        />,
+        <>
+          {card && (
+            <ReplyDraftCard
+              card={card}
+              thread={t.id}
+              to={to ? (to.who.me ? "your message" : to.who.name) : null}
+              mode={it ? modeOf(triage, it.id) : null}
+              busy={!!it && triage.busy.has(it.id)}
+              fixable={!!p && !!t.last && canFix(p, author)}
+              waiting={p ? fixWaiting(p, commits, fixes) : null}
+              ctx={replyCtx}
+            />
+          )}
+          {fixCard}
+        </>,
       );
     }
     return out;
-  }, [o.threads, byThread, pending, triage, replyCtx]);
+  }, [o.threads, byThread, pending, triage, replyCtx, fixCards, fixes, commits, author]);
 
   const api: ReviewApi = {
     // The open brief can hold an unsaved note. There, Ctrl+Enter saves and starts, so r only focuses the note.
@@ -464,6 +503,7 @@ export function useReview(
           <>
             {"since" in rr && <RereviewButton since={rr.since} busy={startRereview.isPending} onClick={rereview} />}
             <DraftRepliesButton your={your} profile={state.name} onClick={() => draftReplies()} />
+            {fix.button}
           </>
         }
         onClick={() => (composer ? closeBrief() : openBrief())}
@@ -522,5 +562,6 @@ export function useReview(
     ),
     api,
     diff: forDiff,
+    fix: { bar: fix.bar, dialog: fix.dialog },
   };
 }

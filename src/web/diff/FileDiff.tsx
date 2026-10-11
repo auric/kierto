@@ -20,7 +20,15 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { type ChangedFile, DIFF_PAGE_ROWS, type DiffFileDto, type DiffIndexDto, type MetaDto, type ReviewItemDto } from "../../shared/dto";
+import {
+  type ChangedFile,
+  DIFF_PAGE_ROWS,
+  type DiffFileDto,
+  type DiffIndexDto,
+  type DiffRowDto,
+  type MetaDto,
+  type ReviewItemDto,
+} from "../../shared/dto";
 import type { AnchoredFinding } from "../../shared/review";
 import { FilesFold, ForgeFiles } from "../pr/Sections";
 import { Avatar, NewMark } from "../pr/Thread";
@@ -359,9 +367,10 @@ const FileRow = memo(function FileRow(props: {
 const SIGN = { add: "+", del: "−", ctx: " " } as const;
 const SR = { add: "Added: ", del: "Removed: ", ctx: "" } as const;
 
-const Line = memo(function Line({ id, kind, old, nu, text, marked }: Row & { id: string; marked: boolean }) {
+// id: a focus target for "Show in diff".
+const Line = memo(function Line({ id, kind, old, nu, text, marked }: Row & { id?: string; marked: boolean }) {
   return (
-    <div id={id} tabIndex={-1} className="rl-dr" data-k={kind} data-mark={marked || undefined}>
+    <div id={id} tabIndex={id ? -1 : undefined} className="rl-dr" data-k={kind} data-mark={marked || undefined}>
       <span className="rl-no">{kind === "add" ? "" : old}</span>
       <span className="rl-no">{kind === "del" ? "" : nu}</span>
       <span aria-hidden className="rl-sg">
@@ -377,14 +386,42 @@ const Line = memo(function Line({ id, kind, old, nu, text, marked }: Row & { id:
 });
 type Row = { kind: "add" | "del" | "ctx"; old: number; nu: number; text: string };
 
+// Diff rows with a gap row for each run of unchanged lines. idOf: the DOM ID of a row. after: the content under the row at index k.
+export function Rows(props: {
+  rows: DiffRowDto[];
+  label: string;
+  idOf?: (r: DiffRowDto) => string;
+  marked?: ReadonlySet<number>;
+  after?: (k: number) => ReactNode;
+}) {
+  const { rows } = props;
+  const last = rows.at(-1);
+  // Wide enough for the largest line number of either side.
+  const nw = `${String(Math.max(99, last?.old ?? 0, last?.new ?? 0)).length + 1}ch`;
+  return (
+    <div translate="no" className="rl-dv" style={{ "--nw": nw } as CSSProperties}>
+      <figure aria-label={props.label} className="rl-dvi m-0">
+        {rows.map((r, k) => {
+          const gap = hidden(rows[k - 1], r);
+          const id = props.idOf?.(r);
+          return (
+            <Fragment key={id ?? `${r.kind}${r.old}:${r.new}`}>
+              {gap > 0 && <div className="rl-dgap">{plural(gap, "unchanged line")}</div>}
+              <Line id={id} kind={r.kind} old={r.old} nu={r.new} text={r.text} marked={!!props.marked?.has(k)} />
+              {props.after?.(k)}
+            </Fragment>
+          );
+        })}
+      </figure>
+    </div>
+  );
+}
+
 function FileBody(props: { i: number; f: DiffFileDto; pages: number; items: Item[]; more: (name: string) => void; ctx: DiffCtx }) {
   const { i, f, items, ctx } = props;
   const name = fileName(f);
   const p = useDiffPages(ctx.pr, name, props.pages);
   const placement = useMemo(() => place(p.rows, p.complete, items), [p.rows, p.complete, items]);
-  const last = p.rows.at(-1);
-  // Wide enough for the largest line number of either side.
-  const nw = `${String(Math.max(99, last?.old ?? 0, last?.new ?? 0)).length + 1}ch`;
   const left = f.rows - p.rows.length;
   return (
     <div className="rl-df">
@@ -392,28 +429,24 @@ function FileBody(props: { i: number; f: DiffFileDto; pages: number; items: Item
       {f.binary ? (
         <p className="m-0 px-2.5 py-2 text-sm text-muted-foreground">Binary file. The diff has no lines to show.</p>
       ) : (
-        <div translate="no" className="rl-dv" style={{ "--nw": nw } as CSSProperties}>
-          <figure aria-label={`Changes in ${name}`} className="rl-dvi m-0">
-            {p.rows.map((r, k) => {
-              const gap = hidden(p.rows[k - 1], r);
-              const cards = placement.at.get(k);
-              const id = rowId(i, r);
-              return (
-                <Fragment key={id}>
-                  {gap > 0 && <div className="rl-dgap">{plural(gap, "unchanged line")}</div>}
-                  <Line id={id} kind={r.kind} old={r.old} nu={r.new} text={r.text} marked={placement.marked.has(k)} />
-                  {cards && (
-                    <div className="rl-dcard">
-                      {cards.map((c) => (
-                        <CardView key={cardKey(c)} c={c} ctx={ctx} />
-                      ))}
-                    </div>
-                  )}
-                </Fragment>
-              );
-            })}
-          </figure>
-        </div>
+        <Rows
+          rows={p.rows}
+          label={`Changes in ${name}`}
+          idOf={(r) => rowId(i, r)}
+          marked={placement.marked}
+          after={(k) => {
+            const cards = placement.at.get(k);
+            return (
+              cards && (
+                <div className="rl-dcard">
+                  {cards.map((c) => (
+                    <CardView key={cardKey(c)} c={c} ctx={ctx} />
+                  ))}
+                </div>
+              )
+            );
+          }}
+        />
       )}
       {p.loading && (
         <div className="grid gap-1.5 px-2.5 py-2" role="status" aria-label="Loading the lines">

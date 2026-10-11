@@ -444,7 +444,14 @@ export function PrDetail({
           </div>
         )}
       </div>
-      {data && bar.node}
+      {/* The fix bar sits above the post bar. Both stay at the bottom of the pane. */}
+      {data && (review.fix.bar || bar.node) && (
+        <div className="sticky bottom-0 z-[2]">
+          {review.fix.bar}
+          {bar.node}
+        </div>
+      )}
+      {review.fix.dialog}
       <SharedHint hints={hints} />
       <p role="status" className="sr-only">
         <span key={said.n}>{said.text}</span>
