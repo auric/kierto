@@ -97,6 +97,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
       tokenStorage: secrets.storage(),
       caFile: c?.caFile ?? null,
       notifications: c?.notifications ?? false,
+      markAi: c?.markAi ?? true,
       taskRules: rulesOf(c).map(({ timedOut, ...r }) => ({ ...r, timedOut: timedOut === true })),
       taskLink: c?.taskLink ?? null,
     };
@@ -226,6 +227,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets } = {}) {
               ? input.taskRules.map((r): StoredRule => (old.some((o) => o.timedOut && sameRule(o, r)) ? { ...r, timedOut: true } : r))
               : prev?.taskRules,
             taskLink: input.taskLink === undefined ? prev?.taskLink : input.taskLink || undefined,
+            markAi: input.markAi ?? prev?.markAi,
           };
           const caFile = input.caFile || undefined;
           const notifications = input.notifications ?? prev?.notifications ?? false;

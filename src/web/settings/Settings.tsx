@@ -1,10 +1,11 @@
 import { ArrowLeft, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import type { PrRow, SettingsDto } from "../../shared/dto";
-import { useForge } from "../meta";
+import { useForge, useMeta } from "../meta";
 import { notifyPermission } from "../notify";
 import { useSaveSettings } from "../shell/data";
 import { Hint } from "../shell/Hint";
@@ -159,6 +160,7 @@ export function Settings({
           </form>
         </section>
         {settings.baseUrl !== null && <Notifications settings={settings} />}
+        {settings.baseUrl !== null && <AiMark settings={settings} />}
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
       </div>
     </>
@@ -205,6 +207,31 @@ function Notifications({ settings }: { settings: SettingsDto }) {
       </label>
       <p className="m-0 text-sm text-muted-foreground">One notification per pull request. Several open tabs never repeat it.</p>
       {note && <p className="m-0 text-sm text-ink-2">{note}</p>}
+      {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
+    </section>
+  );
+}
+
+function AiMark({ settings }: { settings: SettingsDto }) {
+  const save = useSaveSettings();
+  const runner = useMeta().data?.runner.short ?? "";
+  return (
+    <section aria-labelledby="mark-title" className="mt-6 grid max-w-[560px] gap-2 border-t pt-4">
+      <h2 id="mark-title" className={sectionTitle}>
+        Posts
+      </h2>
+      <Field orientation="horizontal">
+        <Switch
+          id="mark-ai"
+          checked={settings.markAi}
+          disabled={save.isPending}
+          onCheckedChange={(markAi) => save.mutate({ baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", markAi })}
+        />
+        <FieldContent>
+          <FieldLabel htmlFor="mark-ai">Mark {runner}-drafted comments with 🤖</FieldLabel>
+          <FieldDescription>Comments and replies that {runner} drafted start with 🤖. Your own replies never do.</FieldDescription>
+        </FieldContent>
+      </Field>
       {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
     </section>
   );

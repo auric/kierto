@@ -11,6 +11,7 @@ import { createBitbucketProvider } from "../../src/server/bitbucket/provider";
 import { writeConfig } from "../../src/server/config";
 import { createLive } from "../../src/server/live";
 import { createOutbox, type Outbox } from "../../src/server/publish/outbox";
+import { AI_MARK } from "../../src/server/publish/plan";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
@@ -68,7 +69,7 @@ function thread(): Activity[] {
   return list;
 }
 
-async function setup() {
+async function setup(mark = false) {
   const world = { pr: ownPr(), list: thread };
   const posts = commentPosts(PR_PATH, () => world.list(), ME, FIRST_ID);
   const fake = startFakeBitbucket({
@@ -80,7 +81,7 @@ async function setup() {
     },
   });
   const dir = mkdtempSync(join(tmpdir(), "rl-wp13-"));
-  writeConfig(dir, { baseUrl: fake.url, userSlug: FAKE_USER, notifications: false });
+  writeConfig(dir, { baseUrl: fake.url, userSlug: FAKE_USER, notifications: false, ...(mark ? {} : { markAi: false }) });
   const secrets = createSecrets(null);
   await secrets.set(FAKE_TOKEN);
   const settings = createSettings({ dir, secrets });
@@ -120,6 +121,14 @@ async function setup() {
   const reply = (o: Record<string, unknown> = {}) =>
     call<PostDto & ReplyConflict>(`/api/prs/${pr}/replies`, { parentId: THEIRS, body: TEXT, seen: THEIRS, key: KEY, ...o });
   const plan = async () => (await call<PostPlanDto>(`/api/prs/${pr}/post-plan`)).body.posts;
+  const markAi = async (on: boolean) => {
+    const res = await cur.app.request(`${ORIGIN}/api/settings`, {
+      method: "PUT",
+      headers: HEADERS,
+      body: JSON.stringify({ baseUrl: fake.url, markAi: on }),
+    });
+    expect(res.status).toBe(200);
+  };
   return {
     world,
     posts,
@@ -130,6 +139,7 @@ async function setup() {
     call,
     reply,
     plan,
+    markAi,
     list: async () => (await call<PostDto[]>(`/api/prs/${pr}/posts`)).body,
     sent: () => fake.requests.filter((r) => r === COMMENTS).length,
     settle: () => cur.outbox.wait(),
@@ -587,5 +597,48 @@ describe("confirm", () => {
     expect(itemRow(s, id)).toEqual({ status: "accepted", revision: 2, anchor_state: "outside" });
     expect((await s.plan()).map((p) => [p.destination.kind, p.body])).toEqual([["general", "src/app.ts:2: Context text."]]);
     expect(await s.list()).toEqual([]);
+  });
+});
+
+describe("AI mark", () => {
+  test("AI posts reach Bitbucket with one mark, and an edited draft keeps it", async () => {
+    const s = await setup(true);
+    const { item } = seedRun(s);
+    const ids = [item("Inline text.", 3), item("Outside text.", 1, "outside"), item("Q?", null)];
+    await accept(s, ...ids);
+    const draft = seedReply(s, THEIRS);
+    expect((await s.call(`/api/items/${draft}`, { action: "edit", revision: 0, body: "Edited reply." })).status).toBe(200);
+    const items = itemsOf(await s.plan());
+    const r = await s.call<ConfirmDto>(`/api/prs/${s.pr}/confirm`, { items });
+    expect(r.status).toBe(202);
+    const marked = [`${AI_MARK}Inline text.`, `${AI_MARK}src/app.ts:1: Outside text.\n\nQ? Why.`, `${AI_MARK}Edited reply.`];
+    expect(r.body.posts.map((p) => p.body).sort()).toEqual([...marked].sort());
+    // The outbox keeps the bytes of the confirm. A later setting change never alters them.
+    await s.markAi(false);
+    await s.settle();
+    expect(s.posts.bodies.map((b) => b.text).sort()).toEqual([...marked].sort());
+    expect((await s.list()).map((p) => [p.state, p.body]).sort()).toEqual(marked.map((b) => ["confirmed", b]).sort());
+  });
+
+  test("a manual reply never gets the mark", async () => {
+    const s = await setup(true);
+    const { status, body } = await s.reply();
+    expect([status, body.body]).toEqual([202, TEXT]);
+    await s.settle();
+    expect(s.posts.bodies.map((b) => b.text)).toEqual([TEXT]);
+  });
+
+  test("A9: the check matches a marked post after a dropped connection, with no second POST", async () => {
+    const s = await setup(true);
+    s.posts.drop = true;
+    const draft = seedReply(s, THEIRS);
+    await accept(s, draft);
+    const r = await s.call<ConfirmDto>(`/api/prs/${s.pr}/confirm`, { items: [{ id: draft, revision: 1 }] });
+    expect(r.status).toBe(202);
+    await s.settle();
+    const [post] = await s.list();
+    expect(post).toMatchObject({ state: "confirmed", remoteId: FIRST_ID, attempts: 1, lastError: null, body: `${AI_MARK}Reply text.` });
+    expect(s.posts.bodies.map((b) => b.text)).toEqual([`${AI_MARK}Reply text.`]);
+    expect(s.sent()).toBe(1);
   });
 });

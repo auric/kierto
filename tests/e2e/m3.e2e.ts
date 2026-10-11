@@ -1,7 +1,7 @@
 // M3 browser acceptance (plan v3 WP14a): triage, the post confirm, the outbox states, and replies.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { test as base, expect, type Locator, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, posts } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, MARK, posts } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -122,7 +122,7 @@ test("A8: two of the drafts are accepted, and exactly those two texts post after
   await expect(page.locator("#nav-post")).toHaveAccessibleName("Ready to post: 0");
 
   const sent = await posts();
-  expect(sent.map((b) => b.text)).toEqual([LOCK, RELEASE]);
+  expect(sent.map((b) => b.text)).toEqual([MARK + LOCK, MARK + RELEASE]);
   expect(sent.map((b) => [b.anchor?.path, b.anchor?.line, b.parent])).toEqual([
     ["src/cache/flush.ts", 3, undefined],
     ["src/cache/flush.ts", 5, undefined],
@@ -186,7 +186,7 @@ test("a failed inline post shows the reason and moves to the general comment", a
   await expect(out).toContainText("Posted.");
   const sent = await posts();
   expect(sent).toHaveLength(1);
-  expect(sent[0]?.text).toBe(`src/cache/flush.ts:3: ${LOCK}`);
+  expect(sent[0]?.text).toBe(`${MARK}src/cache/flush.ts:3: ${LOCK}`);
   expect(sent[0]?.anchor).toBeUndefined();
 });
 

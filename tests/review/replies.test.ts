@@ -78,7 +78,7 @@ async function setup() {
   scenario();
 
   const dir = join(root, "data");
-  writeConfig(dir, { baseUrl: "http://127.0.0.1:9", userSlug: FAKE_USER, notifications: false });
+  writeConfig(dir, { baseUrl: "http://127.0.0.1:9", userSlug: FAKE_USER, notifications: false, markAi: false });
   const secrets = createSecrets(null);
   await secrets.set(FAKE_TOKEN);
   const settings = createSettings({ dir, secrets });
@@ -455,6 +455,7 @@ test("R15: a reply item posts under its parent and never joins the general comme
   const base = { run: 1, anchor: null, status: "accepted" as const, revision: 0, edited: false };
   const posts = buildPlan({
     me: FAKE_USER,
+    mark: false,
     runs: [run],
     comments: [],
     items: [

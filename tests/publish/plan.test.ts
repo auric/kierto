@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createApp } from "../../src/server/app";
 import { writeConfig } from "../../src/server/config";
 import { createLive } from "../../src/server/live";
-import { buildPlan, generalText } from "../../src/server/publish/plan";
+import { AI_MARK, buildPlan, generalText } from "../../src/server/publish/plan";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
@@ -78,9 +78,9 @@ function findingPayload(o: F): AnchoredFinding {
   };
 }
 
-async function setup() {
+async function setup(mark = false) {
   const dir = mkdtempSync(join(tmpdir(), "rl-wp12-"));
-  writeConfig(dir, { baseUrl: "http://127.0.0.1:9", userSlug: FAKE_USER, notifications: false });
+  writeConfig(dir, { baseUrl: "http://127.0.0.1:9", userSlug: FAKE_USER, notifications: false, ...(mark ? {} : { markAi: false }) });
   const secrets = createSecrets(null);
   await secrets.set(FAKE_TOKEN);
   const settings = createSettings({ dir, secrets });
@@ -177,7 +177,15 @@ async function setup() {
     expect(r.status).toBe(200);
     return r.body;
   };
-  return { db, pr, run, finding, question, comment, act, accept, plan, call };
+  const markAi = async (on: boolean) => {
+    const res = await app.request(`${ORIGIN}/api/settings`, {
+      method: "PUT",
+      headers: HEADERS,
+      body: JSON.stringify({ baseUrl: "http://127.0.0.1:9", markAi: on }),
+    });
+    expect(res.status).toBe(200);
+  };
+  return { db, pr, run, finding, question, comment, act, accept, plan, call, markAi };
 }
 
 describe("post plan", () => {
@@ -349,10 +357,49 @@ describe("post plan", () => {
       edited: false,
     });
     const runs = [1, 2].map((id) => ({ id, sourceHead: SOURCE, targetHead: TARGET, mergeBase: BASE }));
-    const posts = buildPlan({ me: FAKE_USER, runs, items: [item(5, 2), item(3, 1), { ...item(4, 1), status: "new" }], comments: [] });
+    const posts = buildPlan({
+      me: FAKE_USER,
+      mark: false,
+      runs,
+      items: [item(5, 2), item(3, 1), { ...item(4, 1), status: "new" }],
+      comments: [],
+    });
     expect(posts.map((p) => [p.run, p.body, p.items])).toEqual([
       [1, "Q3? W.", [{ id: 3, revision: 2 }]],
       [2, "Q5? W.", [{ id: 5, revision: 2 }]],
+    ]);
+  });
+});
+
+describe("AI mark", () => {
+  test("on by default: every plan body gets one mark; off: no mark; the setting is read at build time", async () => {
+    const s = await setup(true);
+    const ids = [s.finding(), s.finding({ state: "outside" }), s.question("Q1?", "W1."), s.question("Q2?", "W2.")];
+    for (const id of ids) await s.accept(id);
+    const general = "src/app.ts:3: Body.\n\nQuestions:\n\n- Q1? W1.\n- Q2? W2.";
+    const on = (await s.plan()).posts.map((p) => [p.destination.kind, p.body]);
+    expect(on).toEqual([
+      ["inline", `${AI_MARK}Body.`],
+      ["general", `${AI_MARK}${general}`],
+    ]);
+    await s.markAi(false);
+    expect((await s.plan()).posts.map((p) => p.body)).toEqual(["Body.", general]);
+    await s.markAi(true);
+    expect((await s.plan()).posts.map((p) => [p.destination.kind, p.body])).toEqual(on);
+  });
+
+  test("an edited item keeps the mark, and a body that already starts with it gets no second mark", async () => {
+    const s = await setup(true);
+    const edited = s.finding();
+    const own = s.finding({ line: 4, body: `${AI_MARK}Already marked.` });
+    const bare = s.finding({ path: "b.ts", body: "\u{1F916}Bare emoji." });
+    expect((await s.act(edited, { action: "edit", revision: 0, body: "Edited text." })).status).toBe(200);
+    await s.accept(own);
+    await s.accept(bare);
+    expect((await s.plan()).posts.map((p) => p.body)).toEqual([
+      `${AI_MARK}Edited text.`,
+      `${AI_MARK}Already marked.`,
+      "\u{1F916}Bare emoji.",
     ]);
   });
 });

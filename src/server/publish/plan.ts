@@ -8,7 +8,12 @@ import type { AnchoredFinding, Question, ReplyPayload } from "../../shared/revie
 export type PlanRun = { id: number; sourceHead: string; targetHead: string; mergeBase: string | null; repoUrl?: string | null };
 // A live root comment. anchor: the stored forge anchor, absent for a general comment.
 export type PlanComment = { id: number; authorSlug: string; authorLogin: string | null; authorName: string | null; anchor: unknown };
-export type PlanInput = { me: string | null; runs: PlanRun[]; items: ReviewItemDto[]; comments: PlanComment[] };
+// mark: the markAi setting at build time. The outbox keeps the built body, so a later change never alters a queued row.
+export type PlanInput = { me: string | null; mark: boolean; runs: PlanRun[]; items: ReviewItemDto[]; comments: PlanComment[] };
+
+export const AI_MARK = "🤖 ";
+// A body that already starts with the robot emoji gets no second mark.
+const marked = (body: string) => (body.startsWith(AI_MARK.trimEnd()) ? body : AI_MARK + body);
 
 // plan v3 WP12: `[path:line](fileUrl)`. Without the browse link or the commit, the plain "path:line" stays. src/shared/links.ts holds the URL form.
 export const fileRef = ({ repoUrl }: Pick<PlanRun, "repoUrl">, path: string, at: string | null, line: number) => {
@@ -44,6 +49,7 @@ export function generalText(findings: { ref: string; body: string }[], questions
 
 export function buildPlan(input: PlanInput): PlannedPost[] {
   const out: PlannedPost[] = [];
+  const text = input.mark ? marked : (body: string) => body;
   for (const run of input.runs) {
     const heads = { run: run.id, sourceHead: run.sourceHead, targetHead: run.targetHead, mergeBase: run.mergeBase };
     const items = input.items.filter((i) => i.run === run.id && i.status === "accepted").sort((a, b) => a.id - b.id);
@@ -56,7 +62,7 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
       // R15: a reply item has no anchor, but it never joins the general comment.
       if (it.kind === "reply") {
         const parentId = (it.payload as ReplyPayload).replyTo;
-        out.push({ ...heads, destination: { kind: "reply", parentId }, body: it.body, items: [ref], duplicate: null });
+        out.push({ ...heads, destination: { kind: "reply", parentId }, body: text(it.body), items: [ref], duplicate: null });
         continue;
       }
       if (it.kind === "question" || !a) {
@@ -71,7 +77,7 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
         out.push({
           ...heads,
           destination: { kind: "inline", path: a.path, srcPath, line: a.line, lineEnd: a.lineEnd, lineType: add ? "add" : "ctx" },
-          body: it.body,
+          body: text(it.body),
           items: [ref],
           duplicate: duplicate(input.comments, input.me, a),
         });
@@ -86,7 +92,13 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
       generalItems.push(ref);
     }
     if (generalItems.length)
-      out.push({ ...heads, destination: { kind: "general" }, body: generalText(general, questions), items: generalItems, duplicate: null });
+      out.push({
+        ...heads,
+        destination: { kind: "general" },
+        body: text(generalText(general, questions)),
+        items: generalItems,
+        duplicate: null,
+      });
   }
   return out;
 }
