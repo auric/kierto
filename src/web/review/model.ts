@@ -111,8 +111,8 @@ export const tokenText = (n: number) => (n < 1000 ? `${n} tokens` : `${Math.roun
 // Plan v3 section 7: an incomplete run says "No findings in what it read", never "No issues".
 // A reply run counts its drafts and the threads where it found no reply needed.
 export function countText(items: ReviewItemDto[], incomplete: boolean, kind: RunKind = "review") {
-  // An ask run has no items. Its answer shows in the Ask panel.
-  if (kind === "ask") return "";
+  // An ask run has no items. Its answer shows in the Ask panel. A fix run keeps its edits apart from the items.
+  if (kind === "ask" || kind === "fix") return "";
   if (kind === "reply") {
     const none = items.filter((i) => (i.payload as ReplyPayload).action === "none").length;
     const r = items.length - none;
@@ -149,7 +149,7 @@ export type RunLineState =
   | { kind: "running"; agents: number; calls: number; startedAt: number }
   | {
       kind: "done";
-      verb: "reviewed" | "explained" | "drafted replies on" | "answered a question on";
+      verb: "reviewed" | "explained" | "drafted replies on" | "answered a question on" | "proposed fixes on";
       head: string;
       at: number;
       count: string;
@@ -190,9 +190,11 @@ export function runLine(d: RunDetail, profiles: ProfileDto[], commits?: CommitDt
             ? "drafted replies on"
             : r.kind === "ask"
               ? "answered a question on"
-              : (r.explain ?? profiles.find((p) => p.id === r.profile)?.explain)
-                ? "explained"
-                : "reviewed",
+              : r.kind === "fix"
+                ? "proposed fixes on"
+                : (r.explain ?? profiles.find((p) => p.id === r.profile)?.explain)
+                  ? "explained"
+                  : "reviewed",
         head: shortHash(r.sourceHead),
         at: r.finishedAt ?? r.startedAt,
         count: r.since ? rereviewCount(d.items) : countText(d.items, gaps, r.kind),
@@ -222,6 +224,13 @@ export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancel
     cancelled: "the question",
     doing: "answering a question on",
     now: "answering a question",
+  },
+  fix: {
+    running: "Proposing fixes…",
+    failed: "The fix run failed.",
+    cancelled: "the fix run",
+    doing: "proposing fixes for",
+    now: "proposing fixes",
   },
 };
 

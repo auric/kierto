@@ -3,7 +3,17 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { askJsonSchema, askResult, rereviewJsonSchema, rereviewResult, reviewJsonSchema } from "../../src/shared/review";
+import {
+  askJsonSchema,
+  askResult,
+  fixJsonSchema,
+  fixResult,
+  replyJsonSchema,
+  replyResult,
+  rereviewJsonSchema,
+  rereviewResult,
+  reviewJsonSchema,
+} from "../../src/shared/review";
 import type { FakeScenario } from "../support/fake-claude";
 import { claudeStream, REVIEW_RESULT } from "../support/review-fixture";
 
@@ -18,6 +28,10 @@ const STDIN = [
   "Answer the question about the change in ./repo.",
   "",
   "Earlier findings: 5, 9, 12, 14",
+  "",
+  "Threads: 1 (answer message 11), 2 (answer message 12), 3 (answer message 13), 4 (answer message 14), 5 (answer message 15), 6 (answer message 16)",
+  "",
+  "Fix threads: 101 (comment 105), 102 (comment 107)",
   "",
   "# Your instructions",
   "",
@@ -96,5 +110,38 @@ describe("fake CLI", () => {
 
     const answer = { answer: "Fixed.", coverage: { read: [], skipped: [], unavailable: [], notChecked: [] } };
     expect((await run(askJsonSchema(), "Read", { answer })).output).toEqual(answer);
+  });
+
+  test("a reply schema echoes one draft per thread; the judgements cycle and every third thread needs no reply", async () => {
+    const r = await run(replyJsonSchema(), "Read,Grep,Glob");
+    expect(replyResult.safeParse(r.output).success).toBe(true);
+    const replies = r.output.replies as { thread: number; action: string; judgement: string | null }[];
+    expect(replies.map((d) => [d.thread, d.action, d.judgement])).toEqual([
+      [1, "reply", "valid"],
+      [2, "reply", "partly"],
+      [3, "none", "invalid"],
+      [4, "reply", "question"],
+      [5, "reply", null],
+      [6, "none", "valid"],
+    ]);
+  });
+
+  test("a fix schema echoes one unfixed note per Fix threads ID and no edit; a scenario fix result replaces it", async () => {
+    const r = await run(fixJsonSchema(), "Read,Grep,Glob");
+    expect(fixResult.safeParse(r.output).success).toBe(true);
+    expect(r.output.threads).toEqual([
+      { thread: 101, fixed: false, reason: "Echo" },
+      { thread: 102, fixed: false, reason: "Echo" },
+    ]);
+    expect(r.output.edits).toEqual([]);
+    expect(r.tools).not.toContain("Task");
+
+    const fix = {
+      summary: "One fix.",
+      threads: [{ thread: 101, fixed: true, reason: "Moves the lock." }],
+      edits: [{ thread: 101, path: "src/cache/flush.ts", old: "a", new: "b" }],
+      coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+    };
+    expect((await run(fixJsonSchema(), "Read", { fix })).output).toEqual(fix);
   });
 });

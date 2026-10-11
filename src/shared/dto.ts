@@ -5,6 +5,7 @@ import {
   type AnchoredFinding,
   type Carried,
   type DiffKind,
+  MAX_FIX_EDITS,
   MAX_QUESTION,
   MAX_REPLY_THREADS,
   type Question,
@@ -250,7 +251,7 @@ export type RunUsage = { costUsd: number; turns: number; durationMs: number; tok
 // dropped: findings that the validator could not anchor. They show as coverage only.
 export type RunSummary = Pick<ValidatedResult, "summary" | "risks" | "coverage" | "dropped">;
 
-export type RunKind = "review" | "reply" | "ask";
+export type RunKind = "review" | "reply" | "ask" | "fix";
 
 export type RunDto = {
   id: number;
@@ -284,6 +285,8 @@ export type RunDto = {
   since: { head: string; incremental: boolean } | null;
   // An ask run only.
   question: string | null;
+  // Plan r3 Feature C: the fetched tasks at the start of the run. Absent for runs made before it was stored.
+  tasks?: { key: string; fetchedAt: number }[];
 };
 
 export type ItemStatus = "new" | "accepted" | "discarded" | "posted";
@@ -400,7 +403,11 @@ export type AskDto = { run: RunDto; answer: string | null };
 
 export const JIRA_KEY = /^[A-Z][A-Z0-9_]*-[1-9][0-9]*$/;
 
+// The listing of one issue attachment (plan r3 S-JMD). id: digits only. created: the timestamp text from the source.
+export type AttachmentMeta = { id: string; filename: string; mimeType: string | null; size: number; created: string | null };
+
 // created: the timestamp text from the source. commentsTotal: the comment count at the source. truncated: a size cap cut the text.
+// format: "markdown" for text converted from rendered HTML. Absent: plain text (rows stored before Release 3).
 export type IssueContext = {
   key: string;
   summary: string;
@@ -409,9 +416,36 @@ export type IssueContext = {
   comments: { author: string; created: string; body: string }[];
   commentsTotal: number;
   truncated: boolean;
+  format?: "markdown";
+  attachments?: AttachmentMeta[];
 };
-// fetchedAt: ms.
-export type TaskContextDto = IssueContext & { source: "jira"; fetchedAt: number };
+
+// A downloaded attachment (plan r3 S-ATT). include: the file goes to context/attachments/ of each run. downloadedAt: ms.
+export type AttachmentDto = {
+  id: string;
+  filename: string;
+  size: number;
+  sha256: string;
+  image: boolean;
+  text: boolean;
+  include: boolean;
+  downloadedAt: number;
+};
+// fetchedAt: ms. files: the downloaded attachments. Absent until S-ATT fills it.
+export type TaskContextDto = IssueContext & { source: "jira"; fetchedAt: number; files?: AttachmentDto[] };
+
+// The :att route parameter.
+export const ATT_ID = /^[0-9]{1,18}$/;
+// PUT /api/prs/:id/task-context/:key/files/:att.
+export const attachmentInput = z.object({ include: z.boolean() });
+
+// Plan r3 caps. Per file and per PR on disk, then the run inclusion caps.
+export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+export const MAX_PR_ATTACHMENT_BYTES = 500 * 1024 * 1024;
+export const RUN_IMAGE_BYTES = 5 * 1024 * 1024;
+export const RUN_IMAGES = 20;
+export const RUN_TEXT_BYTES = 256 * 1024;
+export const RUN_TEXT_TOTAL = 1024 * 1024;
 
 // PUT /api/settings/jira. Empty baseUrl disconnects Jira and clears the token. Absent or empty token keeps the stored token.
 export const jiraSettingsInput = z.object({
@@ -442,6 +476,78 @@ export type DiffPageDto = {
 };
 // GET /api/prs/:id/diff gives 409 with this body when the cache does not hold the PR heads.
 export type DiffFetchNeeded = ApiError & { fetch: true };
+
+// ---------- Fix it (plan r3) ----------
+
+// POST /api/prs/:id/fix-run. Absent threads: the newest valid or partly reply draft of each thread.
+export const fixRunInput = z.object({ threads: z.array(positiveInt).min(1).max(MAX_REPLY_THREADS).optional() });
+
+// One stored edit. added, removed: the line counts of rows.
+export type FixEditDto = { id: number; thread: number; path: string; added: number; removed: number; rows: DiffRowDto[] };
+
+export const fixModes = ["clone", "cache"] as const;
+export type FixMode = (typeof fixModes)[number];
+export type FixCommitState = "committed" | "staged" | "undone";
+
+// edits: the fix_edit IDs. before: the head before the commit, or the parent in cache mode.
+// fetch: cache mode only. The UI builds the git fetch command from it.
+export type FixCommitDto = {
+  id: number;
+  run: number;
+  mode: FixMode;
+  edits: number[];
+  branch: string | null;
+  before: string;
+  commit: string | null;
+  short: string | null;
+  state: FixCommitState;
+  fetch: { cache: string; ref: string } | null;
+  createdAt: number;
+};
+
+// GET /api/prs/:id/fixes gives FixDto[], newest first, at most 10.
+export type FixDto = {
+  run: RunDto;
+  threads: { thread: number; fixed: boolean; reason: string }[];
+  edits: FixEditDto[];
+  commits: FixCommitDto[];
+};
+
+// POST /api/fix-runs/:run/commit. The server checks only the message length.
+export const fixCommitInput = z.object({
+  edits: z.array(positiveInt).min(1).max(MAX_FIX_EDITS),
+  message: z.string().min(1).max(5000),
+  mode: z.enum(fixModes),
+});
+export type FixCommitInput = z.infer<typeof fixCommitInput>;
+
+export const cloneProblems = [
+  "not_set",
+  "missing",
+  "not_repo",
+  "detached",
+  "branch",
+  "no_base",
+  "behind",
+  "diverged",
+  "dirty",
+  "busy",
+  "identity",
+  "patch",
+] as const;
+export type CloneProblem = (typeof cloneProblems)[number];
+
+// GET, PUT /api/prs/:id/clone. text: a fixed text per kind.
+export type CloneDto = {
+  path: string | null;
+  problems: { kind: CloneProblem; text: string }[];
+  branch: string | null;
+  head: string | null;
+};
+// POST /api/fix-runs/:run/commit gives 409 with this body when a clone check fails.
+export type FixConflict = ApiError & { problems: CloneDto["problems"] };
+export const cloneInput = z.object({ path: z.string().trim().min(1).max(4096) });
+export type CloneInput = z.infer<typeof cloneInput>;
 
 // GET /api/runs/:id. events: the run log in seq order.
 export type RunDetail = { run: RunDto; events: RunEvent[]; items: ReviewItemDto[] };

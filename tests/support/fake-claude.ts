@@ -19,21 +19,26 @@ export type FakeScenario = {
   hang?: boolean;
   // The structured_output of the result, by the --json-schema shape. Absent: the echo of the stdin.
   // replies: a reply run (properties.replies). rereview: a re-review (properties.earlier). answer: an ask run (properties.answer).
+  // fix: a fix run (properties.edits).
   replies?: unknown;
   rereview?: unknown;
   answer?: unknown;
+  fix?: unknown;
 };
 
 const CHILD = "process.stdin.on('end', () => {}); process.stdin.resume(); setInterval(() => {}, 1000);";
+const NO_COVERAGE = { read: [], skipped: [], unavailable: [], notChecked: [] };
+const JUDGEMENTS = ["valid", "partly", "invalid", "question", null] as const;
 
 // A reply result for each thread of the stdin "Threads:" line. Every third thread gets action none.
+// The judgements cycle valid, partly, invalid, question, null.
 export function echoReplies(stdin: string) {
   const line = /^Threads: (.*)$/m.exec(stdin)?.[1] ?? "";
   const threads = [...line.matchAll(/(\d+) \(answer message (\d+)\)/g)].map((m) => ({ thread: Number(m[1]), replyTo: Number(m[2]) }));
   return {
     summary: `Drafted replies for ${threads.length} threads.`,
-    replies: threads.map(({ thread, replyTo }, i) =>
-      i % 3 === 2
+    replies: threads.map(({ thread, replyTo }, i) => ({
+      ...(i % 3 === 2
         ? { thread, action: "none", body: "", reason: "The thread needs no answer from you.", evidenceStatus: "unverified" }
         : {
             thread,
@@ -41,9 +46,22 @@ export function echoReplies(stdin: string) {
             body: `Thanks. I checked message ${replyTo} against \`flush()\` and will change it.`,
             reason: "The comment asks for a change.",
             evidenceStatus: "code",
-          },
-    ),
+          }),
+      judgement: JUDGEMENTS[i % JUDGEMENTS.length],
+    })),
     coverage: { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] },
+  };
+}
+
+// A fix result with one note per thread of the stdin "Fix threads:" line, no fix, and no edit.
+export function echoFix(stdin: string) {
+  const line = /^Fix threads: (.*)$/m.exec(stdin)?.[1] ?? "";
+  const threads = [...line.matchAll(/(\d+)(?: \([^)]*\))?/g)].map((m) => Number(m[1]));
+  return {
+    summary: `Checked ${threads.length} threads.`,
+    threads: threads.map((thread) => ({ thread, fixed: false, reason: "Echo" })),
+    edits: [],
+    coverage: NO_COVERAGE,
   };
 }
 
@@ -71,7 +89,7 @@ export function echoAnswer(stdin: string) {
   const end = lines.findIndex((l, i) => i > start && l.startsWith("# "));
   const section = start < 0 ? [] : lines.slice(start + 1, end < 0 ? undefined : end);
   const question = section.filter((l) => l.trim()).at(-1) ?? "";
-  return { answer: `Echo: ${question}`, coverage: { read: [], skipped: [], unavailable: [], notChecked: [] } };
+  return { answer: `Echo: ${question}`, coverage: NO_COVERAGE };
 }
 
 async function main() {
@@ -122,6 +140,7 @@ async function main() {
     if (props.replies !== undefined) return s.replies ?? echoReplies(stdin);
     if (props.earlier !== undefined) return s.rereview ?? echoRereview(stdin, fixture);
     if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);
+    if (props.edits !== undefined) return s.fix ?? echoFix(stdin);
     return undefined;
   };
   const rewrite = (l: string) => {

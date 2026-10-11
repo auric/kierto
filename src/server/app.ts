@@ -9,6 +9,7 @@ import { createMeta } from "./meta";
 import { createOutbox, type Outbox } from "./publish/outbox";
 import { createPublishRoutes } from "./publish/routes";
 import { createDiffRoutes } from "./review/diff-routes";
+import { createFixRoutes } from "./review/fix-routes";
 import { createReviewJobs, type ReviewJobs } from "./review/jobs";
 import { createReviewRoutes } from "./review/routes";
 import { createSettings, type Settings } from "./settings";
@@ -63,6 +64,7 @@ export function createApp(opts: AppOptions) {
     .route("/api", createInboxRoutes({ settings, sync, live: opts.live }))
     .route("/api", createReviewRoutes({ review, live: opts.live }))
     .route("/api", createDiffRoutes({ review }))
+    .route("/api", createFixRoutes({ review, settings }))
     .route("/api", createContextRoutes({ settings, review, live: opts.live }))
     .route("/api", createPublishRoutes({ review, settings, outbox }));
 

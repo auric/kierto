@@ -151,6 +151,7 @@ test("A17: a comment that tells the AI to answer another thread is data; no draf
     body,
     reason: "The comment asks for it.",
     evidenceStatus: "unverified",
+    judgement: null,
   });
   await control("claude", {
     stream: "tree",

@@ -53,6 +53,9 @@ export const reviewJsonSchema = (): Record<string, unknown> => z.toJSONSchema(re
 
 export const replyActions = ["reply", "none"] as const;
 export const MAX_REPLY_THREADS = 25;
+// Plan r3: only valid and partly offer Fix.
+export const judgements = ["valid", "partly", "invalid", "question"] as const;
+export type Judgement = (typeof judgements)[number];
 
 export const replyDraft = z.object({
   thread: lineNo.describe("A thread number from the Threads line."),
@@ -60,6 +63,12 @@ export const replyDraft = z.object({
   body: z.string().describe("The reply as short Markdown in the user's voice. Empty for none."),
   reason: z.string().describe("One line: why this reply, or why no reply."),
   evidenceStatus: z.enum(evidenceStatuses),
+  judgement: z
+    .enum(judgements)
+    .nullable()
+    .describe(
+      "valid: the review point is right. partly: only a part of it is right. invalid: the code is right as it is. question: the newest message asks a question. null: the newest message asks for no change and asks no question.",
+    ),
 });
 
 export const replyResult = z.object({
@@ -71,9 +80,51 @@ export const replyResult = z.object({
 export type ReplyDraft = z.infer<typeof replyDraft>;
 export type ReplyResult = z.infer<typeof replyResult>;
 // replyTo: the message that the reply answers. The post uses it as the parent.
-export type ReplyPayload = ReplyDraft & { replyTo: number };
+// judgement: absent in drafts stored before Release 3. Read it as null.
+// fix: a "Fixed in" reply. It posts only when the PR commits hold the commit (plan r3).
+export type ReplyPayload = Omit<ReplyDraft, "judgement"> & {
+  judgement?: Judgement | null;
+  replyTo: number;
+  fix?: { id: number; commit: string };
+};
 
 export const replyJsonSchema = (): Record<string, unknown> => z.toJSONSchema(replyResult, { target: "draft-07" });
+
+// ---------- Fix runs (plan r3) ----------
+
+export const MAX_FIX_EDITS = 50;
+// The UTF-8 bytes of all old and new texts of one fix result.
+export const MAX_FIX_BYTES = 200_000;
+const MAX_EDIT_TEXT = 20_000;
+
+export const fixEdit = z.object({
+  thread: lineNo.describe("A thread number from the Fix threads line."),
+  path: z.string().describe("File path relative to the repository root, with / separators."),
+  old: z
+    .string()
+    .max(MAX_EDIT_TEXT)
+    .describe("Text copied verbatim from the file at the head commit. It must match exactly one place. Empty only for a new file."),
+  new: z.string().max(MAX_EDIT_TEXT).describe("The text that replaces old."),
+});
+
+export const fixThread = z.object({
+  thread: lineNo.describe("A thread number from the Fix threads line."),
+  fixed: z.boolean().describe("true: the edits of this thread fix the review point."),
+  reason: z.string().describe("One line: what the edits change, or why there is no fix."),
+});
+
+export const fixResult = z.object({
+  summary: z.string().describe("One line."),
+  threads: z.array(fixThread).max(MAX_REPLY_THREADS),
+  edits: z.array(fixEdit).max(MAX_FIX_EDITS),
+  coverage,
+});
+
+export type FixEdit = z.infer<typeof fixEdit>;
+export type FixThread = z.infer<typeof fixThread>;
+export type FixResult = z.infer<typeof fixResult>;
+
+export const fixJsonSchema = (): Record<string, unknown> => z.toJSONSchema(fixResult, { target: "draft-07" });
 
 // ---------- Re-review (plan r2 S-RR) ----------
 

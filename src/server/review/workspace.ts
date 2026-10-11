@@ -1,7 +1,20 @@
 // The sanitized, pinned work folder of one review run (plan v3 WP6). The layout matches claude.ts:
 // <dataDir>/runs/<id>/work/{repo,context} is the CLI cwd, <dataDir>/runs/<id>/app holds the app files.
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { RUN_TEXT_BYTES } from "../../shared/dto";
 import { type Comment, commentLine, type ExcerptLine, type PrRef, type PullRequest } from "../../shared/types";
 import { log } from "../log";
 import { parseDiff } from "./diffmap";
@@ -25,6 +38,8 @@ const REMOVE = new Set([".claude", ".mcp.json"]);
 const RENAME = new Set(["claude.md", "claude.local.md", "agents.md"]);
 // Names of the extra context files. pr.md, changes.patch, and files.txt belong to the workspace.
 const FILE_NAME = /^[a-z-]+\.md$/;
+// Plan r3: context/attachments/<attachment ID>.<ext>. Only .txt is text.
+const ATTACHMENT_NAME = /^[0-9]{1,18}\.(png|jpg|gif|webp|txt)$/;
 // A fixed identity and date give the same range base commit for the same inputs.
 const RANGE_IDENTITY = {
   GIT_AUTHOR_NAME: "Review Loop",
@@ -67,6 +82,10 @@ export type GitRemote = {
 // A file for context/. The workspace puts the UNTRUSTED banner before text.
 export type ContextFile = { name: string; text: string };
 
+// A task attachment for context/attachments/ (plan r3). src: a file under <dataDir>/attachments.
+// text: a .txt file. It gets the UNTRUSTED banner and is cut at RUN_TEXT_BYTES. Other files are copied byte for byte.
+export type AttachmentFile = { name: string; src: string; text: boolean };
+
 export type WorkspaceInput = {
   dataDir: string;
   runId: string;
@@ -75,6 +94,8 @@ export type WorkspaceInput = {
   remote: GitRemote;
   // Names match FILE_NAME and are not pr.md.
   files?: ContextFile[];
+  // Names match ATTACHMENT_NAME.
+  attachments?: AttachmentFile[];
   // A re-review: the head that its base run reviewed.
   since?: string;
 };
@@ -95,8 +116,8 @@ export type Workspace = {
   via: "pull-request-ref" | "branch";
   // `git diff -M -U3 <mergeBase> <sourceHead>` for the validator.
   diff: string;
-  // Points refs/rl/<PR ID>/reviewed at the source head. gc then keeps the head after a force push.
-  keep: () => Promise<void>;
+  // Points refs/rl/<PR ID>/<ref> at the source head. gc then keeps the head after a force push.
+  keep: (ref?: string) => Promise<void>;
   // Deletes the run folder and its worktree entry.
   remove: () => Promise<void>;
 };
@@ -308,7 +329,7 @@ export function cachePath(dataDir: string, ref: PrRef) {
 const locks = new Map<string, Promise<unknown>>();
 
 // Runs f after the earlier calls with the same key end.
-function locked<T>(key: string, f: () => Promise<T>): Promise<T> {
+export function locked<T>(key: string, f: () => Promise<T>): Promise<T> {
   const run = (locks.get(key) ?? Promise.resolve()).then(f, f);
   locks.set(key, run);
   const clear = () => {
@@ -390,16 +411,53 @@ async function rangeBaseOf(g: (args: string[], extra?: Record<string, string>) =
   }
 }
 
+// root: <dataDir>/attachments with the long data folder path. A source that resolves outside it, also by a link, is refused.
+async function copyAttachments(root: string, dir: string, list: AttachmentFile[]) {
+  mkdirSync(dir);
+  for (const a of list) {
+    let src: string;
+    try {
+      src = realpathSync.native(a.src);
+    } catch {
+      throw new WorkspaceError(`Attachment ${a.name} has no source file.`);
+    }
+    const r = relative(root, src);
+    if (!r || r.startsWith("..") || isAbsolute(r) || !statSync(src).isFile())
+      throw new WorkspaceError(`Attachment ${a.name} is not a file in the attachments folder.`);
+    const out = join(dir, a.name);
+    if (!a.text) {
+      copyFileSync(src, out);
+      continue;
+    }
+    const bytes = await Bun.file(src)
+      .slice(0, RUN_TEXT_BYTES + 1)
+      .bytes();
+    const cut = bytes.length > RUN_TEXT_BYTES;
+    // stream: true holds back a UTF-8 sequence that the cut splits.
+    const text = new TextDecoder().decode(bytes.subarray(0, RUN_TEXT_BYTES), { stream: cut });
+    writeFileSync(out, UNTRUSTED + text + (cut ? `\n\n[The app cut this file at ${RUN_TEXT_BYTES} bytes.]\n` : ""));
+  }
+}
+
 export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace> {
   const { pr } = input;
   const runId = name(input.runId, "run ID");
   const files = input.files ?? [];
   for (const f of files)
     if (!FILE_NAME.test(f.name) || f.name === "pr.md") throw new WorkspaceError(`Invalid context file name: ${f.name}`);
+  const attachments = input.attachments ?? [];
+  const names = new Set<string>();
+  for (const a of attachments) {
+    if (!ATTACHMENT_NAME.test(a.name) || a.text !== a.name.endsWith(".txt") || names.has(a.name))
+      throw new WorkspaceError(`Invalid attachment name: ${a.name}`);
+    names.add(a.name);
+  }
   const { dataDir, cache, env, via, mergeBase } = await syncCache({ dataDir: input.dataDir, pr, remote: input.remote });
   const g = (args: string[], extra: Record<string, string> = {}) => git([`--git-dir=${cache}`, ...args], { env: { ...env, ...extra } });
-  const keep = async () => {
-    await locked(cache, () => g(["update-ref", `refs/rl/${pr.ref.id}/reviewed`, pr.sourceHead]));
+  const keep = async (ref = "reviewed") => {
+    const full = `refs/rl/${pr.ref.id}/${ref}`;
+    if (!REF.test(full)) throw new WorkspaceError(`Invalid ref: ${full}`);
+    await locked(cache, () => g(["update-ref", full, pr.sourceHead]));
   };
 
   const run = join(dataDir, "runs", runId);
@@ -434,6 +492,7 @@ export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace
     writeFileSync(join(context, "files.txt"), fileList(changes));
     writeFileSync(join(context, "pr.md"), prText(pr, input.comments));
     for (const f of files) writeFileSync(join(context, f.name), UNTRUSTED + f.text);
+    if (attachments.length) await copyAttachments(join(dataDir, "attachments"), join(context, "attachments"), attachments);
     const heads = { sourceHead: pr.sourceHead, targetHead: pr.targetHead };
     return { run, work, repo, context, app, cache, ...heads, mergeBase, rangeBase, via, diff, keep, remove };
   } catch (e) {

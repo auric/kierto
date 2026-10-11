@@ -37,7 +37,7 @@ import type { RunErrorKind, RunEvent, RunStatus } from "../../shared/run-log";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
 import type { Comment, ExcerptLine, PrRef, PullRequest } from "../../shared/types";
 import { dataDir as defaultDataDir } from "../config";
-import { taskFiles } from "../context/task-file";
+import { taskContext } from "../context/task-file";
 import type { Live } from "../live";
 import { log } from "../log";
 import type { Settings } from "../settings";
@@ -784,7 +784,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
 
     await prune();
     let ws: Workspace;
-    const files = taskFiles(j.db, j.pr);
+    const { files, attachments } = taskContext(j.db, j.pr, dataDir);
     const carry = j.carry;
     const earlier = carry?.items.filter((r) => r.kind === "finding") ?? [];
     try {
@@ -795,6 +795,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         comments: commentsOf(j.db, j.pr),
         remote: await remote({ project: pr.project, repo: pr.repo, id: pr.pr_id }),
         files: carry && earlier.length ? [...files, findingsFile(current(j.db, earlier), carry)] : files,
+        attachments,
         ...(carry && { since: carry.since }),
       });
     } catch (e) {
@@ -817,6 +818,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       pr: { project: pr.project, repo: pr.repo, prId: pr.pr_id, webUrl: pr.web_url },
       tasks: j.db.query(SQL.tasks).all({ pr: j.pr }) as PrTask[],
       taskFile: files.length > 0,
+      attachments: attachments.length > 0,
     };
     const reply = j.threads;
     const question = j.question;

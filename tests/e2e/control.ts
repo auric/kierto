@@ -37,13 +37,14 @@ export type Scenario = {
 // gaps: no finding, a read that stopped at a limit, and a documentation server that did not connect (A11, A12).
 // hang: the CLI stops before its result and waits for a cancel. replies: the result of a reply run; absent, the CLI answers each thread.
 // rereview: the result of a re-review; absent, the CLI gives one verdict per earlier finding. answer: the result of an ask run; absent, an echo.
-// login: the authMethod of `claude auth status`. Absent: claude.ai.
+// fix: the result of a fix run; absent, one note per thread and no edit. login: the authMethod of `claude auth status`. Absent: claude.ai.
 export type ClaudeScenario = {
   stream: "tree" | "schema" | "limit" | "gaps";
   hang?: boolean;
   replies?: unknown;
   rereview?: unknown;
   answer?: unknown;
+  fix?: unknown;
   login?: string;
 };
 
@@ -73,6 +74,33 @@ export async function writes(): Promise<string[]> {
   });
   if (!res.ok) throw new Error(`control writes: ${res.status}`);
   return ((await res.json()) as { writes: string[] }).writes;
+}
+
+// ---------- Fix it (plan r3): the user's clone ----------
+
+const auth = { Authorization: `Bearer ${E2E_TOKEN}`, "Content-Type": "application/json" };
+
+// branch: null when HEAD is detached. status: the `git status --porcelain` output.
+export type CloneState = { head: string; branch: string | null; subject: string; status: string };
+
+// A temp clone of the fake remote on the source branch of the PR, at the PR source head. pr: the Bitbucket PR ID. A reset deletes it.
+export async function makeClone(pr: number): Promise<string> {
+  const res = await fetch(`${FAKE_URL}/__control/clone`, { method: "POST", headers: auth, body: JSON.stringify({ pr }) });
+  if (!res.ok) throw new Error(`control clone: ${res.status}`);
+  return ((await res.json()) as { path: string }).path;
+}
+
+export async function cloneState(path: string): Promise<CloneState> {
+  const res = await fetch(`${FAKE_URL}/__control/clone?path=${encodeURIComponent(path)}`, { headers: auth });
+  if (!res.ok) throw new Error(`control clone state: ${res.status}`);
+  return (await res.json()) as CloneState;
+}
+
+// Pushes the clone HEAD to the PR. The fake then lists it as the PR source head, with its commits and changes. Sync after it.
+export async function pushClone(pr: number, path: string): Promise<string> {
+  const res = await fetch(`${FAKE_URL}/__control/push`, { method: "POST", headers: auth, body: JSON.stringify({ pr, path }) });
+  if (!res.ok) throw new Error(`control push: ${res.status}`);
+  return ((await res.json()) as { head: string }).head;
 }
 
 // Applies the change, then returns every comment POST body of PR 1001 since the last reset.

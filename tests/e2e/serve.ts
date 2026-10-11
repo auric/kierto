@@ -2,9 +2,9 @@
 // The app gets a temp data folder and memory secrets. It never sees the real data folder or the credential store.
 import "../support/no-real-claude";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
 import { createLive } from "../../src/server/live";
 import { startServer } from "../../src/server/main";
@@ -75,6 +75,7 @@ function setClaude(c: ClaudeScenario) {
     replies: c.replies,
     rereview: c.rereview,
     answer: c.answer,
+    fix: c.fix,
     authMethod: c.login,
   });
 }
@@ -119,7 +120,7 @@ const API = "/rest/api/1.0";
 
 function makePr(project: string, repo: string, id: number, title: string, author: unknown, myStatus: string) {
   const pr = S.reviewPr() as S.RawPr & {
-    fromRef: { repository: Repo; latestCommit: string };
+    fromRef: { repository: Repo; latestCommit: string; displayId: string };
     toRef: { repository: Repo; latestCommit: string };
   };
   for (const r of [pr.fromRef, pr.toRef]) Object.assign(r.repository, { slug: repo, project: { ...r.repository.project, key: project } });
@@ -152,14 +153,18 @@ Object.assign(B.pr.fromRef, {
   displayId: "feature/release_pipeline_observability_dashboard_rollout",
 });
 const C = makePr("PROJ1", "sample-repo-3", 77, "Drop the legacy export endpoint", kenji, "APPROVED");
+const PRS: Record<number, typeof A> = { 1001: A, 210: B, 77: C };
+// Plan r3: the source head of a PR after /__control/push, with the commits and changes that the fake lists for it. A reset clears it.
+const pushed = new Map<number, { head: string; commits: unknown[]; changes: unknown[] }>();
+const remoteEnv = gitEnv(join(claudeDir, "empty.gitconfig"));
+const remoteGit = (args: string[]) => git(["--git-dir", remote.remote, ...args], { env: remoteEnv });
+
 // The dashboard and the PR route share the PR A object, so both report the pushed head and the description.
 // The git remote moves the PR ref too, so a review after the push fetches the pushed head (plan r2 UI-RR).
 const headA = async () => {
-  A.pr.fromRef.latestCommit = sc.push ? remote.next : remote.source;
+  A.pr.fromRef.latestCommit = pushed.get(1001)?.head ?? (sc.push ? remote.next : remote.source);
   A.pr.description = sc.task ? `Synthetic e2e data. Implements ${JIRA_ISSUE}. See ABC-404.` : "Synthetic e2e data.";
-  await git(["--git-dir", remote.remote, "update-ref", "refs/pull-requests/1001/from", A.pr.fromRef.latestCommit], {
-    env: gitEnv(join(claudeDir, "empty.gitconfig")),
-  });
+  await remoteGit(["update-ref", "refs/pull-requests/1001/from", A.pr.fromRef.latestCommit]);
 };
 
 const base = () => S.activities("activities-nested-reply.json");
@@ -274,6 +279,113 @@ r[key("POST", `${A.path}/comments`)] = async (req) => {
 };
 r[key("GET", `${A.path}/comments/1000010`)] = () => (sc.reply === "deleted" ? NOT_FOUND : ok(S.findComment(withReply(), 1000010)));
 
+// ---------- Fix it (plan r3): the user's clone ----------
+// Clones live outside the data folder, as a real clone does.
+const clonesDir = join(realpathSync.native(claudeDir), "clones");
+// The clone gets an identity, so commits work without a user config. No signing prompt can block a test.
+const CLONE_CONFIG: [string, string][] = [
+  ["user.name", "Jordan Doe"],
+  ["user.email", `${FAKE_USER}@example.test`],
+  ["commit.gpgsign", "false"],
+];
+const cloneOf = (path: string | null | undefined) => {
+  const rel = relative(clonesDir, path ?? "");
+  return path && rel && !rel.startsWith("..") && !isAbsolute(rel) && existsSync(path) ? path : null;
+};
+const inClone = (path: string, args: string[]) => git(["-C", path, ...args], { env: remoteEnv });
+const STATUS: Record<string, string> = { A: "ADD", M: "MODIFY", D: "DELETE", T: "MODIFY" };
+
+// The PR commits and changes as Bitbucket lists them: the commits of head that are not on the target head.
+async function forgeMeta(head: string, target: string) {
+  const log = await remoteGit(["log", "-z", "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%ct%x1f%B", head, `^${target}`]);
+  const commits = log
+    .split("\0")
+    .filter(Boolean)
+    .map((c) => {
+      const [id = "", parents = "", name = "", email = "", at = "0", ct = "0", message = ""] = c.split("\x1f");
+      const user = { name, emailAddress: email, displayName: name };
+      return {
+        id,
+        displayId: id.slice(0, 11),
+        author: user,
+        authorTimestamp: Number(at) * 1000,
+        committer: user,
+        committerTimestamp: Number(ct) * 1000,
+        message: message.trim(),
+        parents: parents
+          .split(" ")
+          .filter(Boolean)
+          .map((p) => ({ id: p, displayId: p.slice(0, 11) })),
+      };
+    });
+  const base = (await remoteGit(["merge-base", target, head])).trim();
+  const names = (await remoteGit(["diff", "--name-status", "-z", "--no-renames", base, head])).split("\0").filter(Boolean);
+  const changes: unknown[] = [];
+  for (let i = 0; i + 1 < names.length; i += 2)
+    changes.push({ path: { toString: names[i + 1] }, type: STATUS[names[i]?.[0] ?? ""] ?? "MODIFY", nodeType: "FILE" });
+  return { commits, changes };
+}
+
+for (const [id, p] of Object.entries(PRS)) {
+  for (const what of ["commits", "changes"] as const) {
+    const k = key("GET", `${p.path}/${what}`);
+    const before = r[k];
+    r[k] = (req) => {
+      const x = pushed.get(Number(id));
+      if (x) return ok(S.onePage(x[what]));
+      return typeof before === "function" ? before(req) : (before ?? NOT_FOUND);
+    };
+  }
+}
+
+// Makes a clone of the fake remote on the PR source branch at the PR source head. Answers { path }.
+r[key("POST", "/__control/clone")] = async (req) => {
+  const { pr } = (await req.json()) as { pr: number };
+  const p = PRS[pr];
+  if (!p) return NOT_FOUND;
+  mkdirSync(clonesDir, { recursive: true });
+  const path = realpathSync.native(mkdtempSync(join(clonesDir, `pr${pr}-`)));
+  await git(["clone", "-q", "--no-checkout", remote.remote, path], { env: remoteEnv });
+  await inClone(path, ["fetch", "-q", "origin", `+refs/pull-requests/${pr}/from:refs/remotes/origin/pr/${pr}`]);
+  await inClone(path, ["checkout", "-q", "-B", p.pr.fromRef.displayId, p.pr.fromRef.latestCommit]);
+  for (const [k, v] of CLONE_CONFIG) await inClone(path, ["config", k, v]);
+  return ok({ path });
+};
+// The clone state: HEAD, the branch (null when detached), the subject of HEAD, and `git status --porcelain`.
+r[key("GET", "/__control/clone")] = async (req) => {
+  const path = cloneOf(new URL(req.url).searchParams.get("path"));
+  if (!path) return NOT_FOUND;
+  const branch = (await inClone(path, ["symbolic-ref", "-q", "--short", "HEAD"]).catch(() => "")).trim();
+  return ok({
+    head: (await inClone(path, ["rev-parse", "HEAD"])).trim(),
+    branch: branch || null,
+    subject: (await inClone(path, ["log", "-1", "--format=%s"])).trim(),
+    status: await inClone(path, ["status", "--porcelain"]),
+  });
+};
+// Pushes the clone HEAD to the PR ref of the fake remote. The PR then reports it as its source head, with its commits.
+r[key("POST", "/__control/push")] = async (req) => {
+  const { pr, path: raw } = (await req.json()) as { pr: number; path: string };
+  const p = PRS[pr];
+  const path = cloneOf(raw);
+  if (!p || !path) return NOT_FOUND;
+  const head = (await inClone(path, ["rev-parse", "HEAD"])).trim();
+  await inClone(path, ["push", "-q", "--force", "origin", `HEAD:refs/pull-requests/${pr}/from`]);
+  pushed.set(pr, { head, ...(await forgeMeta(head, p.pr.toRef.latestCommit)) });
+  p.pr.fromRef.latestCommit = head;
+  return ok({ head });
+};
+// Undoes every push and deletes the clones.
+async function resetClones() {
+  for (const id of pushed.keys()) {
+    const p = PRS[id] as typeof A;
+    p.pr.fromRef.latestCommit = remote.source;
+    await remoteGit(["update-ref", `refs/pull-requests/${id}/from`, remote.source]);
+  }
+  pushed.clear();
+  rmSync(clonesDir, { recursive: true, force: true, maxRetries: 3 });
+}
+
 // The app. A restart keeps the data folder and the secret store, as a process restart with the OS store does.
 let secrets = createSecrets(null);
 let jiraSecrets = createSecrets(null, "jira-token");
@@ -318,6 +430,7 @@ r[key("POST", "/__control/reset")] = async () => {
   secrets = createSecrets(null);
   jiraSecrets = createSecrets(null, "jira-token");
   sc = { ...INITIAL };
+  await resetClones();
   await headA();
   for (const p of [postsA, postsB, postsC]) p.reset();
   fake.requests.length = 0;

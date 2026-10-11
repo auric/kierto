@@ -56,6 +56,7 @@ const draft = (thread: number, o: Partial<ReplyDraft> = {}): ReplyDraft => ({
   body: `Answer for ${thread}.`,
   reason: "The comment asks.",
   evidenceStatus: "code",
+  judgement: null,
   ...o,
 });
 

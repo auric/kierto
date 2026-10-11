@@ -12,6 +12,9 @@ import m010_profiles from "./migrations/010_profiles.sql" with { type: "text" };
 import m011_run_explain from "./migrations/011_run_explain.sql" with { type: "text" };
 import m012_r2_runs from "./migrations/012_r2_runs.sql" with { type: "text" };
 import m013_task_context from "./migrations/013_task_context.sql" with { type: "text" };
+import m014_r3_runs from "./migrations/014_r3_runs.sql" with { type: "text" };
+import m015_fix from "./migrations/015_fix.sql" with { type: "text" };
+import m016_task_attachment from "./migrations/016_task_attachment.sql" with { type: "text" };
 
 // Index i holds the SQL that raises user_version from i to i + 1. The list order, not the file number, sets the version.
 const MIGRATIONS = [
@@ -28,6 +31,9 @@ const MIGRATIONS = [
   m011_run_explain,
   m012_r2_runs,
   m013_task_context,
+  m014_r3_runs,
+  m015_fix,
+  m016_task_attachment,
 ];
 
 const tables = (db: Database) =>

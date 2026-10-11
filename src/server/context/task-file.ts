@@ -1,7 +1,7 @@
 // context/task.md of a run (plan r2 WP0): the imported task text of the PR. The workspace puts the UNTRUSTED banner before it.
 import type { Database } from "bun:sqlite";
 import type { IssueContext } from "../../shared/dto";
-import type { ContextFile } from "../review/workspace";
+import type { AttachmentFile, ContextFile } from "../review/workspace";
 
 export const TASK_FILE = "task.md";
 
@@ -36,4 +36,10 @@ export function taskFiles(db: Database, pr: number): ContextFile[] {
     if (!i.comments.length) out.push("(none)", "");
   }
   return [{ name: TASK_FILE, text: out.join("\n") }];
+}
+
+// The task files of a run and its attachments for context/attachments/ (plan r3). dataDir: the data folder of the run.
+// attachments stays empty until S-ATT.
+export function taskContext(db: Database, pr: number, _dataDir: string): { files: ContextFile[]; attachments: AttachmentFile[] } {
+  return { files: taskFiles(db, pr), attachments: [] };
 }
