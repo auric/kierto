@@ -4,7 +4,7 @@ import { memo, type Ref, useEffect, useState } from "react";
 import { Kbd } from "@/components/ui/kbd";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import type { ProfileDto, PrRow, RunDto } from "../../shared/dto";
+import type { PrRow, RunDto } from "../../shared/dto";
 import type { PrRef } from "../../shared/types";
 import { runWhy } from "../review/model";
 import { createHints, Hint, type Hints, HintTrigger, SharedHint } from "./Hint";
@@ -40,7 +40,6 @@ export function ListPane(props: {
   runs: ReadonlyMap<number, RunDto> | null;
   // The Ready to post view: what each row posts. Its why-line names the comments (prototype/v3 whyPost).
   ready: ReadonlyMap<number, string> | null;
-  profiles: ProfileDto[];
   candidate: PrRef | null;
   following: boolean;
   followError: string | null;
@@ -68,7 +67,6 @@ export function ListPane(props: {
           hints={hints}
           run={props.runs?.get(p.id)}
           ready={props.ready?.get(p.id)}
-          profile={props.profiles.find((x) => x.id === props.runs?.get(p.id)?.profile)?.name ?? ""}
           selected={p.id === props.selected}
           onSelect={props.onSelect}
           onOpen={props.onOpen}
@@ -238,7 +236,6 @@ const Row = memo(function Row({
   hints,
   run,
   ready,
-  profile,
   selected,
   onSelect,
   onOpen,
@@ -249,7 +246,6 @@ const Row = memo(function Row({
   hints: Hints;
   run: RunDto | undefined;
   ready: string | undefined;
-  profile: string;
   selected: boolean;
   onSelect: (id: number) => void;
   onOpen: (id: number) => void;
@@ -311,7 +307,7 @@ const Row = memo(function Row({
             <b className="font-semibold text-foreground">Ready:</b> {ready}
           </span>
         ) : run ? (
-          <RunWhyLine run={run} profile={profile} />
+          <RunWhyLine run={run} />
         ) : (
           <span className="flex min-w-0 items-baseline gap-2 text-sm text-ink-2">
             {w.closed && <b className="shrink-0 font-semibold text-foreground">{w.closed}</b>}
@@ -347,8 +343,8 @@ const Row = memo(function Row({
 });
 
 // prototype/v3 whyRun: the profile and the outcome of the newest run. An error carries an icon and a word, not only the hue.
-function RunWhyLine({ run, profile }: { run: RunDto; profile: string }) {
-  const w = runWhy(run, profile);
+function RunWhyLine({ run }: { run: RunDto }) {
+  const w = runWhy(run);
   return (
     <span className="flex min-w-0 items-baseline gap-2 text-sm text-ink-2">
       {w.error && (

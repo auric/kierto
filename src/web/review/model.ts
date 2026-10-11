@@ -349,7 +349,9 @@ export function runRows(prs: PrRow[], latest: ReadonlyMap<number, RunDto>, q: st
 export type RunWhy = { error: string | null; lead: string | null; text: string | null };
 
 // prototype/v3 whyRun. The list has no item counts, so a finished run shows its summary line.
-export function runWhy(r: RunDto, profile: string): RunWhy {
+// The run names the profile as it was at the start of the run.
+export function runWhy(r: RunDto): RunWhy {
+  const profile = r.profileName;
   switch (r.status) {
     case "running":
       return { error: null, lead: null, text: `${profile}: ${r.kind === "reply" ? "drafting replies" : "reviewing"} now.` };
