@@ -12,6 +12,8 @@ const config = z.object({
   userSlug: z.string(),
   caFile: z.string().optional(),
   notifications: z.boolean(),
+  // Absent: on. Posts built from AI items start with AI_MARK (src/server/publish/plan.ts).
+  markAi: z.boolean().optional(),
   // Absent: DEFAULT_TASK_RULES (src/server/tasks/rules.ts).
   taskRules: z
     .array(taskRuleInput.extend({ timedOut: z.boolean().optional() }))

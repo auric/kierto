@@ -39,6 +39,8 @@ export const settingsInput = z.object({
   // Absent or empty means no CA file.
   caFile: z.string().trim().optional(),
   notifications: z.boolean().optional(),
+  // Absent keeps the stored value.
+  markAi: z.boolean().optional(),
   // Absent keeps the stored rules.
   taskRules: z.array(taskRuleInput).max(MAX_TASK_RULES).optional(),
   // Absent keeps the stored template. Empty clears it.
@@ -57,6 +59,7 @@ export type SettingsDto = {
   tokenStorage: TokenStorage;
   caFile: string | null;
   notifications: boolean;
+  markAi: boolean;
   taskRules: TaskRuleDto[];
   taskLink: string | null;
 };

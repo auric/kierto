@@ -5,6 +5,8 @@ export const APP_PORT = Number(process.env.E2E_APP_PORT || 7399);
 export const FAKE_URL = `http://127.0.0.1:${Number(process.env.E2E_FAKE_PORT || 7398)}`;
 // The fake Bitbucket accepts only this token. serve.ts sets it on the fake.
 export const E2E_TOKEN = "e2e-token-7f3a9c1d5b2e8f40";
+// src/server/publish/plan.ts AI_MARK. The default markAi setting puts it before each post of an AI item.
+export const MARK = "🤖 ";
 
 export type Scenario = {
   // PR 1001: the reply 1000010 by another user under my comment 1000003. "two": then the reply 1000011 by a third user.

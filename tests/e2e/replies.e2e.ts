@@ -3,7 +3,7 @@
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI. The CLI echoes one reply per
 // thread of its "Threads:" line, and every third thread gets action none (tests/support/fake-claude.ts echoReplies).
 import { test as base, expect, type Locator, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, posts } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, MARK, posts } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -113,7 +113,7 @@ test("Draft replies: three your-turn threads get inline drafts, one needs no rep
   await postButton(box).click();
   await expect(thread(page, 1000101).locator("[data-post]")).toContainText("Posted.");
   await expect(card(page, 1000101)).toHaveCount(0);
-  expect(await posts()).toMatchObject([{ text: echoRaw(1000201), parent: { id: 1000201 } }]);
+  expect(await posts()).toMatchObject([{ text: MARK + echoRaw(1000201), parent: { id: 1000201 } }]);
 });
 
 test("review drafts stay after a reply run (R14), and a per-thread draft replaces only that thread's draft", async ({ page }) => {
@@ -178,7 +178,7 @@ test("a stale draft says new messages arrived; Draft again answers the newest me
   await page.keyboard.press("p");
   await postButton(confirmBox(page)).click();
   await expect(thread(page, ROOT).locator("[data-post]")).toContainText("Posted.");
-  expect(await posts()).toMatchObject([{ text, parent: { id: 1000011 } }]);
+  expect(await posts()).toMatchObject([{ text: MARK + text, parent: { id: 1000011 } }]);
 });
 
 test("cancel stops a reply run: the pending card goes, and no draft appears", async ({ page }) => {
@@ -229,4 +229,34 @@ test("a reply confirm stays open while its thread moves from Waiting to Your tur
   await expect(box).toBeHidden();
   await expect(reply).toHaveValue(text);
   expect(await posts()).toEqual([]);
+});
+
+test("the confirm shows the mark on an AI reply draft, and not after the settings switch is off", async ({ page }) => {
+  await connect(page);
+  await control("state", { turns: 1 });
+  await repliesButton(page).click();
+  await expect(card(page, 1000101)).toContainText(echo(1000201), { timeout: RUN_MS });
+  await card(page, 1000101).getByRole("button", { name: "Accept" }).click();
+  await expect(card(page, 1000101)).toContainText("Accepted");
+
+  const item = () => confirmBox(page).getByRole("list", { name: "Comments to post" }).getByRole("listitem").first();
+  await page.locator("#post-btn").click();
+  await expect(item()).toContainText(MARK + echo(1000201));
+  await confirmBox(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(confirmBox(page)).toBeHidden();
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  const mark = page.getByRole("switch", { name: "Mark Claude-drafted comments with 🤖" });
+  await expect(mark).toBeChecked();
+  await mark.click();
+  await expect(mark).not.toBeChecked();
+  await expect(mark).toBeEnabled();
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  await page.locator("#post-btn").click();
+  await expect(item()).toContainText(echo(1000201));
+  await expect(item()).not.toContainText(MARK.trim());
+  await postButton(confirmBox(page)).click();
+  await expect(thread(page, 1000101).locator("[data-post]")).toContainText("Posted.");
+  expect(await posts()).toMatchObject([{ text: echoRaw(1000201), parent: { id: 1000201 } }]);
 });

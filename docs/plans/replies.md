@@ -93,6 +93,7 @@
 - D12. More than 25 your-turn threads: 409, point to per-thread drafts.
 - D13. Per-thread drafts on any live thread, not only your-turn threads.
 - D14. A reply post checks the parent and `seen` only, not heads.
+- D15. An accepted reply draft posts with the "🤖 " mark when the markAi setting is on (default). A manual reply from the composer never gets it.
 
 ## Unverified
 - U16. A reply to an inline (anchored) parent or a nested reply returns 201.

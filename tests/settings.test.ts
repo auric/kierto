@@ -67,6 +67,7 @@ describe("settings API", () => {
       tokenStorage: "memory",
       caFile: null,
       notifications: false,
+      markAi: true,
       taskRules: DEFAULT_RULES,
       taskLink: null,
     });
@@ -86,6 +87,7 @@ describe("settings API", () => {
       tokenStorage: "memory" as const,
       caFile: null,
       notifications: true,
+      markAi: true,
       taskRules: DEFAULT_RULES,
       taskLink: null,
     };
@@ -140,6 +142,24 @@ describe("settings API", () => {
     expect(fake.requests.length).toBe(before);
     expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).notifications).toBe(true);
     expect(changed).toEqual([false]);
+  });
+
+  test("markAi saves without a Bitbucket request and persists across a restart", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
+    expect((await s.get()).markAi).toBe(true);
+    const before = fake.requests.length;
+    const res = await s.put({ baseUrl: fake.url, markAi: false });
+    expect(res.status).toBe(200);
+    expect((await res.json()).markAi).toBe(false);
+    expect(fake.requests.length).toBe(before);
+    // A PUT without markAi keeps the stored value.
+    expect((await s.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
+    expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).markAi).toBe(false);
+    s.settings.close();
+    const again = setup();
+    expect(await again.get()).toMatchObject({ markAi: false, notifications: true });
+    expect(again.settings.config()?.markAi).toBe(false);
   });
 
   test("401 gives 400 and stores nothing", async () => {

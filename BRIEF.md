@@ -348,6 +348,7 @@ Publication:
 - A timeout after send sets unknown. Reconcile against remote comments before any retry. If still unclear, the user decides.
 - Publish is idempotent on the server side: one outbox row per approval. A second tab or a refresh never sends twice.
 - The backend posts. Claude never posts.
+- AI mark (setting, on by default): the post plan puts "🤖 " once at the start of each post built from an AI item (finding, question, reply draft, edited or not). A manual reply never gets it. The outbox keeps the marked text, so confirm, send, and reconcile use the same bytes.
 
 Notifications: opt-in. Deduplicate by event and comment version. Coalesce per PR. No self-events. After downtime, show one digest. Notifications work only while the service and a UI tab run.
 
