@@ -27,6 +27,11 @@ const CHECKS: Record<string, string> = {
   "b9-first-try":
     "B9, first try. The WP8 flag set with `--allowedTools mcp__rl-*` and no `StructuredOutput` in the `rl-main` tools. The stub tool is refused, and no result event has `structured_output`.",
   b9: "B9. The WP8 flag set with a long-path cwd: `--restricted`, `--agent rl-main`, `rl-reviewer`, the stub MCP server, `--json-schema`, `--no-session-persistence`, and `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`.",
+  "b11-reply":
+    "B11, reply run. The runner flag set without review agents and the reply JSON schema. Expect `structured_output` with one `judgement` set to JSON null.",
+  "b11-fix":
+    "B11, fix run. The runner flag set without review agents and the fix JSON schema. Expect `structured_output` with one edit whose `new` text has 2 KB or more.",
+  b12: "B12. The runner flag set without review agents. The agent reads a PNG attachment with Read and names its color in `structured_output`.",
 };
 // Public built-in agent and product names. They are not private data, and a replacement would break the event shapes.
 const RESERVED = new Set(["claude", "general-purpose", "explore", "plan", "statusline-setup", "claude-code-guide", "builtin"]);
@@ -171,7 +176,9 @@ for (const [f, evs] of raw) {
   for (const e of out) if (isObj(e) && e.subtype === "init" && typeof e.claude_code_version === "string") version ||= e.claude_code_version;
   writeFileSync(join(OUT, f), `${out.map((e) => JSON.stringify(e)).join("\n")}\n`);
 }
-const rows = files.map((f) => `| \`${f}\` | ${CHECKS[basename(f, ".jsonl")] ?? CHECKS[f.slice(0, 2)] ?? "Not mapped to a check."} |`);
+const rows = files.map(
+  (f) => `| \`${f}\` | ${CHECKS[basename(f, ".jsonl")] ?? CHECKS[f.split(/[-.]/)[0] as string] ?? "Not mapped to a check."} |`,
+);
 writeFileSync(
   join(OUT, "README.md"),
   [
