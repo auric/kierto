@@ -5,6 +5,7 @@ import { serveStatic } from "hono/bun";
 import { type AppOptions, createApp } from "./app";
 import { createLive } from "./live";
 import { runGitMcp } from "./review/git-mcp";
+import { createReviewJobs } from "./review/jobs";
 import { createSettings } from "./settings";
 import { createSyncEngine } from "./sync/engine";
 
@@ -48,6 +49,7 @@ if (import.meta.main && gitMcpAt >= 0) {
   const live = createLive();
   const settings = createSettings();
   const sync = createSyncEngine({ settings, live });
+  const review = createReviewJobs({ settings, live });
   try {
     const server = startServer({
       port,
@@ -56,11 +58,13 @@ if (import.meta.main && gitMcpAt >= 0) {
       live,
       settings,
       sync,
+      review,
       indexHtml,
       assets: indexHtml === undefined ? undefined : serveStatic({ root: WEB_DIR }),
     });
     console.log(`Review Loop: http://127.0.0.1:${server.port}/`);
     sync.start();
+    void review.start();
   } catch (err) {
     if ((err as { code?: string }).code === "EADDRINUSE") {
       console.error(`Port ${port} is busy. Stop the other process or set REVIEW_LOOP_PORT.`);

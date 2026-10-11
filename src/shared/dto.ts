@@ -1,5 +1,7 @@
 // API request and response shapes shared by server and UI.
 import { z } from "zod";
+import type { Anchor, AnchoredFinding, Question, Side, ValidatedResult } from "./review";
+import type { RunErrorKind, RunEvent, RunStatus } from "./run-log";
 import type { IncompleteReason, Reviewer, Role } from "./types";
 
 export const taskSources = ["branch", "title", "description"] as const;
@@ -177,8 +179,84 @@ export const followInput = z.object({ followed: z.boolean() });
 export const archiveInput = z.object({ archived: z.boolean() });
 export const followUrlInput = z.object({ url: z.string().trim().min(1).max(2048) });
 
+// ---------- Review (plan v3 WP10) ----------
+
+export const profileIds = ["general", "over", "security", "explain"] as const;
+export type ProfileId = (typeof profileIds)[number];
+export const MAX_NOTE = 20_000;
+
+// PUT /api/prs/:id/brief. POST /api/prs/:id/review runs the stored brief.
+export const briefInput = z.object({ note: z.string().max(MAX_NOTE), profile: z.enum(profileIds) });
+export type BriefInput = z.infer<typeof briefInput>;
+// updatedAt: null for a PR without a stored brief. The defaults then apply.
+export type BriefDto = BriefInput & { updatedAt: number | null };
+
+// The runner check without paths. kind auth: authMethod is not claude.ai.
+export type RunnerCheckDto = { ok: true; version: string } | { ok: false; kind: "unavailable" | "auth"; message: string };
+export type ProfileDto = { id: ProfileId; name: string; note: string; explain: boolean; maxTurns: number };
+
+export type RunUsage = { costUsd: number; turns: number; durationMs: number; tokens: Record<string, unknown> };
+// dropped: findings that the validator could not anchor. They show as coverage only.
+export type RunSummary = Pick<ValidatedResult, "summary" | "risks" | "coverage" | "dropped">;
+
+export type RunDto = {
+  id: number;
+  pr: number;
+  profile: ProfileId;
+  note: string;
+  status: RunStatus;
+  errorKind: RunErrorKind | null;
+  errorText: string | null;
+  sourceHead: string;
+  targetHead: string;
+  mergeBase: string | null;
+  via: "pull-request-ref" | "branch" | null;
+  sessionId: string | null;
+  cliVersion: string | null;
+  model: string | null;
+  usage: RunUsage | null;
+  // Ended runs with a valid result only.
+  summary: RunSummary | null;
+  startedAt: number;
+  finishedAt: number | null;
+  // Computed on read: a head of the PR differs from the reviewed head. null: both heads are the same.
+  stale: { source: boolean; target: boolean } | null;
+  hasRaw: boolean;
+};
+
+export type ItemStatus = "new" | "accepted" | "discarded" | "posted";
+
+export type ReviewItemDto = {
+  id: number;
+  run: number;
+  kind: "finding" | "question";
+  body: string;
+  // finding: the AnchoredFinding as validated. question: the Question.
+  payload: AnchoredFinding | Question;
+  // Findings only: the current anchor.
+  anchor: (Anchor & { side: Side }) | null;
+  status: ItemStatus;
+  revision: number;
+  edited: boolean;
+};
+
+// GET /api/runs/:id. events: the run log in seq order.
+export type RunDetail = { run: RunDto; events: RunEvent[]; items: ReviewItemDto[] };
+
+// POST /api/prs/:id/review gives 409 with this body while another review runs (A14).
+export type RunConflict = ApiError & { running: { run: number; pr: number } };
+
 // GET /api/meta. Product names only, never a setting value.
-export type MetaDto = { forge: { name: string } };
+export type MetaDto = {
+  forge: { name: string };
+  // check: the cached runner check. null before the first check. Each run refreshes it.
+  runner: { name: string; short: string; initials: string; check: RunnerCheckDto | null };
+  // Run log labels, keyed by RunEvent.tool.
+  tools: Record<string, string>;
+  profiles: ProfileDto[];
+  // Context sources (Release 2, plan v3 section 8). Empty in Release 1.
+  context: { id: string; name: string }[];
+};
 
 // POST /api/settings/task-rules/preview. Absent prs: the first 20 listed PRs.
 export const taskPreviewInput = z.object({

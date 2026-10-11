@@ -1,22 +1,36 @@
 // E2E server: the fake Bitbucket on 127.0.0.1:7398 and the app on 127.0.0.1:7399 in one process. Test code only.
 // The app gets a temp data folder and memory secrets. It never sees the real data folder or the credential store.
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
 import { createLive } from "../../src/server/live";
 import { startServer } from "../../src/server/main";
+import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { createSyncEngine } from "../../src/server/sync/engine";
 import { FAKE_USER, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
+import type { FakeScenario } from "../support/fake-claude";
 import * as S from "../support/scenarios";
 import { APP_PORT, E2E_TOKEN, FAKE_URL, type Scenario } from "./control";
 
 const dataDir = mkdtempSync(join(tmpdir(), "review-loop-e2e-"));
 process.env.REVIEW_LOOP_DATA_DIR = dataDir;
 process.env.REVIEW_LOOP_SECRETS = "memory";
+
+// The fake Claude Code CLI. Its folder stays outside the data folder, so a reset keeps it.
+const claudeDir = mkdtempSync(join(tmpdir(), "review-loop-e2e-claude-"));
+const claudeScenario = join(claudeDir, "scenario.json");
+writeFileSync(
+  claudeScenario,
+  JSON.stringify({
+    record: join(claudeDir, "calls.jsonl"),
+    auth: { loggedIn: true, authMethod: "claude.ai", projectsDirectory: join(claudeDir, "projects") },
+  } satisfies FakeScenario),
+);
+const runnerCommand = [process.execPath, resolve(import.meta.dir, "../support/fake-claude.ts"), claudeScenario];
 
 const WEB_DIR = resolve(import.meta.dir, "../../dist/web");
 const index = join(WEB_DIR, "index.html");
@@ -143,22 +157,26 @@ function boot() {
   const live = createLive();
   const settings = createSettings({ dir: dataDir, secrets });
   const sync = createSyncEngine({ settings, live });
+  const review = createReviewJobs({ settings, live, dataDir, runnerCommand });
   const server = startServer({
     port: APP_PORT,
     token: randomBytes(32).toString("hex"),
     live,
     settings,
     sync,
+    review,
     indexHtml,
     assets: serveStatic({ root: WEB_DIR }),
   });
   sync.start();
-  return { server, settings, sync };
+  void review.start();
+  return { server, settings, sync, review };
 }
 let app = boot();
 
 async function halt() {
   app.sync.stop();
+  await app.review.stop();
   await app.server.stop(true);
   // Windows cannot remove an open SQLite file.
   app.settings.db()?.close();
@@ -199,6 +217,7 @@ async function stop() {
   await halt();
   fake.stop();
   rmSync(dataDir, { recursive: true, force: true });
+  rmSync(claudeDir, { recursive: true, force: true });
   process.exit(0);
 }
 // Playwright kills the process without a signal on Windows. The global teardown calls the shutdown route first.

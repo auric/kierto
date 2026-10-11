@@ -582,7 +582,8 @@ describe("GET /api/meta", () => {
     const res = await h.call("/api/meta");
     expect(res.status).toBe(200);
     const text = await res.text();
-    expect(JSON.parse(text)).toEqual({ forge: { name: "Bitbucket" } });
+    // tests/review/jobs.test.ts checks the review fields.
+    expect(JSON.parse(text)).toMatchObject({ forge: { name: "Bitbucket" }, runner: { check: null }, context: [] });
     expect(text).not.toContain(FAKE_TOKEN);
     expect(text).not.toContain(fake.url);
     expect(text).not.toContain(SESSION);
