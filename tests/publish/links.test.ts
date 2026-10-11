@@ -78,11 +78,11 @@ const outside = (id: number, side: "new" | "old"): ReviewItemDto => {
 
 test("the general comment links a new-side line at the source head and an old-side line at the merge base", () => {
   const run = { id: 1, sourceHead: SOURCE, targetHead: "b".repeat(40), mergeBase: BASE, repoUrl: PERSONAL };
-  const [post] = buildPlan({ me: FAKE_USER, runs: [run], items: [outside(1, "new"), outside(2, "old")], comments: [] });
+  const [post] = buildPlan({ me: FAKE_USER, runs: [run], items: [outside(1, "new"), outside(2, "old")], comments: [], mark: false });
   expect(post?.body).toBe(
     `[new/name.ts:8](${PERSONAL}/new/name.ts?at=${SOURCE}#8): Text.\n\n[old/name.ts:8](${PERSONAL}/old/name.ts?at=${BASE}#8): Text.`,
   );
-  const [plain] = buildPlan({ me: FAKE_USER, runs: [{ ...run, repoUrl: null }], items: [outside(1, "new")], comments: [] });
+  const [plain] = buildPlan({ me: FAKE_USER, runs: [{ ...run, repoUrl: null }], items: [outside(1, "new")], comments: [], mark: false });
   expect(plain?.body).toBe("new/name.ts:8: Text.");
 });
 
