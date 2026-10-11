@@ -40,14 +40,16 @@ export function createTaskRunner(opts: { budgetMs?: number } = {}) {
     (w as unknown as { unref(): void }).unref();
     ready = new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("The task worker did not start.")), START_MS);
-      w.onmessage = (e: MessageEvent<WorkerReply | "ready">) => {
-        if (e.data !== "ready") {
-          if (e.data.id === seq) pending?.(e.data);
+      // Bun's types can resolve Worker.onmessage to a constructor type under the DOM lib.
+      (w as EventTarget).addEventListener("message", (e) => {
+        const data = (e as MessageEvent<WorkerReply | "ready">).data;
+        if (data !== "ready") {
+          if (data.id === seq) pending?.(data);
           return;
         }
         clearTimeout(t);
         resolve();
-      };
+      });
     });
     w.onerror = () => pending?.(null);
     worker = w;
