@@ -77,9 +77,12 @@ export function ListPane(props: {
     <section
       aria-labelledby="view-name"
       onFocus={props.onFocus}
-      className={cn("rl-pane rl-list grid grid-rows-[auto_auto_minmax(0,1fr)_auto] border-r bg-pane-2", props.focused && "pane-edge")}
+      className={cn(
+        "rl-pane rl-list grid grid-cols-[minmax(0,1fr)] grid-rows-[auto_auto_minmax(0,1fr)_auto] border-r bg-pane-2",
+        props.focused && "pane-edge",
+      )}
     >
-      <header className="grid gap-2.5 border-b px-4 pt-3.5 pb-3">
+      <header className="grid grid-cols-[minmax(0,1fr)] gap-2.5 border-b px-4 pt-3.5 pb-3">
         <div className="flex items-baseline gap-2">
           <button
             type="button"
@@ -92,6 +95,7 @@ export function ListPane(props: {
           <h2
             id="view-name"
             translate={props.repo ? "no" : undefined}
+            title={props.repo ?? undefined}
             className="m-0 min-w-0 truncate text-[16px] font-bold tracking-[-0.01em]"
           >
             {props.title}
@@ -106,7 +110,7 @@ export function ListPane(props: {
           <input
             ref={props.filterRef}
             type="search"
-            className="min-w-0 flex-1 border-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            className="min-w-24 flex-1 border-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
             placeholder="Filter, or paste a pull request URL…"
             aria-label="Filter the list"
             autoComplete="off"
@@ -115,8 +119,8 @@ export function ListPane(props: {
             onChange={(e) => props.onQuery(e.target.value)}
           />
           {props.repo && (
-            <span className="inline-flex h-[22px] max-w-[60%] shrink-0 items-center gap-1 rounded-full bg-sel pr-1 pl-2 text-xs font-semibold text-foreground">
-              <span translate="no" className="truncate">
+            <span className="inline-flex h-[22px] min-w-0 items-center gap-1 rounded-full bg-sel pr-1 pl-2 text-xs font-semibold text-foreground">
+              <span translate="no" title={props.repo} className="truncate">
                 {props.repo}
               </span>
               <Hint label="Show all repositories">
@@ -146,7 +150,7 @@ export function ListPane(props: {
               <Plus aria-hidden className="size-3.5" />
               {props.following ? "Following…" : "Follow this pull request"}
             </button>
-            <span translate="no" className="font-mono text-xs text-muted-foreground">
+            <span translate="no" className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
               {props.candidate.project}/{props.candidate.repo} #{props.candidate.id}
             </span>
             {props.followError && (
@@ -264,7 +268,7 @@ const Row = memo(function Row({
         onDoubleClick={() => onOpen(p.id)}
       >
         <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          <span translate="no" className="min-w-0 truncate font-mono">
+          <span translate="no" title={prKey(p)} className="min-w-0 truncate font-mono">
             {prKey(p)}
           </span>
           {task && (
@@ -278,9 +282,9 @@ const Row = memo(function Row({
           {!p.followed && <IconHint hints={hints} label="Not followed" icon={BellOff} />}
           {incomplete && (
             <HintTrigger hints={hints} label={incomplete}>
-              <span className="inline-flex shrink-0 items-center gap-[5px] whitespace-nowrap text-destructive">
-                <CircleAlert aria-hidden className="size-[15px]" />
-                Last check incomplete
+              <span className="inline-flex min-w-0 items-center gap-[5px] text-destructive">
+                <CircleAlert aria-hidden className="size-[15px] shrink-0" />
+                <span className="truncate">Last check incomplete</span>
               </span>
             </HintTrigger>
           )}
@@ -293,7 +297,9 @@ const Row = memo(function Row({
         {p.title === null ? (
           <span className="min-w-0 truncate text-muted-foreground italic">Loading details…</span>
         ) : (
-          <span className="min-w-0 truncate font-semibold">{p.title}</span>
+          <span title={p.title} className="min-w-0 truncate font-semibold">
+            {p.title}
+          </span>
         )}
         {run ? (
           <RunWhyLine run={run} profile={profile} />

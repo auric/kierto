@@ -71,7 +71,7 @@ export function Sidebar(props: {
   return (
     <nav
       aria-label="Views"
-      className="rl-pane rl-side grid grid-rows-[auto_minmax(0,1fr)_auto] border-r bg-sidebar text-sidebar-foreground"
+      className="rl-pane rl-side grid grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_auto] border-r bg-sidebar text-sidebar-foreground"
     >
       <div className="rl-center flex items-center gap-[9px] px-4 pt-4 pb-2.5 text-[15px] font-bold tracking-[-0.01em]">
         <svg
@@ -88,7 +88,7 @@ export function Sidebar(props: {
         </svg>
         <span className="rl-lbl">Review Loop</span>
       </div>
-      <div className="relative grid content-start gap-3.5 overflow-auto px-2 pt-1 pb-3">
+      <div className="relative grid grid-cols-[minmax(0,1fr)] content-start gap-3.5 overflow-auto px-2 pt-1 pb-3">
         <div className="grid gap-px">
           <h2 className={heading}>Inbox</h2>
           {(Object.keys(VIEW_LABEL) as View[]).map((v) => {
@@ -122,7 +122,7 @@ export function Sidebar(props: {
             <h2 className={heading}>Repositories</h2>
             {props.repos.map((g) => (
               <Fragment key={g.project}>
-                <div translate="no" className="truncate px-2 pt-1.5 pb-0.5 text-xs font-semibold text-muted-foreground">
+                <div translate="no" title={g.project} className="truncate px-2 pt-1.5 pb-0.5 text-xs font-semibold text-muted-foreground">
                   {g.project}
                 </div>
                 {g.repos.map((r) => {
@@ -138,7 +138,7 @@ export function Sidebar(props: {
                       aria-pressed={on}
                       onClick={() => props.onRepo(on ? null : r.key)}
                     >
-                      <span translate="no" className="min-w-0 truncate">
+                      <span translate="no" title={r.repo} className="min-w-0 truncate">
                         {r.repo}
                       </span>
                       <span className="ml-auto text-xs text-muted-foreground">

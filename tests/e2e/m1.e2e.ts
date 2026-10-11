@@ -1,5 +1,5 @@
 // M1 browser acceptance (plan G8, BRIEF section 6). Runs against the fake Bitbucket of serve.ts only.
-import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
+import { type APIRequestContext, test as base, expect, type Locator, type Page } from "@playwright/test";
 import { APP_PORT, control, E2E_TOKEN, FAKE_URL } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
@@ -390,4 +390,30 @@ test("keys j, k, Enter, Esc, /, n, N, o, g f, and ? work", async ({ page }) => {
   await page.keyboard.press("Escape");
   // The toast of g f is a dialog too, so the check names the sheet.
   await expect(help).toHaveCount(0);
+});
+
+// Elements of a pane that end right of the pane edge, with 0.5 px for subpixel rounding.
+const outside = (pane: Locator, parts = "*") =>
+  pane.evaluate((el, sel) => {
+    const edge = el.getBoundingClientRect().right + 0.5;
+    return [...el.querySelectorAll(sel)].filter((e) => e.getBoundingClientRect().right > edge).map((e) => e.outerHTML.slice(0, 120));
+  }, parts);
+
+test("long repository and branch names stay inside their panes", async ({ page }) => {
+  await connect(page, false);
+  const side = page.locator("nav[aria-label='Views']");
+  const list = page.locator("section[aria-labelledby='view-name']");
+  const detail = page.locator("section[aria-label='Details']");
+  await side.getByRole("button", { name: "release-pipeline-observability-dashboard" }).click();
+  await expect(list.getByRole("button", { name: "Show all repositories" })).toBeVisible();
+  await row(page, TITLE.b).click();
+  await expect(detailTitle(page)).toHaveText(TITLE.b);
+  // Wide and rail layouts give the list 368 px and 320 px.
+  for (const width of [1280, 900]) {
+    await page.setViewportSize({ width, height: 800 });
+    expect(await outside(list)).toEqual([]);
+    expect(await outside(side)).toEqual([]);
+    expect(await outside(detail, "header, header *")).toEqual([]);
+    expect((await page.getByLabel("Filter the list").boundingBox())?.width).toBeGreaterThanOrEqual(96);
+  }
 });

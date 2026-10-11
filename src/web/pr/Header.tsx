@@ -52,7 +52,7 @@ export function Header(props: {
   return (
     <header className="grid gap-1.5 border-b px-6 pt-3 pb-3.5 max-[759px]:px-4 max-[759px]:pt-2">
       <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-muted-foreground">
-        <span translate="no" className="font-mono">
+        <span translate="no" className="font-mono [overflow-wrap:anywhere]">
           {key}
         </span>
         {pr.sourceBranch && (

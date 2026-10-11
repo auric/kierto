@@ -88,7 +88,19 @@ function makePr(project: string, repo: string, id: number, title: string, author
 type Repo = { slug: string; project: { key: string } };
 
 const A = makePr("PROJ1", "sample-repo-2", 1001, "Batch cache writes in the sync worker", alex, "UNAPPROVED");
-const B = makePr("PROJ2", "web-app", 210, "Show build status on the release page", maria, "APPROVED");
+// Long names with few break points test the pane widths.
+const B = makePr(
+  "PLATFORM_RELEASE_ENGINEERING_TOOLS",
+  "release-pipeline-observability-dashboard",
+  210,
+  "Show build status on the release page",
+  maria,
+  "APPROVED",
+);
+Object.assign(B.pr.fromRef, {
+  id: "refs/heads/feature/release_pipeline_observability_dashboard_rollout",
+  displayId: "feature/release_pipeline_observability_dashboard_rollout",
+});
 const C = makePr("PROJ1", "sample-repo-3", 77, "Drop the legacy export endpoint", kenji, "APPROVED");
 
 const base = () => S.activities("activities-nested-reply.json");
