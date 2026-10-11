@@ -139,7 +139,8 @@ export function FilesFold(props: {
     <Fold id="files" open={props.open} onOpen={props.onOpen} head={<FoldHead label="Files" n={`${n}`} />}>
       <ul className="m-0 mb-2.5 list-none p-0">
         {props.files.map((f) => {
-          const [Icon, word] = CHANGE[f.type] ?? [File, "Changed"];
+          const [Icon, type] = CHANGE[f.type] ?? [File, "Changed"];
+          const word = f.srcPath ? `${type} from ${f.srcPath}` : type;
           const count = props.threads.filter((t) => t.anchor?.path === f.path).length;
           const go = `Go to ${count === 1 ? "the thread" : `the first of ${count} threads`} on this file`;
           const cut = f.path.lastIndexOf("/") + 1;

@@ -2,7 +2,7 @@
 // <dataDir>/runs/<id>/work/{repo,context} is the CLI cwd, <dataDir>/runs/<id>/app holds the app files.
 import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { Comment, PullRequest } from "../../shared/types";
+import type { Comment, ExcerptLine, PullRequest } from "../../shared/types";
 import { log } from "../log";
 import { parseDiff } from "./diffmap";
 import { git, gitEnv } from "./git";
@@ -175,6 +175,11 @@ function fileList(diff: string): string {
   return `${out.join("\n")}\n`;
 }
 
+// The marker ">" names the commented line. The number is the line on the side of its kind (ExcerptLine).
+const SIGN = { add: "+", del: "-", ctx: " " } as const;
+const excerptLine = (l: ExcerptLine) =>
+  `    ${l.hit ? ">" : " "} ${String(l.n).padStart(5)} ${SIGN[l.kind]} ${l.text.replace(/[\r\n]/g, " ")}`;
+
 function prText(pr: PullRequest, comments: Comment[]): string {
   const who = (u: { name: string; slug: string }) => `${u.name} (${u.slug})`;
   const out = [
@@ -206,7 +211,10 @@ function prText(pr: PullRequest, comments: Comment[]): string {
     const a = (c.anchor ?? {}) as { path?: unknown; line?: unknown };
     const at = typeof a.path === "string" ? `, on ${a.path}${typeof a.line === "number" ? ` line ${a.line}` : ""}` : "";
     const head = c.parentId === null ? `Comment ${c.id}` : `Reply ${c.id} to ${c.parentId}`;
-    out.push(`### ${head} by ${who(c.author)}${at}${c.threadResolved ? " (resolved)" : ""}`, "", c.text, "");
+    out.push(`### ${head} by ${who(c.author)}${at}${c.threadResolved ? " (resolved)" : ""}`, "");
+    // replies.md step 5: the stored excerpt of an inline root. An indented block, so no line of it can end the block.
+    if (c.parentId === null && c.excerpt?.length) out.push("Code at the comment:", "", ...c.excerpt.map(excerptLine), "");
+    out.push(c.text, "");
     for (const k of kids.get(c.id) ?? []) visit(k);
   };
   for (const c of kids.get(null) ?? []) visit(c);

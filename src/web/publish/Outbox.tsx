@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import type { CommentDto, PostDto } from "../../shared/dto";
+import { commentUrl } from "../../shared/links";
 import { restoreDraft } from "../pr/ReplyComposer";
-import { Text } from "../pr/Thread";
+import { ForgeLink, Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
+import type { Hints } from "../shell/Hint";
 import { dropPost, planKey, postsKey, retryPost, usePosts } from "./data";
 import { destLabel, mergePosts, type PostView, postView, shownPosts, splitPosts } from "./model";
 
@@ -122,6 +124,12 @@ function Actions({ p, v, ctx }: { p: PostDto; v: PostView; ctx: PostCtx }) {
   );
 }
 
+// Plan v3 WP13b: a posted row links to its comment on the forge. web: the PR link of the server.
+function PostedLink({ p, v, web, forge, hints }: { p: PostDto; v: PostView; web: string | null; forge: string; hints: Hints }) {
+  if (v.kind !== "posted" || p.remoteId === null || !web) return null;
+  return <ForgeLink href={commentUrl(web, p.remoteId)} label={`Open in ${forge}`} hints={hints} />;
+}
+
 // WP13a: Post again reads the remote comments first. A match confirms the post with no second send.
 function Reason({ v, forge }: { v: PostView; forge: string }) {
   const text =
@@ -131,8 +139,10 @@ function Reason({ v, forge }: { v: PostView; forge: string }) {
   return text ? <p className="m-0 mt-1 text-xs text-ink-2 [overflow-wrap:anywhere]">{text}</p> : null;
 }
 
+type LinkProps = { web: string | null; hints: Hints };
+
 // One run post in the Posts group (prototype/v3 has no outbox; the row reuses the thread row).
-function RunPost({ p, comments, forge, ctx }: { p: PostDto; comments: CommentDto[]; forge: string; ctx: PostCtx }) {
+function RunPost({ p, comments, forge, ctx, web, hints }: { p: PostDto; comments: CommentDto[]; forge: string; ctx: PostCtx } & LinkProps) {
   const v = postView(p);
   const d = destLabel(p.destination, comments);
   return (
@@ -153,6 +163,7 @@ function RunPost({ p, comments, forge, ctx }: { p: PostDto; comments: CommentDto
         )}
         <span className="min-w-0 flex-1 truncate text-ink-2">{snippet(p.body, 160)}</span>
         <StateMark v={v} />
+        <PostedLink p={p} v={v} web={web} forge={forge} hints={hints} />
       </div>
       <Reason v={v} forge={forge} />
       <Actions p={p} v={v} ctx={ctx} />
@@ -160,7 +171,14 @@ function RunPost({ p, comments, forge, ctx }: { p: PostDto; comments: CommentDto
   );
 }
 
-export function PostsGroup({ posts, comments, forge, ctx }: { posts: PostDto[]; comments: CommentDto[]; forge: string; ctx: PostCtx }) {
+export function PostsGroup({
+  posts,
+  comments,
+  forge,
+  ctx,
+  web,
+  hints,
+}: { posts: PostDto[]; comments: CommentDto[]; forge: string; ctx: PostCtx } & LinkProps) {
   if (!posts.length) return null;
   return (
     <div id="g-posts" className="mt-5">
@@ -175,15 +193,15 @@ export function PostsGroup({ posts, comments, forge, ctx }: { posts: PostDto[]; 
         </span>
       </h3>
       {posts.map((p) => (
-        <RunPost key={p.id} p={p} comments={comments} forge={forge} ctx={ctx} />
+        <RunPost key={p.id} p={p} comments={comments} forge={forge} ctx={ctx} web={web} hints={hints} />
       ))}
     </div>
   );
 }
 
 // My replies on the way, under the thread tree. avatar: my avatar, from the thread renderer.
-export function ReplyPosts(props: { posts: readonly PostDto[]; avatar: ReactNode; forge: string; ctx: PostCtx }) {
-  const { avatar, forge, ctx } = props;
+export function ReplyPosts(props: { posts: readonly PostDto[]; avatar: ReactNode; forge: string; ctx: PostCtx } & LinkProps) {
+  const { avatar, forge, ctx, web, hints } = props;
   return props.posts.map((p) => {
     const v = postView(p);
     return (
@@ -192,6 +210,9 @@ export function ReplyPosts(props: { posts: readonly PostDto[]; avatar: ReactNode
           {avatar}
           <b className="font-semibold text-foreground">You</b>
           <StateMark v={v} />
+          <span className="ml-auto">
+            <PostedLink p={p} v={v} web={web} forge={forge} hints={hints} />
+          </span>
         </div>
         <div className="rl-indent mt-px max-w-[72ch] [overflow-wrap:anywhere]">
           <Text text={p.body} />

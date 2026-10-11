@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ForgeError } from "../../src/server/bitbucket/client";
-import { createBitbucketProvider } from "../../src/server/bitbucket/provider";
+import { createBitbucketProvider, excerptOf } from "../../src/server/bitbucket/provider";
 import { FAKE_TOKEN, type FakeBitbucket, fixture, key, type Route, startFakeBitbucket } from "../support/fake-bitbucket";
 import {
   ACTIVITIES_PATH,
@@ -348,5 +348,138 @@ describe("errors", () => {
   test("plain http to a non-loopback host is refused", () => {
     expect(() => createBitbucketProvider({ baseUrl: "http://bitbucket.example.test", token: FAKE_TOKEN })).toThrow();
     expect(() => createBitbucketProvider({ baseUrl: "ftp://127.0.0.1", token: FAKE_TOKEN })).toThrow();
+  });
+});
+
+// Plan v3 WP4 on the Gate v3 fixtures. Removed lines and orphaned anchors stay synthetic (Gate v3 NOT TRIED: REMOVED, U12).
+describe("forge data", () => {
+  const v3 = () => activities("activities-v3-after-write.json");
+  const serve = (values: unknown[]) => ({ [key("GET", ACTIVITIES_PATH)]: { status: 200, body: { isLastPage: true, start: 0, values } } });
+  const lines = (c: { excerpt?: { n: number; kind: string; hit: boolean }[] } | undefined) =>
+    c?.excerpt?.map((l) => `${l.hit ? ">" : ""}${l.kind}${l.n}`);
+  type Diff = { hunks: { segments: { type: string; lines: { source: number; destination: number; line: string }[] }[] }[] };
+  const diffOf = (list: unknown[], id: number) => (list.find((a) => (a as { id: number }).id === id) as { diff: Diff }).diff;
+
+  test("an ADDED and a CONTEXT comment get the anchor line plus 3 lines on each side", async () => {
+    const r = await setup(serve(v3())).listComments(PR_REF);
+    expect(r.complete).toBe(true);
+    const at = (id: number) => r.items.find((c) => c.id === id);
+    expect(lines(at(1000004))).toEqual(["ctx1", "ctx2", ">add3", "add4", "ctx5", "ctx6"]);
+    // U4: the CONTEXT anchor numbers its line on the new side (fileType TO).
+    expect(lines(at(1000005))).toEqual(["add4", "ctx5", "ctx6", ">ctx7", "ctx8", "ctx9", "ctx10"]);
+    expect(at(1000005)?.excerpt?.[3]?.text).toBe("sample line 34");
+  });
+
+  test("U16: a reply keeps no anchor and no excerpt, and stays in its thread", async () => {
+    const r = await setup(serve(v3())).listComments(PR_REF);
+    const reply = r.items.find((c) => c.id === 1000006);
+    const nested = r.items.find((c) => c.id === 1000007);
+    expect(reply).toMatchObject({ parentId: 1000005, rootId: 1000005 });
+    expect(nested).toMatchObject({ parentId: 1000006, rootId: 1000005 });
+    for (const c of [reply, nested]) {
+      expect(c?.anchor).toBeUndefined();
+      expect(c?.excerpt).toBeUndefined();
+    }
+  });
+
+  test("U14: a BLOCKER task keeps severity and state; a general comment has no excerpt", async () => {
+    const r = await setup(serve(v3())).listComments(PR_REF);
+    expect(r.items.find((c) => c.id === 1000008)).toMatchObject({ severity: "BLOCKER", state: "RESOLVED", version: 1 });
+    expect(r.items.find((c) => c.id === 1000008)?.excerpt).toBeUndefined();
+    expect(r.items.find((c) => c.id === 1000004)).toMatchObject({ severity: "NORMAL", state: "OPEN" });
+  });
+
+  test("synthetic: a REMOVED line numbers on the old side, and an orphaned anchor keeps its diff excerpt", async () => {
+    const list = v3();
+    const removed = findComment(list, 1000004);
+    removed.anchor = { ...(removed.anchor as object), line: 3, lineType: "REMOVED", fileType: "FROM" };
+    const segments = diffOf(list, 10000005).hunks[0]?.segments ?? [];
+    segments.splice(1, 0, { type: "REMOVED", lines: [{ source: 3, destination: 3, line: "old line" }] });
+    const orphan = findComment(list, 1000005);
+    orphan.anchor = { ...(orphan.anchor as object), orphaned: true };
+    const r = await setup(serve(list)).listComments(PR_REF);
+    // An old-side comment numbers its context lines on the old side too.
+    expect(lines(r.items.find((c) => c.id === 1000004))).toEqual(["ctx1", "ctx2", ">del3", "add3", "add4", "ctx3"]);
+    expect(r.items.find((c) => c.id === 1000005)?.excerpt?.find((l) => l.hit)?.n).toBe(7);
+  });
+
+  test("a line outside the diff gives no excerpt; a diff of another shape keeps the page complete", async () => {
+    const list = v3();
+    const far = findComment(list, 1000004);
+    far.anchor = { ...(far.anchor as object), line: 99 };
+    const odd = list.find((a) => a.id === 10000006);
+    if (odd) odd.diff = { hunks: "not a list" };
+    const r = await setup(serve(list)).listComments(PR_REF);
+    expect(r.complete).toBe(true);
+    expect(r.items.find((c) => c.id === 1000004)?.excerpt).toBeUndefined();
+    expect(r.items.find((c) => c.id === 1000005)?.excerpt).toBeUndefined();
+    expect(r.items.find((c) => c.id === 1000005)?.anchor).toMatchObject({ line: 7 });
+  });
+
+  test("an excerpt line stops at 500 chars", () => {
+    const diff = { hunks: [{ segments: [{ type: "ADDED", lines: [{ source: 1, destination: 1, line: "x".repeat(600) }] }] }] };
+    expect(excerptOf(diff, { line: 1, lineType: "ADDED", fileType: "TO" })?.[0]?.text).toHaveLength(500);
+    expect(excerptOf(diff, { lineType: "ADDED", fileType: "TO" })).toBeUndefined();
+  });
+
+  test("U5: repoUrl is the target repository browse link of the configured origin only", async () => {
+    const body = clone(fixture<{ toRef: { repository: { links: { self: { href: string }[] } } } }>("pull-request.json"));
+    const p = setup({ [key("GET", PR_PATH)]: body });
+    // The recorded link has another host.
+    expect((await p.getPullRequest(PR_REF)).repoUrl).toBeUndefined();
+    const link = body.body.toRef.repository.links.self[0];
+    if (link) link.href = `${fake.url}/users/jdoe/repos/sample-repo-1/browse`;
+    expect((await p.getPullRequest(PR_REF)).repoUrl).toBe(`${fake.url}/users/jdoe/repos/sample-repo-1/browse`);
+  });
+
+  test("U15: the recorded commits page maps the confirmed fields", async () => {
+    const r = await setup({ [key("GET", `${PR_PATH}/commits`)]: fixture("pull-request-commits-page.json") }).listCommits(PR_REF);
+    expect(r).toEqual({
+      complete: true,
+      items: [
+        {
+          hash: "ba939ffe19df61d874683e85bb168c1769985d23",
+          parents: ["e1f9c8949eb8129073e3b528a54a1dc79fb95e3a"],
+          message: "Sample commit 14.",
+          authorSlug: "jdoe",
+          authorName: "Jane Doe",
+          at: 1791569802000,
+          committedAt: 1791569802000,
+        },
+      ],
+    });
+  });
+
+  test("synthetic: commits come newest first by parents, whatever the server order and paging", async () => {
+    const [rec] = fixture<{ values: Record<string, unknown>[] }>("pull-request-commits-page.json").body.values;
+    // a <- b <- d and a <- c <- d (a merge). c has the newest commit time, so it comes right after d. e is outside the PR.
+    const mk = (id: string, parents: string[], t: number, author = rec?.author) => ({
+      ...clone(rec),
+      id,
+      parents: parents.map((p) => ({ id: p })),
+      committerTimestamp: t,
+      authorTimestamp: t,
+      author,
+    });
+    const values = [
+      mk("b".repeat(40), ["a".repeat(40)], 20),
+      mk("a".repeat(40), ["e".repeat(40)], 10),
+      mk("d".repeat(40), ["b".repeat(40), "c".repeat(40)], 15),
+      mk("c".repeat(40), ["a".repeat(40)], 30, { name: "Outside Author", emailAddress: "x@example.test" }),
+    ];
+    const r = await setup(pageRoutes(`${PR_PATH}/commits`, pages(values, [3, 1], "null"))).listCommits(PR_REF);
+    expect(r.complete).toBe(true);
+    expect(r.items.map((c) => c.hash[0])).toEqual(["d", "c", "b", "a"]);
+    expect(r.items[1]).toMatchObject({ authorSlug: null, authorName: "Outside Author" });
+  });
+
+  test("changes map path, srcPath, and type", async () => {
+    const recorded = await setup({ [key("GET", `${PR_PATH}/changes`)]: fixture("pull-request-changes.json") }).listChanges(PR_REF);
+    expect(recorded).toEqual({ complete: true, items: [{ path: "sample1.md", srcPath: null, type: "MODIFY" }] });
+    const body = clone(fixture<{ values: Record<string, unknown>[] }>("pull-request-changes.json"));
+    const [v] = body.body.values;
+    body.body.values.push({ ...clone(v), type: "MOVE", path: { toString: "b/new.md" }, srcPath: { toString: "a/old.md" } });
+    const r = await setup({ [key("GET", `${PR_PATH}/changes`)]: body }).listChanges(PR_REF);
+    expect(r.items[1]).toEqual({ path: "b/new.md", srcPath: "a/old.md", type: "MOVE" });
   });
 });

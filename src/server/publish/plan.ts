@@ -1,15 +1,20 @@
 // Publish plan (plan v3 WP12). Pure: the exact comments that a confirm posts for the accepted items.
 import type { PlannedPost, ReviewItemDto } from "../../shared/dto";
+import { fileUrl } from "../../shared/links";
 import { isMe } from "../../shared/me";
 import type { AnchoredFinding, Question, ReplyPayload } from "../../shared/review";
 
-export type PlanRun = { id: number; sourceHead: string; targetHead: string; mergeBase: string | null };
+// repoUrl: the repository browse link of the PR (plan v3 WP4). Absent or null: file references stay plain text.
+export type PlanRun = { id: number; sourceHead: string; targetHead: string; mergeBase: string | null; repoUrl?: string | null };
 // A live root comment. anchor: the stored forge anchor, absent for a general comment.
 export type PlanComment = { id: number; authorSlug: string; authorLogin: string | null; authorName: string | null; anchor: unknown };
 export type PlanInput = { me: string | null; runs: PlanRun[]; items: ReviewItemDto[]; comments: PlanComment[] };
 
-// ponytail: plain "path:line" until Gate A confirms the browse-link suffix (U5). WP4 makes it `[path:line](fileUrl)`.
-export const fileRef = (path: string, _at: string | null, line: number) => `${path}:${line}`;
+// plan v3 WP12: `[path:line](fileUrl)`. Without the browse link or the commit, the plain "path:line" stays. src/shared/links.ts holds the URL form.
+export const fileRef = ({ repoUrl }: Pick<PlanRun, "repoUrl">, path: string, at: string | null, line: number) => {
+  const text = `${path}:${line}`;
+  return repoUrl && at ? `[${text.replace(/[\\[\]]/g, "\\$&")}](${fileUrl(repoUrl, path, at, line)})` : text;
+};
 
 type Inline = { path: string; line: number };
 const anchorOf = (a: unknown): (Inline & { fileType?: unknown }) | null => {
@@ -74,7 +79,10 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
       }
       // D3: a removed line has its number at the merge base, in the old path of a rename.
       const old = a.side === "old";
-      general.push({ ref: fileRef(old ? (a.oldPath ?? a.path) : a.path, old ? run.mergeBase : run.sourceHead, a.line), body: it.body });
+      general.push({
+        ref: fileRef(run, old ? (a.oldPath ?? a.path) : a.path, old ? run.mergeBase : run.sourceHead, a.line),
+        body: it.body,
+      });
       generalItems.push(ref);
     }
     if (generalItems.length)

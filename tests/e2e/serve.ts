@@ -12,7 +12,7 @@ import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { createSyncEngine } from "../../src/server/sync/engine";
-import { FAKE_USER, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
+import { FAKE_USER, fixture, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
 import { claudeStream, fakeRunner, REVIEW_RESULT, reviewRemote, stubListTools } from "../support/review-fixture";
 import * as S from "../support/scenarios";
 import { APP_PORT, type ClaudeScenario, E2E_TOKEN, FAKE_URL, type PostControl, type Scenario } from "./control";
@@ -49,7 +49,7 @@ if (!existsSync(index)) {
 }
 const indexHtml = readFileSync(index, "utf8");
 
-const INITIAL: Scenario = { reply: "none", turns: 0, tall: 0, merge: "open", down: false };
+const INITIAL: Scenario = { reply: "none", turns: 0, tall: 0, merge: "open", down: false, forge: false };
 let sc: Scenario = { ...INITIAL };
 
 // Scenario data.
@@ -158,7 +158,9 @@ function activitiesB(): S.Activity[] {
   return out;
 }
 
-const activitiesC = () => (sc.merge === "open" ? base() : addReply(base(), ROOT, 3000001, kenji, "Merged. Thanks for the quick review."));
+// forge: the recorded Gate v3 activities (inline comments with diffs, a nested reply, a resolved task) join PR 77.
+const baseC = () => (sc.forge ? [...base(), ...S.activities("activities-v3-after-write.json").filter((a) => a.comment)] : base());
+const activitiesC = () => (sc.merge === "open" ? baseC() : addReply(baseC(), ROOT, 3000001, kenji, "Merged. Thanks for the quick review."));
 
 const ok = (body: unknown): Reply => ({ status: 200, body });
 const DROP: Reply = { drop: true };
@@ -195,6 +197,10 @@ const postA = { fail: null as number | null, hide: false };
 r[key("GET", `${A.path}/activities`)] = (req) => (postA.hide ? DROP : paged(postsA.activities(), req, "null"));
 r[key("GET", `${B.path}/activities`)] = () => ok(S.onePage(postsB.activities()));
 r[key("GET", `${C.path}/activities`)] = (req) => paged(postsC.activities(), req, "absent");
+// The commits and changes of PR 77 only exist in the forge scenario. Other PRs get 404, so their detail has no Files or Commits.
+const forgeOnly = (name: string) => (): Reply => (sc.forge ? fixture(name) : NOT_FOUND);
+r[key("GET", `${C.path}/commits`)] = forgeOnly("pull-request-commits-page.json");
+r[key("GET", `${C.path}/changes`)] = forgeOnly("pull-request-changes.json");
 Object.assign(r, postsA.routes, postsB.routes, postsC.routes);
 const sendA = r[key("POST", `${A.path}/comments`)];
 r[key("POST", `${A.path}/comments`)] = async (req) => {

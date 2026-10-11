@@ -5,10 +5,13 @@ import { z } from "zod";
 // name: the username. X-AUSERNAME carries it.
 export const user = z.object({ name: z.string(), slug: z.string(), displayName: z.string() });
 
+const links = z.object({ self: z.array(z.object({ href: z.string() })).optional() }).optional();
+
+// repository.links.self: the browse link (Gate v3 U5). A personal repository uses /users/<slug>/, so the app never builds it from the key.
 const ref = z.object({
   displayId: z.string(),
   latestCommit: z.string(),
-  repository: z.object({ slug: z.string(), project: z.object({ key: z.string() }) }),
+  repository: z.object({ slug: z.string(), project: z.object({ key: z.string() }), links }),
 });
 
 export const pullRequest = z.object({
@@ -22,7 +25,7 @@ export const pullRequest = z.object({
   reviewers: z.array(z.object({ user, status: z.string(), lastReviewedCommit: z.string().optional() })),
   fromRef: ref,
   toRef: ref,
-  links: z.object({ self: z.array(z.object({ href: z.string() })).optional() }).optional(),
+  links,
 });
 
 const anchor = z.object({
@@ -46,6 +49,9 @@ export type RawComment = {
   threadResolved?: boolean;
   anchor?: z.infer<typeof anchor>;
   comments?: RawComment[];
+  severity?: string;
+  state?: string;
+  resolvedDate?: number;
 };
 
 export const comment: z.ZodType<RawComment> = z.object({
@@ -58,17 +64,52 @@ export const comment: z.ZodType<RawComment> = z.object({
   threadResolved: z.boolean().optional(),
   anchor: anchor.optional(),
   comments: z.array(z.lazy(() => comment)).optional(),
+  // Gate v3 U14: a task has severity BLOCKER. A resolve sets state RESOLVED and resolvedDate, raises the version, and adds no activity.
+  severity: z.string().optional(),
+  state: z.string().optional(),
+  resolvedDate: z.number().optional(),
 });
 
 // POST .../comments returns the new comment with HTTP 201 (Gate 0). The outbox keeps only its ID and version.
 export const postedComment = z.object({ id: z.number(), version: z.number() });
+
+// The diff of an inline comment activity (I6). source and destination: the old and the new line number.
+const diff = z.object({
+  hunks: z.array(
+    z.object({
+      segments: z.array(
+        z.object({
+          type: z.string(),
+          lines: z.array(z.object({ source: z.number(), destination: z.number(), line: z.string() })),
+        }),
+      ),
+    }),
+  ),
+});
+export type RawDiff = z.infer<typeof diff>;
 
 export const activity = z.object({
   id: z.number(),
   action: z.string(),
   commentAction: z.string().optional(),
   comment: comment.optional(),
+  // A diff in another shape only loses the excerpt. It must not fail the activities page.
+  diff: diff.optional().catch(undefined),
 });
+
+// PR commits page values (Gate v3 U15). An author without a forge account can lack slug and displayName.
+export const commit = z.object({
+  id: z.string(),
+  author: z.object({ name: z.string(), slug: z.string().optional(), displayName: z.string().optional() }),
+  authorTimestamp: z.number(),
+  committerTimestamp: z.number(),
+  message: z.string(),
+  parents: z.array(z.object({ id: z.string() })),
+});
+
+// PR changes page values. srcPath: only for a moved or copied file.
+const filePath = z.object({ toString: z.string() });
+export const change = z.object({ path: filePath, srcPath: filePath.optional(), type: z.string() });
 
 export const page = <T extends z.ZodType>(item: T) =>
   z.object({

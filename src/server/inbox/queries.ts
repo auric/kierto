@@ -2,10 +2,13 @@
 import type { Database } from "bun:sqlite";
 import type {
   Cause,
+  ChangedFile,
   CheckpointDto,
   CheckpointReason,
   ClaimedEvent,
   CommentDto,
+  CommitDto,
+  ExcerptLine,
   FollowState,
   Group,
   PrDetail,
@@ -36,7 +39,9 @@ const SQL = {
     FROM comment c JOIN pull_request p ON p.id = c.pr WHERE ${LISTED}`,
   tasks: `SELECT t.pr, t.key, t.source, t.url FROM pr_task t JOIN pull_request p ON p.id = t.pr WHERE ${LISTED} ORDER BY t.pr, t.ord`,
   comments: `SELECT comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json, thread_resolved, created_at, updated_at,
-      ack_version, tombstoned_at FROM comment WHERE pr = $pr ORDER BY created_at, comment_id`,
+      ack_version, tombstoned_at, severity, task_state, excerpt_json FROM comment WHERE pr = $pr ORDER BY created_at, comment_id`,
+  commits: "SELECT hash, message, author_name AS author, ts AS at FROM pr_commit WHERE pr = $pr ORDER BY ord",
+  files: "SELECT path, src_path AS srcPath, type FROM pr_change WHERE pr = $pr ORDER BY path",
   // A2: the ack never rises above the stored version, and never falls.
   read: `UPDATE comment SET ack_version = MIN(version, $version)
     WHERE pr = $pr AND comment_id = $id AND (ack_version IS NULL OR ack_version < MIN(version, $version))`,
@@ -238,6 +243,9 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
     updated_at: number;
     ack_version: number | null;
     tombstoned_at: number | null;
+    severity: string | null;
+    task_state: string | null;
+    excerpt_json: string | null;
   };
   const posted = new Map(
     (db.query(SQL.posted).all({ pr: id }) as { remote_id: number; run: number }[]).map(
@@ -262,11 +270,16 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
       updatedAt: c.updated_at,
       unread: pr.followed && !deleted && (c.ack_version === null || c.ack_version < c.version),
       deleted,
+      ...(c.excerpt_json !== null && { excerpt: JSON.parse(c.excerpt_json) as ExcerptLine[] }),
+      // Gate v3 U14: a task is a BLOCKER comment. RESOLVED marks it done.
+      ...(c.severity === "BLOCKER" && { task: c.task_state === "RESOLVED" ? "done" : "open" }),
       ...(by && { posted: by }),
     };
   });
   const { description } = db.query(SQL.description).get({ id }) as { description: string | null };
-  return { pr, description, comments };
+  const commits = db.query(SQL.commits).all({ pr: id }) as CommitDto[];
+  const files = db.query(SQL.files).all({ pr: id }) as ChangedFile[];
+  return { pr, description, comments, files, commits };
 }
 
 // null for an unknown PR.

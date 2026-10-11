@@ -170,12 +170,14 @@ export function PrDetail({
   // The review hook comes after the thread context, so the context reads its action through this ref.
   const draftReply = useRef((_: number) => {});
 
+  const web = webLink(pr.webUrl);
   const ctx = useMemo<ThreadCtx>(
     () => ({
       pr: row.id,
       hints,
       now,
       forge,
+      web,
       runner,
       me: mine,
       ackRef,
@@ -197,7 +199,7 @@ export function PrDetail({
       onDraftReply: (tid) => draftReply.current(tid),
       posts: outbox.ctx,
     }),
-    [row.id, hints, now, forge, runner, mine, ackRef, focusAfter, jump, announce, onReply, outbox.ctx],
+    [row.id, hints, now, forge, web, runner, mine, ackRef, focusAfter, jump, announce, onReply, outbox.ctx],
   );
 
   const review = useReview(pr, { commits: data?.commits, threads, hints, now, focusAfter, reveal: jump, announce, onSettings });
@@ -318,7 +320,7 @@ export function PrDetail({
               posts={outbox.threads}
               targets={targets}
               cards={review.cards}
-              outbox={<PostsGroup posts={outbox.rest} comments={comments} forge={forge} ctx={outbox.ctx} />}
+              outbox={<PostsGroup posts={outbox.rest} comments={comments} forge={forge} web={web} hints={hints} ctx={outbox.ctx} />}
               drafts={review.drafts}
               onNeedMe={setNeedMe}
               onShowResolved={() => {
@@ -337,7 +339,7 @@ export function PrDetail({
                   const t = ordered(threads, false).find((x) => x.anchor?.path === path);
                   if (t) jump(t.id);
                 }}
-                web={webLink(pr.webUrl)}
+                web={web}
                 forge={forge}
                 hints={hints}
               />

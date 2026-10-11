@@ -9,7 +9,8 @@ import { buildPlan, type PlanComment, type PlanInput, type PlanRun } from "./pla
 
 const SQL = {
   pr: "SELECT id FROM pull_request WHERE id = $pr",
-  runs: `SELECT id, source_head AS sourceHead, target_head AS targetHead, merge_base AS mergeBase FROM review_run
+  runs: `SELECT id, source_head AS sourceHead, target_head AS targetHead, merge_base AS mergeBase,
+      (SELECT repo_url FROM pull_request WHERE id = $pr) AS repoUrl FROM review_run
     WHERE pr = $pr AND id IN (SELECT run FROM review_item WHERE status = 'accepted') ORDER BY id`,
   items: `SELECT i.* FROM review_item i JOIN review_run r ON r.id = i.run WHERE r.pr = $pr AND i.status = 'accepted' ORDER BY i.id`,
   comments: `SELECT comment_id AS id, author_slug AS authorSlug, author_login AS authorLogin, author_name AS authorName, anchor_json

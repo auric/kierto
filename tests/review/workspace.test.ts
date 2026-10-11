@@ -89,6 +89,10 @@ const COMMENTS: Comment[] = [
     threadResolved: false,
     createdAt: 1,
     updatedAt: 1,
+    excerpt: [
+      { n: 2, kind: "ctx", text: "const a = 1;", hit: false },
+      { n: 3, kind: "add", text: "const b = 2;", hit: true },
+    ],
   },
   {
     id: 102,
@@ -470,6 +474,10 @@ describe("workspace", () => {
       ])
         expect(pr).toContain(t);
       expect(pr.indexOf("Why does line 3 change?")).toBeLessThan(pr.indexOf("It fixes the bug."));
+      // replies.md step 5: the stored excerpt sits under its inline root, as an indented block before the comment text.
+      expect(pr).toContain(
+        ["Code at the comment:", "", "          2   const a = 1;", "    >     3 + const b = 2;", "", "Why does line 3 change?"].join("\n"),
+      );
       await ws.remove();
     },
     SLOW,

@@ -27,7 +27,7 @@ import {
 } from "../../shared/review";
 import type { RunErrorKind, RunEvent, RunStatus } from "../../shared/run-log";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
-import type { Comment, PrRef, PullRequest } from "../../shared/types";
+import type { Comment, ExcerptLine, PrRef, PullRequest } from "../../shared/types";
 import { dataDir as defaultDataDir } from "../config";
 import type { Live } from "../live";
 import { log } from "../log";
@@ -160,7 +160,7 @@ const SQL = {
   pr: `SELECT id, project, repo, pr_id, title, description, author_slug, author_name, my_role, state, pr_version, source_head, target_head, source_branch,
       target_branch, web_url, updated_date FROM pull_request WHERE id = $id`,
   comments: `SELECT comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json, thread_resolved, created_at,
-      updated_at FROM comment WHERE pr = $pr AND tombstoned_at IS NULL`,
+      updated_at, excerpt_json FROM comment WHERE pr = $pr AND tombstoned_at IS NULL`,
   tasks: "SELECT key, source, url FROM pr_task WHERE pr = $pr ORDER BY ord",
   brief: "SELECT note, profile, updated_at FROM pr_brief WHERE pr = $pr",
   saveBrief: `INSERT INTO pr_brief (pr, note, profile, updated_at) VALUES ($pr, $note, $profile, $now)
@@ -260,11 +260,14 @@ function commentsOf(db: Database, pr: number): Comment[] {
     thread_resolved: number;
     created_at: number;
     updated_at: number;
+    excerpt_json: string | null;
   };
   return (db.query(SQL.comments).all({ pr }) as Row[]).map((c) => {
     let anchor: unknown;
+    let excerpt: ExcerptLine[] | undefined;
     try {
       anchor = c.anchor_json ? JSON.parse(c.anchor_json) : undefined;
+      excerpt = c.excerpt_json ? JSON.parse(c.excerpt_json) : undefined;
     } catch {}
     return {
       id: c.comment_id,
@@ -277,6 +280,7 @@ function commentsOf(db: Database, pr: number): Comment[] {
       threadResolved: c.thread_resolved === 1,
       createdAt: c.created_at,
       updatedAt: c.updated_at,
+      ...(excerpt && { excerpt }),
     };
   });
 }

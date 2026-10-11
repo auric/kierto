@@ -115,6 +115,9 @@ test("A8: two of the drafts are accepted, and exactly those two texts post after
   await postButton(box).click();
   await expect(box).toBeHidden();
   await expect(page.locator("[data-post]", { hasText: "Posted." })).toHaveCount(2);
+  // Plan v3 WP13b: a posted row links to its comment on the PR link of the server.
+  const link = (id: number) => `${FAKE_URL}/projects/PROJ1/repos/sample-repo-2/pull-requests/1001/overview?commentId=${id}`;
+  await expect(page.locator(`[data-post] a[href="${link(4_000_001)}"], [data-post] a[href="${link(4_000_002)}"]`)).toHaveCount(2);
   await expect(drafts(page)).toHaveCount(1);
   await expect(page.locator("#nav-post")).toHaveAccessibleName("Ready to post: 0");
 
@@ -132,6 +135,10 @@ test("A8: two of the drafts are accepted, and exactly those two texts post after
   await expect(posted).toHaveCount(2);
   await posted.first().locator("button[aria-expanded]").first().click();
   await expect(posted.first()).toContainText("Posted from a Claude Code review");
+  await expect(posted.first().getByRole("link", { name: "Open this thread in Bitbucket" })).toHaveAttribute(
+    "href",
+    /\/overview\?commentId=400000[12]$/,
+  );
 });
 
 test("A9: the connection drops after Bitbucket accepts; the outcome is unknown, and Post again finds it with no second post", async ({

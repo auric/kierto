@@ -14,7 +14,7 @@ import { createReviewJobs } from "../src/server/review/jobs";
 import { createSecrets } from "../src/server/secrets";
 import { createSettings } from "../src/server/settings";
 import { createSyncEngine } from "../src/server/sync/engine";
-import { FAKE_TOKEN, FAKE_USER, key, startFakeBitbucket } from "../tests/support/fake-bitbucket";
+import { FAKE_TOKEN, FAKE_USER, fixture, key, startFakeBitbucket } from "../tests/support/fake-bitbucket";
 import { claudeStream, fakeRunner, REVIEW_RESULT, reviewRemote, stubListTools } from "../tests/support/review-fixture";
 import * as S from "../tests/support/scenarios";
 
@@ -74,10 +74,11 @@ type Spec = {
 
 function makePr(o: Spec): Pr {
   const pr = S.reviewPr() as Pr;
-  const refs = [pr.fromRef, pr.toRef] as { displayId: string; repository: { slug: string; project: { key: string } } }[];
+  const refs = [pr.fromRef, pr.toRef] as { displayId: string; repository: { slug: string; project: { key: string }; links: unknown } }[];
   for (const r of refs) {
     r.repository.slug = o.repo;
     r.repository.project.key = o.project;
+    r.repository.links = { self: [{ href: `${fake.url}/projects/${o.project}/repos/${o.repo}/browse` }] };
   }
   Object.assign(pr, {
     id: o.id,
@@ -246,6 +247,9 @@ const own = Object.assign(S.ownPr() as Pr, {
   links: { self: [{ href: `${fake.url}/users/${FAKE_USER}/repos/sample-repo-1/pull-requests/2` }] },
 });
 own.fromRef.latestCommit = remote.source;
+(own.toRef as { repository: { links: unknown } }).repository.links = {
+  self: [{ href: `${fake.url}/users/${FAKE_USER}/repos/sample-repo-1/browse` }],
+};
 (own.toRef as { latestCommit: string }).latestCommit = remote.target;
 // Not on the dashboard. Paste its URL into the filter to follow it.
 const extra = makePr({
@@ -277,7 +281,22 @@ function reply(list: S.Activity[], parent: number, id: number, user: User, minut
   return out;
 }
 
-type ThreadOpts = { path?: string; line?: number; resolved?: boolean };
+// code: 7 lines around the commented line. The middle line is the commented, added line. task: a BLOCKER task in that state.
+type ThreadOpts = { path?: string; line?: number; resolved?: boolean; code?: string[]; task?: "OPEN" | "RESOLVED" };
+
+// The activity diff of an inline comment, in the shape of fixtures/bitbucket/activities-v3-after-write.json.
+function diffOf(line: number, code: string[]) {
+  const at = (i: number) => ({ source: line - 3 + (i > 3 ? i - 1 : i), destination: line - 3 + i, line: code[i] ?? "", truncated: false });
+  const seg = (type: string, from: number, to: number) => ({
+    type,
+    lines: code.slice(from, to).map((_, k) => at(from + k)),
+    truncated: false,
+  });
+  return {
+    hunks: [{ segments: [seg("CONTEXT", 0, 3), seg("ADDED", 3, 4), seg("CONTEXT", 4, code.length)], truncated: false }],
+    truncated: false,
+  };
+}
 
 // A new root comment. A path gives an inline comment on an added line.
 function thread(list: S.Activity[], id: number, user: User, minutes: number, text: string, o: ThreadOpts = {}): S.Activity[] {
@@ -285,7 +304,9 @@ function thread(list: S.Activity[], id: number, user: User, minutes: number, tex
   Object.assign(root, { id, version: 0, text, author: user, createdDate: min(minutes), updatedDate: min(minutes), comments: [] });
   if (o.path) root.anchor = { path: o.path, line: o.line, lineType: "ADDED", fileType: "TO" };
   if (o.resolved) root.threadResolved = true;
-  return [...S.clone(list), { id: id + 9_000_000, action: "COMMENTED", commentAction: "ADDED", comment: root }];
+  if (o.task) Object.assign(root, { severity: "BLOCKER", state: o.task, version: o.task === "RESOLVED" ? 1 : 0 });
+  const diff = o.code && o.line ? { diff: diffOf(o.line, o.code) } : {};
+  return [...S.clone(list), { id: id + 9_000_000, action: "COMMENTED", commentAction: "ADDED", comment: root, ...diff }];
 }
 
 const none = (): S.Activity[] => [];
@@ -297,7 +318,17 @@ const activities = new Map<Pr, () => S.Activity[]>([
       let t = thread(none(), 1100, me, 300, "Does evict() still need the caller to hold the lock?", {
         path: "src/cache/evict.ts",
         line: 42,
+        code: [
+          "export function evict(cache: Cache, budget: number) {",
+          "  let freed = 0;",
+          "  for (const key of cache.oldest()) {",
+          "    cache.lock.acquire();",
+          "    freed += cache.drop(key);",
+          "    if (freed >= budget) break;",
+          "  }",
+        ],
       });
+      t = thread(t, 1140, maria, 275, "Add a test for an empty cache before this merges.", { task: "OPEN" });
       t = thread(t, 1110, maria, 280, "Typo in the comment above trim().", { path: "src/cache/trim.ts", line: 8, resolved: true });
       t = reply(t, 1110, 1111, alex, 270, "Fixed.");
       t = thread(t, 1120, maria, 260, "Can the eviction policy own the budget?");
@@ -321,7 +352,19 @@ const activities = new Map<Pr, () => S.Activity[]>([
   [
     prs.commits,
     () => {
-      let t = thread(none(), 1300, me, 400, "Flush the batch before the write lock?", { path: "src/sync/worker.ts", line: 118 });
+      let t = thread(none(), 1300, me, 400, "Flush the batch before the write lock?", {
+        path: "src/sync/worker.ts",
+        line: 118,
+        code: [
+          "  async run(batch: Write[]) {",
+          "    const lock = await this.store.writeLock();",
+          "    try {",
+          "      await this.flush(batch);",
+          "      await this.store.commit();",
+          "    } finally {",
+          "      lock.release();",
+        ],
+      });
       t = reply(t, 1300, 1301, alex, 380, "Done in the next push.");
       return reply(t, 1300, 1302, me, 370, "Thanks. I will look again after the push.");
     },
@@ -360,7 +403,7 @@ const activities = new Map<Pr, () => S.Activity[]>([
     prs.authored,
     () => {
       const t = thread(none(), 1900, kenji, 2800, "Use Intl.DateTimeFormat here.", { path: "src/date/format.ts", line: 12 });
-      return thread(t, 1910, kenji, 2790, "Please add a test for the leap day.");
+      return thread(t, 1910, kenji, 2790, "Please add a test for the leap day.", { task: "RESOLVED" });
     },
   ],
   [prs.unfollowed, none],
@@ -381,6 +424,49 @@ const activities = new Map<Pr, () => S.Activity[]>([
   [extra, base],
 ]);
 
+// Commits and changed files of each PR (plan v3 WP4). PR 81 has one commit after my review.
+const [recorded] = fixture<{ values: Record<string, unknown>[] }>("pull-request-commits-page.json").body.values;
+const commit = (id: string, parent: string, message: string, author: User, minutes: number) => ({
+  ...S.clone(recorded),
+  id,
+  displayId: id.slice(0, 11),
+  message,
+  author,
+  committer: author,
+  authorTimestamp: min(minutes),
+  committerTimestamp: min(minutes),
+  parents: [{ id: parent, displayId: parent.slice(0, 11) }],
+});
+const FILES = new Map<Pr, [string, string][]>([
+  [
+    prs.yourTurn,
+    [
+      ["MODIFY", "src/cache/evict.ts"],
+      ["MODIFY", "src/cache/trim.ts"],
+      ["ADD", "src/cache/evict.test.ts"],
+    ],
+  ],
+  [
+    prs.commits,
+    [
+      ["MODIFY", "src/sync/worker.ts"],
+      ["DELETE", "src/sync/legacy-queue.ts"],
+    ],
+  ],
+  [
+    prs.authored,
+    [
+      ["MODIFY", "src/date/format.ts"],
+      ["MOVE", "src/date/parse.ts"],
+    ],
+  ],
+]);
+const change = ([type, path]: [string, string]) => ({
+  path: { toString: path },
+  ...(type === "MOVE" && { srcPath: { toString: path.replace("src/date/", "src/util/") } }),
+  type,
+});
+
 // Merged and declined in phase 2. Both leave the dashboard and stay followed.
 const closed = new Map<Pr, string>([
   [prs.merging, "MERGED"],
@@ -397,6 +483,15 @@ for (const [pr, list] of activities) {
     phase === 2 && pr === prs.broken
       ? { status: 500, body: { errors: [{ message: "Internal error." }] } }
       : { status: 200, body: S.onePage(posts.activities()) };
+  const author = (pr.author as { user: User }).user;
+  const head = pr.fromRef.latestCommit;
+  const title = String(pr.title).replace(/^\[[A-Z0-9-]+\] /, "");
+  const commits =
+    head === HEAD_B
+      ? [commit(HEAD_B, HEAD_A, "Flush the batch before the write lock", author, 60), commit(HEAD_A, remote.target, title, author, 500)]
+      : [commit(head, remote.target, title, author, 500)];
+  fake.routes[key("GET", `${pathOf(pr)}/commits`)] = { status: 200, body: S.onePage(commits) };
+  fake.routes[key("GET", `${pathOf(pr)}/changes`)] = { status: 200, body: S.onePage((FILES.get(pr) ?? []).map(change)) };
   fake.routes[key("GET", pathOf(pr))] = () => {
     const state = phase === 2 ? closed.get(pr) : undefined;
     return { status: 200, body: state ? { ...pr, state, updatedDate: min(15) } : pr };

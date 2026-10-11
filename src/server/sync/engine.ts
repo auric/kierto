@@ -1,7 +1,7 @@
 // Polling sync (plan G4): dashboard, PR states, comments, delete checks, events. One cycle at a time.
 import type { CheckpointReason, SyncState, SyncStatus } from "../../shared/dto";
 import { isMe } from "../../shared/me";
-import type { ForgeErrorInfo, IncompleteReason, PrRef, PullRequest } from "../../shared/types";
+import type { Change, Commit, ForgeErrorInfo, IncompleteReason, PrRef, PullRequest } from "../../shared/types";
 import { ForgeError } from "../bitbucket/client";
 import type { ForgeProvider } from "../bitbucket/provider";
 import type { Live } from "../live";
@@ -29,34 +29,45 @@ const SQL = {
   prBefore:
     "SELECT id, my_role, source_head, initialized_at, followed, archived_at FROM pull_request WHERE project = $project AND repo = $repo AND pr_id = $pr_id",
   prUpsert: `INSERT INTO pull_request (project, repo, pr_id, title, description, author_slug, author_name, my_role, my_status, last_reviewed_commit,
-      state, pr_version, source_head, target_head, source_branch, target_branch, web_url, updated_date, on_dashboard, reviewers_json)
+      state, pr_version, source_head, target_head, source_branch, target_branch, web_url, repo_url, updated_date, on_dashboard, reviewers_json)
     VALUES ($project, $repo, $pr_id, $title, $description, $author_slug, $author_name, $my_role, $my_status, $last_reviewed_commit,
-      $state, $pr_version, $source_head, $target_head, $source_branch, $target_branch, $web_url, $updated_date, $on_dashboard, $reviewers_json)
+      $state, $pr_version, $source_head, $target_head, $source_branch, $target_branch, $web_url, $repo_url, $updated_date, $on_dashboard, $reviewers_json)
     ON CONFLICT (project, repo, pr_id) DO UPDATE SET title = excluded.title, description = excluded.description,
       author_slug = excluded.author_slug, author_name = excluded.author_name, my_role = excluded.my_role, my_status = excluded.my_status,
       last_reviewed_commit = excluded.last_reviewed_commit, state = excluded.state, pr_version = excluded.pr_version,
       source_head = excluded.source_head, target_head = excluded.target_head, source_branch = excluded.source_branch,
-      target_branch = excluded.target_branch, web_url = excluded.web_url, updated_date = excluded.updated_date, on_dashboard = excluded.on_dashboard,
+      target_branch = excluded.target_branch, web_url = excluded.web_url, repo_url = excluded.repo_url, updated_date = excluded.updated_date,
+      on_dashboard = excluded.on_dashboard,
       reviewers_json = excluded.reviewers_json
     RETURNING id`,
   offDashboard:
     "UPDATE pull_request SET on_dashboard = 0 WHERE on_dashboard = 1 AND id NOT IN (SELECT value FROM json_each($ids)) RETURNING id",
-  prState: "SELECT my_role, initialized_at FROM pull_request WHERE id = $id",
+  prState: "SELECT my_role, initialized_at, source_head, target_head, meta_head FROM pull_request WHERE id = $id",
   watched: "SELECT id FROM pull_request WHERE id = $id AND followed = 1 AND archived_at IS NULL",
   stored:
     "SELECT comment_id AS id, root_id AS rootId, author_slug AS author, author_login AS login, tombstoned_at IS NULL AS live FROM comment WHERE pr = $pr",
-  // A3: a lower or equal version never overwrites. ack_version stays unless this write acknowledges the new version. commentMeta writes the anchor and the resolved flag.
+  // A3: a lower or equal version never overwrites. ack_version stays unless this write acknowledges the new version.
+  // commentMeta writes the anchor, the resolved flag, the task fields, and the excerpt.
   commentUpsert: `INSERT INTO comment (pr, comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json,
-      thread_resolved, created_at, updated_at, ack_version)
+      thread_resolved, created_at, updated_at, ack_version, severity, task_state, excerpt_json)
     VALUES ($pr, $comment_id, $version, $parent_id, $root_id, $author_slug, $author_name, $author_login, $text, $anchor_json,
-      $thread_resolved, $created_at, $updated_at, $ack_version)
+      $thread_resolved, $created_at, $updated_at, $ack_version, $severity, $task_state, $excerpt_json)
     ON CONFLICT (pr, comment_id) DO UPDATE SET version = excluded.version, parent_id = excluded.parent_id, root_id = excluded.root_id,
       author_slug = excluded.author_slug, author_name = excluded.author_name, author_login = excluded.author_login, text = excluded.text, updated_at = excluded.updated_at,
       ack_version = COALESCE(excluded.ack_version, comment.ack_version)
     WHERE excluded.version > comment.version`,
   // Bitbucket can change orphaned and threadResolved without a new version. The stored row with the highest version wins; at an equal version, the latest complete fetch wins.
-  commentMeta: `UPDATE comment SET anchor_json = $anchor_json, thread_resolved = $thread_resolved
-    WHERE pr = $pr AND comment_id = $comment_id AND version <= $version AND (anchor_json IS NOT $anchor_json OR thread_resolved IS NOT $thread_resolved)`,
+  // A task resolve raises the version and adds no activity (Gate v3 U14). The equal-version write also fills rows stored before 006_forge.sql.
+  commentMeta: `UPDATE comment SET anchor_json = $anchor_json, thread_resolved = $thread_resolved, severity = $severity, task_state = $task_state,
+      excerpt_json = $excerpt_json
+    WHERE pr = $pr AND comment_id = $comment_id AND version <= $version AND (anchor_json IS NOT $anchor_json OR thread_resolved IS NOT $thread_resolved
+      OR severity IS NOT $severity OR task_state IS NOT $task_state OR excerpt_json IS NOT $excerpt_json)`,
+  clearCommits: "DELETE FROM pr_commit WHERE pr = $pr",
+  commit: `INSERT INTO pr_commit (pr, hash, ord, message, author_slug, author_name, ts) VALUES ($pr, $hash, $ord, $message, $author_slug, $author_name, $ts)
+    ON CONFLICT DO NOTHING`,
+  clearChanges: "DELETE FROM pr_change WHERE pr = $pr",
+  change: "INSERT INTO pr_change (pr, path, src_path, type) VALUES ($pr, $path, $src_path, $type) ON CONFLICT DO NOTHING",
+  metaHead: "UPDATE pull_request SET meta_head = $heads WHERE id = $pr",
   tombstone: "UPDATE comment SET tombstoned_at = $now WHERE pr = $pr AND comment_id = $id AND tombstoned_at IS NULL",
   initialized: "UPDATE pull_request SET initialized_at = COALESCE(initialized_at, $now) WHERE id = $id",
   event: "INSERT INTO event (pr, kind, ref, created_at, digest) VALUES ($pr, $kind, $ref, $now, $digest) ON CONFLICT DO NOTHING",
@@ -164,6 +175,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
         source_branch: pr.sourceBranch,
         target_branch: pr.targetBranch,
         web_url: pr.webUrl ?? null,
+        repo_url: pr.repoUrl ?? null,
         updated_date: pr.updatedDate,
         on_dashboard: onDashboard ? 1 : 0,
         reviewers_json: JSON.stringify(
@@ -264,14 +276,30 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
       }
       reached = true;
       // Only this engine writes my_role, initialized_at, and comment rows, and cycles never overlap. Follow state is checked again at commit.
+      type State = {
+        my_role: string | null;
+        initialized_at: number | null;
+        source_head: string | null;
+        target_head: string | null;
+        meta_head: string | null;
+      };
       const { pr, stored } = tx(() => ({
-        pr: db.query(SQL.prState).get({ id: row.id }) as { my_role: string | null; initialized_at: number | null },
+        pr: db.query(SQL.prState).get({ id: row.id }) as State,
         stored: (db.query(SQL.stored).all({ pr: row.id }) as (Omit<StoredComment, "live"> & { live: number })[]).map((s) => ({
           ...s,
           live: s.live === 1,
         })),
       }));
       const plan = reconcile({ stored, fetched: r.items, me, initialized: pr.initialized_at !== null, role: pr.my_role });
+
+      // Plan v3 WP4: commits and changes only after a head change. A partial fetch writes nothing, so the next cycle tries again.
+      let meta: { heads: string; commits: Commit[]; changes: Change[] } | null = null;
+      const heads = pr.source_head && pr.target_head ? `${pr.source_head}:${pr.target_head}` : null;
+      if (heads && heads !== pr.meta_head) {
+        const [commits, changes] = await Promise.all([forge.listCommits(ref), forge.listChanges(ref)]);
+        for (const l of [commits, changes]) if (!l.complete) failed(l.reason, l.error);
+        if (commits.complete && changes.complete) meta = { heads, commits: commits.items, changes: changes.items };
+      }
 
       // Step 4: a delete needs absence from a complete fetch plus a 404.
       const deleted: number[] = [];
@@ -297,6 +325,11 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
         for (const c of plan.rows) {
           const anchor = c.anchor === undefined ? null : JSON.stringify(c.anchor);
           const resolved = c.threadResolved ? 1 : 0;
+          const fields = {
+            severity: c.severity ?? null,
+            task_state: c.state ?? null,
+            excerpt_json: c.excerpt ? JSON.stringify(c.excerpt) : null,
+          };
           run(SQL.commentUpsert, {
             pr: row.id,
             comment_id: c.id,
@@ -312,8 +345,32 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
             created_at: c.createdAt,
             updated_at: c.updatedAt,
             ack_version: c.ackVersion,
+            ...fields,
           });
-          run(SQL.commentMeta, { pr: row.id, comment_id: c.id, version: c.version, anchor_json: anchor, thread_resolved: resolved });
+          run(SQL.commentMeta, {
+            pr: row.id,
+            comment_id: c.id,
+            version: c.version,
+            anchor_json: anchor,
+            thread_resolved: resolved,
+            ...fields,
+          });
+        }
+        if (meta) {
+          run(SQL.clearCommits, { pr: row.id });
+          for (const [ord, c] of meta.commits.entries())
+            run(SQL.commit, {
+              pr: row.id,
+              hash: c.hash,
+              ord,
+              message: c.message,
+              author_slug: c.authorSlug,
+              author_name: c.authorName,
+              ts: c.at,
+            });
+          run(SQL.clearChanges, { pr: row.id });
+          for (const c of meta.changes) run(SQL.change, { pr: row.id, path: c.path, src_path: c.srcPath, type: c.type });
+          run(SQL.metaHead, { pr: row.id, heads: meta.heads });
         }
         for (const id of deleted) run(SQL.tombstone, { pr: row.id, id, now: t });
         const added = addEvents(

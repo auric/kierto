@@ -17,6 +17,8 @@ export type Scenario = {
   merge: "open" | "reply" | "merged";
   // Bitbucket stops answering after the first dashboard page.
   down: boolean;
+  // PR 77: the Gate v3 inline threads with their diffs, the resolved BLOCKER task, and the commits and changes (plan v3 WP4).
+  forge: boolean;
 };
 
 // The next fake Claude Code run. tree: a subagent run with drafts. schema: a result that fails the schema. limit: a usage limit.

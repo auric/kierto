@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Copy,
   CornerDownRight,
+  ExternalLink,
   History,
   Hourglass,
   MessageSquare,
@@ -13,11 +14,12 @@ import {
   SquareCheckBig,
 } from "lucide-react";
 import { lazy, memo, type ReactNode, Suspense, useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { ExcerptLine, PostDto } from "../../shared/dto";
+import { commentUrl } from "../../shared/links";
 import { type PostCtx, ReplyPosts } from "../publish/Outbox";
 import type { Hints } from "../shell/Hint";
 import { HintTrigger } from "../shell/Hint";
@@ -55,6 +57,8 @@ export type ThreadCtx = {
   hints: Hints;
   now: number;
   forge: string;
+  // The PR link of the server (webLink). null: no comment links.
+  web: string | null;
   // The runner name, for "Posted from a <runner> review".
   runner: string;
   // I, for the avatar of my replies on the way.
@@ -204,8 +208,10 @@ export const Thread = memo(function Thread({
           </HintTrigger>
           <ChevronRight aria-hidden className={cn("rl-chev", icon)} />
         </button>
-        {/* The link column keeps every chevron in one line. A comment link needs the Gate A suffix (plan v3 section 2). */}
-        <span className="w-[30px] flex-none" />
+        {/* The link column keeps every chevron in one line. An open thread links to its root comment (plan v3 WP13b). */}
+        <span className="flex w-[30px] flex-none justify-end">
+          {open && ctx.web && <ForgeLink href={commentUrl(ctx.web, t.id)} label={`Open this thread in ${ctx.forge}`} hints={ctx.hints} />}
+        </span>
       </div>
       <div id={`tb-${t.id}`} hidden={!open} className="px-1.5 pt-0.5 pb-4">
         {open && (
@@ -216,7 +222,16 @@ export const Thread = memo(function Thread({
             ctx={ctx}
             after={
               <>
-                {posts && <ReplyPosts posts={posts} avatar={<Avatar p={ctx.me} />} forge={ctx.forge} ctx={ctx.posts} />}
+                {posts && (
+                  <ReplyPosts
+                    posts={posts}
+                    avatar={<Avatar p={ctx.me} />}
+                    forge={ctx.forge}
+                    ctx={ctx.posts}
+                    web={ctx.web}
+                    hints={ctx.hints}
+                  />
+                )}
                 {draft}
                 <ReplyComposer
                   t={t}
@@ -367,6 +382,27 @@ function FoldButton({ row, tid, ctx }: { row: FoldRow; tid: number; ctx: ThreadC
 }
 
 const msgBtn = "-my-1 text-muted-foreground hover:bg-hover hover:text-foreground";
+
+// A link into the forge, opened in a new tab. The posted outbox rows use it too.
+export function ForgeLink({ href, label, hints }: { href: string; label: string; hints: Hints }) {
+  return (
+    <HintTrigger hints={hints} label={label}>
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={label}
+        className={buttonVariants({
+          variant: "ghost",
+          size: "icon-sm",
+          className: "-my-1.5 text-ink-2 hover:bg-hover hover:text-foreground",
+        })}
+      >
+        <ExternalLink aria-hidden />
+      </a>
+    </HintTrigger>
+  );
+}
 
 // WP16: copies the raw Markdown. The reply draft card (WP18) uses it too.
 export function CopyButton({ text, ctx }: { text: string; ctx: Pick<ThreadCtx, "hints" | "announce"> }) {

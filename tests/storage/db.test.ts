@@ -26,7 +26,7 @@ const schema = (path: string) => {
 
 test("migration runs on an empty file and creates every M1 table", () => {
   const s = schema(join(dir, "empty.sqlite"));
-  expect(s.version).toBe(8);
+  expect(s.version).toBe(9);
   expect(s.journal).toBe("wal");
   expect(s.fk).toBe(1);
   expect(s.busy).toBe(5000);
@@ -42,11 +42,16 @@ test("migration runs on an empty file and creates every M1 table", () => {
       "run_event",
       "review_item",
       "post",
+      "pr_commit",
+      "pr_change",
     ]),
   );
   const indexes = s.objects.filter((o) => o.type === "index" && o.sql).map((o) => o.name);
   expect(indexes).toEqual(expect.arrayContaining(["comment_thread", "event_unclaimed"]));
   expect(s.objects.find((o) => o.name === "pull_request")?.sql).toContain("seen_at INTEGER");
+  // 006_forge.sql runs last (db.ts list order).
+  expect(s.objects.find((o) => o.name === "pull_request")?.sql).toContain("meta_head TEXT");
+  expect(s.objects.find((o) => o.name === "comment")?.sql).toContain("excerpt_json TEXT");
 });
 
 test("a second run changes nothing", () => {

@@ -10,7 +10,9 @@ import {
   type ValidatedResult,
 } from "./review";
 import type { RunErrorKind, RunEvent, RunStatus } from "./run-log";
-import type { IncompleteReason, Reviewer, Role } from "./types";
+import type { ExcerptLine, IncompleteReason, Reviewer, Role } from "./types";
+
+export type { ExcerptLine };
 
 export const taskSources = ["branch", "title", "description"] as const;
 
@@ -129,10 +131,8 @@ export type PrRow = {
 };
 
 // WP4 fills the optional forge fields below. The detail renders each part only when its field is present.
-// hit: the commented line. kind: an added, removed, or context line of the diff.
-export type ExcerptLine = { n: number; kind: "add" | "del" | "ctx"; text: string; hit: boolean };
-// type: the change type from the forge, for example ADD, MODIFY, DELETE, MOVE.
-export type ChangedFile = { path: string; type: string };
+// type: the change type from the forge, for example ADD, MODIFY, DELETE, MOVE. srcPath: the old path of a moved or copied file.
+export type ChangedFile = { path: string; srcPath: string | null; type: string };
 // author: the display name. at: ms. Newest first.
 export type CommitDto = { hash: string; message: string; author: string; at: number };
 

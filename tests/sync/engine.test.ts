@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
 import { writeConfig } from "../../src/server/config";
-import { listPrs } from "../../src/server/inbox/queries";
+import { listPrs, prDetail } from "../../src/server/inbox/queries";
 import { createLive, type LiveEvent } from "../../src/server/live";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings, type Settings } from "../../src/server/settings";
@@ -871,5 +871,101 @@ describe("scheduling", () => {
     expect(engine.status()).toMatchObject({ state: "unconfigured", nextAt: null });
     expect(timers.pending.size).toBe(0);
     expect(fake.requests).toEqual([]);
+  });
+});
+
+// Plan v3 WP4 on the Gate v3 fixtures.
+describe("forge data", () => {
+  const COMMITS = `${PR_PATH}/commits`;
+  const CHANGES = `${PR_PATH}/changes`;
+  const HEAD = ownPr().fromRef.latestCommit;
+  const TARGET = (ownPr().toRef as { latestCommit: string }).latestCommit;
+  const NEXT = "f".repeat(40);
+  const v3 = () => activities("activities-v3-after-write.json");
+  const serveMeta = () => {
+    fake.routes[key("GET", COMMITS)] = fixture("pull-request-commits-page.json");
+    fake.routes[key("GET", CHANGES)] = fixture("pull-request-changes.json");
+  };
+  const pushed = () => {
+    const pr = ownPr();
+    pr.fromRef.latestCommit = NEXT;
+    world.author = [pr];
+  };
+  const detail = (h: Awaited<ReturnType<typeof setup>>) => prDetail(h.db(), FAKE_USER, h.pr(2).id as number);
+
+  test("commits and changes load once per head change", async () => {
+    serveMeta();
+    const h = await setup();
+    await h.cycle();
+    expect(detail(h)?.commits).toEqual([{ hash: HEAD, message: "Sample commit 14.", author: "Jane Doe", at: 1791569802000 }]);
+    expect(detail(h)?.files).toEqual([{ path: "sample1.md", srcPath: null, type: "MODIFY" }]);
+    expect(h.pr(2).meta_head).toBe(`${HEAD}:${TARGET}`);
+    const from = fake.requests.length;
+    await h.cycle();
+    expect(requests(from, "/commits")).toEqual([]);
+    expect(requests(from, "/changes")).toEqual([]);
+    pushed();
+    await h.cycle();
+    expect(requests(from, "/commits")).toHaveLength(1);
+    expect(requests(from, "/changes")).toHaveLength(1);
+    expect(h.pr(2).meta_head).toBe(`${NEXT}:${TARGET}`);
+  });
+
+  test("a partial commits fetch changes nothing, and the comments still sync", async () => {
+    serveMeta();
+    const h = await setup();
+    await h.cycle();
+    const [commit] = fixture<{ values: unknown[] }>("pull-request-commits-page.json").body.values;
+    fake.routes[key("GET", COMMITS, 0)] = { status: 200, body: { isLastPage: false, nextPageStart: 1, start: 0, values: [commit] } };
+    fake.routes[key("GET", COMMITS, 1)] = { status: 500, body: { errors: [{ message: "Internal error." }] } };
+    pushed();
+    world.own = addReply(v3(), 1000005, 1000010, OTHER);
+    const before = detail(h);
+    await h.cycle();
+    expect(h.pr(2).meta_head).toBe(`${HEAD}:${TARGET}`);
+    expect(detail(h)?.commits).toEqual(before?.commits);
+    expect(detail(h)?.files).toEqual(before?.files);
+    expect(h.comment(1000010)).toMatchObject({ parent_id: 1000005, root_id: 1000005 });
+    expect(h.checkpoint(2)).toMatchObject({ incomplete_reason: null });
+  });
+
+  test("U14: a resolve raises the version with no new activity, and the task turns done", async () => {
+    const resolved = byUser(v3(), 1000008, OTHER);
+    const open = clone(resolved);
+    const task = findComment(open, 1000008);
+    Object.assign(task, { version: 0, state: "OPEN", resolvedDate: undefined, resolver: undefined });
+    world.own = open;
+    const h = await setup();
+    await h.cycle();
+    const at = () => detail(h)?.comments.find((c) => c.id === 1000008);
+    expect(at()).toMatchObject({ task: "open", version: 0, unread: false });
+    world.own = resolved;
+    await h.cycle();
+    expect(at()).toMatchObject({ task: "done", version: 1, unread: true });
+    expect(h.events()).toEqual([]);
+  });
+
+  test("the detail holds the excerpt of an inline root, and no reply holds an anchor (U16)", async () => {
+    world.own = v3();
+    const h = await setup();
+    await h.cycle();
+    const c = (id: number) => detail(h)?.comments.find((x) => x.id === id);
+    expect(c(1000005)?.excerpt?.find((l) => l.hit)).toEqual({ n: 7, kind: "ctx", text: "sample line 34", hit: true });
+    expect(c(1000004)?.task).toBeUndefined();
+    for (const id of [1000006, 1000007]) {
+      expect(c(id)?.anchor).toBeNull();
+      expect(c(id)?.excerpt).toBeUndefined();
+    }
+  });
+
+  test("rows stored before 006_forge.sql get the task and the excerpt at the same version", async () => {
+    world.own = v3();
+    const h = await setup();
+    await h.cycle();
+    h.db().run("UPDATE comment SET severity = NULL, task_state = NULL, excerpt_json = NULL");
+    await h.cycle();
+    expect(h.comment(1000008)).toMatchObject({ severity: "BLOCKER", task_state: "RESOLVED" });
+    expect(h.comment(1000004)).toMatchObject({ excerpt_json: expect.stringContaining('"hit":true') });
+    expect(h.unread()).toBe(0);
   });
 });

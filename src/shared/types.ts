@@ -24,8 +24,14 @@ export type PullRequest = {
   targetBranch: string;
   // Present only when the server link has the configured origin.
   webUrl?: string;
+  // The repository browse link of the target repository. Present only when it has the configured origin.
+  repoUrl?: string;
   updatedDate: number;
 };
+
+// A line of the diff around an inline comment. n: the new line number of an added or context line, the old one of a removed line.
+// A context line of an old-side comment keeps its old number. hit: the commented line.
+export type ExcerptLine = { n: number; kind: "add" | "del" | "ctx"; text: string; hit: boolean };
 
 export type Comment = {
   id: number;
@@ -36,11 +42,31 @@ export type Comment = {
   rootId: number;
   author: User;
   text: string;
+  // Root comments only. A reply carries a copy of its root anchor on the forge (Gate v3 U16). The adapter drops it.
   anchor?: unknown;
   threadResolved: boolean;
   createdAt: number;
   updatedAt: number;
+  // Open forge values. A task is severity BLOCKER. Done is state RESOLVED (Gate v3 U14).
+  severity?: string;
+  state?: string;
+  // Inline root comments with a diff only.
+  excerpt?: ExcerptLine[];
 };
+
+// at: the author time in ms. committedAt: the commit time in ms. authorSlug: null for an author with no forge account.
+export type Commit = {
+  hash: string;
+  parents: string[];
+  message: string;
+  authorSlug: string | null;
+  authorName: string;
+  at: number;
+  committedAt: number;
+};
+
+// srcPath: the old path of a moved or copied file. type: the forge change type, for example ADD, MODIFY, DELETE, MOVE.
+export type Change = { path: string; srcPath: string | null; type: string };
 
 export type ForgeErrorKind = "network" | "timeout" | "auth" | "forbidden" | "not_found" | "rate" | "server" | "shape";
 

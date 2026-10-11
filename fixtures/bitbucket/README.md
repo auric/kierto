@@ -48,6 +48,8 @@ The v3 probe (`bitbucket-probe.ts --v3`) writes these files. `sanitize-fixtures.
 
 `tests/support/scenarios.ts` derives synthetic states from these files at test time: page splits, both last-page forms, a missing cursor, duplicates, reordering, a version-0 state before the recorded edit, comments by a second user, new nested replies, a higher comment version, a merged PR, and a new source head. The server did not send these states. The second user comes from `dashboard-reviewer-page.json`, because every recorded comment is by the token owner.
 
+Gate v3 synthetic states (plan v3 WP4) live in `tests/bitbucket/provider.test.ts` and `tests/sync/engine.test.ts`: a REMOVED segment with a FROM anchor, an orphaned anchor that keeps its diff, a diff in another shape, a merge commit DAG in server order over two pages, a commit author without a forge account, a MOVE change with `srcPath`, a partial commits fetch, and the BLOCKER task at version 0 before the recorded resolve. The server did not send these states.
+
 Synthetic username case: `asUsername` in `tests/support/scenarios.ts` gives the token owner the username `JDoe` with the slug `jdoe`. The fake server then sends `X-AUSERNAME: JDoe`. The recorded server sent a username equal to the slug. No recorded file has this case.
 
 `fixtures/tls/` holds a test-only CA (`ca.pem`) and a server certificate for `127.0.0.1` (`server.pem`, `server.key`). The fake server uses them for the https test. The CA key was deleted after signing.
