@@ -641,6 +641,38 @@ describe("acceptance", () => {
   );
 
   test(
+    "a run frees the slot before its end is visible; its workspace is gone by then",
+    async () => {
+      const h = await setup();
+      await h.brief(NOTE, "general");
+      let id = 0;
+      let next: ReturnType<typeof h.review.ask> | undefined;
+      let folder: boolean | undefined;
+      // Starts the next run in the same tick as the commit of the end, before any other request can run.
+      const transaction = h.db.transaction.bind(h.db);
+      h.db.transaction = ((fn: () => unknown) => {
+        const t = transaction(fn);
+        return () => {
+          const r = t();
+          if (id && !next && h.review.run(h.db, id)?.run.status !== "running") {
+            folder = existsSync(join(h.dir, "runs", String(id)));
+            next = h.review.ask(h.db, h.pr, "Why does the flush run first?");
+          }
+          return r;
+        };
+      }) as unknown as typeof h.db.transaction;
+      const started = await h.start();
+      id = started.body.id;
+      expect(await waitFor(() => next !== undefined)).toBe(true);
+      expect(h.review.run(h.db, id)?.run.status).toBe("completed");
+      expect(folder).toBe(false);
+      expect(next?.status).toBe(202);
+      await h.review.wait();
+    },
+    SLOW,
+  );
+
+  test(
     "A7: a head change marks the run stale",
     async () => {
       const h = await setup();

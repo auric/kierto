@@ -254,96 +254,106 @@ function Shell({ stale }: { stale: boolean }) {
         onSettings={() => go({ settings: !ks.settings || locked, mobile: "detail", focus: "detail" })}
         settingsOpen={showSettings}
       />
-      <ListPane
-        title={repo ?? (view === "runs" ? "Review runs" : view === "post" ? "Ready to post" : VIEW_LABEL[view])}
-        count={rows.length}
-        groups={groups}
-        loading={prs.isPending}
-        repo={repo}
-        query={query}
-        empty={
-          view === "post" ? `Nothing is ready to post. Accept drafts from ${meta.data.runner.short} to post them to ${forge}.` : EMPTY[view]
-        }
-        selected={showSettings ? null : selected}
-        focused={ks.focus === "list" && !showSettings}
-        doneOpen={doneOpen}
-        forge={forge}
-        runs={aiView && view === "runs" ? latest : null}
-        ready={aiView && view === "post" ? readyWhy : null}
-        candidate={candidate}
-        following={follow.isPending}
-        followError={follow.error && !isStale(follow.error) ? follow.error.message : null}
-        banner={
-          <Banner stale={stale} status={status.data} now={now} forge={forge} onSettings={() => go({ settings: true, mobile: "detail" })} />
-        }
-        filterRef={filterRef}
-        onQuery={(q) => {
-          setQuery(q);
-          if (follow.error) follow.reset();
-        }}
-        onRepo={setRepo}
-        onDoneOpen={setDoneOpen}
-        onSelect={onOpen}
-        onOpen={onOpen}
-        onFollow={() =>
-          follow.mutate(query.trim(), {
-            onSuccess: () => {
-              setQuery("");
-              setView("following");
-              setRepo(null);
-            },
-          })
-        }
-        onMenu={() => go({ mobile: "side" })}
-        onFocus={() => ks.focus !== "list" && setKs((k) => ({ ...k, focus: "list" }))}
-      />
-      <section
-        ref={detailRef}
-        tabIndex={-1}
-        aria-label="Details"
-        className={cn("rl-pane rl-detail flex flex-col bg-pane outline-none", ks.focus === "detail" && "pane-edge")}
-        onFocus={() => ks.focus !== "detail" && setKs((k) => ({ ...k, focus: "detail" }))}
-      >
-        {showSettings && s ? (
-          <Settings
-            settings={s}
-            required={locked}
-            prs={all}
-            selected={selected}
-            onBack={() => go({ settings: false, mobile: "list", focus: "list" }, "focus-list")}
-            onSaved={() => go({ settings: false, mobile: "list" })}
-          />
-        ) : prs.isPending || settings.isPending ? (
-          <DetailSkeleton />
-        ) : current ? (
-          <>
-            <BackBar onBack={() => go({ mobile: "list", focus: "list" }, "focus-list")} />
-            {/* The sticky post bar covers the bottom of the pane, so focus and scroll targets stop above it. */}
-            <div data-scroll className="relative flex-1 overflow-auto overscroll-contain has-[[data-postbar]]:scroll-pb-16">
-              <PrDetail
-                key={current.id}
-                ref={detailApi}
-                pr={current}
-                me={s?.user ?? null}
-                onSettings={() => go({ settings: true, mobile: "detail", focus: "detail" })}
-                onLeave={() => {
-                  const i = ids.indexOf(current.id);
-                  setKs((k) => ({ ...k, selected: ids[i + 1] ?? ids[i - 1] ?? null }));
-                }}
-              />
-            </div>
-          </>
-        ) : (
-          <>
-            <BackBar onBack={() => go({ mobile: "list", focus: "list" }, "focus-list")} />
-            <div className="mx-auto my-10 grid max-w-[52ch] gap-3 px-6 text-ink-2">
-              <p className="m-0">
-                {all.length ? "Select a pull request in the list." : "Pull requests appear here after the first check."}
-              </p>
-            </div>
-          </>
-        )}
-      </section>
+      <main className="contents">
+        <ListPane
+          title={repo ?? (view === "runs" ? "Review runs" : view === "post" ? "Ready to post" : VIEW_LABEL[view])}
+          count={rows.length}
+          groups={groups}
+          loading={prs.isPending}
+          repo={repo}
+          query={query}
+          empty={
+            view === "post"
+              ? `Nothing is ready to post. Accept drafts from ${meta.data.runner.short} to post them to ${forge}.`
+              : EMPTY[view]
+          }
+          selected={showSettings ? null : selected}
+          focused={ks.focus === "list" && !showSettings}
+          doneOpen={doneOpen}
+          forge={forge}
+          runs={aiView && view === "runs" ? latest : null}
+          ready={aiView && view === "post" ? readyWhy : null}
+          candidate={candidate}
+          following={follow.isPending}
+          followError={follow.error && !isStale(follow.error) ? follow.error.message : null}
+          banner={
+            <Banner
+              stale={stale}
+              status={status.data}
+              now={now}
+              forge={forge}
+              onSettings={() => go({ settings: true, mobile: "detail" })}
+            />
+          }
+          filterRef={filterRef}
+          onQuery={(q) => {
+            setQuery(q);
+            if (follow.error) follow.reset();
+          }}
+          onRepo={setRepo}
+          onDoneOpen={setDoneOpen}
+          onSelect={onOpen}
+          onOpen={onOpen}
+          onFollow={() =>
+            follow.mutate(query.trim(), {
+              onSuccess: () => {
+                setQuery("");
+                setView("following");
+                setRepo(null);
+              },
+            })
+          }
+          onMenu={() => go({ mobile: "side" })}
+          onFocus={() => ks.focus !== "list" && setKs((k) => ({ ...k, focus: "list" }))}
+        />
+        <section
+          ref={detailRef}
+          tabIndex={-1}
+          aria-label="Details"
+          className={cn("rl-pane rl-detail flex flex-col bg-pane outline-none", ks.focus === "detail" && "pane-edge")}
+          onFocus={() => ks.focus !== "detail" && setKs((k) => ({ ...k, focus: "detail" }))}
+        >
+          {showSettings && s ? (
+            <Settings
+              settings={s}
+              required={locked}
+              prs={all}
+              selected={selected}
+              onBack={() => go({ settings: false, mobile: "list", focus: "list" }, "focus-list")}
+              onSaved={() => go({ settings: false, mobile: "list" })}
+            />
+          ) : prs.isPending || settings.isPending ? (
+            <DetailSkeleton />
+          ) : current ? (
+            <>
+              <BackBar onBack={() => go({ mobile: "list", focus: "list" }, "focus-list")} />
+              {/* The sticky post bar covers the bottom of the pane, so focus and scroll targets stop above it. */}
+              <div data-scroll className="relative flex-1 overflow-auto overscroll-contain has-[[data-postbar]]:scroll-pb-16">
+                <PrDetail
+                  key={current.id}
+                  ref={detailApi}
+                  pr={current}
+                  me={s?.user ?? null}
+                  onSettings={() => go({ settings: true, mobile: "detail", focus: "detail" })}
+                  onLeave={() => {
+                    const i = ids.indexOf(current.id);
+                    setKs((k) => ({ ...k, selected: ids[i + 1] ?? ids[i - 1] ?? null }));
+                  }}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <BackBar onBack={() => go({ mobile: "list", focus: "list" }, "focus-list")} />
+              <div className="mx-auto my-10 grid max-w-[52ch] gap-3 px-6 text-ink-2">
+                <p className="m-0">
+                  {all.length ? "Select a pull request in the list." : "Pull requests appear here after the first check."}
+                </p>
+              </div>
+            </>
+          )}
+        </section>
+      </main>
       <HelpSheet open={ks.help} onOpenChange={(help) => setKs((k) => ({ ...k, help }))} />
     </div>
   );

@@ -862,22 +862,25 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
 
   async function execute(j: Job, pr: Heads, brief: BriefInput) {
     const held: { ws?: Workspace } = {};
+    let e: Ending;
     try {
-      const e = await steps(j, pr, brief, held);
+      e = await steps(j, pr, brief, held);
       // A later re-review merges from this head. The ref keeps it after a force push.
-      if (end(j, e) && e.result && !j.threads && j.question === null && !j.profile.explain)
+      if (e.result && !j.threads && j.question === null && !j.profile.explain)
         await held.ws?.keep().catch((err) => log(`Could not keep the head of review run ${j.id}: ${noUrl((err as Error).message)}`));
-    } catch (e) {
-      const message = (e as Error).message;
+    } catch (err) {
+      const message = (err as Error).message;
       log(`Review run ${j.id} failed: ${message}`);
-      try {
-        end(j, failure("process", message));
-      } catch (e2) {
-        // The settings changed and closed this database. The next open marks the run failed.
-        log(`Could not end review run ${j.id}: ${(e2 as Error).message}`);
-      }
-    } finally {
-      await held.ws?.remove();
+      e = failure("process", message);
+    }
+    await held.ws?.remove().catch((err) => log(`Could not remove the workspace of review run ${j.id}: ${noUrl((err as Error).message)}`));
+    // The slot frees in the same tick as the end write. A client that sees the end can start the next run.
+    if (job === j) job = null;
+    try {
+      end(j, e);
+    } catch (e2) {
+      // The settings changed and closed this database. The next open marks the run failed.
+      log(`Could not end review run ${j.id}: ${(e2 as Error).message}`);
     }
   }
 

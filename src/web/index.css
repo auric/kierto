@@ -73,7 +73,7 @@
   --sel: #dde2e8;
   --foreground: #161a21;
   --ink-2: #4b5563;
-  --muted-foreground: #636d7b;
+  --muted-foreground: #5a6573;
   --border: #d9dee4;
   --rule-strong: #b6bec9;
   --pen: #2a45b0;
@@ -107,7 +107,7 @@
   --sel: #2b313b;
   --foreground: #e4e8ed;
   --ink-2: #a9b2be;
-  --muted-foreground: #8c96a3;
+  --muted-foreground: #97a0ab;
   --border: #2c323b;
   --rule-strong: #46505c;
   --pen: #93a8ff;
@@ -229,7 +229,8 @@ details[open] > summary .rl-chev {
   display: grid;
   grid-template-columns: 228px 368px minmax(0, 1fr);
 }
-.rl-app > * {
+.rl-app > *,
+.rl-app > main > * {
   min-height: 0;
   min-width: 0;
 }
@@ -276,14 +277,14 @@ details[open] > summary .rl-chev {
   .rl-app {
     grid-template-columns: minmax(0, 1fr);
   }
-  .rl-app > .rl-pane {
+  .rl-app .rl-pane {
     display: none;
   }
-  .rl-app[data-m="detail"] > .rl-detail {
+  .rl-app[data-m="detail"] .rl-detail {
     display: flex;
   }
-  .rl-app[data-m="side"] > .rl-side,
-  .rl-app[data-m="list"] > .rl-list {
+  .rl-app[data-m="side"] .rl-side,
+  .rl-app[data-m="list"] .rl-list {
     display: grid;
   }
   .rl-m-only {
