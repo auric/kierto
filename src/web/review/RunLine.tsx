@@ -94,7 +94,7 @@ export function RunLine(props: {
           <Hint label={fullTime(s.at)}>
             <time dateTime={new Date(s.at).toISOString()}>{agoLong(s.at, props.now)}</time>
           </Hint>
-          <span>{s.count}</span>
+          {s.count && <span>{s.count}</span>}
           {s.changes?.full && (
             <span>
               The run reviewed the full change, not only the commits since <Hash h={s.changes.from} />

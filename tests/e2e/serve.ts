@@ -320,6 +320,7 @@ r[key("POST", "/__control/reset")] = async () => {
   sc = { ...INITIAL };
   await headA();
   for (const p of [postsA, postsB, postsC]) p.reset();
+  fake.requests.length = 0;
   Object.assign(postA, { fail: null, hide: false });
   setClaude({ stream: "tree" });
   app = boot();
@@ -343,6 +344,9 @@ r[key("POST", "/__control/posts")] = async (req) => {
   if (change.hide !== undefined) postA.hide = change.hide;
   return ok({ bodies: postsA.bodies });
 };
+// Every request to the fake Bitbucket since the last reset that is not a GET. The control routes do not count.
+r[key("POST", "/__control/writes")] = () =>
+  ok({ writes: fake.requests.filter((x) => !x.startsWith("GET ") && !x.includes(" /__control/")) });
 // Lets the running cycle end, changes the scenario, then runs one full cycle.
 r[key("POST", "/__control/state")] = async (req) => {
   const change = (await req.json()) as Partial<Scenario>;

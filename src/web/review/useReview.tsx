@@ -33,6 +33,7 @@ import {
   latestReview,
   plural,
   questions,
+  RUN_TEXT,
   replyCard,
   replyMap,
   replyOf,
@@ -54,6 +55,8 @@ export type ReviewApi = {
   brief(): void;
   drafts(): void;
   log(): void;
+  // The log sheet of one run, such as an ask run (plan r2 UI-ASK). raw: show its raw output.
+  openRunLog(run: number, raw?: boolean): void;
   // Keys a, e, and d act on the draft, question, or reply draft that holds the focus (prototype/v3 triageKey).
   triage(key: "accept" | "edit" | "discard"): void;
   // A reply-draft run for one thread (replies.md step 6).
@@ -82,7 +85,7 @@ const NO_ITEMS: ReviewItemDto[] = [];
 const detailOf = (r: RunDto | null, d: RunDetail | undefined): RunDetail | null =>
   r ? (d?.run.id === r.id ? { ...d, run: { ...d.run, stale: r.stale } } : { run: r, events: [], items: [] }) : null;
 
-const doing = (r: RunDto | null) => (r?.kind === "reply" ? "drafting replies for" : "reviewing");
+const doing = (r: RunDto | null) => RUN_TEXT[r?.kind ?? "review"].doing;
 
 // Plan r2 UI-RR. It shows only when the server takes a re-review (rereviewState).
 function RereviewButton({ since, busy, onClick }: { since: string; busy: boolean; onClick: () => void }) {
@@ -128,8 +131,9 @@ export function useReview(
   const startRereview = useStartRereview(pr.id);
   const cancel = useCancelRun();
   const [composer, setComposer] = useState(false);
-  // of: "line" follows the run of the run line. "review" stays on the newest review run, for its drafts.
-  const [log, setLog] = useState<(LogTarget & { of: "line" | "review" }) | null>(null);
+  // of: "line" follows the run of the run line. "review" stays on the newest review run, for its drafts. A number is a run ID.
+  const [log, setLog] = useState<(LogTarget & { of: "line" | "review" | number }) | null>(null);
+  const pinned = useRun(typeof log?.of === "number" ? log.of : null);
   const [sumOpen, setSumOpen] = useState(false);
   const [openDrafts, setOpenDrafts] = useState<ReadonlyMap<number, boolean>>(new Map());
   const [triage, setTriage] = useState<TriageState>({ open: null, busy: new Set() });
@@ -206,8 +210,8 @@ export function useReview(
     focusAfter({ id: "review-btn", block: "nearest", flash: false });
   };
 
-  const openLog = (agent: string | null, raw = false, of: "line" | "review" = "line") => {
-    if (!(of === "review" ? latest : newest)) {
+  const openLog = (agent: string | null, raw = false, of: "line" | "review" | number = "line") => {
+    if (typeof of !== "number" && !(of === "review" ? latest : newest)) {
       toast.add({ title: "No review has run on this pull request yet. Press r to start one." });
       return;
     }
@@ -400,6 +404,7 @@ export function useReview(
       else toast.add({ title: `No drafts. Press r to start a review with ${meta.runner.name}.` });
     },
     log: () => openLog(null),
+    openRunLog: (id, raw = false) => openLog(null, raw, id),
     triage(key) {
       const at = Number(document.activeElement?.closest("[data-item]")?.getAttribute("data-item"));
       const it = all.find((x) => x.id === at && x.status !== "posted");
@@ -427,7 +432,7 @@ export function useReview(
   };
 
   const lineState = line ? runLine(line, meta.profiles, o.commits) : null;
-  const logRun = log?.of === "review" ? latest : newest;
+  const logRun = typeof log?.of === "number" ? log.of : (log?.of === "review" ? latest : newest)?.id;
   const your = o.threads.filter((t) => t.turn === "your").length;
   return {
     action: (
@@ -472,8 +477,8 @@ export function useReview(
           onLog={() => openLog(null)}
           onRaw={() => openLog(null, true)}
           onCancel={() => cancel.mutate(line.run.id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
-          // A reply run has no summary section. Its log lists the gaps.
-          onGaps={() => (line.run.kind === "reply" ? openLog(null) : openSummary())}
+          // Only a review run has a summary section. The log of a reply or ask run lists the gaps.
+          onGaps={() => (line.run.kind === "review" ? openSummary() : openLog(null))}
         />
         <BriefLine tasks={pr.tasks} note={line.run.note} />
       </>
@@ -485,7 +490,7 @@ export function useReview(
     cards,
     sheet: log && (
       <RunLog
-        detail={[run.data, other.data].find((d) => d && d.run.id === logRun?.id)}
+        detail={[run.data, other.data, pinned.data].find((d) => d && d.run.id === logRun)}
         meta={meta}
         prKey={prKey(pr)}
         tasks={pr.tasks}

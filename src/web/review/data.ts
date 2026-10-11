@@ -56,7 +56,12 @@ export const useReplyDrafts = (pr: number) =>
 export type StartResult = { run: RunDto } | { conflict: RunConflict };
 
 // 409 with `running` names the run that holds the only slot (A14). Any other 409 is an error.
-async function started(res: { status: number; ok: boolean; json(): Promise<unknown>; text(): Promise<string> }): Promise<StartResult> {
+export async function started(res: {
+  status: number;
+  ok: boolean;
+  json(): Promise<unknown>;
+  text(): Promise<string>;
+}): Promise<StartResult> {
   if (res.status !== 409) return { run: await read<RunDto>(res) };
   const text = await res.text();
   let body: Partial<RunConflict> = {};
@@ -67,7 +72,7 @@ async function started(res: { status: number; ok: boolean; json(): Promise<unkno
   throw new ApiError(409, body.error ?? text);
 }
 
-function useStart<A>(pr: number, post: (a: A) => Promise<StartResult>) {
+export function useStart<A>(pr: number, post: (a: A) => Promise<StartResult>) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: post,

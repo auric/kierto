@@ -1,9 +1,10 @@
-// PR detail (plan v3 WP5): header, then one column of Overview, Threads, Files, and Commits (prototype/v3 renderDetail).
+// PR detail (plan v3 WP5, r2 UI-ASK): header, then one column of Overview, Threads, Files, Commits, and Ask (prototype/v3 renderDetail).
 import { useMutation } from "@tanstack/react-query";
 import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommentDto, PrRow } from "../../shared/dto";
+import { AskPanel } from "../ask/AskPanel";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
 import { PostsGroup, useOutbox } from "../publish/Outbox";
@@ -30,6 +31,8 @@ export type DetailApi = {
   nextNew(d: 1 | -1): void;
   nextYour(): void;
   section(id: "files" | "commits"): void;
+  // Plan r2 UI-ASK: q opens the Ask section with the focus in its box.
+  ask(): void;
   // Plan v3 WP11: r, Shift+R, 2, 3, and the Esc layers of the review. Plan r2 UI-RR: c.
   rerun(): void;
   rereview(): void;
@@ -276,6 +279,14 @@ export function PrDetail({
       setSecs((s) => new Set(s).add(id));
       focusAfter({ id: `s-${id}-sum`, block: "start", flash: false });
     },
+    ask() {
+      if (!data) {
+        toast.add({ title: "The pull request is still loading." });
+        return;
+      }
+      setSecs((s) => new Set(s).add("ask"));
+      focusAfter({ id: "ask-q", block: "center", flash: false });
+    },
     ...review.api,
     // prototype/v3 Esc order: an edit, the brief, the post confirm, the run log.
     layer(target) {
@@ -357,6 +368,17 @@ export function PrDetail({
                 hints={hints}
               />
             ) : null}
+            {meta && (
+              <AskPanel
+                pr={pr}
+                meta={meta}
+                now={now}
+                open={secs.has("ask")}
+                onOpen={openSec("ask")}
+                onLog={review.api.openRunLog}
+                announce={announce}
+              />
+            )}
           </>
         ) : q.error ? (
           <Calm title={notFound ? "This pull request left the inbox" : "Cannot load this pull request"}>

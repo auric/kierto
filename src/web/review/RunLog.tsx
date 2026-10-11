@@ -320,14 +320,15 @@ function Foot({ detail, meta, raw, onRaw }: { detail: RunDetail; meta: MetaDto; 
     default: {
       const tokens = tokenTotal(r.usage);
       const time = r.usage ? clockDur(r.usage.durationMs / 1000) : r.finishedAt ? clockDur((r.finishedAt - r.startedAt) / 1000) : "";
+      // An ask run has no items. Its answer shows in the Ask section.
+      const count = countText(detail.items, r.status === "incomplete", r.kind);
       return (
         <span>
-          Result: {countText(detail.items, r.status === "incomplete", r.kind)}.{" "}
-          {[tokens === null ? "" : tokenText(tokens), time].filter(Boolean).join(", ")}
+          {count ? `Result: ${count}.` : "Answered."} {[tokens === null ? "" : tokenText(tokens), time].filter(Boolean).join(", ")}
           {tokens !== null || time ? "." : ""}
-          {/* A reply run has no summary section, so its gaps show here. */}
+          {/* Only a review run has a summary section. The gaps of other runs show here. */}
           {r.status === "incomplete" &&
-            (r.kind === "reply"
+            (r.kind !== "review"
               ? ` Coverage has gaps. ${r.summary ? [...r.summary.coverage.skipped, ...r.summary.coverage.unavailable, ...r.summary.coverage.notChecked].join(" ") : ""}`
               : " Coverage has gaps. The summary lists them.")}
         </span>

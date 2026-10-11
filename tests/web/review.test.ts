@@ -403,9 +403,30 @@ describe("reply drafts", () => {
     expect(countText([reply(3, 103, 305, {}, { action: "none" }), reply(4, 104, 405, {}, { action: "none" })], false, "reply")).toBe(
       "No reply drafts, 2 threads need no reply",
     );
-    expect(RUN_TEXT.reply).toEqual({ running: "Drafting replies…", failed: "Reply drafts failed.", cancelled: "the reply drafts" });
+    expect(RUN_TEXT.reply).toEqual({
+      running: "Drafting replies…",
+      failed: "Reply drafts failed.",
+      cancelled: "the reply drafts",
+      doing: "drafting replies for",
+      now: "drafting replies",
+    });
     expect(RUN_TEXT.review.running).toBe("Reviewing…");
     expect(runWhy(run({ kind: "reply", status: "running" })).text).toBe("General: drafting replies now.");
+  });
+
+  // Plan r2 section 7: an ask run is never labeled as a review. It has no items, so its count is empty.
+  test("an ask run reads Answering… while it runs and answered a question on when done, with an empty count", () => {
+    expect(RUN_TEXT.ask.running).toBe("Answering…");
+    expect(RUN_TEXT.ask.doing).toBe("answering a question on");
+    expect(runWhy(run({ kind: "ask", status: "running" })).text).toBe("General: answering a question now.");
+    expect(runWhy(run({ kind: "review", status: "running" })).text).toBe("General: reviewing now.");
+    // The Explain flag names a review "explained". An ask run keeps its own verb.
+    expect(runLine(detail(run({ kind: "ask", profile: "explain", question: "Why?" })), PROFILES)).toMatchObject({
+      kind: "done",
+      verb: "answered a question on",
+      count: "",
+    });
+    expect(countText([], false, "ask")).toBe("");
   });
 
   test("the thread-to-draft map keys reply items by thread and skips other kinds", () => {

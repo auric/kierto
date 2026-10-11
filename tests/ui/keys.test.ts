@@ -123,6 +123,13 @@ describe("detail keys", () => {
     expect(reduceKey(S, "c", C).handled).toBe(false);
   });
 
+  // Plan r2 UI-ASK: q opens the Ask section. In a text field, q is a letter.
+  test("q asks; it does nothing while typing or without a PR", () => {
+    expect(reduceKey({ ...S, selected: 20 }, "q", C)).toMatchObject({ effect: "ask", state: { focus: "detail", mobile: "detail" } });
+    expect(reduceKey({ ...S, selected: 20 }, "q", { ...C, typing: true }).handled).toBe(false);
+    expect(reduceKey(S, "q", C).handled).toBe(false);
+  });
+
   test("Enter in the detail toggles the current thread, but not on a button", () => {
     const detail = { ...S, selected: 20, focus: "detail" as const };
     expect(reduceKey(detail, "Enter", C).effect).toBe("thread-toggle");

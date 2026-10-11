@@ -65,6 +65,16 @@ export async function control(action: string, change?: Partial<Scenario> | Claud
   if (!res.ok) throw new Error(`control ${action}: ${res.status}`);
 }
 
+// Every request to the fake Bitbucket since the last reset that is not a GET, as "METHOD /path?query". Control routes do not count.
+export async function writes(): Promise<string[]> {
+  const res = await fetch(`${FAKE_URL}/__control/writes`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${E2E_TOKEN}` },
+  });
+  if (!res.ok) throw new Error(`control writes: ${res.status}`);
+  return ((await res.json()) as { writes: string[] }).writes;
+}
+
 // Applies the change, then returns every comment POST body of PR 1001 since the last reset.
 export async function posts(change: PostControl = {}): Promise<PostBody[]> {
   const res = await fetch(`${FAKE_URL}/__control/posts`, {

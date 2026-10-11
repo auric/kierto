@@ -90,7 +90,7 @@ function DiffLink({ web, forge }: { web: string; forge: string }) {
 }
 
 // Files and Commits start closed. The detail keeps them open across renders.
-function Fold({
+export function Fold({
   id,
   head,
   open,
@@ -179,7 +179,7 @@ export function FilesFold(props: {
   );
 }
 
-function FoldHead({ label, n }: { label: string; n: string }) {
+export function FoldHead({ label, n }: { label: string; n: string }) {
   return (
     <>
       {label}

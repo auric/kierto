@@ -206,10 +206,23 @@ export function runLine(d: RunDetail, profiles: ProfileDto[], commits?: CommitDt
 }
 
 // The kind label of the run line (R14): the newest run of any kind shows there.
-export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancelled: string }> = {
-  review: { running: "Reviewing…", failed: "Review failed.", cancelled: "the review" },
-  reply: { running: "Drafting replies…", failed: "Reply drafts failed.", cancelled: "the reply drafts" },
-  ask: { running: "Answering…", failed: "The question failed.", cancelled: "the question" },
+// doing: "<runner> is <doing> <PR>" while the run holds the only slot. now: "<profile>: <now> now." in the Review runs view.
+export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancelled: string; doing: string; now: string }> = {
+  review: { running: "Reviewing…", failed: "Review failed.", cancelled: "the review", doing: "reviewing", now: "reviewing" },
+  reply: {
+    running: "Drafting replies…",
+    failed: "Reply drafts failed.",
+    cancelled: "the reply drafts",
+    doing: "drafting replies for",
+    now: "drafting replies",
+  },
+  ask: {
+    running: "Answering…",
+    failed: "The question failed.",
+    cancelled: "the question",
+    doing: "answering a question on",
+    now: "answering a question",
+  },
 };
 
 // R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, and the brief.
@@ -415,7 +428,7 @@ export function runWhy(r: RunDto): RunWhy {
   const profile = r.profileName;
   switch (r.status) {
     case "running":
-      return { error: null, lead: null, text: `${profile}: ${r.kind === "reply" ? "drafting replies" : "reviewing"} now.` };
+      return { error: null, lead: null, text: `${profile}: ${RUN_TEXT[r.kind].now} now.` };
     case "cancelled":
       return { error: null, lead: null, text: `${profile}: you cancelled it.` };
     case "failed":
