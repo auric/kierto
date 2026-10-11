@@ -3,6 +3,9 @@ const TIMEOUT_MS = 10 * 60_000;
 const DRAIN_MS = 5_000;
 const STDERR_TAIL = 2_000;
 
+// Bun docs: BUN_BE_BUN=1 turns a compiled binary into the bun CLI. BUN_OPTIONS and NODE_OPTIONS add runtime flags. No child gets them.
+export const RUNTIME_ENV = /^(?:BUN_BE_BUN|BUN_OPTIONS|NODE_OPTIONS)$/i;
+
 export class GitError extends Error {
   override name = "GitError";
 }
@@ -13,7 +16,7 @@ export function gitEnv(emptyGlobal: string, config: [string, string][] = []): Re
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     // Inherited GIT_* variables can name another config, repository, or trace file. git runs SSH_ASKPASS before it reads GIT_TERMINAL_PROMPT.
-    if (v === undefined || /^GIT_/i.test(k) || /^SSH_ASKPASS$/i.test(k)) continue;
+    if (v === undefined || /^GIT_/i.test(k) || /^SSH_ASKPASS$/i.test(k) || RUNTIME_ENV.test(k)) continue;
     env[k] = v;
   }
   const all: [string, string][] = [["credential.helper", ""], ["http.followRedirects", "false"], ...config];

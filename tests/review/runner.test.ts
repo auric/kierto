@@ -261,7 +261,7 @@ describe("safety", () => {
     expect(await runner.check()).toMatchObject({ ok: false, kind: "unavailable", message: "claude.cmd is not the native claude.exe." });
   });
 
-  test("scrubbed env: no API key, no nested-session markers, background tasks off", async () => {
+  test("scrubbed env: no API key, no nested-session markers, no Bun or Node runtime flags, background tasks off", async () => {
     const set = {
       ANTHROPIC_API_KEY: "test-key",
       ANTHROPIC_AUTH_TOKEN: "test-token",
@@ -269,6 +269,9 @@ describe("safety", () => {
       CLAUDE_PID: "4242",
       CLAUDE_CODE_ENTRYPOINT: "cli",
       CLAUDE_CODE_SOMETHING: "x",
+      BUN_BE_BUN: "1",
+      BUN_OPTIONS: "--smol",
+      NODE_OPTIONS: "--inspect",
       RL_KEEP_ME: "kept",
     };
     const saved = Object.fromEntries(Object.keys(set).map((k) => [k, process.env[k]]));
@@ -280,6 +283,7 @@ describe("safety", () => {
       for (const c of calls()) {
         const keys = Object.keys(c.env).map((k) => k.toUpperCase());
         for (const k of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE", "CLAUDE_PID"]) expect(keys).not.toContain(k);
+        for (const k of ["BUN_BE_BUN", "BUN_OPTIONS", "NODE_OPTIONS"]) expect(keys).not.toContain(k);
         expect(keys.filter((k) => k.startsWith("CLAUDE_CODE_"))).toEqual(["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]);
         expect(c.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe("1");
         expect(c.env.RL_KEEP_ME).toBe("kept");

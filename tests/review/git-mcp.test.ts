@@ -180,3 +180,21 @@ describe("git MCP server", () => {
     expect(snapshot()).toEqual(before);
   });
 });
+
+test("gitEnv drops Bun and Node runtime flags from every git child", () => {
+  const set = { BUN_BE_BUN: "1", BUN_OPTIONS: "--smol", NODE_OPTIONS: "--inspect", RL_KEEP_ME: "kept" };
+  const saved = Object.fromEntries(Object.keys(set).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, set);
+  try {
+    for (const env of [gitEnv("/dev/null"), gitEnv("/dev/null", [["http.extraHeader", "x"]])]) {
+      const keys = Object.keys(env).map((k) => k.toUpperCase());
+      for (const k of ["BUN_BE_BUN", "BUN_OPTIONS", "NODE_OPTIONS"]) expect(keys).not.toContain(k);
+      expect(env.RL_KEEP_ME).toBe("kept");
+    }
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});

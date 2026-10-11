@@ -4,6 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { RunErrorKind, RunEvent, SDKResultMessage, SDKSystemMessage } from "../../shared/run-log";
 import { log } from "../log";
+import { RUNTIME_ENV } from "./git";
 import { classify, createStreamParser } from "./stream";
 
 // Gate B ran on this version. Older versions have other flags and event shapes.
@@ -58,13 +59,14 @@ export type RunnerOptions = {
 };
 
 // Gate B: ANTHROPIC_* selects API billing. CLAUDECODE, CLAUDE_PID, and CLAUDE_CODE_* mark a nested session.
+// The git MCP child gets this env through the CLI. mcp.json sets no env for it.
 export function childEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     // Windows env names ignore case.
     const K = process.platform === "win32" ? k.toUpperCase() : k;
     if (v === undefined || K === "ANTHROPIC_API_KEY" || K === "ANTHROPIC_AUTH_TOKEN" || K === "CLAUDECODE" || K === "CLAUDE_PID") continue;
-    if (K.startsWith("CLAUDE_CODE_")) continue;
+    if (K.startsWith("CLAUDE_CODE_") || RUNTIME_ENV.test(K)) continue;
     env[k] = v;
   }
   // Gate B3: with this switch, subagents run in the foreground and the run sends one result event.
