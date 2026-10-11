@@ -253,7 +253,9 @@ const files = (p: string): string[] => {
     return [p];
   }
 };
-const strTokens = [...new Set([...strMap.keys(), ...scanOnly, ...hashMap.keys()])].filter((t) => t.length >= 3 && strMap.get(t)?.toLowerCase() !== t && t !== "bitbucket" && t !== "jira");
+// Generic product and default branch names are not secrets. Docs use them as plain words.
+const PUBLIC_WORDS = new Set(["bitbucket", "jira", "main", "master", "develop"]);
+const strTokens = [...new Set([...strMap.keys(), ...scanOnly, ...hashMap.keys()])].filter((t) => t.length >= 3 && strMap.get(t)?.toLowerCase() !== t && !PUBLIC_WORDS.has(t));
 const idTokens = [...idMap.keys()];
 let hits = 0;
 let checked = 0;

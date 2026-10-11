@@ -23,9 +23,13 @@ const CHECKS: Record<string, string> = {
   b5: "B5. Errors: `--max-turns 1` on a two-step task, and a run with an empty `CLAUDE_CONFIG_DIR` (auth failure).",
   b6: "B6. A sanitized hostile repository with the app flags. Expect no hook, no canary, and only the app MCP server.",
   b7: "B7. A stub stdio MCP server with one read-only tool, called by the main agent and by a subagent.",
+  b8: "B8. `--restricted` with stream-json, `--json-schema`, the stub MCP server, and `rl-reviewer`. Variant: `--setting-sources user` and `--settings`.",
+  "b9-first-try":
+    "B9, first try. The WP8 flag set with `--allowedTools mcp__rl-*` and no `StructuredOutput` in the `rl-main` tools. The stub tool is refused, and no result event has `structured_output`.",
+  b9: "B9. The WP8 flag set with a long-path cwd: `--restricted`, `--agent rl-main`, `rl-reviewer`, the stub MCP server, `--json-schema`, `--no-session-persistence`, and `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`.",
 };
 // Public built-in agent and product names. They are not private data, and a replacement would break the event shapes.
-const RESERVED = new Set(["claude", "general-purpose", "explore", "plan", "statusline-setup", "claude-code-guide"]);
+const RESERVED = new Set(["claude", "general-purpose", "explore", "plan", "statusline-setup", "claude-code-guide", "builtin"]);
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 const isObj = (v: Json): v is { [k: string]: Json } => !!v && typeof v === "object" && !Array.isArray(v);
@@ -167,7 +171,7 @@ for (const [f, evs] of raw) {
   for (const e of out) if (isObj(e) && e.subtype === "init" && typeof e.claude_code_version === "string") version ||= e.claude_code_version;
   writeFileSync(join(OUT, f), `${out.map((e) => JSON.stringify(e)).join("\n")}\n`);
 }
-const rows = files.map((f) => `| \`${f}\` | ${CHECKS[f.slice(0, 2)] ?? "Not mapped to a check."} |`);
+const rows = files.map((f) => `| \`${f}\` | ${CHECKS[basename(f, ".jsonl")] ?? CHECKS[f.slice(0, 2)] ?? "Not mapped to a check."} |`);
 writeFileSync(
   join(OUT, "README.md"),
   [

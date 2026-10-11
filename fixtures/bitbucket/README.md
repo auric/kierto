@@ -25,6 +25,24 @@ Regenerate: run the probe (`bun scripts/gate0/bitbucket-probe.ts --pr <PR> --wri
 | `comment-get-after-delete-404.json` | 27 post-delete-0 | `GET .../comments/{id}` after the delete. 404 with `errors[].message` only, no `exceptionName`. |
 | `activities-after-delete.json` | 28 trace-delete | Activities after all deletes. The comment activities are gone. The server shows no deleted-comment shape in activities. |
 
+## Gate v3 fixtures (pending Gate A)
+
+The v3 probe (`bitbucket-probe.ts --v3`) writes these files. They do not exist until Gate A runs on the real server. `sanitize-fixtures.ts` skips a v3 file whose raw source is missing.
+
+| File | Raw probe step | Status |
+|---|---|---|
+| `pull-request-commits-page.json` | v3-p1-commits-p0 | Pending Gate A |
+| `jira-issues.json` | v3-p1-jira-issues | Pending Gate A |
+| `repository.json` | v3-p1-repository | Pending Gate A |
+| `comment-inline-removed-response.json` | v3-p1-post-removed | Pending Gate A |
+| `comment-inline-context-response.json` | v3-p1-post-context | Pending Gate A |
+| `comment-inline-merge-base-response.json` | v3-p1-post-merge-base | Pending Gate A |
+| `comment-blocker-task-response.json` | v3-p1-post-blocker | Pending Gate A |
+| `comment-blocker-resolved-response.json` | v3-p1-resolve-blocker | Pending Gate A |
+| `activities-v3-after-write.json` | v3-p1-activities-after-write-p0 | Pending Gate A |
+| `activities-rescoped-orphaned-range.json` | v3-p2-activities-p0 | Pending Gate A |
+| `pull-request-commits-after-push.json` | v3-p2-commits-p0 | Pending Gate A |
+
 ## Synthetic scenarios
 
 `tests/support/scenarios.ts` derives synthetic states from these files at test time: page splits, both last-page forms, a missing cursor, duplicates, reordering, a version-0 state before the recorded edit, comments by a second user, new nested replies, a higher comment version, a merged PR, and a new source head. The server did not send these states. The second user comes from `dashboard-reviewer-page.json`, because every recorded comment is by the token owner.
