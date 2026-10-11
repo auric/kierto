@@ -861,6 +861,32 @@ button.rl-ll:hover {
   border-left: 2px solid var(--border);
   color: var(--muted-foreground);
 }
+/* The table width never reaches the ancestors' intrinsic sizes, so a grid track of the pane does not grow. */
+.rl-md-table {
+  overflow-x: auto;
+  margin: 0 0 0.5em;
+  contain: inline-size;
+}
+.rl-md :where(th, td) {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+  /* A cell breaks between words only. A wider table scrolls in .rl-md-table. */
+  overflow-wrap: normal;
+}
+.rl-md th {
+  background: var(--sunken);
+  font-weight: 600;
+}
+.rl-md .contains-task-list {
+  padding-left: 0;
+  list-style: none;
+}
+.rl-md .task-list-item input {
+  margin: 0 0.4em 0 0;
+  vertical-align: -1px;
+}
 /* Headings stay close to the text size: a comment is not a page. */
 .rl-md :where(h1, h2, h3, h4) {
   margin: 0.9em 0 0.35em;

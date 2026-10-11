@@ -2,7 +2,10 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { ATT_ID, type AttachmentMeta, type IssueContext, JIRA_KEY } from "../../shared/dto";
-import { fenced, toMarkdown } from "./markdown";
+import { COMPILED } from "../build";
+import { log } from "../log";
+import { fenced } from "./markdown";
+import type { ConvertReply, ConvertRequest } from "./markdown-worker";
 import { ContextError, type ContextErrorKind, type ContextSource } from "./source";
 
 export const JIRA = { id: "jira", name: "Jira" } as const;
@@ -17,6 +20,82 @@ export const MAX_BODY_BYTES = 10 * 1024 * 1024;
 export const MAX_HTML_BYTES = 1024 * 1024;
 export const MAX_ATTACHMENTS = 200;
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
+// Deep nesting keeps the converter busy for minutes (1 MB of nested div: over 90 s).
+// A field budget starts when its worker is ready. The total budget starts when the first worker is ready.
+export const CONVERT_FIELD_MS = 3_000;
+export const CONVERT_TOTAL_MS = 10_000;
+const WORKER_START_MS = 5_000;
+// In a compiled binary, import.meta.url names the bundle entry. scripts/compile.ts embeds markdown-worker.ts as context/markdown-worker.js beside it.
+const WORKER_URL = new URL(COMPILED ? "./context/markdown-worker.ts" : "./markdown-worker.ts", import.meta.url).href;
+
+// One worker per issue fetch, started on first use. convert gives null for a converter error, a timeout, or a worker that does not start.
+function createConverter(base: string, fieldMs: number, totalMs: number) {
+  let worker: Worker | null = null;
+  let ready: Promise<boolean> = Promise.resolve(false);
+  let pending: ((r: ConvertReply | null) => void) | null = null;
+  let deadline = Number.POSITIVE_INFINITY;
+  let broken = false;
+  let seq = 0;
+
+  const stop = () => {
+    worker?.terminate();
+    worker = null;
+  };
+
+  const start = (): Worker => {
+    const w = new Worker(WORKER_URL);
+    ready = new Promise((resolve) => {
+      const t = setTimeout(() => resolve(false), WORKER_START_MS);
+      // Bun's types can resolve Worker.onmessage to a constructor type under the DOM lib.
+      (w as EventTarget).addEventListener("message", (e) => {
+        const data = (e as MessageEvent<ConvertReply | "ready">).data;
+        if (data !== "ready") {
+          if (data.id === seq) pending?.(data);
+          return;
+        }
+        clearTimeout(t);
+        resolve(true);
+      });
+      w.onerror = () => {
+        clearTimeout(t);
+        resolve(false);
+        if (w === worker) pending?.(null);
+      };
+    });
+    worker = w;
+    return w;
+  };
+
+  return {
+    async convert(html: string): Promise<string | null> {
+      if (broken || performance.now() >= deadline) return null;
+      const w = worker ?? start();
+      if (!(await ready)) {
+        broken = true;
+        stop();
+        log("The Jira text converter did not start. The task shows the wiki text.");
+        return null;
+      }
+      deadline = Math.min(deadline, performance.now() + totalMs);
+      const ms = Math.min(fieldMs, deadline - performance.now());
+      if (ms <= 0) return null;
+      const id = ++seq;
+      const reply = await new Promise<ConvertReply | null>((resolve) => {
+        const t = setTimeout(() => done(null), ms);
+        const done = (r: ConvertReply | null) => {
+          clearTimeout(t);
+          pending = null;
+          resolve(r);
+        };
+        pending = done;
+        w.postMessage({ id, html, base } satisfies ConvertRequest);
+      });
+      if (!reply) stop();
+      return reply && "markdown" in reply ? reply.markdown : null;
+    },
+    close: stop,
+  };
+}
 
 // Lenient: unknown keys pass. The real shapes are not recorded (integration-check.md, Release 2).
 const myself = z.object({ name: z.string() });
@@ -69,7 +148,13 @@ async function readBody(res: Response): Promise<string | null> {
   }
 }
 
-export type JiraOptions = { baseUrl: string; token: string; caFile?: string; timeoutMs?: number };
+export type JiraOptions = {
+  baseUrl: string;
+  token: string;
+  caFile?: string;
+  timeoutMs?: number;
+  convertMs?: { field: number; total: number };
+};
 
 function kindOf(status: number): ContextErrorKind {
   if (status >= 300 && status < 400) return "redirect";
@@ -90,6 +175,7 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
   const base = opts.baseUrl.replace(/\/+$/, "");
   const ca = opts.caFile ? readFileSync(opts.caFile, "utf8") : undefined;
   const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
+  const convertMs = opts.convertMs ?? { field: CONVERT_FIELD_MS, total: CONVERT_TOTAL_MS };
 
   async function get<T extends z.ZodType>(path: string, schema: T): Promise<z.infer<T>> {
     const endpoint = path.split("?")[0] ?? path;
@@ -151,34 +237,34 @@ export function createJiraSource(opts: JiraOptions): ContextSource {
         truncated = true;
         return s.slice(0, max);
       };
+      const converter = createConverter(base, convertMs.field, convertMs.total);
       // The rendered HTML as Markdown. A missing or too large rendered field, or a failed conversion, gives the wiki text.
-      const markdown = (html: string | null | undefined, wiki: string | null | undefined): string | null => {
-        if (html != null && Buffer.byteLength(html) <= MAX_HTML_BYTES) {
-          try {
-            return toMarkdown(html, base);
-          } catch {
-            // Deep nesting overflows the stack of the converter.
-          }
-        }
-        return wiki ? fenced(wiki) : (wiki ?? null);
+      const markdown = async (html: string | null | undefined, wiki: string | null | undefined): Promise<string | null> => {
+        const text = html != null && Buffer.byteLength(html) <= MAX_HTML_BYTES ? await converter.convert(html) : null;
+        return text ?? (wiki ? fenced(wiki) : (wiki ?? null));
       };
-      const text = markdown(renderedFields?.description, fields.description);
-      const description = text == null ? null : cut(text, CAPS.description);
-      let bytes = Buffer.byteLength(fields.summary) + Buffer.byteLength(description ?? "");
+      let description: string | null;
       const comments: IssueContext["comments"] = [];
-      if (raw.length > CAPS.comments) truncated = true;
-      for (const c of raw.slice(0, CAPS.comments)) {
-        const out = {
-          author: c.author?.displayName || c.author?.name || "(unknown)",
-          created: c.created ?? "",
-          body: cut(markdown(c.renderedBody, c.body) ?? "", CAPS.comment),
-        };
-        bytes += Buffer.byteLength(out.author) + Buffer.byteLength(out.created) + Buffer.byteLength(out.body);
-        if (bytes > CAPS.totalBytes) {
-          truncated = true;
-          break;
+      try {
+        const text = await markdown(renderedFields?.description, fields.description);
+        description = text == null ? null : cut(text, CAPS.description);
+        let bytes = Buffer.byteLength(fields.summary) + Buffer.byteLength(description ?? "");
+        if (raw.length > CAPS.comments) truncated = true;
+        for (const c of raw.slice(0, CAPS.comments)) {
+          const out = {
+            author: c.author?.displayName || c.author?.name || "(unknown)",
+            created: c.created ?? "",
+            body: cut((await markdown(c.renderedBody, c.body)) ?? "", CAPS.comment),
+          };
+          bytes += Buffer.byteLength(out.author) + Buffer.byteLength(out.created) + Buffer.byteLength(out.body);
+          if (bytes > CAPS.totalBytes) {
+            truncated = true;
+            break;
+          }
+          comments.push(out);
         }
-        comments.push(out);
+      } finally {
+        converter.close();
       }
       const attachments: AttachmentMeta[] = [];
       for (const a of fields.attachment ?? []) {

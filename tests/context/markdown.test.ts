@@ -168,7 +168,40 @@ describe("Markdown component", () => {
   });
 
   test("attachment: stays an image source only", () => {
-    expect(render("[l](attachment:1)")).toBe('<div class="rl-md"><p><a href="" target="_blank" rel="noopener noreferrer">l</a></p></div>');
+    expect(render("[l](attachment:1)")).toBe('<div class="rl-md"><p>l</p></div>');
+  });
+
+  test("GFM: a table in its scroll box, strikethrough, and a task list", () => {
+    const html = render("| A | B \\| C |\n| :-- | --: |\n| **1** | 2 |\n\n~~old~~\n\n- [x] done\n- [ ] open");
+    expect(html).toContain(
+      '<div class="rl-md-table"><table><thead><tr><th style="text-align:left">A</th><th style="text-align:right">B | C</th></tr></thead>' +
+        '<tbody><tr><td style="text-align:left"><strong>1</strong></td><td style="text-align:right">2</td></tr></tbody></table></div>',
+    );
+    expect(html).toContain("<del>old</del>");
+    expect(html).toContain('<li class="task-list-item"><input type="checkbox" disabled="" checked=""/> done</li>');
+  });
+
+  test("links: only http(s) and in-page links; GFM autolinks and footnotes make no other scheme", () => {
+    const html = render(
+      [
+        "a@example.test www.example.test https://x.example.test/p mailto:b@example.test xmpp:c@example.test",
+        "[m](mailto:d@example.test) [i](irc://e.example.test) [j](javascript:alert(1)) [r](/rel)",
+        "",
+        "Note[^1]",
+        "",
+        "[^1]: [f](ftp://f.example.test) and <mailto:g@example.test>",
+      ].join("\n"),
+    );
+    const hrefs = [...html.matchAll(/<a [^>]*>/g)].map((m) => m[0]);
+    expect(hrefs).toEqual([
+      '<a href="http://www.example.test" target="_blank" rel="noopener noreferrer">',
+      '<a href="https://x.example.test/p" target="_blank" rel="noopener noreferrer">',
+      '<a href="/rel" target="_blank" rel="noopener noreferrer">',
+      '<a href="#user-content-fn-1" id="user-content-fnref-1" data-footnote-ref="true" aria-describedby="footnote-label">',
+      '<a href="#user-content-fnref-1" data-footnote-backref="" aria-label="Back to reference 1" class="data-footnote-backref">',
+    ]);
+    for (const text of ["a@example.test", "b@example.test", "c@example.test", "m", "i", "j", "f", "g@example.test"])
+      expect(html).toContain(text);
   });
 });
 

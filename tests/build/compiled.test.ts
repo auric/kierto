@@ -128,7 +128,7 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
     expect(version(new Database(dbPath(join(root, "data"), url), { readonly: true }))).toBe(expected);
   });
 
-  test("a task fetch converts the Jira HTML to Markdown with the bundled turndown", async () => {
+  test("a task fetch converts the Jira HTML to Markdown with the bundled turndown in the bundled worker", async () => {
     const url = fake?.url as string;
     expect((await call("PUT", "/api/settings", { baseUrl: url, token: FAKE_TOKEN, notifications: false })).status).toBe(200);
     expect((await call("PUT", "/api/settings/jira", { baseUrl: jira?.url, token: JIRA_TOKEN })).status).toBe(200);
@@ -144,7 +144,7 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
     const res = await call("POST", `/api/prs/${pr}/task-context/${ISSUE_KEY}`);
     expect(res.status).toBe(200);
     const dto = (await res.json()) as TaskContextDto;
-    // A failed conversion gives the fenced wiki text ("h3. Acceptance criteria") instead.
+    // A failed conversion, or a worker that does not start, gives the fenced wiki text ("h3. Acceptance criteria") instead.
     expect(dto.format).toBe("markdown");
     expect(dto.description).toContain("### Acceptance criteria\n\n-   Batch the writes.");
     expect(dto.description).toContain("| Flush \\| now | Alex Smith |");

@@ -105,6 +105,22 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
   await expect(task.getByRole("heading", { level: 3, name: "Acceptance criteria" })).toBeVisible();
   await expect(task.getByRole("listitem")).toHaveText(["Batch the writes.", "Flush the cache before the write lock."]);
   await expect(task.locator("pre code")).toHaveText('String fence = "``` is not a fence";');
+  // A GFM table. A wide table scrolls in its own box, and the panes keep their width.
+  const table = task.getByRole("table");
+  await expect(table.getByRole("columnheader")).toHaveText(["Step", "Owner"]);
+  await expect(table.getByRole("cell")).toHaveText(["Flush | now", "Alex Smith", "Lock", "sync worker"]);
+  const panes = page.locator("#brief, section[aria-label='Details']");
+  const widths = () => panes.evaluateAll((els) => els.map((el) => [el.scrollWidth, el.clientWidth]));
+  const before = await widths();
+  const cell = table.getByRole("cell", { name: "sync worker" });
+  await cell.evaluate((td) => {
+    td.textContent = "wide".repeat(100);
+  });
+  expect(await task.locator(".rl-md-table").evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  expect(await widths()).toEqual(before);
+  await table.getByRole("cell", { name: "wide".repeat(100) }).evaluate((td) => {
+    td.textContent = "sync worker";
+  });
   const link = task.getByRole("link", { name: "design note" });
   await expect(link).toHaveAttribute("href", "https://docs.example.test/cache");
   await expect(link).toHaveAttribute("target", "_blank");

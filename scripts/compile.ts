@@ -28,8 +28,9 @@ if (import.meta.main) {
         "build",
         "--compile",
         "src/server/main.ts",
-        // A worker needs its own entry point. --root keeps it at tasks/worker.js, where src/server/tasks/rules.ts looks.
+        // A worker needs its own entry point. --root keeps each worker at the path where rules.ts or jira.ts looks.
         "src/server/tasks/worker.ts",
+        "src/server/context/markdown-worker.ts",
         "--root",
         "src/server",
         "--asset",

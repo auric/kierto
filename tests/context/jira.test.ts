@@ -1,6 +1,6 @@
 // Plan r2 S-JIRA and r3 S-JMD: the Jira REST client against the fake Jira. No test calls a real server.
 import { afterEach, describe, expect, test } from "bun:test";
-import { CAPS, createJiraSource, MAX_ATTACHMENTS, MAX_BODY_BYTES, MAX_HTML_BYTES } from "../../src/server/context/jira";
+import { CAPS, CONVERT_FIELD_MS, createJiraSource, MAX_ATTACHMENTS, MAX_BODY_BYTES, MAX_HTML_BYTES } from "../../src/server/context/jira";
 import { ContextError } from "../../src/server/context/source";
 import { key, startFakeBitbucket } from "../support/fake-bitbucket";
 import { type FakeJira, ISSUE_KEY, JIRA_TOKEN, startFakeJira } from "../support/fake-jira";
@@ -129,6 +129,50 @@ describe("Jira client", () => {
     expect(issue.comments[0]?.body).toBe("c".repeat(CAPS.comment));
     expect(issue.truncated).toBe(true);
   });
+
+  // Without the budget, this field keeps the converter busy for minutes.
+  const NESTED = "<div>".repeat(200_000);
+
+  test("deep nesting passes the field budget: the field gives the wiki text, and the next field converts in a new worker", async () => {
+    expect(Buffer.byteLength(NESTED)).toBeLessThanOrEqual(MAX_HTML_BYTES);
+    const { fake, source } = setup();
+    fake.routes[key("GET", ISSUE)] = {
+      status: 200,
+      body: { fields: { summary: "S", description: "w" }, renderedFields: { description: NESTED } },
+    };
+    fake.routes[key("GET", `${ISSUE}/comment`)] = page([{ body: "c", renderedBody: "<p><b>c</b></p>" }]);
+    // The main thread stays free: the longest gap between two timer ticks.
+    let last = performance.now();
+    let gap = 0;
+    const tick = setInterval(() => {
+      gap = Math.max(gap, performance.now() - last);
+      last = performance.now();
+    }, 20);
+    const t0 = performance.now();
+    const issue = await source.fetchIssue(ISSUE_KEY).finally(() => clearInterval(tick));
+    const ms = performance.now() - t0;
+    expect(issue.description).toBe("```\nw\n```");
+    expect(issue.comments.map((c) => c.body)).toEqual(["**c**"]);
+    expect(ms).toBeGreaterThanOrEqual(CONVERT_FIELD_MS);
+    expect(ms).toBeLessThan(CONVERT_FIELD_MS + 3_000);
+    expect(gap).toBeLessThan(1_000);
+  }, 20_000);
+
+  test("after the total budget, every later field gives the wiki text", async () => {
+    const fake = startFakeJira();
+    stops.push(fake.stop);
+    const source = createJiraSource({ baseUrl: fake.url, token: JIRA_TOKEN, convertMs: { field: 300, total: 300 } });
+    fake.routes[key("GET", ISSUE)] = {
+      status: 200,
+      body: { fields: { summary: "S", description: "w" }, renderedFields: { description: NESTED } },
+    };
+    fake.routes[key("GET", `${ISSUE}/comment`)] = page([{ body: "c", renderedBody: "<p><b>c</b></p>" }]);
+    const t0 = performance.now();
+    const issue = await source.fetchIssue(ISSUE_KEY);
+    expect(performance.now() - t0).toBeLessThan(3_000);
+    expect(issue.description).toBe("```\nw\n```");
+    expect(issue.comments.map((c) => c.body)).toEqual(["```\nc\n```"]);
+  }, 20_000);
 
   test("attachments: lenient entries, numeric IDs as digits, bad entries left out, at most 200", async () => {
     const { fake, source } = setup();
