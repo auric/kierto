@@ -1,0 +1,48 @@
+{
+  "status": 201,
+  "body": {
+    "properties": {
+      "repositoryId": 10002
+    },
+    "id": 1000004,
+    "version": 0,
+    "text": "[review-loop gate0 probe, safe to ignore] v3 merge-base",
+    "author": {
+      "name": "jdoe",
+      "emailAddress": "jdoe@example.test",
+      "active": true,
+      "displayName": "Jane Doe",
+      "id": 10001,
+      "slug": "jdoe",
+      "type": "NORMAL",
+      "links": {
+        "self": [
+          {
+            "href": "https://bitbucket.example.test/users/jdoe"
+          }
+        ]
+      }
+    },
+    "createdDate": 1791710578199,
+    "updatedDate": 1791710578199,
+    "comments": [],
+    "anchor": {
+      "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a",
+      "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+      "line": 3,
+      "lineType": "ADDED",
+      "fileType": "TO",
+      "path": "sample1.md",
+      "diffType": "COMMIT",
+      "orphaned": false
+    },
+    "threadResolved": false,
+    "severity": "NORMAL",
+    "state": "OPEN",
+    "permittedOperations": {
+      "editable": true,
+      "transitionable": true,
+      "deletable": true
+    }
+  }
+}

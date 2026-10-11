@@ -1,0 +1,688 @@
+{
+  "status": 200,
+  "body": {
+    "size": 4,
+    "limit": 50,
+    "isLastPage": true,
+    "values": [
+      {
+        "id": 10000005,
+        "createdDate": 1791710578204,
+        "user": {
+          "name": "jdoe",
+          "emailAddress": "jdoe@example.test",
+          "active": true,
+          "displayName": "Jane Doe",
+          "id": 10001,
+          "slug": "jdoe",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.test/users/jdoe"
+              }
+            ]
+          }
+        },
+        "action": "COMMENTED",
+        "commentAction": "ADDED",
+        "comment": {
+          "properties": {
+            "repositoryId": 10002
+          },
+          "id": 1000004,
+          "version": 0,
+          "text": "[review-loop gate0 probe, safe to ignore] v3 merge-base",
+          "author": {
+            "name": "jdoe",
+            "emailAddress": "jdoe@example.test",
+            "active": true,
+            "displayName": "Jane Doe",
+            "id": 10001,
+            "slug": "jdoe",
+            "type": "NORMAL",
+            "links": {
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/users/jdoe"
+                }
+              ]
+            }
+          },
+          "createdDate": 1791710578199,
+          "updatedDate": 1791710578199,
+          "comments": [
+            {
+              "properties": {
+                "repositoryId": 10002
+              },
+              "id": 1000009,
+              "version": 0,
+              "text": "Sample comment 47.",
+              "author": {
+                "name": "jdoe",
+                "emailAddress": "jdoe@example.test",
+                "active": true,
+                "displayName": "Jane Doe",
+                "id": 10001,
+                "slug": "jdoe",
+                "type": "NORMAL",
+                "links": {
+                  "self": [
+                    {
+                      "href": "https://bitbucket.example.test/users/jdoe"
+                    }
+                  ]
+                }
+              },
+              "createdDate": 1791710594446,
+              "updatedDate": 1791710594446,
+              "comments": [],
+              "anchor": {
+                "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a",
+                "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+                "line": 3,
+                "lineType": "ADDED",
+                "fileType": "TO",
+                "path": "sample1.md",
+                "diffType": "COMMIT",
+                "orphaned": false
+              },
+              "threadResolved": false,
+              "severity": "NORMAL",
+              "state": "OPEN",
+              "permittedOperations": {
+                "editable": true,
+                "transitionable": true,
+                "deletable": true
+              }
+            }
+          ],
+          "anchor": {
+            "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a",
+            "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+            "line": 3,
+            "lineType": "ADDED",
+            "fileType": "TO",
+            "path": "sample1.md",
+            "diffType": "COMMIT",
+            "orphaned": false
+          },
+          "threadResolved": false,
+          "severity": "NORMAL",
+          "state": "OPEN",
+          "permittedOperations": {
+            "editable": true,
+            "transitionable": true,
+            "deletable": true
+          }
+        },
+        "commentAnchor": {
+          "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a",
+          "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+          "line": 3,
+          "lineType": "ADDED",
+          "fileType": "TO",
+          "path": "sample1.md",
+          "diffType": "COMMIT",
+          "orphaned": false
+        },
+        "diff": {
+          "destination": {
+            "components": [
+              "sample1.md"
+            ],
+            "parent": "",
+            "name": "sample1.md",
+            "extension": "md",
+            "toString": "sample1.md"
+          },
+          "hunks": [
+            {
+              "sourceLine": 1,
+              "sourceSpan": 11,
+              "destinationLine": 1,
+              "destinationSpan": 13,
+              "segments": [
+                {
+                  "type": "CONTEXT",
+                  "lines": [
+                    {
+                      "destination": 1,
+                      "source": 1,
+                      "line": "sample line 48",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 2,
+                      "source": 2,
+                      "line": "sample line 49",
+                      "truncated": false
+                    }
+                  ],
+                  "truncated": false
+                },
+                {
+                  "type": "ADDED",
+                  "lines": [
+                    {
+                      "destination": 3,
+                      "source": 3,
+                      "line": "sample line 50",
+                      "truncated": false,
+                      "commentIds": [
+                        1000004
+                      ]
+                    },
+                    {
+                      "destination": 4,
+                      "source": 3,
+                      "line": "sample line 51",
+                      "truncated": false
+                    }
+                  ],
+                  "truncated": false
+                },
+                {
+                  "type": "CONTEXT",
+                  "lines": [
+                    {
+                      "destination": 5,
+                      "source": 3,
+                      "line": "sample line 52",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 6,
+                      "source": 4,
+                      "line": "sample line 53",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 7,
+                      "source": 5,
+                      "line": "sample line 54",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 8,
+                      "source": 6,
+                      "line": "sample line 55",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 9,
+                      "source": 7,
+                      "line": "sample line 56",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 10,
+                      "source": 8,
+                      "line": "sample line 57",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 11,
+                      "source": 9,
+                      "line": "sample line 58",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 12,
+                      "source": 10,
+                      "line": "sample line 59",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 13,
+                      "source": 11,
+                      "line": "sample line 60",
+                      "truncated": false
+                    }
+                  ],
+                  "truncated": false
+                }
+              ],
+              "truncated": false
+            }
+          ],
+          "truncated": false,
+          "properties": {
+            "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+            "current": true,
+            "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a"
+          }
+        }
+      },
+      {
+        "id": 10000004,
+        "createdDate": 1791710578302,
+        "user": {
+          "name": "jdoe",
+          "emailAddress": "jdoe@example.test",
+          "active": true,
+          "displayName": "Jane Doe",
+          "id": 10001,
+          "slug": "jdoe",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.test/users/jdoe"
+              }
+            ]
+          }
+        },
+        "action": "COMMENTED",
+        "commentAction": "ADDED",
+        "comment": {
+          "properties": {
+            "repositoryId": 10002
+          },
+          "id": 1000008,
+          "version": 1,
+          "text": "[review-loop gate0 probe, safe to ignore] v3 blocker",
+          "author": {
+            "name": "jdoe",
+            "emailAddress": "jdoe@example.test",
+            "active": true,
+            "displayName": "Jane Doe",
+            "id": 10001,
+            "slug": "jdoe",
+            "type": "NORMAL",
+            "links": {
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/users/jdoe"
+                }
+              ]
+            }
+          },
+          "createdDate": 1791710578296,
+          "updatedDate": 1791710578296,
+          "comments": [],
+          "threadResolved": false,
+          "severity": "BLOCKER",
+          "state": "RESOLVED",
+          "permittedOperations": {
+            "editable": true,
+            "transitionable": true,
+            "deletable": true
+          },
+          "resolvedDate": 1791710578399,
+          "resolver": {
+            "name": "jdoe",
+            "emailAddress": "jdoe@example.test",
+            "active": true,
+            "displayName": "Jane Doe",
+            "id": 10001,
+            "slug": "jdoe",
+            "type": "NORMAL",
+            "links": {
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/users/jdoe"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 10000006,
+        "createdDate": 1791710577928,
+        "user": {
+          "name": "jdoe",
+          "emailAddress": "jdoe@example.test",
+          "active": true,
+          "displayName": "Jane Doe",
+          "id": 10001,
+          "slug": "jdoe",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.test/users/jdoe"
+              }
+            ]
+          }
+        },
+        "action": "COMMENTED",
+        "commentAction": "ADDED",
+        "comment": {
+          "properties": {
+            "repositoryId": 10002
+          },
+          "id": 1000005,
+          "version": 0,
+          "text": "[review-loop gate0 probe, safe to ignore] v3 context",
+          "author": {
+            "name": "jdoe",
+            "emailAddress": "jdoe@example.test",
+            "active": true,
+            "displayName": "Jane Doe",
+            "id": 10001,
+            "slug": "jdoe",
+            "type": "NORMAL",
+            "links": {
+              "self": [
+                {
+                  "href": "https://bitbucket.example.test/users/jdoe"
+                }
+              ]
+            }
+          },
+          "createdDate": 1791710577923,
+          "updatedDate": 1791710577923,
+          "comments": [
+            {
+              "properties": {
+                "repositoryId": 10002
+              },
+              "id": 1000006,
+              "version": 0,
+              "text": "[review-loop gate0 probe, safe to ignore] v3 inline-reply",
+              "author": {
+                "name": "jdoe",
+                "emailAddress": "jdoe@example.test",
+                "active": true,
+                "displayName": "Jane Doe",
+                "id": 10001,
+                "slug": "jdoe",
+                "type": "NORMAL",
+                "links": {
+                  "self": [
+                    {
+                      "href": "https://bitbucket.example.test/users/jdoe"
+                    }
+                  ]
+                }
+              },
+              "createdDate": 1791710578018,
+              "updatedDate": 1791710578018,
+              "comments": [
+                {
+                  "properties": {
+                    "repositoryId": 10002
+                  },
+                  "id": 1000007,
+                  "version": 0,
+                  "text": "[review-loop gate0 probe, safe to ignore] v3 inline-reply2",
+                  "author": {
+                    "name": "jdoe",
+                    "emailAddress": "jdoe@example.test",
+                    "active": true,
+                    "displayName": "Jane Doe",
+                    "id": 10001,
+                    "slug": "jdoe",
+                    "type": "NORMAL",
+                    "links": {
+                      "self": [
+                        {
+                          "href": "https://bitbucket.example.test/users/jdoe"
+                        }
+                      ]
+                    }
+                  },
+                  "createdDate": 1791710578108,
+                  "updatedDate": 1791710578108,
+                  "comments": [],
+                  "anchor": {
+                    "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a",
+                    "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+                    "line": 7,
+                    "lineType": "CONTEXT",
+                    "fileType": "TO",
+                    "path": "sample1.md",
+                    "diffType": "COMMIT",
+                    "orphaned": false
+                  },
+                  "threadResolved": false,
+                  "severity": "NORMAL",
+                  "state": "OPEN",
+                  "permittedOperations": {
+                    "editable": true,
+                    "transitionable": true,
+                    "deletable": true
+                  }
+                }
+              ],
+              "anchor": {
+                "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a",
+                "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+                "line": 7,
+                "lineType": "CONTEXT",
+                "fileType": "TO",
+                "path": "sample1.md",
+                "diffType": "COMMIT",
+                "orphaned": false
+              },
+              "threadResolved": false,
+              "severity": "NORMAL",
+              "state": "OPEN",
+              "permittedOperations": {
+                "editable": true,
+                "transitionable": true,
+                "deletable": true
+              }
+            }
+          ],
+          "anchor": {
+            "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a",
+            "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+            "line": 7,
+            "lineType": "CONTEXT",
+            "fileType": "TO",
+            "path": "sample1.md",
+            "diffType": "COMMIT",
+            "orphaned": false
+          },
+          "threadResolved": false,
+          "severity": "NORMAL",
+          "state": "OPEN",
+          "permittedOperations": {
+            "editable": true,
+            "transitionable": true,
+            "deletable": true
+          }
+        },
+        "commentAnchor": {
+          "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a",
+          "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+          "line": 7,
+          "lineType": "CONTEXT",
+          "fileType": "TO",
+          "path": "sample1.md",
+          "diffType": "COMMIT",
+          "orphaned": false
+        },
+        "diff": {
+          "destination": {
+            "components": [
+              "sample1.md"
+            ],
+            "parent": "",
+            "name": "sample1.md",
+            "extension": "md",
+            "toString": "sample1.md"
+          },
+          "hunks": [
+            {
+              "sourceLine": 1,
+              "sourceSpan": 17,
+              "destinationLine": 1,
+              "destinationSpan": 19,
+              "segments": [
+                {
+                  "type": "CONTEXT",
+                  "lines": [
+                    {
+                      "destination": 1,
+                      "source": 1,
+                      "line": "sample line 61",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 2,
+                      "source": 2,
+                      "line": "sample line 62",
+                      "truncated": false
+                    }
+                  ],
+                  "truncated": false
+                },
+                {
+                  "type": "ADDED",
+                  "lines": [
+                    {
+                      "destination": 3,
+                      "source": 3,
+                      "line": "sample line 63",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 4,
+                      "source": 3,
+                      "line": "sample line 64",
+                      "truncated": false
+                    }
+                  ],
+                  "truncated": false
+                },
+                {
+                  "type": "CONTEXT",
+                  "lines": [
+                    {
+                      "destination": 5,
+                      "source": 3,
+                      "line": "sample line 65",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 6,
+                      "source": 4,
+                      "line": "sample line 66",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 7,
+                      "source": 5,
+                      "line": "sample line 67",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 8,
+                      "source": 6,
+                      "line": "sample line 68",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 9,
+                      "source": 7,
+                      "line": "sample line 69",
+                      "truncated": false,
+                      "commentIds": [
+                        1000005
+                      ]
+                    },
+                    {
+                      "destination": 10,
+                      "source": 8,
+                      "line": "sample line 70",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 11,
+                      "source": 9,
+                      "line": "sample line 71",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 12,
+                      "source": 10,
+                      "line": "sample line 72",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 13,
+                      "source": 11,
+                      "line": "sample line 73",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 14,
+                      "source": 12,
+                      "line": "sample line 74",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 15,
+                      "source": 13,
+                      "line": "sample line 75",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 16,
+                      "source": 14,
+                      "line": "sample line 76",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 17,
+                      "source": 15,
+                      "line": "sample line 77",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 18,
+                      "source": 16,
+                      "line": "sample line 78",
+                      "truncated": false
+                    },
+                    {
+                      "destination": 19,
+                      "source": 17,
+                      "line": "sample line 79",
+                      "truncated": false
+                    }
+                  ],
+                  "truncated": false
+                }
+              ],
+              "truncated": false
+            }
+          ],
+          "truncated": false,
+          "properties": {
+            "toHash": "ba939ffe19df61d874683e85bb168c1769985d23",
+            "current": true,
+            "fromHash": "e1f9c8949eb8129073e3b528a54a1dc79fb95e3a"
+          }
+        }
+      },
+      {
+        "id": 10000002,
+        "createdDate": 1791569832748,
+        "user": {
+          "name": "jdoe",
+          "emailAddress": "jdoe@example.test",
+          "active": true,
+          "displayName": "Jane Doe",
+          "id": 10001,
+          "slug": "jdoe",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example.test/users/jdoe"
+              }
+            ]
+          }
+        },
+        "action": "OPENED"
+      }
+    ],
+    "start": 0
+  }
+}

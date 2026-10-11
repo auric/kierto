@@ -1,0 +1,62 @@
+{
+  "status": 200,
+  "body": {
+    "slug": "sample-repo-1",
+    "id": 10002,
+    "name": "sample-repo-1",
+    "hierarchyId": "de6650b3472043096d9e",
+    "scmId": "git",
+    "state": "AVAILABLE",
+    "statusMessage": "Available",
+    "forkable": true,
+    "project": {
+      "key": "~JDOE",
+      "id": 1004,
+      "name": "Jane Doe",
+      "type": "PERSONAL",
+      "owner": {
+        "name": "jdoe",
+        "emailAddress": "jdoe@example.test",
+        "active": true,
+        "displayName": "Jane Doe",
+        "id": 10001,
+        "slug": "jdoe",
+        "type": "NORMAL",
+        "links": {
+          "self": [
+            {
+              "href": "https://bitbucket.example.test/users/jdoe"
+            }
+          ]
+        }
+      },
+      "links": {
+        "self": [
+          {
+            "href": "https://bitbucket.example.test/users/jdoe"
+          }
+        ]
+      }
+    },
+    "public": false,
+    "partition": 23,
+    "archived": false,
+    "links": {
+      "clone": [
+        {
+          "href": "https://bitbucket.example.test/scm/~jdoe/sample-repo-1.git",
+          "name": "http"
+        },
+        {
+          "href": "ssh://git@bitbucket.example.test:7999/~jdoe/sample-repo-1.git",
+          "name": "ssh"
+        }
+      ],
+      "self": [
+        {
+          "href": "https://bitbucket.example.test/users/jdoe/repos/sample-repo-1/browse"
+        }
+      ]
+    }
+  }
+}

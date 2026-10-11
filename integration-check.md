@@ -115,7 +115,7 @@ Recommended WP8 runner command:
 
 ## Gate v3, Bitbucket
 
-Status: PENDING. The probe is ready. No check has run on the real server yet.
+Status: DONE (2026-10-11). Phase 1 and phase 2 ran on a personal-repository test PR with 1 commit. Manual steps a and b did not occur. The cleanup is not complete (see below the table).
 
 Run these commands in order, on the designated test PR only:
 
@@ -134,18 +134,37 @@ Raw responses go to `.gate0/raw/v3-p<phase>-<step>.json` (gitignored). The phase
 
 | Item | Status | Evidence |
 |---|---|---|
-| U1. Jira integration endpoint `GET /rest/jira/1.0/projects/{p}/repos/{r}/pull-requests/{id}/issues`: status, shape (key, URL), answer when the integration is off | PENDING | |
-| U2. Range comment (manual step a): the anchor field for the range start | PENDING | |
-| U3. COMMIT anchor with fromHash = merge base, toHash = source head: accepted, shown in the PR diff | PENDING | |
-| U4. Inline comment on a CONTEXT line 3 lines from a change | PENDING | |
-| Inline comment on a REMOVED line (lineType REMOVED, fileType FROM) | PENDING | |
-| U16. Reply to the CONTEXT inline comment, and a reply to that reply: status, and whether each response has `anchor` | PENDING | |
-| U5. File link `<repo browse link>/<path>?at=<hash>#<line>` and comment link `<PR link>/overview?commentId=<id>` open the right place. Repository and PR `links` | PENDING | |
-| U6. Fetch of `refs/pull-requests/<id>/from` and the target branch with the token env: exit code, head hash, merge base, TLS setting that worked | PENDING | |
-| U12. Orphaned comment after manual step b: `orphaned: true`, the diff hunk kept, the RESCOPED activity | PENDING | |
-| U14. BLOCKER task: severity and state in the comment and in the activities, before and after resolve | PENDING | |
-| U15. PR commits endpoint: fields, paging, order | PENDING | |
-| APPROVED and REVIEWED activities | PENDING | Needs a second reviewer. Otherwise NOT TRIED. |
+| U1. Jira integration endpoint `GET /rest/jira/1.0/projects/{p}/repos/{r}/pull-requests/{id}/issues`: status, shape (key, URL), answer when the integration is off | CONFIRMED: path and status. NOT TRIED: item shape, integration off. | HTTP 200, body `[]` (a JSON array). The test PR has no linked issue, so the item fields are not recorded. `v3-p1-jira-issues.json` |
+| U2. Range comment (manual step a): the anchor field for the range start | NOT TRIED | Manual step a did not occur. Phase 2 activities hold no comment from the web UI. `v3-p2-activities-p0.json` |
+| U3. COMMIT anchor with fromHash = merge base, toHash = source head: accepted, shown in the PR diff | CONFIRMED, weak. Shown in the diff: NOT RECORDED. | POST gives 201. The anchor comes back with the same `fromHash` and `toHash`, `diffType: COMMIT`, `orphaned: false`. In this PR the merge base equals the target head, so the check does not separate them. `v3-p1-post-merge-base.json`, `v3-p1-git-fetch.json` |
+| U4. Inline comment on a CONTEXT line 3 lines from a change | CONFIRMED | POST gives 201 for `lineType: CONTEXT`, `fileType: TO` on new line 7. The last changed line is new line 4. The anchor comes back unchanged with `orphaned: false`. `v3-p1-post-context.json`, `v3-p1-diff-0.json` |
+| Inline comment on a REMOVED line (lineType REMOVED, fileType FROM) | NOT TRIED | The test diff has only ADDED and CONTEXT segments. The probe posted nothing. `v3-p1-diff-0.json` |
+| U16. Reply to the CONTEXT inline comment, and a reply to that reply: status, and whether each response has `anchor` | CONFIRMED | Both POSTs give 201. Each response has `anchor`, a copy of the parent anchor, and no `parent` field. No reply gets its own activity. The reply is in the parent's `comments[]`. The reply to the reply is in the reply's `comments[]`. `v3-p1-post-inline-reply.json`, `v3-p1-post-inline-reply2.json`, `v3-p2-get-context.json` |
+| U5. File link `<repo browse link>/<path>?at=<hash>#<line>` and comment link `<PR link>/overview?commentId=<id>` open the right place. Repository and PR `links` | CONFIRMED: `links` shape. NOT RECORDED: opens the right place. | PR `links` has only `self`: `<base>/users/<slug>/repos/<repo>/pull-requests/<id>`. Repository `links.self` is `<base>/users/<slug>/repos/<repo>/browse`. `links.clone` has `http` and `ssh`. The state file has no result of the manual link check. `v3-p1-pull-request.json`, `v3-p1-repository.json` |
+| U6. Fetch of `refs/pull-requests/<id>/from` and the target branch with the token env: exit code, head hash, merge base, TLS setting that worked | CONFIRMED | Exit 0 on the first setting, `isolated`. The system SSL backend is `schannel`. The fetched head equals the PR source `latestCommit`. `git merge-base` exits 0. The merge base equals the target head. `v3-p1-git-fetch.json` |
+| U12. Orphaned comment after manual step b: `orphaned: true`, the diff hunk kept, the RESCOPED activity | NOT TRIED | Manual step b did not occur. Phase 2 shows the same head, PR version 0, no RESCOPED activity, and `orphaned: false` on each anchor. `v3-p2-commits-p0.json`, `v3-p2-pull-request.json`, `v3-p2-activities-p0.json` |
+| U14. BLOCKER task: severity and state in the comment and in the activities, before and after resolve | CONFIRMED. NOT TRIED: activities before resolve. | POST with `severity: BLOCKER` gives 201, `state: OPEN`, version 0. PUT with `state: RESOLVED` gives 200, version 1, and adds `resolvedDate` and `resolver`. `threadResolved` stays false. The activity stays `commentAction: ADDED` and shows BLOCKER and RESOLVED. The resolve adds no activity. `v3-p1-post-blocker.json`, `v3-p1-resolve-blocker.json`, `v3-p1-activities-after-write-p0.json` |
+| U15. PR commits endpoint: fields, paging, order | CONFIRMED: fields. NOT TRIED: paging, order. | Page keys: `values`, `size`, `isLastPage`, `start`, `limit`, `nextPageStart` (`null` on the last page). Commit keys: `id`, `displayId`, `author`, `authorTimestamp`, `committer`, `committerTimestamp`, `message`, `parents`. A commit with COMMIT-anchored comments adds `properties.commentCount`. The PR has 1 commit. `v3-p1-commits-p0.json`, `v3-p2-commits-p0.json` |
+| APPROVED and REVIEWED activities | NOT TRIED | No second reviewer. Activities hold only OPENED and COMMENTED. `v3-p2-activities-p0.json` |
+
+Cleanup is not complete. Phase 2 deleted the BLOCKER task, the CONTEXT comment, and both replies (204 each). The delete of the merge-base comment gave 409 `CommentDeletionException`: "This comment has replies which must be deleted first." The token owner added a short reply to that comment by hand during the run. Delete that reply, then the merge-base comment, by hand (`v3-p2-delete-merge-base.json`).
+
+The sanitizer printed `hits=0 structure diffs=0`. `activities-rescoped-orphaned-range.json` and `pull-request-commits-after-push.json` hold the state without a push and without a range comment. Their names do not match their content.
+
+## Impact on the plan (Gate v3)
+
+- U1 (WP4): the endpoint exists and returns an array. The item shape is unknown. Do not build the `linked` task-ID source yet. The patterns stay the only source until a PR with a linked issue records the shape.
+- U2 (WP4): unknown. Anchors keep `line` only. Do not add a range-start column.
+- U3 (WP13b): not separated from the target head. Keep `fromHash` = target head (outbox.ts `fromHash: h.target_head`, provider.ts I8). Switch to the merge base only after a PR with a moved target branch confirms it.
+- U4 (WP13b): holds. Context-line findings post inline with `lineType: CONTEXT`, `fileType: TO`. No change.
+- REMOVED line, D3 (WP13b): unknown. Old-side findings stay general comments (plan.ts). No change.
+- U5 (WP4, WP13b): `links` holds. Build file links from the repository `links.self` browse link and comment links from the PR `links.self`. Do not build them from the project key, because personal repositories use `/users/<slug>/`. The suffixes `?at=<hash>#<line>` and `/overview?commentId=<id>` are not verified.
+- U6 (WP6): holds. The fetch with the token in `GIT_CONFIG_*` works with the isolated setting. No change.
+- U12 (WP4): unknown. Orphaned excerpts and RESCOPED stay on synthetic fixtures. Repeat manual step b before a test depends on the real shape.
+- U14 (WP4): holds. Add optional `severity`, `state`, and `resolvedDate` to the comment schema (schemas.ts `comment`). A task is `severity: BLOCKER`. Done is `state: RESOLVED`. A resolve adds no activity and leaves `threadResolved` false. The poll must detect it through the higher `comment.version` of a seen comment.
+- U15 (WP4): fields hold. The commits schema uses the keys above and the shared `page()` helper, which accepts `nextPageStart: null`. Commit order and paging are unknown. Do not depend on the order until a PR with two or more commits records it.
+- U16 (WP13b, WP17): holds. Replies to anchored and nested parents return 201. A reply response carries a copy of the parent anchor. Thread structure must come only from `comments[]`, never from `anchor`. R12 is closed.
+- APPROVED and REVIEWED: unknown. They stay synthetic.
 
 ## Impact on BRIEF.md
 

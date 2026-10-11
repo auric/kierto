@@ -1,0 +1,38 @@
+{
+  "status": 201,
+  "body": {
+    "properties": {
+      "repositoryId": 10002
+    },
+    "id": 1000008,
+    "version": 0,
+    "text": "[review-loop gate0 probe, safe to ignore] v3 blocker",
+    "author": {
+      "name": "jdoe",
+      "emailAddress": "jdoe@example.test",
+      "active": true,
+      "displayName": "Jane Doe",
+      "id": 10001,
+      "slug": "jdoe",
+      "type": "NORMAL",
+      "links": {
+        "self": [
+          {
+            "href": "https://bitbucket.example.test/users/jdoe"
+          }
+        ]
+      }
+    },
+    "createdDate": 1791710578296,
+    "updatedDate": 1791710578296,
+    "comments": [],
+    "threadResolved": false,
+    "severity": "BLOCKER",
+    "state": "OPEN",
+    "permittedOperations": {
+      "editable": true,
+      "transitionable": true,
+      "deletable": true
+    }
+  }
+}
