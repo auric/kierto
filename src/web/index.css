@@ -783,20 +783,18 @@ button.rl-ll:hover {
     gap: 0 6px;
   }
 }
-/* A jump target shows a short highlight. Reduced motion removes it and keeps the focus ring. */
+/* A jump target shows a short highlight. Reduced motion removes it and keeps the focus ring.
+   No "to" keyframe: the highlight ends on the own background of the row. */
 .rl-flash {
   animation: rl-flash 900ms var(--ease-out) 1;
 }
 @keyframes rl-flash {
   from {
-    background: var(--sel);
-  }
-  to {
-    background: transparent;
+    background-color: var(--sel);
   }
 }
-/* Feedback for a change that the user causes or watches: a new card or row, a new state mark, the copy check.
-   Content that mounts with the detail or with an opened thread is inside [data-mounting] for one frame, so it does not move. */
+/* Feedback for a change that the user causes or watches: a new card or row, a new state mark, a new answer, the copy check.
+   Content that mounts with the detail, an opened thread, the run line, or the shown answers is inside [data-mounting] for one frame, so it does not move. */
 .rl-enter {
   transition:
     opacity 200ms var(--ease-out),

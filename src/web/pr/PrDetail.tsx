@@ -61,11 +61,12 @@ const toggled = <T,>(s: ReadonlySet<T>, v: T) => {
 };
 
 // A jump target shows a short highlight. Reduced motion keeps only the focus ring.
+// The highlight has no end keyframe, so it ends on the own background of the target, such as the fill of a diff line.
 function flash(el: HTMLElement) {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const css = getComputedStyle(el);
   const from = css.getPropertyValue("--sel").trim();
-  el.animate([{ backgroundColor: from }, { backgroundColor: "transparent" }], {
+  el.animate([{ backgroundColor: from, offset: 0 }], {
     duration: 900,
     easing: css.getPropertyValue("--ease-out").trim(),
   });

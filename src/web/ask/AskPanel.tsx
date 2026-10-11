@@ -12,11 +12,12 @@ import { cn } from "@/lib/utils";
 import type { AskDto, MetaDto, PrRow, RunKind } from "../../shared/dto";
 import { MAX_QUESTION } from "../../shared/review";
 import { Fold, FoldHead } from "../pr/Sections";
-import { fullTime, Text } from "../pr/Thread";
+import { fullTime, Text, useSettled } from "../pr/Thread";
 import { agoLong } from "../pr/threads";
 import { AiAvatar } from "../review/Drafts";
 import { useBrief, useCancelRun, useRuns } from "../review/data";
 import { clockDur, profileOf, shortHash, tokenText } from "../review/model";
+import { RunStatus } from "../review/RunLine";
 import { Hint } from "../shell/Hint";
 import { prKey } from "../shell/model";
 import { useNow } from "../shell/Sidebar";
@@ -78,6 +79,10 @@ export function AskPanel(props: {
   const cancel = useCancelRun();
   const [text, setText] = useState(() => loadDraft(pr.id));
   const list = asks.data ?? [];
+  // An entry transition that starts in a closed section plays when the section opens, also before onOpen runs.
+  // So the answers stay in [data-mounting] while the section is closed or loading, and for one frame after they show.
+  const shown = props.open && !!asks.data;
+  const steady = useSettled(shown);
 
   const where = (id: number) => {
     if (id === pr.id) return "this pull request";
@@ -164,7 +169,7 @@ export function AskPanel(props: {
         </p>
       )}
       {list.length > 0 && (
-        <ol aria-label="Answers" className="m-0 mt-4 mb-2.5 list-none p-0">
+        <ol aria-label="Answers" data-mounting={!(shown && steady) || undefined} className="m-0 mt-4 mb-2.5 list-none p-0">
           {list.map((a) => (
             <Answer
               key={a.run.id}
@@ -276,7 +281,7 @@ function Answer(props: {
       actions = log;
   }
   return (
-    <li id={`ask-${id}`} data-ask={id} className="grid grid-cols-[minmax(0,1fr)] gap-2 border-t py-3">
+    <li id={`ask-${id}`} data-ask={id} className="rl-enter grid grid-cols-[minmax(0,1fr)] gap-2 border-t py-3">
       <p className="m-0 flex gap-2">
         <User aria-hidden className={cn(icon, "mt-[3px] text-muted-foreground")} />
         <span id={about} className="min-w-0 font-medium whitespace-pre-line [overflow-wrap:anywhere]">
@@ -286,19 +291,17 @@ function Answer(props: {
       </p>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-2">
         <AiAvatar meta={meta} />
-        <span role="status" className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
-          {status}
-        </span>
+        <RunStatus state={v.kind}>{status}</RunStatus>
         {times}
         <span className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1">{actions}</span>
       </div>
       {v.kind === "answered" && v.answer !== null && (
-        <div id={`ask-${id}-a`} className="max-w-[72ch] pl-7 [overflow-wrap:anywhere]">
+        <div id={`ask-${id}-a`} className="rl-fade max-w-[72ch] pl-7 [overflow-wrap:anywhere]">
           <Text text={v.answer} />
         </div>
       )}
       {v.kind === "answered" && v.gaps.length > 0 && (
-        <dl className="m-0 grid max-w-[72ch] grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5 pl-7 text-xs text-muted-foreground">
+        <dl className="rl-fade m-0 grid max-w-[72ch] grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5 pl-7 text-xs text-muted-foreground">
           {v.gaps.map(([k, items]) => (
             <Fragment key={k}>
               <dt className="font-semibold">{k}</dt>
