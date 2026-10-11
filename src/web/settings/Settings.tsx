@@ -4,14 +4,17 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import type { PrRow, SettingsDto } from "../../shared/dto";
+import { CHECK_CHOICES, type PrRow, type SettingsDto } from "../../shared/dto";
 import { useForge, useMeta } from "../meta";
 import { notifyPermission } from "../notify";
 import { useSaveSettings } from "../shell/data";
 import { Hint } from "../shell/Hint";
+import { ReviewProfiles } from "./ReviewProfiles";
 import { TaskRules } from "./TaskRules";
 
 const sectionTitle = "m-0 text-[15px] font-bold";
+
+const checkText = (s: number) => (s < 60 ? `Every ${s} seconds` : s === 60 ? "Every minute" : `Every ${s / 60} minutes`);
 
 export function Settings({
   settings,
@@ -159,11 +162,49 @@ export function Settings({
             </div>
           </form>
         </section>
+        {settings.baseUrl !== null && <Checks settings={settings} />}
         {settings.baseUrl !== null && <Notifications settings={settings} />}
         {settings.baseUrl !== null && <AiMark settings={settings} />}
+        {settings.baseUrl !== null && <ReviewProfiles settings={settings} />}
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
       </div>
     </>
+  );
+}
+
+function Checks({ settings }: { settings: SettingsDto }) {
+  const save = useSaveSettings();
+  const forge = useForge();
+  // The select stays enabled, so the arrow keys can step through the choices. Each step saves.
+  const value = (save.isPending && save.variables?.checkSeconds) || settings.checkSeconds;
+  return (
+    <section aria-labelledby="checks-title" className="mt-6 grid max-w-[560px] gap-2 border-t pt-4">
+      <h2 id="checks-title" className={sectionTitle}>
+        Checks
+      </h2>
+      <Field>
+        <FieldLabel htmlFor="check-every">Check for new activity</FieldLabel>
+        <select
+          id="check-every"
+          aria-describedby="check-every-help"
+          className="h-8 rounded-lg border border-input bg-pane px-2 text-sm text-foreground"
+          value={value}
+          onChange={(e) =>
+            save.mutate({ baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", checkSeconds: Number(e.target.value) })
+          }
+        >
+          {CHECK_CHOICES.map((s) => (
+            <option key={s} value={s}>
+              {checkText(s)}
+            </option>
+          ))}
+        </select>
+        <FieldDescription id="check-every-help">
+          Review Loop asks {forge} for changes at this interval. A new interval starts after the next check.
+        </FieldDescription>
+      </Field>
+      {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
+    </section>
   );
 }
 

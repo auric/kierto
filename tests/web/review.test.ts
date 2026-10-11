@@ -322,22 +322,28 @@ describe("Review runs view", () => {
   });
 
   test("the why-line names the profile and the outcome", () => {
-    expect(runWhy(run({ status: "running" }), "General")).toEqual({ error: null, lead: null, text: "General: reviewing now." });
+    expect(runWhy(run({ status: "running" }))).toEqual({ error: null, lead: null, text: "General: reviewing now." });
     const summary = {
       summary: "Deadlock risk.",
       risks: [],
       coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
       dropped: [],
     };
-    expect(runWhy(run({ summary }), "General")).toEqual({ error: null, lead: "General:", text: "Deadlock risk." });
-    expect(runWhy(run({ status: "incomplete", summary }), "General").text).toBe("Deadlock risk. Coverage has gaps.");
-    expect(runWhy(run({ status: "failed", errorKind: "usage_limit", errorText: "Resets at 6pm." }), "General")).toEqual({
+    expect(runWhy(run({ summary }))).toEqual({ error: null, lead: "General:", text: "Deadlock risk." });
+    expect(runWhy(run({ status: "incomplete", summary })).text).toBe("Deadlock risk. Coverage has gaps.");
+    expect(runWhy(run({ status: "failed", errorKind: "usage_limit", errorText: "Resets at 6pm." }))).toEqual({
       error: "Usage limit",
       lead: null,
       text: "General: Resets at 6pm.",
     });
-    expect(runWhy(run({ status: "failed", errorKind: "schema", errorText: "Bad." }), "General").error).toBe("Failed");
-    expect(runWhy(run({ status: "cancelled" }), "General").text).toBe("General: you cancelled it.");
+    expect(runWhy(run({ status: "failed", errorKind: "schema", errorText: "Bad." })).error).toBe("Failed");
+    expect(runWhy(run({ status: "cancelled" })).text).toBe("General: you cancelled it.");
+  });
+
+  test("the why-line keeps the profile name of the run start after a rename", () => {
+    expect(runWhy(run({ status: "cancelled", profile: "general", profileName: "Correctness" })).text).toBe(
+      "Correctness: you cancelled it.",
+    );
   });
 });
 
@@ -389,7 +395,7 @@ describe("reply drafts", () => {
     );
     expect(RUN_TEXT.reply).toEqual({ running: "Drafting replies…", failed: "Reply drafts failed.", cancelled: "the reply drafts" });
     expect(RUN_TEXT.review.running).toBe("Reviewing…");
-    expect(runWhy(run({ kind: "reply", status: "running" }), "General").text).toBe("General: drafting replies now.");
+    expect(runWhy(run({ kind: "reply", status: "running" })).text).toBe("General: drafting replies now.");
   });
 
   test("the thread-to-draft map keys reply items by thread and skips other kinds", () => {

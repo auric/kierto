@@ -267,7 +267,6 @@ function Shell({ stale }: { stale: boolean }) {
         forge={forge}
         runs={aiView && view === "runs" ? latest : null}
         ready={aiView && view === "post" ? readyWhy : null}
-        profiles={meta.data.profiles}
         candidate={candidate}
         following={follow.isPending}
         followError={follow.error && !isStale(follow.error) ? follow.error.message : null}

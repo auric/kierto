@@ -21,7 +21,6 @@ import {
   type LogNode,
   limitText,
   logTree,
-  profileOf,
   seconds,
   shortHash,
   tokenText,
@@ -143,7 +142,6 @@ export function RunLog(props: {
   }, [events]);
 
   const run = detail?.run;
-  const profile = run ? profileOf(meta.profiles, run.profile)?.name : "";
   const isOpen = (e: RunEvent) => folds.get(e.id) ?? e.status !== "ok";
   const toggle = (e: RunEvent) => setFolds((f) => new Map(f).set(e.id, !isOpen(e)));
 
@@ -173,7 +171,7 @@ export function RunLog(props: {
         {run && (
           <>
             <p className="col-span-full m-0 text-xs text-muted-foreground">
-              <span translate="no">{props.prKey}</span>, {profile} profile, commit{" "}
+              <span translate="no">{props.prKey}</span>, {run.profileName} profile, commit{" "}
               <code translate="no" className="font-mono">
                 {shortHash(run.sourceHead)}
               </code>
