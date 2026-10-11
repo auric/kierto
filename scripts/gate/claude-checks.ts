@@ -1,6 +1,6 @@
-// Gate B: local Claude Code checks B1 to B9 (docs/plans/v3.md section 5).
+// Gate B: local Claude Code checks B1 to B9 (docs/plans/v3.md section 5), B11 and B12 (docs/plans/r3.md WP-G3).
 // Usage: bun scripts/gate/claude-checks.ts [--only B1,B3] [--dry-run]
-// --dry-run builds every fixture and prints the planned argv. It starts no `claude` process.
+// --dry-run builds every fixture and prints the planned argv. It starts no `claude -p` process and needs no `claude` on PATH.
 // Raw output goes to .gate0/v3-local/raw/ (gitignored). Raw files hold local paths and account data.
 import {
   existsSync,
@@ -16,6 +16,8 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
+import { fixJsonSchema, fixResult, replyJsonSchema, replyResult } from "../../src/shared/review";
 
 const ROOT = resolve(import.meta.dir, "../..");
 const OUT = join(ROOT, ".gate0/v3-local");
@@ -24,15 +26,15 @@ const STUB = join(import.meta.dir, "stub-mcp-server.ts");
 const BUN = process.execPath;
 const MAX_CALLS = 14;
 const MAX_TURNS = 4;
-// B9 has its own call cap. It does not count against MAX_CALLS.
-const B9_MAX_CALLS = 2;
+// B9, B11, and B12 have their own call caps. They do not count against MAX_CALLS.
+const OWN_MAX_CALLS: Record<string, number> = { b9: 2, b11: 2, b12: 1 };
 const B9_MAX_TURNS = 8;
 const MAX_COST_USD = 0.6;
 const RUN_TIMEOUT_MS = 180_000;
 // Every temp folder name holds TAG. Claude Code keeps the name in its encoded per-cwd folders.
 const TAG = "rl-gb-";
 const FACT = "STUBFACT-5150";
-const CHECKS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9"] as const;
+const CHECKS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B11", "B12"] as const;
 type CheckId = (typeof CHECKS)[number];
 
 // ---------- arguments ----------
@@ -178,7 +180,8 @@ type Status = "PASS" | "FAIL" | "INFO" | "SKIPPED" | "DRY-RUN";
 type Result = { check: string; status: Status; calls: number; evidence: string; data?: unknown };
 const results: Result[] = [];
 let claudeCalls = 0;
-let b9Calls = 0;
+const ownCalls: Record<string, number> = {};
+const ownTotal = () => Object.values(ownCalls).reduce((a, b) => a + b, 0);
 let costSum = 0;
 const usageTotals: Record<string, number> = {};
 const perCall: {
@@ -201,10 +204,10 @@ const push = (check: string, status: Status, evidence: string, data?: unknown) =
 // ---------- environment ----------
 mkdirSync(RAW, { recursive: true });
 const CLAUDE = Bun.which("claude");
-if (!CLAUDE) fail("claude is not on PATH");
-if (process.platform === "win32" && !CLAUDE.toLowerCase().endsWith(".exe")) fail("claude on PATH is not the native .exe");
-const cliVersion = sh([CLAUDE, "--version"]).out.trim();
-const helpText = sh([CLAUDE, "--help"]).out;
+if (!CLAUDE && !DRY) fail("claude is not on PATH");
+if (CLAUDE && process.platform === "win32" && !CLAUDE.toLowerCase().endsWith(".exe")) fail("claude on PATH is not the native .exe");
+const cliVersion = CLAUDE ? sh([CLAUDE, "--version"]).out.trim() : "not found";
+const helpText = CLAUDE ? sh([CLAUDE, "--help"]).out : "";
 // One option block of `claude --help`: the option line plus its indented continuation lines.
 function helpBlock(flag: string) {
   const lines = helpText.split(/\r?\n/);
@@ -227,7 +230,7 @@ console.log(`claude --help --permission-mode choices: ${permissionModes.join(", 
 let configDir = process.env.CLAUDE_CONFIG_DIR ?? join(HOME, ".claude");
 let projectsDir = join(configDir, "projects");
 if (!DRY) {
-  const r = sh([CLAUDE, "auth", "status"]);
+  const r = sh([CLAUDE as string, "auth", "status"]);
   let j: { authMethod?: unknown; configDirectory?: unknown; projectsDirectory?: unknown } = {};
   try {
     j = JSON.parse(r.out);
@@ -271,11 +274,12 @@ async function runClaude(
   if (args.includes("--bare")) throw new Error("--bare is forbidden");
   const env = opts.env ?? childEnv;
   if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) throw new Error("API key in the child env");
-  const isB9 = name.startsWith("b9-");
-  const turnCap = isB9 ? B9_MAX_TURNS : MAX_TURNS;
+  const group = name.split("-")[0] ?? "";
+  const ownCap = OWN_MAX_CALLS[group];
+  const turnCap = group === "b9" ? B9_MAX_TURNS : MAX_TURNS;
   const turns = Math.min(opts.maxTurns ?? turnCap, turnCap);
   const cmd = [
-    CLAUDE as string,
+    CLAUDE ?? "claude",
     "-p",
     "--model",
     "haiku",
@@ -291,16 +295,20 @@ async function runClaude(
     JSON.stringify({ argv: cmd.slice(1), cwd, envSet: Object.keys(env).filter((k) => env[k] !== childEnv[k]) }, null, 2),
   );
   const empty: Run = { name, events: [], exit: null, timedOut: false, stderr: "", results: [], text: "" };
-  if (DRY) {
+  const count = () => {
     claudeCalls++;
-    if (isB9) b9Calls++;
+    if (ownCap !== undefined) ownCalls[group] = (ownCalls[group] ?? 0) + 1;
+  };
+  if (DRY) {
+    count();
+    const shown = cmd.slice(1).map((a) => (a.length > 120 ? `<${a.length} chars>` : redact(a)));
+    console.log(`dry-run ${name}: cwd=${redact(cwd)} argv=${JSON.stringify(shown)}`);
     return empty;
   }
-  if (isB9 ? b9Calls >= B9_MAX_CALLS : claudeCalls - b9Calls >= MAX_CALLS)
-    throw new Error(`call limit ${isB9 ? B9_MAX_CALLS : MAX_CALLS} reached`);
+  if (ownCap !== undefined ? (ownCalls[group] ?? 0) >= ownCap : claudeCalls - ownTotal() >= MAX_CALLS)
+    throw new Error(`call limit ${ownCap ?? MAX_CALLS} reached`);
   if (costSum >= MAX_COST_USD) throw new Error(`cost limit ${MAX_COST_USD} USD reached`);
-  claudeCalls++;
-  if (isB9) b9Calls++;
+  count();
   const proc = Bun.spawn(cmd, { cwd, env, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe" });
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -1236,8 +1244,201 @@ async function b9() {
   }
 }
 
+// ---------- B11 and B12: the runner flag set without review agents (plan r3 WP-G3) ----------
+// Gate B9: a long-form cwd. Claude Code writes per-cwd folders also with --no-session-persistence.
+function runnerFolder(tag: string) {
+  const base = realpathSync.native(tmp(tag));
+  const work = join(base, "work");
+  const app = join(base, "app");
+  mkdirSync(join(work, "repo"), { recursive: true });
+  mkdirSync(join(work, "context"));
+  mkdirSync(app);
+  const perCwd = work.replace(/[^a-zA-Z0-9]/g, "-");
+  const drop = () => {
+    for (const d of [join(projectsDir, perCwd), join(tmpdir(), "claude", perCwd), base]) rmSync(d, { recursive: true, force: true });
+  };
+  return { base, work, app, drop };
+}
+
+// The app runner command (src/server/review/claude.ts prepare()) for a run with no review agents.
+function runnerArgs(app: string, schema: Record<string, unknown>) {
+  const agents = agentsFile(app, {
+    "rl-main": {
+      description: "Gate B11 and B12 main thread.",
+      prompt: "You do the user task exactly. You change no files.",
+      tools: ["Read", "Grep", "Glob", STUB_TOOL, "StructuredOutput"],
+      model: "haiku",
+    },
+  });
+  return [
+    "--restricted",
+    "--strict-mcp-config",
+    "--mcp-config",
+    stubMcpConfig(app, join(app, "stub-calls.log")),
+    "--tools",
+    "Read,Grep,Glob",
+    "--allowedTools",
+    "Read,Grep,Glob,mcp__rl-stub",
+    "--agents",
+    agents,
+    "--agent",
+    "rl-main",
+    "--json-schema",
+    JSON.stringify(schema),
+    "--no-session-persistence",
+  ];
+}
+const runnerEnv = () => ({ ...childEnv, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" });
+const listFiles = (root: string, dir = root): string[] =>
+  readdirSync(dir).flatMap((f) => {
+    const p = join(dir, f);
+    return lstatSync(p).isDirectory() ? listFiles(root, p) : [`${slash(relative(root, p))} (${lstatSync(p).size} B)`];
+  });
+
+const NEW_MIN_BYTES = 2048;
+// About 2.2 KB of plain lines. The model copies them into one `new` string.
+const B11_NEW = Array.from(
+  { length: 36 },
+  (_, i) => `// B11 line ${String(i + 1).padStart(2, "0")}: the quick brown fox jumps over the lazy dog.\n`,
+).join("");
+
+async function b11() {
+  const { base, work, app, drop } = runnerFolder("b11");
+  try {
+    const empty = "coverage = read, skipped, unavailable, and notChecked, each an empty list.";
+    const replyPrompt = [
+      "This is a format test. Read no files. Return this result exactly:",
+      'summary = "gate b11".',
+      "replies = two entries:",
+      '1. thread 1, action "none", body "", reason "no change asked", evidenceStatus "unverified", judgement null (JSON null, not a string).',
+      '2. thread 2, action "reply", body "Thanks, done.", reason "the point is right", evidenceStatus "code", judgement "valid".',
+      empty,
+    ].join("\n");
+    const fixPrompt = [
+      "This is a format test. Read no files. Return this result exactly:",
+      'summary = "gate b11".',
+      'threads = one entry: thread 1, fixed true, reason "adds the lines".',
+      'edits = one entry: thread 1, path "src/gate.ts", old "" (empty), new = all text between the BEGIN and END lines below, copied verbatim with every line break.',
+      empty,
+      "BEGIN",
+      `${B11_NEW}END`,
+    ].join("\n");
+    const runs = [
+      { tag: "reply", schema: replyJsonSchema(), prompt: replyPrompt },
+      { tag: "fix", schema: fixJsonSchema(), prompt: fixPrompt },
+    ];
+    const got: Record<string, Run> = {};
+    for (const x of runs) got[x.tag] = await runClaude(`b11-${x.tag}`, runnerArgs(app, x.schema), x.prompt, work, { env: runnerEnv() });
+    if (DRY)
+      return dry(
+        "B11",
+        `cwd long form=${!base.includes("~")}; schema bytes reply=${JSON.stringify(runs[0]?.schema).length} fix=${JSON.stringify(runs[1]?.schema).length}; new text bytes=${Buffer.byteLength(B11_NEW)}; files=${listFiles(base).join(", ")}`,
+      );
+    const so = (r: Run | undefined) => r?.results.find((e) => e.structured_output !== undefined)?.structured_output;
+    const desc = (r: Run | undefined) =>
+      `exit=${r?.exit} results=${r?.results.map((e) => `${e.subtype}${e.is_error ? "!" : ""}${e.structured_output !== undefined ? "+so" : ""}`).join(",") || "none"}`;
+    const reply = replyResult.safeParse(so(got.reply));
+    const fix = fixResult.safeParse(so(got.fix));
+    const nullJudgement = reply.success && reply.data.replies.some((d) => d.judgement === null);
+    const newBytes = fix.success ? Math.max(0, ...fix.data.edits.map((e) => Buffer.byteLength(e.new))) : 0;
+    const verbatim = fix.success && fix.data.edits.some((e) => e.new === B11_NEW || e.new === B11_NEW.trimEnd());
+    const issues = (p: { success: boolean; error?: { issues: { path: PropertyKey[]; message: string }[] } }) =>
+      p.success ? "ok" : (p.error?.issues ?? []).map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") || "no structured_output";
+    const ok = reply.success && nullJudgement && fix.success && newBytes >= NEW_MIN_BYTES;
+    push(
+      "B11",
+      ok ? "PASS" : "FAIL",
+      `reply: ${desc(got.reply)} zod=${short(issues(reply), 200)} null judgement=${nullJudgement} judgements=${reply.success ? reply.data.replies.map((d) => String(d.judgement)).join(",") : "n/a"}; fix: ${desc(got.fix)} zod=${short(issues(fix), 200)} longest new bytes=${newBytes} (need ${NEW_MIN_BYTES}) verbatim=${verbatim}`,
+      { reply: so(got.reply), fix: so(got.fix) },
+    );
+  } finally {
+    drop();
+  }
+}
+
+// A one-color RGB PNG (PNG spec: IHDR, one zlib IDAT, IEND; each chunk CRC-32 covers type and data).
+function solidPng(w: number, h: number, rgb: [number, number, number]) {
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr.set([8, 2, 0, 0, 0], 8); // bit depth 8, color type 2 (RGB), deflate, filter 0, no interlace
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(w * 3).map((_, i) => rgb[i % 3] ?? 0)]);
+  const raw = Buffer.concat(Array.from({ length: h }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+async function b12() {
+  const { base, work, app, drop } = runnerFolder("b12");
+  try {
+    const COLOR = "red";
+    const rel = "context/attachments/1.png";
+    mkdirSync(join(work, "context/attachments"), { recursive: true });
+    writeFileSync(join(work, rel), solidPng(64, 64, [255, 0, 0]));
+    const schema = {
+      type: "object",
+      properties: { color: { type: "string" } },
+      required: ["color"],
+      additionalProperties: false,
+    };
+    const prompt = `Read the image and name its color. The image is ./${rel} in the current folder. Return color = the color name.`;
+    const r = await runClaude("b12-image-read", runnerArgs(app, schema), prompt, work, { env: runnerEnv() });
+    if (DRY) return dry("B12", `cwd long form=${!base.includes("~")}; files=${listFiles(base).join(", ")}`);
+    const reads = toolUses(r).filter((t) => t.name === "Read" && slash(String(t.input.file_path ?? "")).endsWith(rel));
+    const res = reads.map((t) => toolResult(r, t.id));
+    const ok = res.some((b) => b !== undefined && !b.is_error);
+    const answer = (r.results.find((e) => e.structured_output !== undefined)?.structured_output as { color?: unknown } | undefined)?.color;
+    const kinds = res.map((b) =>
+      !b
+        ? "no result"
+        : b.is_error
+          ? `error: ${short(blockText(b), 120)}`
+          : Array.isArray(b.content)
+            ? b.content.map((c: { type?: unknown }) => String(c?.type)).join("+")
+            : typeof b.content,
+    );
+    push(
+      "B12",
+      ok ? "PASS" : "FAIL",
+      `exit=${r.exit} init.tools=${(r.init?.tools ?? []).join(",")}; Read calls of ${rel}=${reads.length} results=${kinds.join(",") || "none"}; other tools=${
+        toolUses(r)
+          .filter((t) => !reads.includes(t))
+          .map((t) => t.name)
+          .join(",") || "none"
+      }; color answer (INFO)=${JSON.stringify(answer ?? null)} expected=${COLOR}`,
+      { reads: reads.length, kinds, answer },
+    );
+  } finally {
+    drop();
+  }
+}
+
 // ---------- main ----------
-const RUNNERS: Record<CheckId, () => Promise<unknown>> = { B1: b1, B2: b2, B3: b3, B4: b4, B5: b5, B6: b6, B7: b7, B8: b8, B9: b9 };
+const RUNNERS: Record<CheckId, () => Promise<unknown>> = {
+  B1: b1,
+  B2: b2,
+  B3: b3,
+  B4: b4,
+  B5: b5,
+  B6: b6,
+  B7: b7,
+  B8: b8,
+  B9: b9,
+  B11: b11,
+  B12: b12,
+};
 {
   for (const id of selected) await check(id, RUNNERS[id]);
   cleanup();
@@ -1249,7 +1450,8 @@ const RUNNERS: Record<CheckId, () => Promise<unknown>> = { B1: b1, B2: b2, B3: b
     selected,
     claudeCalls,
     callLimit: MAX_CALLS,
-    b9CallLimit: B9_MAX_CALLS,
+    ownCallLimits: OWN_MAX_CALLS,
+    ownCalls,
     costUsdSumOfResultEvents: costSum,
     usageTotals,
     perCall,
@@ -1260,7 +1462,9 @@ const RUNNERS: Record<CheckId, () => Promise<unknown>> = { B1: b1, B2: b2, B3: b
   writeJson(join(OUT, `results${part}${DRY ? ".dry-run" : ""}.json`), summary);
   for (const r of results) console.log(`${r.status.padEnd(8)} ${r.check.padEnd(4)} calls=${r.calls} ${r.evidence}`);
   console.log(
-    `\nclaude ${cliVersion}; claude -p calls: ${claudeCalls - b9Calls}/${MAX_CALLS}, B9 ${b9Calls}/${B9_MAX_CALLS}; reported cost (sum of result events): $${costSum.toFixed(4)}`,
+    `\nclaude ${cliVersion}; claude -p calls: ${claudeCalls - ownTotal()}/${MAX_CALLS}, ${Object.entries(OWN_MAX_CALLS)
+      .map(([g, n]) => `${g.toUpperCase()} ${ownCalls[g] ?? 0}/${n}`)
+      .join(", ")}; reported cost (sum of result events): $${costSum.toFixed(4)}`,
   );
   if (results.some((r) => r.status === "FAIL")) process.exitCode = 1;
 }
