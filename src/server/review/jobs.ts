@@ -70,6 +70,7 @@ import {
 } from "./catalog";
 import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude";
 import { type FixCommitRow, toFixCommitDto } from "./clone";
+import { codegraphEntry, codegraphIndex, indexCodegraph } from "./codegraph";
 import { type DiffFile, parseDiff } from "./diffmap";
 import { type FixFile, type ValidEdit, validateFix } from "./fix";
 import { git, gitEnv } from "./git";
@@ -234,6 +235,10 @@ type Job = {
   question: string | null;
   cancelled: boolean;
   done: Promise<void>;
+  // The step before the CLI starts. RunDto.phase shows it.
+  phase?: RunDto["phase"];
+  // Stops the step before the CLI starts.
+  abort?: AbortController;
 };
 
 export type StartResult =
@@ -1060,6 +1065,32 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       ),
     ]);
     if (j.cancelled) return cancelled();
+    // One index serves every picked codegraph server. A failed index keeps the servers out of the run.
+    const graphs = Object.entries(user.servers).filter(([, s]) => codegraphIndex(s.user) >= 0);
+    const first = graphs[0]?.[1].user;
+    if (first?.type === "stdio") {
+      j.phase = "indexing";
+      j.abort = new AbortController();
+      notify(j.id);
+      const started = now();
+      const failed = await indexCodegraph({
+        entry: first,
+        repo: ws.repo,
+        dataDir,
+        cacheDb: join(dataDir, "cache", "codegraph", pr.project, pr.repo, "codegraph.db"),
+        signal: j.abort.signal,
+      });
+      j.phase = undefined;
+      j.abort = undefined;
+      notify(j.id);
+      if (j.cancelled) return cancelled();
+      log(`Review run ${j.id}: codegraph index: ${failed ?? "ready"} after ${now() - started} ms.`);
+      for (const [key, s] of graphs)
+        if (failed) {
+          delete user.servers[key];
+          user.gaps.push(`MCP server ${key}: no codegraph index (${failed})`);
+        } else if (s.user.type === "stdio") user.servers[key] = { ...s, user: codegraphEntry(s.user, ws.repo) };
+    }
     const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...docs.servers, ...user.servers };
     for (const g of user.gaps) log(`Review run ${j.id}: ${g}.`);
     const used = Object.entries(user.servers).map(([server, s]) => ({ server, tools: s.tools, remote: s.user.type !== "stdio" }));
@@ -1175,9 +1206,13 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     }
   }
 
+  const withPhase = (db: Database, r: RunDto): RunDto =>
+    job?.phase && job.id === r.id && job.db === db && r.status === "running" ? { ...r, phase: job.phase } : r;
+
   function cancelActive() {
     if (!job) return false;
     job.cancelled = true;
+    job.abort?.abort();
     runner.cancel();
     return true;
   }
@@ -1445,14 +1480,14 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
           ? `${SQL.run} ORDER BY r.id DESC LIMIT $limit`
           : `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE pr = $pr ORDER BY id DESC LIMIT $limit)
               OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review') ORDER BY r.id DESC`;
-      return (db.query(sql).all(pr === null ? { limit } : { pr, limit }) as RunRow[]).map(toRunDto);
+      return (db.query(sql).all(pr === null ? { limit } : { pr, limit }) as RunRow[]).map((r) => withPhase(db, toRunDto(r)));
     },
 
     run(db: Database, id: number): RunDetail | null {
       const r = runRow(db, id);
       if (!r) return null;
       return {
-        run: toRunDto(r),
+        run: withPhase(db, toRunDto(r)),
         events: db.query(SQL.events).all({ run: id }) as RunEvent[],
         items: (db.query(SQL.items).all({ run: id }) as ItemRow[]).map(toItemDto),
       };

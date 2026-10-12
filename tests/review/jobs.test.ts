@@ -970,6 +970,82 @@ describe("editable profiles (M4)", () => {
   );
 
   test(
+    "a codegraph server: the run indexes the snapshot first, shows the phase, pins the server to the snapshot; a failed index is a gap",
+    async () => {
+      const config = mkdtempSync(join(tmpdir(), "rl-mcp-config-"));
+      dirs.push(config);
+      const log = join(config, "cg.jsonl");
+      const FAKE_CG = join(import.meta.dir, "../support/fake-codegraph/codegraph.js");
+      const write = (env: Record<string, string>) =>
+        writeFileSync(
+          join(config, ".claude.json"),
+          JSON.stringify({
+            mcpServers: {
+              cg: {
+                command: process.execPath,
+                args: [FAKE_CG, "serve", "--mcp", "--path", "/user/clone"],
+                env: { FAKE_CG_LOG: log, ...env },
+              },
+            },
+          }),
+        );
+      write({ FAKE_CG: "hang" });
+      const h = await setup({ claudeConfigDir: config });
+      expect((await putProfiles(h, [{ ...general, mcp: [{ server: "cg", tools: ["codegraph_explore"] }] }])).status).toBe(200);
+      await h.brief(NOTE, "general");
+
+      const phase = async (id: number) => (await h.json<RunDto[]>(`/api/prs/${h.pr}/runs`)).body.find((r) => r.id === id)?.phase;
+      const a = await h.start();
+      // The tools/list call also starts the fake, as serve.
+      expect(await waitFor(() => existsSync(log) && readFileSync(log, "utf8").includes(`"cmd":"init"`))).toBe(true);
+      expect(await phase(a.body.id)).toBe("indexing");
+      await h.call(`/api/runs/${a.body.id}/cancel`, { method: "POST" });
+      const da = await h.finish(a.body.id);
+      expect(da.run.status).toBe("cancelled");
+      expect(da.run.phase).toBeUndefined();
+      expect(h.runCall()).toBeUndefined();
+
+      write({});
+      h.scenario({ fixture: subagentRun(), hang: true });
+      const b = await h.start();
+      expect(await waitFor(() => h.runCall() !== undefined)).toBe(true);
+      const c = h.runCall() as Call;
+      const repo = join(c.cwd, "repo");
+      const servers = JSON.parse(readFileSync(flag(c.argv, "--mcp-config") as string, "utf8")).mcpServers;
+      expect(servers.cg.args.map((x: string) => x.toLowerCase())).toEqual(
+        [FAKE_CG, "serve", "--mcp", "--path", repo, "--no-watch"].map((x) => x.toLowerCase()),
+      );
+      expect(servers.cg.env).toMatchObject({ CODEGRAPH_NO_DAEMON: "1", DO_NOT_TRACK: "1", CODEGRAPH_DIR: "" });
+      expect(flag(c.argv, "--allowedTools")).toContain("mcp__cg__codegraph_explore");
+      const calls = readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l) as { cmd: string; cwd: string });
+      expect(calls.slice(-2).map((x) => [x.cmd, x.cwd.toLowerCase()])).toEqual([
+        ["init", repo.toLowerCase()],
+        ["status", repo.toLowerCase()],
+      ]);
+      expect(existsSync(join(h.dir, "cache", "codegraph", "PROJ", "repo", "codegraph.db"))).toBe(true);
+      await h.call(`/api/runs/${b.body.id}/cancel`, { method: "POST" });
+      await h.finish(b.body.id);
+
+      write({ FAKE_CG: "fail" });
+      h.scenario({ fixture: subagentRun() });
+      const before = h.calls().length;
+      const d = await h.finish((await h.start()).body.id);
+      const last = h
+        .calls()
+        .slice(before)
+        .find((x) => x.argv.includes("-p")) as Call;
+      const after = JSON.parse(readFileSync(join(config, "cg.jsonl"), "utf8").trim().split("\n").at(-1) as string);
+      expect(after.cmd).toBe("init");
+      expect(flag(last.argv, "--allowedTools")).not.toContain("mcp__cg");
+      expect(d.run.summary?.coverage.unavailable).toContain("MCP server cg: no codegraph index (codegraph init or sync failed)");
+    },
+    SLOW,
+  );
+
+  test(
     "a run uses the edited profile and stores its name and revision; an edit during the run gives 409",
     async () => {
       const h = await setup();

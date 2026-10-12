@@ -120,7 +120,11 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onGaps }: 
         <>
           <RunStatus state={state} quiet={!first}>
             <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
-            {run.since ? `Reviewing changes since ${shortHash(run.since.head)}…` : RUN_TEXT[run.kind].running}
+            {run.phase === "indexing"
+              ? "Indexing for codegraph…"
+              : run.since
+                ? `Reviewing changes since ${shortHash(run.since.head)}…`
+                : RUN_TEXT[run.kind].running}
           </RunStatus>
           {s.agents > 0 && <span>{plural(s.agents, "agent")}</span>}
           <span>{plural(s.calls, "tool call")}</span>

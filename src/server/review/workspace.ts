@@ -32,7 +32,8 @@ const CONFIG: [string, string][] = [
   ["core.longpaths", "true"],
   ["core.autocrlf", "false"],
 ];
-const REMOVE = new Set([".claude", ".mcp.json"]);
+// .codegraph: an index from the PR is untrusted. The run builds its own (codegraph.ts).
+const REMOVE = new Set([".claude", ".mcp.json", ".codegraph", ".codegraph-wsl"]);
 const RENAME = new Set(["claude.md", "claude.local.md", "agents.md"]);
 // Names of the extra context files. pr.md belongs to the workspace.
 const FILE_NAME = /^[a-z-]+\.md$/;
@@ -138,7 +139,7 @@ export function gitSetup(dataDir: string) {
   return { dir, empty, env: gitEnv(empty) };
 }
 
-// Removes links, .claude folders, and .mcp.json files. Renames instruction files to *.untrusted.md.
+// Removes links, .claude and .codegraph folders, and .mcp.json files. Renames instruction files to *.untrusted.md.
 // links: the mode-120000 paths of the tree. The lstat walk also finds junctions and links that git did not make.
 export function sanitize(repo: string, links: string[]) {
   const removed: string[] = [];

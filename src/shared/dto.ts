@@ -373,6 +373,8 @@ export type RunDto = {
   tasks?: { key: string; fetchedAt: number }[];
   // The finding items of the run that a re-review did not find fixed or outdated. 0 for other run kinds.
   findings: number;
+  // A running run before the CLI starts: indexing builds the codegraph index of the snapshot.
+  phase?: "indexing";
 };
 
 export type ItemStatus = "new" | "accepted" | "discarded" | "posted";

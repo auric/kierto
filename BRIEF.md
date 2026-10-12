@@ -109,7 +109,7 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 ### 3.5 Review safety
 
 - `claude -p` never shows the workspace trust dialog. In an untrusted folder it still uses project hooks, the project `env` block, and `apiKeyHelper`. So never run Claude Code in a raw PR checkout.
-- The app checks out the pinned PR head as a detached git worktree in an app-owned run folder. It removes `.claude/`, `.mcp.json`, and links. It renames CLAUDE.md, CLAUDE.local.md, and AGENTS.md files.
+- The app checks out the pinned PR head as a detached git worktree in an app-owned run folder. It removes `.claude/`, `.codegraph/`, `.mcp.json`, and links. It renames CLAUDE.md, CLAUDE.local.md, and AGENTS.md files.
 - The runner passes `--restricted`, not `--setting-sources user`. With `--restricted`, no hook runs, also with `--setting-sources user` added (Gate B8, CLI 2.1.295).
 - Gate 0 checked project CLAUDE.md and skills only with `--setting-sources user`. The snapshot rename and remove steps cover them under `--restricted`.
 - `--strict-mcp-config` removes the user's MCP servers, including claude.ai connectors. `--agent rl-main` refuses the user's agents (Gate B9). Gate 0 did not check the user's own CLAUDE.md under `--restricted`.
@@ -343,7 +343,7 @@ Read state:
 Review runner:
 - Snapshot: fetch refs/pull-requests/{id}/from into one bare cache clone per repository. If the server blocks these refs, fetch the source branch by name. Gate 0: git ls-remote lists refs/pull-requests/{id}/from, and it equals the source head. No merge ref is listed. Verify the fetch of /from in M2. Pin the source, target, and merge-base commits. On Windows, set core.longpaths=true.
 - Check out the pinned source head with `git worktree add --detach` into `<dataDir>/runs/<id>/work/repo`. Info attributes turn off filters, text conversion, and ident, so checkout writes each blob unchanged.
-- Remove links (tree entries with mode 120000 and any link or junction on disk), .claude/ folders, and .mcp.json files. Rename every CLAUDE.md, CLAUDE.local.md, and AGENTS.md to <name>.untrusted.md. No submodules. No repository scripts run.
+- Remove links (tree entries with mode 120000 and any link or junction on disk), .claude/ and .codegraph/ folders, and .mcp.json files. Rename every CLAUDE.md, CLAUDE.local.md, and AGENTS.md to <name>.untrusted.md. No submodules. No repository scripts run.
 - The app writes context files into `work/context`: the numbered diff, the changed-file list, and the PR text with the existing comments. The review reads history only through the read-only git MCP of the app.
 - Spawn the native claude binary (claude.exe on Windows) with the shell off. cwd = the run folder. Send the prompt on stdin, because Windows limits the command-line length.
 - Refuse a claude.cmd wrapper, because cmd.exe parses the arguments again. The runner check says "claude.cmd is not the native claude.exe." and no run starts.
@@ -355,6 +355,7 @@ Review runner:
 - Never use --bare. It never reads OAuth credentials or the keychain, so the subscription login fails.
 - --strict-mcp-config keeps only the app MCP servers: the read-only git MCP, the documentation MCPs when the profile has Docs on, and the user MCP servers that the profile picks. The Bitbucket MCP never runs in reviews.
 - User MCP servers: at run start the app reads the user's Claude config file again and copies each picked entry into the run's mcp.json. The file can hold secrets. The app writes it owner-only where the OS allows, deletes it with the run folder, and never logs it or stores it in SQLite or prompts. --allowedTools and the agent tool lists name each ticked tool as mcp__<server>__<tool>. --disallowedTools names the other tools of the server. A missing server or tool is a coverage gap, and the run still starts.
+- A picked codegraph server (`codegraph serve --mcp`): before the CLI starts, the app indexes repo/ with the same command (init, or sync from a per-repository cache) within 120 s. The run entry gets `--path <repo> --no-watch`. A failed index is a coverage gap, and the server stays out of the run.
 - The settings list of user MCP servers shows names and transports only. It never shows URLs, headers, commands, arguments, or env values. A tool without readOnlyHint true gets a warning, because the app cannot check what it changes.
 - Subagents: the --agents file gives each reviewer agent read-only tools, a deny list (Bash, PowerShell, Write, Edit, NotebookEdit, Agent), and omitClaudeMd. `--agent rl-main` with the tool `Agent(rl-reviewer)` refuses built-in and user agents (Gate B2, B9).
 - Init check: if the init event lists a tool outside the allowlist, the app kills the run before any tool use.

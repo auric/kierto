@@ -142,9 +142,9 @@ export const discoverMcpServers = (file = claudeJsonPath(), config = claudeConfi
   );
 
 // code.claude.com/docs/en/mcp, "Environment variable expansion": ${VAR} and ${VAR:-default}. The run's CLI expands the copied entry itself.
-const expand = (s: string, env: Record<string, string>) =>
+export const expand = (s: string, env: Record<string, string>) =>
   s.replace(/\$\{([^}:]+)(?::-([^}]*))?\}/g, (m, k: string, d?: string) => env[k] ?? d ?? m);
-const expandAll = (o: Record<string, string>, env: Record<string, string>) =>
+export const expandAll = (o: Record<string, string>, env: Record<string, string>) =>
   Object.fromEntries(Object.entries(o).map(([k, v]) => [k, expand(v, env)]));
 
 // A failure with a message that holds no URL, header, or command text.
