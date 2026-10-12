@@ -168,3 +168,7 @@ export const putFile = (rows: TaskContextDto[] | undefined, key: string, f: Atta
 
 export const dropFile = (rows: TaskContextDto[] | undefined, key: string, id: string) =>
   rows?.map((t) => (t.key === key ? { ...t, files: t.files.filter((x) => x.id !== id) } : t));
+
+// The confirm text of Remove. files: the count of downloaded attachments that the server deletes with the text.
+export const removeText = (key: string, files: number) =>
+  `The app deletes the stored text of ${key}.` + (files ? ` It also deletes ${files} downloaded attachment${files === 1 ? "" : "s"}.` : "");

@@ -179,10 +179,25 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
   await expect(task).toHaveJSProperty("open", true);
   await expect(description).toBeVisible();
 
+  // Remove asks first. Cancel and Escape keep the text, and focus goes back to the Remove button.
+  const remove = brief(page).getByRole("button", { name: `Remove the ${JIRA_ISSUE} text` });
+  const confirm = page.getByRole("dialog", { name: `Remove the ${JIRA_ISSUE} text?` });
+  await remove.click();
+  await expect(confirm).toContainText(`The app deletes the stored text of ${JIRA_ISSUE}.`);
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(remove).toBeFocused();
+  await expect(fold(page, JIRA_ISSUE)).toHaveCount(1);
+  await remove.press("Enter");
+  await expect(confirm).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  await expect(remove).toBeFocused();
+  await expect(fold(page, JIRA_ISSUE)).toHaveCount(1);
+
   // Remove deletes the stored text. Focus goes back to the Fetch button of the chip.
-  await brief(page)
-    .getByRole("button", { name: `Remove the ${JIRA_ISSUE} text` })
-    .click();
+  await remove.click();
+  await confirm.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(fold(page, JIRA_ISSUE)).toHaveCount(0);
   await expect(fetchBtn(page, JIRA_ISSUE)).toBeFocused();
 
@@ -255,6 +270,7 @@ test("the run buttons and the Ask section share the task chips of the brief, and
 
   // Remove changes the PR tasks, not the record of the run.
   await runs.getByRole("button", { name: `Remove the ${JIRA_ISSUE} text` }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Remove", exact: true }).click();
   await expect(runs).toContainText(`${JIRA_ISSUE} · not fetched`);
   await expect(runs.getByRole("button", { name: `Fetch ${JIRA_ISSUE} from Jira` })).toBeFocused();
   await expect(runTasks(page, JIRA_ISSUE)).toBeVisible();

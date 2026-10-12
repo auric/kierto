@@ -3,15 +3,18 @@
 // All places share one query, so a fetch in one place shows in all.
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, Download, LoaderCircle, RefreshCw, Settings2, X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { MetaDto, PrTask, TaskContextDto } from "../../shared/dto";
 import { api } from "../api";
+import { dialogKeys } from "../fix/CloneDialog";
 import { webLink } from "../pr/Header";
 import { ApiError, read } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { taskHint } from "../shell/model";
-import { fetchedText, mergeTask, offerSetup, taskChips, trackerOf } from "./tasks";
+import { fetchedText, mergeTask, offerSetup, removeText, taskChips, trackerOf } from "./tasks";
 
 const icon = "size-[15px] shrink-0";
 const SOURCE: Record<PrTask["source"], string> = { branch: "branch", title: "title", description: "description" };
@@ -72,6 +75,11 @@ export function TaskChips(props: {
   const chips = compact ? all.filter((c) => c.fetchable || c.fetched) : all;
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [errors, setErrors] = useState<TaskError[]>([]);
+  // The task that the Remove confirm asks about. The last one stays while the dialog plays its close transition.
+  const [asking, setAsking] = useState<{ key: string; files: number } | null>(null);
+  const last = useRef(asking);
+  if (asking) last.current = asking;
+  const shown = last.current;
   const now = Date.now();
 
   const setUp = () => {
@@ -79,6 +87,13 @@ export function TaskChips(props: {
     // The settings render in the same click. Focus then lands on the tracker URL field.
     requestAnimationFrame(() => document.getElementById("tracker-url")?.focus());
   };
+  // The Remove button while the request runs, then the Fetch button, then focusTo when the chip is gone.
+  const refocus = (key: string) =>
+    (
+      document.getElementById(`${id}-remove-${key}`) ??
+      document.getElementById(`${id}-fetch-${key}`) ??
+      document.getElementById(props.focusTo)
+    )?.focus();
   const run = async (key: string, act: "fetch" | "remove") => {
     if (busy.has(key)) return;
     setBusy((b) => new Set(b).add(key));
@@ -88,8 +103,7 @@ export function TaskChips(props: {
       else await removeTask(qc, pr, key);
       announce(act === "fetch" ? `Fetched ${key} from ${source}.` : `Removed the ${key} text.`);
       // Remove takes its own button away, and the chip too when the PR no longer names the task.
-      if (act === "remove")
-        requestAnimationFrame(() => (document.getElementById(`${id}-fetch-${key}`) ?? document.getElementById(props.focusTo))?.focus());
+      if (act === "remove") requestAnimationFrame(() => refocus(key));
     } catch (e) {
       const message = (e as Error).message;
       const setup = !!onSettings && e instanceof ApiError && e.status === 409;
@@ -184,11 +198,13 @@ export function TaskChips(props: {
               {t.fetched && (
                 <Hint label={`Remove the ${t.key} text`}>
                   <button
+                    id={`${id}-remove-${t.key}`}
                     type="button"
                     className={chipBtn}
                     aria-label={`Remove the ${t.key} text`}
+                    aria-haspopup="dialog"
                     aria-busy={wait || undefined}
-                    onClick={() => void run(t.key, "remove")}
+                    onClick={() => !wait && setAsking({ key: t.key, files: t.fetched?.files.length ?? 0 })}
                   >
                     <X aria-hidden className={icon} />
                   </button>
@@ -227,6 +243,36 @@ export function TaskChips(props: {
           </span>
         </p>
       ))}
+      <Dialog
+        open={asking !== null}
+        onOpenChange={(on) => !on && setAsking(null)}
+        onOpenChangeComplete={(on) => !on && shown && refocus(shown.key)}
+      >
+        <DialogContent className="sm:max-w-[440px]" finalFocus={false} onKeyDown={dialogKeys(() => setAsking(null))}>
+          {shown && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Remove the {shown.key} text?</DialogTitle>
+                <DialogDescription>{removeText(shown.key, shown.files)}</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setAsking(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    setAsking(null);
+                    void run(shown.key, "remove");
+                  }}
+                >
+                  Remove
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

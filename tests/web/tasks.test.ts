@@ -15,6 +15,7 @@ import {
   mergeTask,
   offerSetup,
   putFile,
+  removeText,
   sizeText,
   sourceTime,
   taskChips,
@@ -225,4 +226,10 @@ test("putFile and dropFile change the files of one task only", () => {
   expect(putFile(rows, "ABC-2", file("5"))?.[1]?.files).toEqual([file("5")]);
   expect(dropFile(rows, "ABC-1", "1")?.[0]?.files).toEqual([]);
   expect(putFile(undefined, "ABC-1", file("1"))).toBeUndefined();
+});
+
+test("removeText names the attachments only when the task has some", () => {
+  expect(removeText("ABC-1", 0)).toBe("The app deletes the stored text of ABC-1.");
+  expect(removeText("ABC-1", 1)).toBe("The app deletes the stored text of ABC-1. It also deletes 1 downloaded attachment.");
+  expect(removeText("ABC-1", 3)).toBe("The app deletes the stored text of ABC-1. It also deletes 3 downloaded attachments.");
 });
