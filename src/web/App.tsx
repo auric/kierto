@@ -107,6 +107,8 @@ function Shell({ stale }: { stale: boolean }) {
   const [doneOpen, setDoneOpen] = useState(false);
   const [ks, setKs] = useState<KeyState>(INITIAL);
   const [frozen, setFrozen] = useState<{ scope: string; slots: Slot[] }>({ scope: "", slots: [] });
+  // The profile that "Edit profile…" opened. n changes on each request, so the same profile can be asked again.
+  const [profileAt, setProfileAt] = useState<{ id: string; n: number } | null>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const detailApi = useRef<DetailApi | null>(null);
@@ -178,6 +180,11 @@ function Shell({ stale }: { stale: boolean }) {
   useEffect(() => {
     document.title = unread > 0 ? `(${unread}) Review Loop` : "Review Loop";
   }, [unread]);
+
+  // Settings opened another way start at the top.
+  useEffect(() => {
+    if (!showSettings) setProfileAt(null);
+  }, [showSettings]);
 
   // The default row becomes the selection, so the selection follows the PR and not the first place.
   useEffect(() => {
@@ -390,6 +397,7 @@ function Shell({ stale }: { stale: boolean }) {
               required={locked}
               prs={all}
               selected={selected}
+              profile={profileAt}
               onBack={() => go({ settings: false, mobile: "list", focus: "list" }, "focus-list")}
               onSaved={() => go({ settings: false, mobile: "list" })}
             />
@@ -406,6 +414,10 @@ function Shell({ stale }: { stale: boolean }) {
                   pr={current}
                   me={s?.user ?? null}
                   onSettings={() => go({ settings: true, mobile: "detail", focus: "detail" })}
+                  onProfile={(id) => {
+                    setProfileAt((t) => ({ id, n: (t?.n ?? 0) + 1 }));
+                    go({ settings: true, mobile: "detail", focus: "detail" });
+                  }}
                   onLeave={() => {
                     const i = ids.indexOf(current.id);
                     setKs((k) => ({ ...k, selected: ids[i + 1] ?? ids[i - 1] ?? null }));

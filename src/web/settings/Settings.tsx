@@ -36,6 +36,7 @@ export function Settings({
   required,
   prs,
   selected,
+  profile,
   onBack,
   onSaved,
 }: {
@@ -44,6 +45,8 @@ export function Settings({
   // The task-rule preview runs on one of these.
   prs: PrRow[];
   selected: number | null;
+  // The profile that "Edit profile…" opened. n changes on each request.
+  profile?: { id: string; n: number } | null;
   onBack: () => void;
   onSaved: () => void;
 }) {
@@ -133,7 +136,9 @@ export function Settings({
             <h2 id="h-connection" tabIndex={-1} className={sectionTitle}>
               Connection
             </h2>
-            <p className={saveNote}>Press Save to keep the changes. Save checks the connection first.</p>
+            <p className={saveNote}>
+              Press Save to keep the changes. Save tests the connection to the server first, so it does not save by itself.
+            </p>
           </div>
           <form className="grid gap-4" onSubmit={submit} key={settings.baseUrl ?? ""}>
             {settings.baseUrl === null && (
@@ -214,7 +219,7 @@ export function Settings({
         {settings.baseUrl !== null && <Notifications settings={settings} />}
         {settings.baseUrl !== null && <AiMark settings={settings} />}
         {settings.baseUrl !== null && <Appearance />}
-        {settings.baseUrl !== null && <ReviewProfiles settings={settings} />}
+        {settings.baseUrl !== null && <ReviewProfiles settings={settings} target={profile} />}
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
         {settings.baseUrl !== null && <JiraSettings settings={settings} />}
         {settings.baseUrl !== null && <Clones />}

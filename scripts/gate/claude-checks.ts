@@ -1,4 +1,5 @@
-// Gate B: local Claude Code checks B1 to B9 (docs/plans/v3.md section 5), B11 and B12 (docs/plans/r3.md WP-G3).
+// Gate B: local Claude Code checks B1 to B9 (docs/plans/v3.md section 5), B11 and B12 (docs/plans/r3.md WP-G3),
+// B13 (the model and effort fields of an --agents definition, and the --effort flag).
 // Usage: bun scripts/gate/claude-checks.ts [--only B1,B3] [--dry-run]
 // --dry-run builds every fixture and prints the planned argv. It starts no `claude -p` process and needs no `claude` on PATH.
 // Raw output goes to .gate0/v3-local/raw/ (gitignored). Raw files hold local paths and account data.
@@ -26,15 +27,15 @@ const STUB = join(import.meta.dir, "stub-mcp-server.ts");
 const BUN = process.execPath;
 const MAX_CALLS = 14;
 const MAX_TURNS = 4;
-// B9, B11, and B12 have their own call caps. They do not count against MAX_CALLS.
-const OWN_MAX_CALLS: Record<string, number> = { b9: 2, b11: 2, b12: 1 };
+// B9, B11, B12, and B13 have their own call caps. They do not count against MAX_CALLS.
+const OWN_MAX_CALLS: Record<string, number> = { b9: 2, b11: 2, b12: 1, b13: 2 };
 const B9_MAX_TURNS = 8;
 const MAX_COST_USD = 0.6;
 const RUN_TIMEOUT_MS = 180_000;
 // Every temp folder name holds TAG. Claude Code keeps the name in its encoded per-cwd folders.
 const TAG = "rl-gb-";
 const FACT = "STUBFACT-5150";
-const CHECKS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B11", "B12"] as const;
+const CHECKS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B11", "B12", "B13"] as const;
 type CheckId = (typeof CHECKS)[number];
 
 // ---------- arguments ----------
@@ -117,7 +118,7 @@ interface Ev {
   type: string;
   subtype?: string;
   parent_tool_use_id?: string | null;
-  message?: { content?: Block[] | string };
+  message?: { content?: Block[] | string; model?: string };
   tools?: string[];
   agents?: string[];
   mcp_servers?: { name: string; status: string }[];
@@ -1424,6 +1425,63 @@ async function b12() {
   }
 }
 
+// ---------- B13: model and effort of a review agent, and the --effort flag ----------
+// The app writes rl-reviewer with the profile model and effort (src/server/review/catalog.ts reviewerAgent).
+// Run 1: rl-reviewer with model sonnet and effort low under a haiku main thread at --effort low. The subagent messages name their model.
+// Run 2: an effort that no CLI accepts. It shows whether the CLI refuses an --agents file with a bad field or ignores the field.
+const B13_EFFORT = "low";
+async function b13() {
+  const { work, app, drop } = runnerFolder("b13");
+  try {
+    writeFileSync(join(work, "repo", "b13.txt"), "B13 file.\n");
+    const definition = (effort: string) => ({
+      "rl-main": {
+        description: "Gate B13 main thread.",
+        prompt: "You do the user task exactly. You change no files.",
+        tools: ["Agent(rl-reviewer)", "Read", "Grep", "Glob"],
+      },
+      "rl-reviewer": { ...reviewer(), model: "sonnet", effort, maxTurns: 2 },
+    });
+    const args = (effort: string) => [
+      "--restricted",
+      "--strict-mcp-config",
+      "--tools",
+      "Read,Grep,Glob,Agent",
+      "--allowedTools",
+      "Read,Grep,Glob",
+      "--agents",
+      agentsFile(app, definition(effort)),
+      "--agent",
+      "rl-main",
+      "--effort",
+      B13_EFFORT,
+      "--no-session-persistence",
+    ];
+    const prompt = `Call the Agent tool once with subagent_type "rl-reviewer" and this task: "Read ./repo/b13.txt and reply with its text." Then reply with the agent's answer.`;
+    const ok = await runClaude("b13-agent-fields", args(B13_EFFORT), prompt, work, { env: runnerEnv() });
+    const bad = await runClaude("b13-bad-effort", args("turbo"), "Reply with the word OK.", work, { env: runnerEnv(), maxTurns: 1 });
+    if (DRY) return dry("B13", `effort help=${short(helpBlock("--effort"), 200)}`);
+    const call = toolUses(ok).find((t) => t.parent === null && isAgentTool(t.name));
+    const subModels = [
+      ...new Set(ok.events.filter((e) => e.type === "assistant" && e.parent_tool_use_id).map((e) => e.message?.model ?? "none")),
+    ];
+    const mainModels = [
+      ...new Set(ok.events.filter((e) => e.type === "assistant" && !e.parent_tool_use_id).map((e) => e.message?.model ?? "none")),
+    ];
+    const refused = /Invalid --agents configuration/i.test(ok.stderr);
+    const pass = ok.exit === 0 && !refused && !!call && ranUnder(ok, call.id) && subModels.some((m) => /sonnet/i.test(m));
+    const badRefused = /Invalid --agents configuration/i.test(bad.stderr);
+    push(
+      "B13",
+      pass ? "PASS" : "FAIL",
+      `agent fields run: exit=${ok.exit} refused=${refused} init.model=${ok.init ? String((ok.init as { model?: unknown }).model) : "none"} main models=${mainModels.join(",") || "none"} agent call=${call?.name ?? "none"} subagent ran=${call ? ranUnder(ok, call.id) : false} subagent models=${subModels.join(",") || "none"} (want sonnet); bad effort (INFO): exit=${bad.exit} refused=${badRefused} stderr=${short(bad.stderr, 200) || "none"}; --effort help=${short(helpBlock("--effort"), 200)}; --model help=${short(helpBlock("--model"), 200)}`,
+      { subModels, mainModels, badExit: bad.exit, badRefused },
+    );
+  } finally {
+    drop();
+  }
+}
+
 // ---------- main ----------
 const RUNNERS: Record<CheckId, () => Promise<unknown>> = {
   B1: b1,
@@ -1437,6 +1495,7 @@ const RUNNERS: Record<CheckId, () => Promise<unknown>> = {
   B9: b9,
   B11: b11,
   B12: b12,
+  B13: b13,
 };
 {
   for (const id of selected) await check(id, RUNNERS[id]);
@@ -1446,6 +1505,8 @@ const RUNNERS: Record<CheckId, () => Promise<unknown>> = {
     cliVersion,
     permissionModes,
     restrictedHelp: helpBlock("--restricted"),
+    modelHelp: helpBlock("--model"),
+    effortHelp: helpBlock("--effort"),
     selected,
     claudeCalls,
     callLimit: MAX_CALLS,

@@ -1,7 +1,7 @@
 // Run list (R14, prototype/v3 runLine): one row for the newest run of each kind, newest first. Each row has the same parts:
 // the kind, the state or the result, the time, and Log in its own column. Below them, the inputs of the run.
 // Failed, usage-limit, and cancelled runs are one row each. A re-review names its range (plan r2 UI-RR).
-import { Bot, Braces, CircleAlert, CircleStop, GitCommitHorizontal, LoaderCircle, ScrollText, Ticket, User } from "lucide-react";
+import { Bot, Braces, CircleAlert, CircleStop, Cpu, GitCommitHorizontal, LoaderCircle, ScrollText, Ticket, User } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { MetaDto, RunDto } from "../../shared/dto";
@@ -9,7 +9,7 @@ import { fullTime, useSettled } from "../pr/Thread";
 import { agoLong } from "../pr/threads";
 import { Hint } from "../shell/Hint";
 import { useNow } from "../shell/Sidebar";
-import { clockDur, type Jump, KIND_LABEL, limitText, plural, RUN_TEXT, type RunLineState, SEVERITY, shortHash } from "./model";
+import { clockDur, type Jump, KIND_LABEL, limitText, plural, RUN_TEXT, type RunLineState, SEVERITY, setupText, shortHash } from "./model";
 
 const icon = "size-[15px] shrink-0";
 const jump = "inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium hover:underline";
@@ -207,7 +207,7 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onGaps }: 
   );
 }
 
-// What the run read: the commit or the range, the profile, the tasks of plan r3 Feature C, and your note as plain text.
+// What the run read: the commit or the range, the profile, the model and the effort, the tasks of plan r3 Feature C, and your note as plain text.
 // A menu of a run button can pick another profile than the brief one, so the row names it.
 // The run records its tasks at its start. A run from before Release 3 has no record, so it shows no task.
 function Inputs({ run, stale }: { run: RunDto; stale: string | null }) {
@@ -242,6 +242,11 @@ function Inputs({ run, stale }: { run: RunDto; stale: string | null }) {
       <span className={item}>
         <Bot aria-hidden className={icon} />
         {run.profileName} profile
+      </span>
+      <span className={item} data-run-setup>
+        <Cpu aria-hidden className={icon} />
+        <span className="sr-only">Model and effort: </span>
+        {setupText(run)}
       </span>
       {tasks.length > 0 && (
         <span className={item} title={`Task text that this run read: ${ids}`}>

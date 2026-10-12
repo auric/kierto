@@ -75,12 +75,13 @@ function flash(el: HTMLElement) {
 }
 
 // onLeave: the shell moves the selection away before the PR leaves the list. onSettings: the brief links to the task ID rules.
-// onRestore: the Archive view brings the PR back.
+// onProfile: the Review menu opens the settings at one profile. onRestore: the Archive view brings the PR back.
 export function PrDetail({
   pr: row,
   me,
   onLeave,
   onSettings,
+  onProfile,
   onRestore,
   ref,
 }: {
@@ -88,6 +89,7 @@ export function PrDetail({
   me: string | null;
   onLeave: () => void;
   onSettings: () => void;
+  onProfile: (id: string) => void;
   onRestore: (pr: PrRow) => void;
   ref: Ref<DetailApi | null>;
 }) {
@@ -230,6 +232,7 @@ export function PrDetail({
     reveal: jump,
     announce,
     onSettings,
+    onProfile,
     showInDiff: (id) => showDiff.current({ kind: "draft", id }),
   });
   draftReply.current = review.api.draftReply;

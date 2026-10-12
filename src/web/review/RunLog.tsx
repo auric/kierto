@@ -23,6 +23,7 @@ import {
   limitText,
   logTree,
   seconds,
+  setupText,
   shortHash,
   tokenText,
   tokenTotal,
@@ -208,6 +209,12 @@ export function RunLog(props: {
         className="flex flex-wrap items-baseline gap-x-3.5 gap-y-1.5 border-t px-4 pt-2.5 pb-3.5 text-sm text-ink-2"
       >
         {detail && <Foot detail={detail} meta={meta} raw={target.raw} onRaw={props.onRaw} />}
+        {detail && (
+          <span data-run-setup className="text-muted-foreground">
+            <span className="sr-only">Model and effort: </span>
+            {setupText(detail.run)}
+          </span>
+        )}
       </footer>
     </aside>
   );

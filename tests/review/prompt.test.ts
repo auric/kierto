@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { LARGE_FILE_RULE, mainAgent, reviewerAgent, SHIPPED_PROFILES } from "../../src/server/review/catalog";
+import {
+  LARGE_FILE_RULE,
+  mainAgent,
+  profileRevision,
+  reviewerAgent,
+  SHIPPED_PROFILES,
+  usesReviewer,
+} from "../../src/server/review/catalog";
 import {
   buildAskPrompt,
   buildFixPrompt,
@@ -88,5 +95,51 @@ ${rule}
     expect(reviewer).toContain(rule);
     expect(reviewer).toContain(LARGE_FILE_RULE);
     expect(reviewer).toContain("The request names the paths and the git_diff range to review.");
+  });
+});
+
+describe("reviewer agents (profile run setup)", () => {
+  const withMode = (mode: "auto" | "always" | "off", explain = false) => ({ ...general, explain, reviewer: { ...general.reviewer, mode } });
+
+  test("Always splits the changed files across rl-reviewer calls and checks the merged findings", () => {
+    const always = mainAgent(withMode("always")).prompt;
+    expect(always).toContain(
+      "Split the changed files by path across calls to the rl-reviewer agent. Make at least 2 calls when the change has 2 or more changed files.",
+    );
+    expect(always).toContain(
+      'Merge the findings of all calls. Check each finding against the code in ./repo, and drop a finding that the code does not confirm. Set agent to "rl-reviewer" on each finding from a call.',
+    );
+    expect(always).not.toContain("Give parts of a large change");
+    expect(mainAgent(withMode("auto")).prompt).toContain("Give parts of a large change to the rl-reviewer agent.");
+    expect(mainAgent(withMode("auto")).prompt).not.toContain("Make at least 2 calls");
+  });
+
+  test("Off and Explain get no rl-reviewer, in the prompt and in the run", () => {
+    for (const p of [withMode("off"), withMode("always", true), withMode("auto", true)]) {
+      expect(mainAgent(p).prompt).not.toContain("rl-reviewer");
+      expect(usesReviewer(p)).toBe(false);
+    }
+    expect(usesReviewer(withMode("always"))).toBe(true);
+    expect(usesReviewer(general)).toBe(true);
+  });
+
+  test("the reviewer agent gets model and effort only when the profile sets them", () => {
+    expect(reviewerAgent(general)).not.toHaveProperty("model");
+    expect(reviewerAgent(general)).not.toHaveProperty("effort");
+    const set = reviewerAgent({ ...general, reviewer: { model: "haiku", effort: "low", mode: "auto" } });
+    expect(set).toMatchObject({ model: "haiku", effort: "low" });
+  });
+
+  test("the run setup joins the revision only when it differs from the defaults", () => {
+    const base = profileRevision(general);
+    expect(profileRevision({ ...general, model: null, effort: null, reviewer: { model: null, effort: null, mode: "auto" } })).toBe(base);
+    const changed = [
+      { ...general, model: "opus" },
+      { ...general, effort: "high" as const },
+      { ...general, reviewer: { ...general.reviewer, mode: "off" as const } },
+      { ...general, reviewer: { ...general.reviewer, model: "haiku" } },
+      { ...general, reviewer: { ...general.reviewer, effort: "max" as const } },
+    ].map(profileRevision);
+    expect(new Set([base, ...changed]).size).toBe(changed.length + 1);
   });
 });

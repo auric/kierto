@@ -3,11 +3,20 @@
 import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { ProfileId, ProfileInput } from "../../shared/dto";
+import { DEFAULT_REVIEWER, type ProfileId, type ProfileInput } from "../../shared/dto";
 import { type AgentSpec, type McpServerSpec, NAME } from "./claude";
+import { SKILL_INDEX, SKILL_INDEX_AFTER } from "./skills";
 
 // login: `claude auth login --help` (CLI 2.1.295) names --claudeai for the subscription.
-export const RUNNER = { name: "Claude Code", short: "Claude", initials: "AI", login: "claude auth login --claudeai" };
+// models: the --model aliases that code.claude.com/docs/en/model-config lists for every account. modelExample: a full model ID.
+export const RUNNER = {
+  name: "Claude Code",
+  short: "Claude",
+  initials: "AI",
+  login: "claude auth login --claudeai",
+  models: ["opus", "sonnet", "haiku"],
+  modelExample: "claude-opus-5-5",
+};
 export const GIT_SERVER = "rl-git";
 export const REVIEWER = "rl-reviewer";
 // Plan v3 D10: remote documentation servers. They get no credentials.
@@ -47,6 +56,9 @@ export const SHIPPED_PROFILES: Profile[] = [
     docs: true,
     skills: [],
     mcp: [],
+    model: null,
+    effort: null,
+    reviewer: { ...DEFAULT_REVIEWER },
     prompt:
       "Find defects in the change: wrong logic, missed edge cases, races and lock order, resource leaks, error handling, and effects on callers outside the diff.",
   },
@@ -59,6 +71,9 @@ export const SHIPPED_PROFILES: Profile[] = [
     docs: true,
     skills: [],
     mcp: [],
+    model: null,
+    effort: null,
+    reviewer: { ...DEFAULT_REVIEWER },
     prompt:
       "Find code that the change can delete or simplify: abstractions with one use, code that the standard library or the platform already gives, unneeded dependencies, settings for fixed values, and dead code.",
   },
@@ -71,6 +86,9 @@ export const SHIPPED_PROFILES: Profile[] = [
     docs: true,
     skills: [],
     mcp: [],
+    model: null,
+    effort: null,
+    reviewer: { ...DEFAULT_REVIEWER },
     prompt:
       "Find security defects: trust boundaries, input validation, injection, secrets in code or logs, authentication and authorization, unsafe memory use, and unsafe defaults.",
   },
@@ -83,6 +101,9 @@ export const SHIPPED_PROFILES: Profile[] = [
     docs: false,
     skills: [],
     mcp: [],
+    model: null,
+    effort: null,
+    reviewer: { ...DEFAULT_REVIEWER },
     prompt:
       "Explain the change for a reviewer: what it does, why, and which parts need attention. Ask a question where the intent is not clear. Report no findings.",
   },
@@ -90,13 +111,19 @@ export const SHIPPED_PROFILES: Profile[] = [
 
 // list: at least one profile (profileList).
 export const profileOf = (list: Profile[], id: string): Profile => list.find((p) => p.id === id) ?? (list[0] as Profile);
-// The replacer array fixes the key order. Skills and MCP picks join the hash only when present, so the revisions of older runs stay valid.
+const defaultReviewer = (p: Profile) =>
+  p.reviewer.model === DEFAULT_REVIEWER.model && p.reviewer.effort === DEFAULT_REVIEWER.effort && p.reviewer.mode === DEFAULT_REVIEWER.mode;
+// The replacer array fixes the key order. Each later field joins the hash only when it differs from its default, so the revisions of older runs stay valid.
 export const profileRevision = (p: Profile) =>
   createHash("sha256")
     .update(JSON.stringify(p, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
     .update(p.skills.length ? JSON.stringify(p.skills) : "")
     .update(p.mcp.length ? `mcp${JSON.stringify(p.mcp, ["server", "tools"])}` : "")
+    .update(p.model !== null || p.effort !== null ? `run${JSON.stringify([p.model, p.effort])}` : "")
+    .update(defaultReviewer(p) ? "" : `reviewer${JSON.stringify(p.reviewer, ["model", "effort", "mode"])}`)
     .digest("hex");
+// A review run of the profile gets the rl-reviewer agent. The caller checks the run kind.
+export const usesReviewer = (p: Profile) => !p.explain && p.reviewer.mode !== "off";
 export const DEFAULT_PROFILE: ProfileId = "general";
 // Fix and reply runs get at least this turn cap, whatever the profile.
 export const MIN_EDIT_TURNS = 100;
@@ -184,13 +211,21 @@ const RESULT_RULES = [
   'Base each finding on code that you read. Set evidenceStatus to "unverified" when you did not check it.',
 ];
 
+const DELEGATE: Record<Exclude<Profile["reviewer"]["mode"], "off">, string[]> = {
+  auto: [
+    `Give parts of a large change to the ${REVIEWER} agent. Give each call a list of paths and the git_diff range to review. In a re-review, also give the merge base.`,
+    `Merge its findings and set agent to "${REVIEWER}" on each of them.`,
+  ],
+  always: [
+    `Split the changed files by path across calls to the ${REVIEWER} agent. Make at least 2 calls when the change has 2 or more changed files.`,
+    "Give each call its list of paths and the git_diff range to review. In a re-review, also give the merge base.",
+    `Merge the findings of all calls. Check each finding against the code in ./repo, and drop a finding that the code does not confirm. Set agent to "${REVIEWER}" on each finding from a call.`,
+  ],
+};
+
 export function mainAgent(p: Profile): AgentSpec {
-  const delegate = p.explain
-    ? []
-    : [
-        `Give parts of a large change to the ${REVIEWER} agent. Give each call a list of paths and the git_diff range to review. In a re-review, also give the merge base.`,
-        `Merge its findings and set agent to "${REVIEWER}" on each of them.`,
-      ];
+  // The usesReviewer rule, written out so that the mode narrows.
+  const delegate = !p.explain && p.reviewer.mode !== "off" ? DELEGATE[p.reviewer.mode] : [];
   return {
     description: "Read-only review of one pull request.",
     prompt: [
@@ -264,13 +299,20 @@ export function askAgent(p: Profile): AgentSpec {
 }
 
 // folders: the skill folders in ./skills of this run. The skill text comes from the user's own Claude Code setup.
+// Above SKILL_INDEX_AFTER skills, copySkills writes the index and the model reads only the skills that apply.
 export function skillLines(folders: string[]): string[] {
   if (!folders.length) return [];
-  return [
-    `The user chose these skills: ${folders.map((f) => `./skills/${f}/SKILL.md`).join(", ")}.`,
-    "Read each SKILL.md first and follow it. Read its other files when it tells you to.",
-    "Skill scripts cannot run. The rules above stay in force, and your result must still use the required output format.",
-  ];
+  const read =
+    folders.length > SKILL_INDEX_AFTER
+      ? [
+          `The user chose ${folders.length} skills. ./skills/${SKILL_INDEX} lists the name, the description, and the folder of each one.`,
+          `Read skills/${SKILL_INDEX}. Read a skill's SKILL.md only when it applies to this change. Follow each skill that you read, and read its other files when it tells you to.`,
+        ]
+      : [
+          `The user chose these skills: ${folders.map((f) => `./skills/${f}/SKILL.md`).join(", ")}.`,
+          "Read each SKILL.md first and follow it. Read its other files when it tells you to.",
+        ];
+  return [...read, "Skill scripts cannot run. The rules above stay in force, and your result must still use the required output format."];
 }
 
 // Adds the skill pointer to the prompt of an agent.
@@ -295,8 +337,11 @@ export function mcpLines(used: McpUse[]): string[] {
 export const withMcp = (a: AgentSpec, used: McpUse[]): AgentSpec =>
   used.length ? { ...a, prompt: [a.prompt, ...mcpLines(used)].join("\n") } : a;
 
+// model and effort are agent definition fields (code.claude.com/docs/en/sub-agents). Gate B13 checks that the CLI accepts them.
 export function reviewerAgent(p: Profile): AgentSpec {
   return {
+    ...(p.reviewer.model !== null && { model: p.reviewer.model }),
+    ...(p.reviewer.effort !== null && { effort: p.reviewer.effort }),
     description: "Read-only reviewer for one part of a change.",
     prompt: [
       "You review one part of a change, read-only. The request names the paths and the git_diff range to review.",

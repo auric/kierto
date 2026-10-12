@@ -100,10 +100,13 @@ export function ReviewButton(props: {
   extra?: ReactNode;
   onRun: (profile?: string) => void;
   onBrief: () => void;
+  // Opens the settings at the brief profile.
+  onEditProfile: () => void;
 }) {
   const note = runnerNote(props.meta);
-  // Open brief moves the focus into the note, not back to the menu button.
+  // Open brief moves the focus into the note, not back to the menu button. Edit profile moves it into the settings.
   const toBrief = useRef(false);
+  const toSettings = useRef(false);
   return (
     <>
       {note && (
@@ -129,13 +132,25 @@ export function ReviewButton(props: {
         onRun={props.onRun}
         finalFocus={() => {
           const brief = toBrief.current;
+          const settings = toSettings.current;
           toBrief.current = false;
-          return brief ? document.getElementById("brief-note") : true;
+          toSettings.current = false;
+          return settings ? false : brief ? document.getElementById("brief-note") : true;
         }}
         more={
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
+              <DropdownMenuItem
+                id="review-btn-edit-profile"
+                onClick={() => {
+                  toSettings.current = true;
+                  props.onEditProfile();
+                }}
+              >
+                Edit profile…
+                <span className="sr-only"> {props.state.name}</span>
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {
                   toBrief.current = true;

@@ -9,6 +9,7 @@ const TITLE = "Batch cache writes in the sync worker";
 const SHIPPED = ["General", "Over-engineering", "Security", "Explain"];
 // A run passes the git workspace, the fake CLI, and the validator.
 const RUN_MS = 60_000;
+const SAVED = "Saved. New runs use these profiles.";
 
 const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
   seen: [
@@ -35,6 +36,7 @@ const runLine = (page: Page) => page.locator("#runline");
 const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 const runLog = (page: Page) => page.getByRole("dialog", { name: "Review run log" });
 const field = (page: Page, label: string, n: number) => page.getByLabel(`${label} of profile ${n}`, { exact: true });
+const status = (page: Page) => page.locator("#profiles-status");
 const names = (page: Page) =>
   page
     .getByRole("list", { name: "Review profiles" })
@@ -55,10 +57,8 @@ async function connect(page: Page) {
 const openSettings = (page: Page) => page.getByRole("button", { name: "Settings" }).click();
 const closeSettings = (page: Page) => page.getByRole("button", { name: "Close the settings" }).click();
 
-async function saveProfiles(page: Page) {
-  await page.getByRole("button", { name: "Save profiles" }).click();
-  await expect(page.getByText("Saved. New reviews use these profiles.")).toBeVisible();
-}
+// Autosave: the status names the save. A text field saves when it loses focus or after a pause.
+const saved = (page: Page) => expect(status(page)).toHaveText(SAVED);
 
 // The names of the profile radios in the review brief. Esc closes the brief again.
 async function briefNames(page: Page) {
@@ -71,8 +71,26 @@ async function briefNames(page: Page) {
   return out;
 }
 
+type SavedProfile = {
+  id: string;
+  name: string;
+  note: string;
+  skills?: string[];
+  mcp?: unknown;
+  model?: string | null;
+  effort?: string | null;
+  reviewer?: unknown;
+};
 async function settingsApi(request: APIRequestContext) {
-  return (await (await request.get(`${APP}/api/settings`)).json()) as { checkSeconds: number; profiles: { id: string; name: string }[] };
+  return (await (await request.get(`${APP}/api/settings`)).json()) as { checkSeconds: number; profiles: SavedProfile[] };
+}
+
+// Remove asks first. The dialog names the profile.
+async function removeProfile(page: Page, name: string) {
+  await page.getByRole("button", { name: `Remove ${name}` }).click();
+  const ask = page.getByRole("dialog", { name: `Remove ${name}?` });
+  await ask.getByRole("button", { name: "Remove profile" }).click();
+  await expect(ask).toHaveCount(0);
 }
 
 test("the check interval persists after a reload", async ({ page, request }) => {
@@ -102,8 +120,8 @@ test("a renamed profile shows in the Review button and in the run labels; a run 
   const name = field(page, "Name", 1);
   await expect(name).toHaveValue("General");
   await name.fill("Correctness");
-  await expect(page.getByText("Unsaved changes.")).toBeVisible();
-  await saveProfiles(page);
+  await name.blur();
+  await saved(page);
   await closeSettings(page);
   await expect(reviewButton(page)).toHaveText(/Review · Correctness/);
 
@@ -120,7 +138,7 @@ test("a renamed profile shows in the Review button and in the run labels; a run 
   await openSettings(page);
   await field(page, "Name", 1).fill("Logic");
   await field(page, "Explain only", 1).check();
-  await saveProfiles(page);
+  await saved(page);
   await closeSettings(page);
   await expect(reviewButton(page)).toHaveText(/Review · Logic/);
   await expect(runRow(page)).toContainText("Correctness profile");
@@ -131,34 +149,78 @@ test("a renamed profile shows in the Review button and in the run labels; a run 
   await expect(row(page)).toContainText("Correctness:");
 });
 
-test("an added profile appears in the brief, and a removed one disappears", async ({ page, request }) => {
+test("autosave: each change persists without a Save button, also after a reload; an invalid name stays unsaved", async ({
+  page,
+  request,
+}) => {
   await connect(page);
   await openSettings(page);
-  const save = page.getByRole("button", { name: "Save profiles" });
-  await page.getByRole("button", { name: "Add profile" }).click();
-  await expect(field(page, "Name", 5)).toBeFocused();
-  // A new profile needs a name and a prompt before the save.
+  await expect(page.getByRole("button", { name: "Save profiles" })).toHaveCount(0);
+  await expect(page.locator("section[aria-labelledby='h-profiles']")).toContainText("Changes save as you make them.");
+  // A text field saves about one second after the last key, without a blur.
+  await field(page, "Note", 1).fill("Typed note");
+  await saved(page);
+  expect((await settingsApi(request)).profiles[0]?.note).toBe("Typed note");
+
+  // An empty name shows its error and stays unsaved. The note of the same profile still saves.
+  await field(page, "Name", 2).fill("");
   await expect(page.getByText("Enter a name.")).toBeVisible();
-  await expect(page.getByText("Enter a prompt.")).toBeVisible();
-  await expect(save).toBeDisabled();
-  await field(page, "Name", 5).fill("API review");
-  await field(page, "Note", 5).fill("Public API and compatibility");
-  await field(page, "Prompt", 5).fill("Check the public API for breaking changes.");
-  await expect(page.getByText("Enter a prompt.")).toHaveCount(0);
-  await page.getByRole("button", { name: "Remove Over-engineering" }).click();
-  await expect(page.getByRole("button", { name: "Remove Security" })).toBeFocused();
-  // Unsaved edits stay when the settings close.
+  await expect(field(page, "Name", 2)).toHaveAttribute("aria-invalid", "true");
+  await expect(status(page)).toHaveText("A marked field is not saved. Fix it to save it.");
+  await field(page, "Note", 2).fill("Kept while the name is empty");
+  await field(page, "Note", 2).blur();
+  await expect.poll(async () => (await settingsApi(request)).profiles[1]?.note).toBe("Kept while the name is empty");
+  expect((await settingsApi(request)).profiles[1]?.name).toBe("Over-engineering");
+
+  // Closing the settings sends a waiting change at once.
+  await field(page, "Name", 2).fill("Simplify");
   await closeSettings(page);
+  await expect.poll(async () => (await settingsApi(request)).profiles[1]?.name).toBe("Simplify");
+
+  await page.reload();
   await openSettings(page);
-  await expect(page.getByText("Unsaved changes.")).toBeVisible();
+  await expect(field(page, "Note", 1)).toHaveValue("Typed note");
+  await expect(field(page, "Name", 2)).toHaveValue("Simplify");
+  await expect(field(page, "Note", 2)).toHaveValue("Kept while the name is empty");
+});
+
+test("an added profile appears in the brief, and a removed one disappears after a confirm", async ({ page, request }) => {
+  await connect(page);
+  await openSettings(page);
+  await page.getByRole("button", { name: "Add profile" }).click();
+  // A new profile saves at once, so it starts valid. Its name is selected, so typing replaces it.
+  const name = field(page, "Name", 5);
+  await expect(name).toBeFocused();
+  await expect(name).toHaveValue("New profile");
+  await saved(page);
+  await page.keyboard.type("API review");
+  await field(page, "Note", 5).fill("Public API and compatibility");
+  // A label also holds the text of its textarea, so the prompt goes by its accessible name.
+  const prompt = page.getByRole("textbox", { name: "Prompt of profile 5", exact: true });
+  await expect(prompt).toHaveValue("Find defects in the change: wrong logic, missed edge cases, and effects on callers outside the diff.");
+  await prompt.fill("Check the public API for breaking changes.");
+  await prompt.blur();
+  await saved(page);
+
+  // Remove asks first. Cancel keeps the profile; the dialog gives the focus back to the button.
+  const remove = page.getByRole("button", { name: "Remove Over-engineering" });
+  await remove.click();
+  const ask = page.getByRole("dialog", { name: "Remove Over-engineering?" });
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  await expect(remove).toBeFocused();
+  await removeProfile(page, "Over-engineering");
+  await expect(page.getByRole("button", { name: "Remove Security" })).toBeFocused();
+  await saved(page);
   expect(await names(page)).toEqual(["General", "Security", "Explain", "API review"]);
-  await saveProfiles(page);
-  expect((await settingsApi(request)).profiles.map((p) => [p.id, p.name])).toEqual([
-    ["general", "General"],
-    ["security", "Security"],
-    ["explain", "Explain"],
-    ["api-review", "API review"],
-  ]);
+  await expect
+    .poll(async () => (await settingsApi(request)).profiles.map((p) => [p.id, p.name]))
+    .toEqual([
+      ["general", "General"],
+      ["security", "Security"],
+      ["explain", "Explain"],
+      ["new-profile", "API review"],
+    ]);
   await closeSettings(page);
   expect(await briefNames(page)).toEqual(["General", "Security", "Explain", "API review"]);
 });
@@ -167,8 +229,8 @@ test("reset brings back the four shipped profiles", async ({ page, request }) =>
   await connect(page);
   await openSettings(page);
   await field(page, "Name", 1).fill("Mine");
-  await page.getByRole("button", { name: "Remove Explain" }).click();
-  await saveProfiles(page);
+  await removeProfile(page, "Explain");
+  await saved(page);
   expect(await names(page)).toEqual(["Mine", "Over-engineering", "Security"]);
 
   const reset = page.getByRole("button", { name: "Reset to shipped profiles" });
@@ -192,20 +254,32 @@ test("reset brings back the four shipped profiles", async ({ page, request }) =>
 });
 
 // serve.ts gives the app a synthetic Claude Code config folder with the user skill test-check and the plugin skill e2e-plugin:style.
-test("a skill picked in a profile is saved and copied into the run folder", async ({ page, request }) => {
+test("skills picked in the dialog save at once and are copied into the run folder", async ({ page, request }) => {
   await connect(page);
   await openSettings(page);
-  const picker = page.locator("#profile-0-skills");
-  await picker.locator("summary").click();
-  const skills = page.getByRole("group", { name: "Skills of profile 1" });
-  await expect(skills.getByText("Finds changed code without a test.")).toBeVisible();
-  await expect(skills.getByText("Plugin 1.2.0 · Checks the naming style.")).toBeVisible();
-  await skills.getByRole("checkbox", { name: /^test-check test-check/ }).check();
-  await skills.getByRole("checkbox", { name: /^style e2e-plugin:style/ }).check();
-  await expect(picker.locator("summary")).toContainText("test-check, style");
-  await saveProfiles(page);
-  const saved = (await settingsApi(request)).profiles[0] as { skills?: string[] };
-  expect(saved.skills).toEqual(["test-check", "e2e-plugin:style"]);
+  const chips = page.getByRole("list", { name: "Skills of profile 1" });
+  await expect(chips).toHaveCount(0);
+  await page.getByRole("button", { name: "Choose… skills of profile 1" }).click();
+  const dialog = page.getByRole("dialog", { name: "Skills of General" });
+  await expect(dialog.getByText("Finds changed code without a test.")).toBeVisible();
+  await expect(dialog.getByText("Plugin 1.2.0 · Checks the naming style.")).toBeVisible();
+  // Search narrows the list. Select all then picks only the shown skills.
+  await dialog.getByRole("searchbox", { name: "Search skills" }).fill("naming");
+  await expect(dialog.getByRole("checkbox")).toHaveCount(1);
+  await dialog.getByRole("button", { name: "Select all shown" }).click();
+  await expect(dialog.getByRole("checkbox", { name: /^style e2e-plugin:style/ })).toBeChecked();
+  await dialog.getByRole("searchbox", { name: "Search skills" }).fill("");
+  await dialog.getByRole("checkbox", { name: /^test-check test-check/ }).check();
+  await expect(dialog.getByRole("status")).toHaveText("2 of 2 chosen");
+  await dialog.getByRole("button", { name: "Clear" }).click();
+  await expect(dialog.getByRole("status")).toHaveText("0 of 2 chosen");
+  await dialog.getByRole("checkbox", { name: /^test-check test-check/ }).check();
+  await dialog.getByRole("checkbox", { name: /^style e2e-plugin:style/ }).check();
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("button", { name: "Choose… skills of profile 1" })).toBeFocused();
+  await expect(chips.getByRole("listitem")).toHaveText(["test-check", "style"]);
+  await saved(page);
+  await expect.poll(async () => (await settingsApi(request)).profiles[0]?.skills).toEqual(["test-check", "e2e-plugin:style"]);
   await closeSettings(page);
 
   await control("claude", { stream: "tree", hang: true });
@@ -218,14 +292,13 @@ test("a skill picked in a profile is saved and copied into the run folder", asyn
 });
 
 // serve.ts gives the app a Claude config with the user MCP server fake-docs and the plugin server e2e-plugin:docs. Both run tests/support/fake-mcp.ts.
-test("an MCP server picked in a profile gets only its ticked tools in the run", async ({ page, request }) => {
+test("an MCP server picked in the dialog gets only its ticked tools in the run", async ({ page, request }) => {
   await connect(page);
   await openSettings(page);
-  const picker = page.locator("#profile-0-mcp");
-  await picker.locator("summary").click();
-  const group = page.getByRole("group", { name: "MCP servers of profile 1" });
-  await expect(group.getByRole("checkbox", { name: /^e2e-plugin:docs Local command, plugin e2e-plugin$/ })).toBeVisible();
-  await group.getByRole("checkbox", { name: /^fake-docs Local command/ }).check();
+  await page.getByRole("button", { name: "Choose… MCP servers of profile 1" }).click();
+  const dialog = page.getByRole("dialog", { name: "MCP servers of General" });
+  await expect(dialog.getByRole("checkbox", { name: /^e2e-plugin:docs Local command, plugin e2e-plugin$/ })).toBeVisible();
+  await dialog.getByRole("checkbox", { name: /^fake-docs Local command/ }).check();
   const tools = page.getByRole("group", { name: "Tools of fake-docs" });
   // Only the tools with readOnlyHint true start ticked.
   await expect(tools.getByRole("checkbox", { name: /^search / })).toBeChecked();
@@ -247,16 +320,34 @@ test("an MCP server picked in a profile gets only its ticked tools in the run", 
   await ask.getByRole("button", { name: "Cancel" }).click();
   await expect(ask).toHaveCount(0);
   await expect(note).not.toBeChecked();
-  await note.click();
+
+  // Clear unticks every tool. Select all ticks the read-only tools at once and asks once for the unmarked one. Blocked stays off.
+  const clear = tools.getByRole("button", { name: "Clear tools of fake-docs" });
+  const all = tools.getByRole("button", { name: "Select all tools of fake-docs" });
+  await clear.click();
+  await expect(tools.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  await expect(tools).toContainText("No tool is ticked. Runs skip this server.");
+  await all.click();
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(tools.getByRole("checkbox", { checked: true })).toHaveCount(2);
+  await expect(tools.getByRole("checkbox", { name: /^search / })).toBeChecked();
+  await expect(tools.getByRole("checkbox", { name: /^lookup / })).toBeChecked();
+  await expect(note).not.toBeChecked();
+  await clear.click();
+  await all.click();
   await ask.getByRole("button", { name: "Allow in runs" }).click();
+  await expect(tools.getByRole("checkbox", { checked: true })).toHaveCount(3);
   await expect(note).toBeChecked();
+  await expect(del).not.toBeChecked();
   await expect(tools.getByText("bad.name")).toHaveCount(0);
   await tools.getByRole("checkbox", { name: /^lookup / }).uncheck();
-  await expect(picker.locator("summary")).toContainText("fake-docs (2)");
   await expect(page.getByText("E2E-MCP-SECRET")).toHaveCount(0);
-  await saveProfiles(page);
-  const saved = (await settingsApi(request)).profiles[0] as { mcp?: unknown };
-  expect(saved.mcp).toEqual([{ server: "fake-docs", tools: ["search", "note_tool"] }]);
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("list", { name: "MCP servers of profile 1" })).toHaveText("fake-docs (2 tools)");
+  await saved(page);
+  await expect
+    .poll(async () => (await settingsApi(request)).profiles[0]?.mcp)
+    .toEqual([{ server: "fake-docs", tools: ["search", "note_tool"] }]);
   await closeSettings(page);
 
   await control("claude", { stream: "tree", hang: true });
@@ -270,4 +361,73 @@ test("an MCP server picked in a profile gets only its ticked tools in the run", 
   expect(run?.denied?.split(",").sort()).toEqual(["mcp__fake-docs__delete_item", "mcp__fake-docs__lookup"]);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
   await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
+});
+
+test("the run setup saves model, effort, and reviewer agents; the run row and the log show the model and the effort", async ({
+  page,
+  request,
+}) => {
+  await connect(page);
+  // Before any change, a run shows the defaults: the init event names the model, and no --effort went out.
+  await page.keyboard.press("Shift+R");
+  await page.getByLabel("Your note").press("Control+Enter");
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  await expect(runRow(page).locator("[data-run-setup]")).toHaveText(/default effort$/);
+
+  await openSettings(page);
+  await field(page, "Model", 1).selectOption("other");
+  const id = page.getByLabel("Model ID of profile 1", { exact: true });
+  await expect(id).toBeFocused();
+  await id.fill("bad model");
+  await expect(page.getByText("Enter a model name without spaces that starts with a letter or a digit.")).toBeVisible();
+  await id.fill("claude-opus-5-5");
+  await id.blur();
+  await field(page, "Effort", 1).selectOption("high");
+  await page.getByRole("radiogroup", { name: "Reviewer agents of profile 1" }).getByText("Always", { exact: true }).click();
+  await expect(page.getByRole("radio", { name: "Always" }).first()).toBeChecked();
+  await field(page, "Agent effort", 1).selectOption("low");
+  await field(page, "Agent model", 1).selectOption("haiku");
+  await saved(page);
+  await expect
+    .poll(async () => {
+      const p = (await settingsApi(request)).profiles[0];
+      return [p?.model, p?.effort, p?.reviewer];
+    })
+    .toEqual(["claude-opus-5-5", "high", { model: "haiku", effort: "low", mode: "always" }]);
+  // Explain only turns the reviewer agents off for the profile.
+  await field(page, "Explain only", 1).check();
+  await expect(page.locator("#profile-0-reviewer-help")).toHaveText("Explain only runs use no reviewer agents.");
+  await expect(field(page, "Agent effort", 1)).toBeDisabled();
+  await field(page, "Explain only", 1).uncheck();
+  await saved(page);
+  await closeSettings(page);
+
+  await page.keyboard.press("Shift+R");
+  await page.getByLabel("Your note").press("Control+Enter");
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  // The fake CLI init event names claude-haiku-5-5, the model that ran.
+  await expect(runRow(page).locator("[data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, high effort");
+  await page.keyboard.press("3");
+  await expect(runLog(page).locator("footer [data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, high effort");
+});
+
+test("Edit profile… in the Review menu opens the settings at the brief profile", async ({ page }) => {
+  await connect(page);
+  await page.keyboard.press("Shift+R");
+  await page
+    .locator("#brief")
+    .getByRole("radio", { name: /^Security/ })
+    .check();
+  await page.keyboard.press("Escape");
+  await expect(reviewButton(page)).toHaveText(/Review · Security/);
+  await page.locator("#review-btn-menu").click();
+  await page.getByRole("menuitem", { name: /^Edit profile…/ }).click();
+  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+  await expect(field(page, "Name", 3)).toBeFocused();
+  await expect(field(page, "Name", 3)).toHaveValue("Security");
+  await expect(field(page, "Name", 3)).toBeInViewport();
+  // The settings opened another way start at the top.
+  await closeSettings(page);
+  await openSettings(page);
+  await expect(field(page, "Name", 3)).not.toBeFocused();
 });

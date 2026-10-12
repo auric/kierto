@@ -27,6 +27,7 @@ import {
   runLine,
   runRows,
   runWhy,
+  setupText,
   severityJumps,
   staleText,
   tokenTotal,
@@ -74,6 +75,7 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
   sessionId: null,
   cliVersion: "2.1.295",
   model: "m",
+  effort: null,
   usage: null,
   summary: null,
   startedAt: 1_000,
@@ -605,5 +607,14 @@ describe("one row per run kind", () => {
       { severity: "minor", n: 2, first: 1 },
     ]);
     expect(severityJumps([finding(1, { status: "discarded" })])).toEqual([]);
+  });
+});
+
+describe("model and effort of a run", () => {
+  test("the run row and the log footer name the model and the effort; an unknown value reads as default", () => {
+    expect(setupText({ model: "claude-opus-5-5", effort: "high" })).toBe("claude-opus-5-5, high effort");
+    expect(setupText({ model: null, effort: "default" })).toBe("default model, default effort");
+    // A run from before the effort column ran without --effort.
+    expect(setupText({ model: "claude-haiku-5-5", effort: null })).toBe("claude-haiku-5-5, default effort");
   });
 });

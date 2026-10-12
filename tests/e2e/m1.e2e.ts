@@ -322,7 +322,7 @@ test("copy: a message copies as raw Markdown without a toast; a deleted message 
   await expect(page.locator("#c-1000003").getByRole("button", { name: "Copy Markdown" })).toBeVisible();
 });
 
-test("task rules: a live preview, a syntax error, and the saved rule on the rows", async ({ page }) => {
+test("task rules: a live preview, a syntax error that stays unsaved, and the autosaved rule on the rows", async ({ page }) => {
   await connect(page, false);
   await nav(page, "Reviewing").click();
   await row(page, TITLE.a).click();
@@ -330,14 +330,19 @@ test("task rules: a live preview, a syntax error, and the saved rule on the rows
   // The default rules find nothing in the e2e PR, whose branch is topic/sample-3.
   await expect(page.getByText("No match.")).toBeVisible();
   const pattern = page.getByLabel("Pattern of rule 1");
-  const save = page.getByRole("button", { name: "Save task rules" });
+  const status = page.locator("#taskids-status");
+  await expect(page.getByRole("button", { name: "Save task rules" })).toHaveCount(0);
   await pattern.fill("(");
   await expect(page.getByText("This is not a valid regular expression")).toBeVisible();
-  await expect(save).toBeDisabled();
+  await expect(status).toHaveText("A marked rule is not saved. Fix it to save it.");
+  // A bad task link stays unsaved too and shows its own error.
+  const link = page.getByLabel("Task link (optional)");
+  await link.fill("ftp://tracker.example.test/{key}");
+  await expect(page.getByText("The task link must be an https URL with {key}.", { exact: false })).toBeVisible();
+  await link.fill("");
   await pattern.fill(String.raw`sample-\d+`);
   await expect(page.getByRole("list", { name: "Task IDs found" })).toContainText("sample-3");
-  await save.click();
-  await expect(page.getByText("Saved.")).toBeVisible();
+  await expect(status).toHaveText("Saved. The inbox finds the task IDs again in the background.");
   await page.getByRole("button", { name: "Cancel" }).click();
   // The background pass writes the IDs, and the live channel refreshes the list.
   await expect(row(page, TITLE.a)).toContainText("sample-3");
@@ -355,9 +360,12 @@ test("settings: the section links focus each section, each section says how it s
   await links.getByRole("link", { name: "Clones" }).click();
   await expect(page.getByRole("heading", { name: "Clones" })).toBeFocused();
   await expect(page.locator("section[aria-labelledby='h-clones']")).toContainText("Change saves from its dialog. Remove saves at once.");
-  await expect(page.locator("section[aria-labelledby='h-connection']")).toContainText("Press Save to keep the changes.");
+  await expect(page.locator("section[aria-labelledby='h-connection']")).toContainText(
+    "Press Save to keep the changes. Save tests the connection to the server first, so it does not save by itself.",
+  );
   await expect(page.locator("section[aria-labelledby='checks-title']")).toContainText("Changes save at once.");
-  await expect(page.locator("section[aria-labelledby='h-profiles']")).toContainText("Press Save profiles to keep the changes.");
+  await expect(page.locator("section[aria-labelledby='h-profiles']")).toContainText("Changes save as you make them.");
+  await expect(page.locator("section[aria-labelledby='h-taskids']")).toContainText("Changes save as you make them.");
 
   await links.getByRole("link", { name: "Appearance" }).click();
   await expect(page.getByRole("heading", { name: "Appearance" })).toBeFocused();

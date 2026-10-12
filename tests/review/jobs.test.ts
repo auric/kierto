@@ -334,6 +334,7 @@ describe("run pipeline", () => {
         via: "pull-request-ref",
         cliVersion: "2.1.295",
         model: "claude-haiku-5-5",
+        effort: "default",
         stale: null,
         hasRaw: true,
         findings: 2,
@@ -797,6 +798,8 @@ describe("brief and meta", () => {
       short: "Claude",
       initials: "AI",
       login: "claude auth login --claudeai",
+      models: ["opus", "sonnet", "haiku"],
+      modelExample: "claude-opus-5-5",
       check: null,
     });
     expect(meta.profiles.map((p) => [p.id, p.name, p.explain, p.maxTurns])).toEqual([
@@ -1011,6 +1014,62 @@ describe("editable profiles (M4)", () => {
   );
 
   test(
+    "the run setup: --model and --effort, the reviewer agent fields, the effort column, and no reviewer agent for Off",
+    async () => {
+      const h = await setup();
+      const tuned: ProfileInput = {
+        ...general,
+        model: "opus",
+        effort: "high",
+        reviewer: { model: "haiku", effort: "low", mode: "always" },
+      };
+      expect((await putProfiles(h, [tuned, ...SHIPPED_PROFILES.slice(1)])).status).toBe(200);
+      h.scenario({ fixture: subagentRun(), hang: true });
+      await h.brief(NOTE, "general");
+      const a = await h.start();
+      expect(a.status).toBe(202);
+      // Until the init event names the model that ran, the run shows the --model value.
+      expect(a.body).toMatchObject({ model: "opus", effort: "high" });
+      expect(await waitFor(() => h.runCall() !== undefined)).toBe(true);
+      const c = h.runCall() as Call;
+      expect(flag(c.argv, "--model")).toBe("opus");
+      expect(flag(c.argv, "--effort")).toBe("high");
+      const agents = JSON.parse(readFileSync(flag(c.argv, "--agents") as string, "utf8"));
+      expect(agents["rl-reviewer"]).toMatchObject({ model: "haiku", effort: "low" });
+      expect(agents["rl-main"]).not.toHaveProperty("model");
+      expect(agents["rl-main"].prompt).toContain("Make at least 2 calls when the change has 2 or more changed files.");
+      expect(h.db.query("SELECT model, effort FROM review_run WHERE id = $id").get({ id: a.body.id })).toEqual({
+        model: "opus",
+        effort: "high",
+      });
+      await h.call(`/api/runs/${a.body.id}/cancel`, { method: "POST" });
+      // The cancel can come before or after the init event of the fake CLI. The init event names the model that ran.
+      const cancelled = (await h.finish(a.body.id)).run;
+      expect(cancelled).toMatchObject({ status: "cancelled", effort: "high" });
+      expect(["opus", "claude-haiku-5-5"]).toContain(cancelled.model as string);
+
+      // Off: no rl-reviewer and no Agent tool. The init event names the model that ran.
+      const off = { ...tuned, model: null, reviewer: { ...tuned.reviewer, mode: "off" as const } };
+      expect((await putProfiles(h, [off, ...SHIPPED_PROFILES.slice(1)])).status).toBe(200);
+      h.scenario({ fixture: derive(join(REAL, "b6-hostile-repo.jsonl"), { tools: EXPLAIN_TOOLS, structured: RESULT }) });
+      const d = await h.finish((await h.start()).body.id);
+      // A hang run also records a line without argv.
+      const last = h
+        .calls()
+        .filter((x) => x.argv?.includes("-p"))
+        .at(-1);
+      const argv = last?.argv ?? [];
+      expect(flag(argv, "--tools")).toBe("Read,Grep,Glob");
+      expect(argv).not.toContain("--model");
+      expect(flag(argv, "--effort")).toBe("high");
+      expect(last?.stdin).not.toContain("rl-reviewer");
+      expect(d.run.effort).toBe("high");
+      expect(d.run.model).toBe("claude-haiku-5-5");
+    },
+    SLOW,
+  );
+
+  test(
     "a deleted profile in a stored brief falls back to the first profile; PUT brief refuses an unknown ID",
     async () => {
       const h = await setup();
@@ -1025,6 +1084,9 @@ describe("editable profiles (M4)", () => {
         maxTurns: 9,
         skills: [],
         mcp: [],
+        model: null,
+        effort: null,
+        reviewer: { model: null, effort: null, mode: "auto" as const },
       };
       expect((await putProfiles(h, [perf, general])).status).toBe(200);
       expect((await h.json<BriefDto>(`/api/prs/${h.pr}/brief`)).body.profile).toBe("perf");

@@ -1,12 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readConfig } from "../../src/server/config";
 import { profileRevision, reviewerAgent, SHIPPED_PROFILES, withSkills } from "../../src/server/review/catalog";
 import { buildPrompt, type PromptInput } from "../../src/server/review/prompt";
-import { copySkills, discoverSkills, MAX_SKILL_BYTES, MAX_SKILL_FILES, skillDto } from "../../src/server/review/skills";
+import { copySkills, discoverSkills, MAX_SKILL_BYTES, MAX_SKILL_FILES, SKILL_INDEX_AFTER, skillDto } from "../../src/server/review/skills";
 import { profileInput } from "../../src/shared/dto";
 
 const dirs: string[] = [];
@@ -192,6 +192,86 @@ describe("skill prompts and profiles", () => {
     expect(profileInput.parse({ ...general, skills: ["a", "p:b", "a"] }).skills).toEqual(["a", "p:b"]);
     for (const bad of ["../x", "a/b", "a:b:c", ":x", "", "a b"])
       expect(profileInput.safeParse({ ...general, skills: [bad] }).success, bad).toBe(false);
-    expect(profileInput.safeParse({ ...general, skills: Array.from({ length: 21 }, (_, i) => `s${i}`) }).success).toBe(false);
+    expect(profileInput.safeParse({ ...general, skills: Array.from({ length: 200 }, (_, i) => `s${i}`) }).success).toBe(true);
+    expect(profileInput.safeParse({ ...general, skills: Array.from({ length: 201 }, (_, i) => `s${i}`) }).success).toBe(false);
+  });
+});
+
+describe("skill index (more than SKILL_INDEX_AFTER skills)", () => {
+  const general = SHIPPED_PROFILES[0] as (typeof SHIPPED_PROFILES)[number];
+  const input: PromptInput = {
+    mergeBase: "a".repeat(40),
+    head: "b".repeat(40),
+    note: "NOTE",
+    profile: general,
+    pr: { project: "P", repo: "r", prId: 1, webUrl: null },
+    tasks: [],
+    taskFile: false,
+    attachments: false,
+  };
+  // A config folder with n user skills: s0 to s<n-1>.
+  function many(n: number) {
+    const c = temp("many");
+    for (let i = 0; i < n; i++) skill(join(c, "skills", `s${i}`), `name: Skill ${i}\ndescription: >\n  Checks part\n  ${i}.`);
+    return c;
+  }
+
+  test("above the threshold the run gets INDEX.md with the path, name, and description of each copied skill", () => {
+    const n = SKILL_INDEX_AFTER + 1;
+    const c = many(n);
+    const dest = join(temp("dest"), "skills");
+    const r = copySkills([...Array.from({ length: n }, (_, i) => `s${i}`), "gone"], dest, c);
+    expect(r.copied).toHaveLength(n);
+    const index = readFileSync(join(dest, "INDEX.md"), "utf8");
+    expect(index).toContain("- ./skills/s0/SKILL.md: Skill 0. Checks part 0.");
+    expect(index).toContain(`- ./skills/s${n - 1}/SKILL.md: Skill ${n - 1}. Checks part ${n - 1}.`);
+    expect(index).not.toContain("gone");
+    expect(index.split("\n").filter((l) => l.startsWith("- "))).toHaveLength(n);
+  });
+
+  test("at the threshold or below there is no index, and the prompt keeps the read-each-skill rule", () => {
+    const c = many(SKILL_INDEX_AFTER);
+    const dest = join(temp("dest"), "skills");
+    copySkills(
+      Array.from({ length: SKILL_INDEX_AFTER }, (_, i) => `s${i}`),
+      dest,
+      c,
+    );
+    expect(existsSync(join(dest, "INDEX.md"))).toBe(false);
+    const few = buildPrompt({ ...input, skills: Array.from({ length: SKILL_INDEX_AFTER }, (_, i) => `s${i}`) });
+    expect(few).toContain("Read each SKILL.md first and follow it.");
+    expect(few).not.toContain("INDEX.md");
+  });
+
+  test("above the threshold the prompt points at the index and asks for the skills that apply only", () => {
+    const folders = Array.from({ length: SKILL_INDEX_AFTER + 1 }, (_, i) => `s${i}`);
+    const text = buildPrompt({ ...input, skills: folders });
+    expect(text).toContain(
+      `The user chose ${folders.length} skills. ./skills/INDEX.md lists the name, the description, and the folder of each one.`,
+    );
+    expect(text).toContain("Read skills/INDEX.md. Read a skill's SKILL.md only when it applies to this change.");
+    expect(text).not.toContain("Read each SKILL.md first");
+    expect(text).not.toContain("./skills/s0/SKILL.md");
+    expect(withSkills(reviewerAgent(general), folders).prompt).toContain("Read skills/INDEX.md.");
+  });
+
+  test("a skill folder named INDEX.md is a gap, so it never hides the index", () => {
+    const c = temp("reserved");
+    skill(join(c, "skills", "INDEX.md"), "name: odd");
+    const dest = join(temp("dest"), "skills");
+    expect(copySkills(["INDEX.md"], dest, c)).toEqual({ copied: [], gaps: ["Skill INDEX.md: the folder name INDEX.md is reserved"] });
+  });
+
+  test("a saved profile without the run setup reads as the defaults and keeps its revision", () => {
+    const dir = temp("cfg-setup");
+    const { model, effort, reviewer, ...old } = { ...general, prompt: "Mine.", skills: ["x"] };
+    json(join(dir, "config.json"), { baseUrl: "https://example.test", userSlug: "me", notifications: false, profiles: [old] });
+    const read = readConfig(dir)?.profiles?.[0];
+    expect(read).toEqual({ ...old, model: null, effort: null, reviewer: { model: null, effort: null, mode: "auto" } });
+    const before = createHash("sha256")
+      .update(JSON.stringify(old, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
+      .update(JSON.stringify(old.skills))
+      .digest("hex");
+    expect(profileRevision(read as typeof general)).toBe(before);
   });
 });

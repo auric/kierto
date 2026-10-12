@@ -209,6 +209,9 @@ describe("settings API", () => {
     maxTurns: 20,
     skills: [],
     mcp: [],
+    model: null,
+    effort: null,
+    reviewer: { model: null, effort: null, mode: "auto" as const },
   };
 
   test("saved profiles and checkSeconds persist offline, with no secret in config.json", async () => {

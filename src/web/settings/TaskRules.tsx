@@ -1,16 +1,18 @@
 // Task IDs settings (prototype/v3 renderSettings): ordered rules, the task link, and a live preview.
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+// Each change saves by itself (autosave.tsx). The server runs no remote check here; it checks each pattern in its worker.
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, CircleAlert, Plus, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import type { PrRow, SettingsDto, TaskPreviewDto, TaskPreviewError, TaskRule, TaskSource } from "../../shared/dto";
+import type { PrRow, SettingsDto, SettingsInput, TaskPreviewDto, TaskPreviewError, TaskRule, TaskSource } from "../../shared/dto";
 import { api } from "../api";
-import { ApiError, read, usePr, useSaveSettings } from "../shell/data";
+import { ApiError, read, usePr } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { prKey } from "../shell/model";
+import { SaveStatus, TYPING_MS, useSaver } from "./autosave";
 import {
   ADD_ID,
   type Change,
@@ -18,6 +20,7 @@ import {
   type Draft,
   focusAfter,
   LIMITS,
+  linkProblem,
   ruleId,
   ruleProblem,
   SOURCE_NAME,
@@ -46,9 +49,10 @@ function useDebounced<T>(value: T, ms: number): T {
 type Preview = { ok: true; dto: TaskPreviewDto } | { ok: false; rules: TaskPreviewError["rules"] };
 
 // rules null: a rule has a client problem, so no request goes out. A 400 with rule errors is a result, not a failure.
+// key: the rules of the answer, as JSON. null while the answer is from earlier rules.
 function usePreview(rules: TaskRule[] | null, pr: number | null) {
   const key = useDebounced(rules && JSON.stringify(rules), 300);
-  return useQuery({
+  const q = useQuery({
     queryKey: ["task-preview", key, pr],
     enabled: key !== null && pr !== null,
     placeholderData: keepPreviousData,
@@ -62,15 +66,19 @@ function usePreview(rules: TaskRule[] | null, pr: number | null) {
       throw new ApiError(400, body.error ?? "The server refused the rules.");
     },
   });
+  return { ...q, key: q.isPlaceholderData ? null : key };
 }
 
 export function TaskRules({ settings, prs, selected }: { settings: SettingsDto; prs: PrRow[]; selected: number | null }) {
-  const save = useSaveSettings();
+  const qc = useQueryClient();
   const [drafts, setDrafts] = useState(() => toDrafts(settings.taskRules));
   const [link, setLink] = useState(settings.taskLink ?? "");
+  // The newest values. Event handlers set them before the render, so a save in the same handler sends the change.
+  const latest = useRef({ drafts, link });
+  // The rules, as JSON, that the preview found a syntax error in. They stay unsaved; the link still saves.
+  const badRules = useRef<string | null>(null);
   const [pick, setPick] = useState<number | null>(selected);
   const [focus, setFocus] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   const pr = prs.find((p) => p.id === pick) ?? prs[0] ?? null;
   const rules = toRules(drafts);
   const problems = drafts.map(ruleProblem);
@@ -79,7 +87,27 @@ export function TaskRules({ settings, prs, selected }: { settings: SettingsDto; 
   const result = valid ? preview.data : undefined;
   const serverRules = result && (result.ok ? result.dto.rules : result.rules);
   const syntax = !!result && !result.ok;
-  const dirty = !sameRules(rules, settings.taskRules) || link.trim() !== (settings.taskLink ?? "");
+  const linkError = linkProblem(link.trim());
+  if (result && preview.key) badRules.current = result.ok ? null : preview.key;
+
+  // The cache holds the newest saved settings, also after a save in another section.
+  const current = () => qc.getQueryData<SettingsDto>(["settings"]) ?? settings;
+  const { state, saver } = useSaver(
+    (): SettingsInput | null => {
+      const s = current();
+      const r = toRules(latest.current.drafts);
+      const l = latest.current.link.trim();
+      const rulesOk = latest.current.drafts.every((d) => ruleProblem(d) === null) && badRules.current !== JSON.stringify(r);
+      const out: SettingsInput = { baseUrl: s.baseUrl ?? "", caFile: s.caFile ?? "" };
+      if (rulesOk && !sameRules(r, s.taskRules)) out.taskRules = r;
+      if (!linkProblem(l) && l !== (s.taskLink ?? "")) out.taskLink = l;
+      return out.taskRules || out.taskLink !== undefined ? out : null;
+    },
+    async (input: SettingsInput) => {
+      qc.setQueryData(["settings"], await read<SettingsDto>(await api.api.settings.$put({ json: input })));
+      void qc.invalidateQueries({ queryKey: ["prs"] });
+    },
+  );
 
   // Focus moves after the list renders with the change.
   useEffect(() => {
@@ -87,26 +115,39 @@ export function TaskRules({ settings, prs, selected }: { settings: SettingsDto; 
     setFocus(null);
   }, [focus]);
 
-  const apply = (c: Change) => {
-    const next = change(drafts, c);
+  // delay: 0 for a select or a list change; TYPING_MS for a key in a text field.
+  const apply = (c: Change, delay = 0) => {
+    const next = change(latest.current.drafts, c);
+    latest.current = { ...latest.current, drafts: next };
     setDrafts(next);
-    setSaved(false);
     if (c.act !== "edit") setFocus(focusAfter(c, next.length));
+    saver.request(delay);
   };
-
-  const submit = () =>
-    save.mutate(
-      { baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", taskRules: rules, taskLink: link.trim() },
-      { onSuccess: () => setSaved(true) },
-    );
 
   return (
     <section aria-labelledby="h-taskids" className="mt-6 grid max-w-[86ch] gap-3 border-t pt-4">
       <div className="grid gap-0.5">
-        <h2 id="h-taskids" tabIndex={-1} className="m-0 scroll-mt-4 text-[15px] font-bold outline-none">
-          Task IDs
-        </h2>
-        <p className="m-0 text-xs text-muted-foreground">Press Save task rules to keep the changes.</p>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <h2 id="h-taskids" tabIndex={-1} className="m-0 scroll-mt-4 text-[15px] font-bold outline-none">
+            Task IDs
+          </h2>
+          <SaveStatus
+            id="taskids-status"
+            state={state}
+            problem={
+              !valid || syntax
+                ? "A marked rule is not saved. Fix it to save it."
+                : linkError
+                  ? "The task link is not saved. Fix it to save it."
+                  : null
+            }
+            saved="Saved. The inbox finds the task IDs again in the background."
+            onRetry={() => saver.request(0)}
+          />
+        </div>
+        <p className="m-0 text-xs text-muted-foreground">
+          Changes save as you make them. Text saves when you leave the field or stop typing.
+        </p>
       </div>
       <p className="m-0 max-w-[72ch] text-sm text-ink-2">
         Review Loop looks for task IDs in each pull request. The rules run from top to bottom. When two rules find the same ID, the first
@@ -122,6 +163,7 @@ export function TaskRules({ settings, prs, selected }: { settings: SettingsDto; 
             problem={problems[i] ?? null}
             server={serverRules?.[i]}
             onChange={apply}
+            onBlur={() => void saver.flush()}
           />
         ))}
       </ol>
@@ -141,22 +183,18 @@ export function TaskRules({ settings, prs, selected }: { settings: SettingsDto; 
           spellCheck={false}
           value={link}
           placeholder="https://tracker.example.com/browse/{key}"
+          aria-invalid={!!linkError}
+          aria-describedby={linkError ? "task-link-error" : undefined}
           onChange={(e) => {
             setLink(e.target.value);
-            setSaved(false);
+            latest.current = { ...latest.current, link: e.target.value };
+            saver.request(TYPING_MS);
           }}
+          onBlur={() => void saver.flush()}
         />
         <FieldDescription>Each task ID links to this address. {"{key}"} stands for the ID. Leave it empty for no link.</FieldDescription>
+        {linkError && <FieldError id="task-link-error">{linkError}</FieldError>}
       </Field>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <Button disabled={!dirty || !valid || syntax || save.isPending} onClick={submit}>
-          {save.isPending ? "Saving…" : "Save task rules"}
-        </Button>
-        <p role="status" className="m-0 text-sm text-ink-2">
-          {saved && !dirty ? "Saved. The inbox finds the task IDs again in the background." : ""}
-        </p>
-      </div>
-      {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
       <PreviewBox
         prs={prs}
         pr={pr}
@@ -175,18 +213,22 @@ function RuleRow({
   problem,
   server,
   onChange,
+  onBlur,
 }: {
   r: Draft;
   i: number;
   last: boolean;
   problem: string | null;
   server: { error: string | null; timedOut: boolean } | undefined;
-  onChange: (c: Change) => void;
+  onChange: (c: Change, delay?: number) => void;
+  onBlur: () => void;
 }) {
   const n = i + 1;
   const of = <span className="sr-only"> of rule {n}</span>;
   const message = problem ?? (server?.error ? syntaxText(server.error) : r.timedOut || server?.timedOut ? TIMEOUT_TEXT : null);
-  const edit = (patch: Partial<Pick<Draft, "source" | "pattern" | "keys">>) => onChange({ act: "edit", i, patch });
+  type Patch = Partial<Pick<Draft, "source" | "pattern" | "keys">>;
+  const edit = (patch: Patch) => onChange({ act: "edit", i, patch });
+  const type = (patch: Patch) => onChange({ act: "edit", i, patch }, TYPING_MS);
   return (
     <li className="grid grid-cols-[2ch_8.5rem_minmax(0,1fr)_8rem_auto] items-end gap-x-3 gap-y-1 border-b py-2.5 @max-[559px]:grid-cols-[2ch_minmax(0,1fr)_auto]">
       <span aria-hidden className="text-right text-sm leading-[30px] text-muted-foreground @max-[559px]:row-start-1">
@@ -217,7 +259,8 @@ function RuleRow({
           autoComplete="off"
           aria-invalid={!!(problem || server?.error)}
           aria-describedby={message ? ruleId(i, "error") : undefined}
-          onChange={(e) => edit({ pattern: e.target.value })}
+          onChange={(e) => type({ pattern: e.target.value })}
+          onBlur={onBlur}
         />
       </label>
       <label className={cn(field, "@max-[559px]:col-[2/-1]")}>
@@ -229,7 +272,8 @@ function RuleRow({
           placeholder="Any key"
           spellCheck={false}
           autoComplete="off"
-          onChange={(e) => edit({ keys: e.target.value })}
+          onChange={(e) => type({ keys: e.target.value })}
+          onBlur={onBlur}
         />
       </label>
       <span className="flex gap-0.5 @max-[559px]:col-start-3 @max-[559px]:row-start-1">

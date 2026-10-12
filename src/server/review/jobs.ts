@@ -64,6 +64,7 @@ import {
   replyAgent,
   reviewerAgent,
   SHIPPED_PROFILES,
+  usesReviewer,
   withMcp,
   withSkills,
 } from "./catalog";
@@ -161,6 +162,7 @@ type RunRow = {
   session_id: string | null;
   cli_version: string | null;
   model: string | null;
+  effort: string | null;
   usage_json: string | null;
   summary_json: string | null;
   has_raw: number;
@@ -248,20 +250,22 @@ const SQL = {
   brief: "SELECT note, profile, updated_at FROM pr_brief WHERE pr = $pr",
   saveBrief: `INSERT INTO pr_brief (pr, note, profile, updated_at) VALUES ($pr, $note, $profile, $now)
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
+  // model: the --model value until the init event gives the model that ran.
   insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, status, started_at,
-      since_head, question, tasks_json)
-    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since, $question, $tasks)
+      since_head, question, tasks_json, model, effort)
+    VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since, $question, $tasks,
+      $model, $effort)
     RETURNING id`,
   // Plan r3 Feature C: the fetched tasks at the start of a run, in the order of task.md.
   fetched: "SELECT key, fetched_at AS fetchedAt FROM task_context WHERE pr = $pr ORDER BY key",
   run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
-      r.session_id, r.cli_version, r.model, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
+      r.session_id, r.cli_version, r.model, r.effort, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
       p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer, r.fix_json, r.tasks_json,
       (SELECT COUNT(*) FROM review_item i WHERE i.run = r.id AND i.kind = 'finding'
         AND COALESCE(json_extract(i.payload_json, '$.carried.verdict'), 'open') = 'open') AS findings
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
   workspace: "UPDATE review_run SET merge_base = $base, range_base = $range, fetch_via = $via WHERE id = $id",
-  end: `UPDATE review_run SET status = $status, error_kind = $kind, error_text = $text, session_id = $session, cli_version = $cli, model = $model,
+  end: `UPDATE review_run SET status = $status, error_kind = $kind, error_text = $text, session_id = $session, cli_version = $cli, model = COALESCE($model, model),
       usage_json = $usage, summary_json = $summary, answer = $answer, fix_json = $fix, raw_output = $raw, finished_at = $now
     WHERE id = $id AND status = 'running'`,
   fixEdit: `INSERT INTO fix_edit (run, ord, thread, path, old, new, start, rows_json) VALUES ($run, $ord, $thread, $path, $old, $new, $start, $rows)`,
@@ -829,6 +833,7 @@ function toRunDto(r: RunRow): RunDto {
     sessionId: r.session_id,
     cliVersion: r.cli_version,
     model: r.model,
+    effort: r.effort,
     usage: r.usage_json ? (JSON.parse(r.usage_json) as RunUsage) : null,
     summary: r.summary_json ? (JSON.parse(r.summary_json) as RunSummary) : null,
     startedAt: r.started_at,
@@ -1110,8 +1115,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         ...spec,
         main: withMcp(withSkills(spec.main, folders), used),
         maxTurns: reply || fix ? Math.max(profile.maxTurns, MIN_EDIT_TURNS) : profile.maxTurns,
+        model: profile.model,
+        effort: profile.effort,
         // Only a review gets subagents. With agents {}, the CLI gets no Agent tool.
-        agents: j.kind === "review" && !profile.explain ? { [REVIEWER]: withMcp(withSkills(reviewerAgent(profile), folders), used) } : {},
+        agents:
+          j.kind === "review" && usesReviewer(profile) ? { [REVIEWER]: withMcp(withSkills(reviewerAgent(profile), folders), used) } : {},
         mcpServers,
       },
       (events) => {
@@ -1210,6 +1218,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       since: carry?.since ?? null,
       question,
       tasks: JSON.stringify(db.query(SQL.fetched).all({ pr: pr.id })),
+      model: profile.model,
+      effort: profile.effort ?? "default",
     }) as { id: number };
     const j: Job = { id: runId, pr: pr.id, kind, key, db, profile, threads, carry, question, cancelled: false, done: Promise.resolve() };
     job = j;

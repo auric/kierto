@@ -2,6 +2,7 @@
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { EFFORTS, type Effort, modelName } from "../../shared/dto";
 import type { RunErrorKind, RunEvent, SDKResultMessage, SDKSystemMessage } from "../../shared/run-log";
 import { log } from "../log";
 import { RUNTIME_ENV } from "./git";
@@ -20,7 +21,8 @@ const RUN_TIMEOUT_MS = 60 * 60_000;
 // CreateProcess limits the Windows command line to 32,767 characters.
 const MAX_ARGV = 32_000;
 
-export type AgentSpec = { description: string; prompt: string };
+// model, effort: agent definition fields. Absent: Claude Code picks them.
+export type AgentSpec = { description: string; prompt: string; model?: string; effort?: Effort };
 // tools: the tool names the server offers, without the mcp__<server>__ prefix. A remote server gets no headers or credentials.
 export type StdioServerSpec = { command: string; args: string[]; tools: string[] };
 // A server entry of the user's Claude config, as the CLI reads it. It can hold secrets: never log it or store it.
@@ -38,6 +40,9 @@ export type RunSpec = {
   prompt: string;
   schema: Record<string, unknown>;
   maxTurns: number;
+  // --model and --effort. Absent or null: no flag.
+  model?: string | null;
+  effort?: Effort | null;
   main: AgentSpec;
   // Review subagents, by name. rl-main can call only these.
   agents: Record<string, AgentSpec>;
@@ -137,6 +142,10 @@ function prepare(spec: RunSpec) {
   if (reviewers.includes(MAIN_AGENT)) throw new Error(`${MAIN_AGENT} cannot be a review agent.`);
   for (const [s, c] of servers)
     if ("url" in c && new URL(c.url).protocol !== "https:") throw new Error(`MCP server ${s} needs an https URL.`);
+  for (const a of [spec, spec.main, ...Object.values(spec.agents)]) {
+    if (a.model != null && !modelName.safeParse(a.model).success) throw new Error(`Invalid model name: ${a.model}`);
+    if (a.effort != null && !EFFORTS.includes(a.effort)) throw new Error(`Invalid effort: ${a.effort}`);
+  }
 
   // Gate B9: agent tool lists need full MCP tool names. --allowedTools needs mcp__<server>; a wildcard does not work.
   const mcpTools = servers.flatMap(([s, c]) => c.tools.map((t) => `mcp__${s}__${t}`));
@@ -201,6 +210,8 @@ function prepare(spec: RunSpec) {
     JSON.stringify(spec.schema),
     "--max-turns",
     String(spec.maxTurns),
+    ...(spec.model ? ["--model", spec.model] : []),
+    ...(spec.effort ? ["--effort", spec.effort] : []),
     "--no-session-persistence",
   ];
   // JSON quoting is close to the Windows argument quoting.

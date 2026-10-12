@@ -11,6 +11,10 @@ export type CopiedSkill = { id: string; version: string | null; folder: string; 
 export const MAX_SKILL_BYTES = 1_000_000;
 export const MAX_SKILL_FILES = 200;
 const MAX_SKILL_MD = 64 * 1024;
+// Above this count, the run gets the index file in ./skills, and the prompt asks for the skills that apply only.
+export const SKILL_INDEX_AFTER = 5;
+export const SKILL_INDEX = "INDEX.md";
+const MAX_INDEX_DESCRIPTION = 1024;
 // The skillId parts in src/shared/dto.ts.
 const PART = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 // A null byte in the content also marks a binary file.
@@ -142,23 +146,47 @@ function copyOne(s: Skill, to: string): CopiedSkill {
   return out;
 }
 
+// One line per skill: line breaks in the front matter text become spaces.
+function indexText(skills: Skill[]): string {
+  const one = (s: string) => s.replace(/\s+/g, " ").trim();
+  return [
+    "# Skills",
+    "",
+    "Each line gives the SKILL.md path, the skill name, and its description.",
+    "",
+    ...skills.map((s) => {
+      const d = one(s.description).slice(0, MAX_INDEX_DESCRIPTION);
+      return `- ./skills/${skillFolder(s.id)}/SKILL.md: ${one(s.name)}${d ? `. ${d}` : ""}`;
+    }),
+    "",
+  ].join("\n");
+}
+
 // dest: <work>/skills. gaps: one line for each listed skill that the run does not get.
+// Above SKILL_INDEX_AFTER copied skills, dest also gets SKILL_INDEX.
 export function copySkills(ids: string[], dest: string, config = claudeConfigDir()): { copied: CopiedSkill[]; gaps: string[] } {
   const copied: CopiedSkill[] = [];
   const gaps: string[] = [];
   if (!ids.length) return { copied, gaps };
   const found = new Map(discoverSkills(config).map((s) => [s.id, s]));
+  const listed: Skill[] = [];
   for (const id of ids) {
     const s = found.get(id);
     if (!s) {
       gaps.push(`Skill ${id}: not found`);
       continue;
     }
+    if (skillFolder(id).toLowerCase() === SKILL_INDEX.toLowerCase()) {
+      gaps.push(`Skill ${id}: the folder name ${SKILL_INDEX} is reserved`);
+      continue;
+    }
     const to = join(dest, skillFolder(id));
     try {
       const c = copyOne(s, to);
-      if (lstatSync(join(to, "SKILL.md"), { throwIfNoEntry: false })?.isFile()) copied.push(c);
-      else {
+      if (lstatSync(join(to, "SKILL.md"), { throwIfNoEntry: false })?.isFile()) {
+        copied.push(c);
+        listed.push(s);
+      } else {
         rmSync(to, { recursive: true, force: true });
         gaps.push(`Skill ${id}: SKILL.md is over ${MAX_SKILL_BYTES} bytes or not a text file`);
       }
@@ -166,5 +194,6 @@ export function copySkills(ids: string[], dest: string, config = claudeConfigDir
       gaps.push(`Skill ${id}: copy failed (${(e as Error).message})`);
     }
   }
+  if (listed.length > SKILL_INDEX_AFTER) writeFileSync(join(dest, SKILL_INDEX), indexText(listed));
   return { copied, gaps };
 }

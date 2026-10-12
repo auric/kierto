@@ -2,21 +2,27 @@ import { describe, expect, test } from "bun:test";
 import { MAX_NOTE, MAX_PROFILES, type ProfileInput, profileInput, profileList } from "../../src/shared/dto";
 import {
   ADD_ID,
+  addSkills,
   allValid,
   change,
   type Draft,
   focusAfter,
   LIMITS,
+  modelChoice,
+  NEW_PROMPT,
   problems,
   profileId,
   sameProfiles,
+  selectAll,
   setTools,
   slug,
   tickAction,
   toDrafts,
   toggleServer,
   toggleSkill,
+  toPayload,
   toProfiles,
+  unmarkedListQuestion,
   unmarkedQuestion,
 } from "../../src/web/settings/profiles";
 
@@ -30,9 +36,27 @@ const p = (id: string, name: string, o: Partial<ProfileInput> = {}): ProfileInpu
   maxTurns: 40,
   skills: [],
   mcp: [],
+  model: null,
+  effort: null,
+  reviewer: { model: null, effort: null, mode: "auto" },
   ...o,
 });
 const SAVED = [p("general", "General"), p("security", "Security"), p("explain", "Explain", { explain: true, docs: false, maxTurns: 12 })];
+
+// Model texts: empty, aliases, full IDs, and texts that the server refuses.
+const MODELS = [
+  "",
+  "  ",
+  "opus",
+  "claude-opus-5-5",
+  "opus[1m]",
+  "us.anthropic.claude:0",
+  " sonnet ",
+  "-x",
+  "a b",
+  "m".repeat(200),
+  "m".repeat(201),
+];
 
 const added = (list: Draft[], name: string, prompt = "Look.") => {
   const next = change(list, { act: "add" });
@@ -49,16 +73,18 @@ describe("profile editor model", () => {
     expect(new Set(d.map((x) => x.key)).size).toBe(3);
   });
 
-  test("a saved profile keeps its ID through a rename; a new one takes a unique slug of its name", () => {
+  test("a profile keeps its ID through a rename; a new profile gets a unique ID and name when it is added", () => {
     let d = change(toDrafts(SAVED), { act: "edit", i: 0, patch: { name: "Correctness" } });
     expect(ids(d)[0]).toBe("general");
-    d = added(d, "Threat Model!");
-    // The saved IDs come first, so a new "General" does not take the ID of the renamed profile.
-    d = added(d, "General");
+    // An added profile saves at once, so its ID comes from the name it starts with.
+    d = change(d, { act: "add" });
+    d = change(d, { act: "add" });
     d = added(d, "Perf");
-    d = added(d, "Perf");
-    expect(ids(d)).toEqual(["general", "security", "explain", "threat-model", "general-2", "perf", "perf-2"]);
+    expect(ids(d)).toEqual(["general", "security", "explain", "new-profile", "new-profile-2", "new-profile-3"]);
+    expect(toProfiles(d).map((x) => x.name)).toEqual(["Correctness", "Security", "Explain", "New profile", "New profile 2", "Perf"]);
     expect(profileList.safeParse(toProfiles(d)).success).toBe(true);
+    // A removed ID can come back for the next new profile.
+    expect(ids(change(change(d, { act: "remove", i: 3 }), { act: "add" })).at(-1)).toBe("new-profile");
   });
 
   test("slugs fit the server ID pattern for any name", () => {
@@ -73,7 +99,7 @@ describe("profile editor model", () => {
     const out = ids(d);
     expect(new Set(out).size).toBe(out.length);
     for (const id of out) expect(profileInput.shape.id.safeParse(id).success).toBe(true);
-    expect(out.at(-1)).toBe(`${"y".repeat(LIMITS.id - 3)}-12`);
+    expect(out.at(-1)).toBe("new-profile-12");
   });
 
   test("remove keeps one profile, add stops at the limit, move keeps the keys", () => {
@@ -89,8 +115,20 @@ describe("profile editor model", () => {
     expect(moved.map((x) => x.key)).toEqual([0, 2, 1].map((i) => d[i]?.key ?? -1));
     expect(change(d, { act: "move", i: 0, d: -1 })).toBe(d);
     expect(change(d, { act: "move", i: 2, d: 1 })).toBe(d);
-    // A new profile starts as a review profile: no name, no prompt, 100 turns, documentation on.
-    expect(change(d, { act: "add" }).at(-1)).toMatchObject({ id: null, name: "", prompt: "", explain: false, docs: true, maxTurns: "100" });
+    // A new profile saves at once, so it starts valid: a review profile with 100 turns, documentation on, and the default run setup.
+    const fresh = change(d, { act: "add" });
+    expect(fresh.at(-1)).toMatchObject({
+      id: "new-profile",
+      name: "New profile",
+      prompt: NEW_PROMPT,
+      explain: false,
+      docs: true,
+      maxTurns: "100",
+      model: "",
+      effort: "",
+      reviewer: { model: "", effort: "", mode: "auto" },
+    });
+    expect(allValid(fresh)).toBe(true);
   });
 
   test("focus keeps the place after each change", () => {
@@ -133,6 +171,10 @@ describe("profile editor model", () => {
       { prompt: "p".repeat(MAX_NOTE) },
       { prompt: "p".repeat(MAX_NOTE + 1) },
       ...["1", "2", "200", "201", "2.5", "", " 12 ", "abc", "-3", "1e2"].map((maxTurns) => ({ maxTurns })),
+      ...MODELS.map((model) => ({ model })),
+      ...MODELS.map((model) => ({ reviewer: { model, effort: "" as const, mode: "always" as const } })),
+      { effort: "xhigh" as const },
+      { reviewer: { model: "", effort: "max" as const, mode: "off" as const } },
     ];
     for (const c of cases) {
       const d = { ...base, ...c };
@@ -211,6 +253,7 @@ describe("profile editor model", () => {
     expect(ok({ maxTurns: LIMITS.minTurns - 1 })).toBe(false);
     expect(ok({ maxTurns: LIMITS.maxTurns })).toBe(true);
     expect(ok({ maxTurns: LIMITS.maxTurns + 1 })).toBe(false);
+    expect(LIMITS.skills).toBe(200);
     expect(ok({ skills: Array.from({ length: LIMITS.skills }, (_, i) => `s${i}`) })).toBe(true);
     expect(ok({ skills: Array.from({ length: LIMITS.skills + 1 }, (_, i) => `s${i}`) })).toBe(false);
     const servers = (n: number) => Array.from({ length: n }, (_, i) => ({ server: `s${i}`, tools: [] }));
@@ -219,5 +262,82 @@ describe("profile editor model", () => {
     const tools = (n: number) => [{ server: "s", tools: Array.from({ length: n }, (_, i) => `t${i}`) }];
     expect(ok({ mcp: tools(LIMITS.mcpTools) })).toBe(true);
     expect(ok({ mcp: tools(LIMITS.mcpTools + 1) })).toBe(false);
+  });
+});
+
+describe("autosave payload", () => {
+  test("a field with a problem keeps its saved value; the other fields of the change still go", () => {
+    const d = toDrafts(SAVED);
+    const edited = change(change(d, { act: "edit", i: 0, patch: { name: "  ", note: "New note", maxTurns: "abc" } }), {
+      act: "edit",
+      i: 1,
+      patch: { model: "bad model", effort: "high", reviewer: { model: "a b", effort: "low", mode: "always" } },
+    });
+    const out = toPayload(edited, SAVED);
+    expect(out[0]).toMatchObject({ id: "general", name: "General", note: "New note", maxTurns: 40 });
+    expect(out[1]).toMatchObject({ id: "security", model: null, effort: "high", reviewer: { model: null, effort: "low", mode: "always" } });
+    expect(profileList.safeParse(out).success).toBe(true);
+    // Nothing valid changed: the payload equals the saved list, so no request goes out.
+    const invalidOnly = change(d, { act: "edit", i: 0, patch: { name: "" } });
+    expect(sameProfiles(toPayload(invalidOnly, SAVED), SAVED)).toBe(true);
+  });
+
+  test("a new profile without a saved copy falls back to the new-profile values", () => {
+    const d = change(toDrafts(SAVED), { act: "add" });
+    const broken = change(d, { act: "edit", i: 3, patch: { name: "", prompt: " ", maxTurns: "1", note: "Kept" } });
+    expect(toPayload(broken, SAVED)[3]).toMatchObject({
+      id: "new-profile",
+      name: "New profile",
+      prompt: NEW_PROMPT,
+      maxTurns: 100,
+      note: "Kept",
+    });
+    expect(profileList.safeParse(toPayload(broken, SAVED)).success).toBe(true);
+  });
+
+  test("model text: empty for the default, an alias, or another ID", () => {
+    const aliases = ["opus", "sonnet", "haiku"];
+    expect(modelChoice("", aliases)).toBe("");
+    expect(modelChoice(" opus ", aliases)).toBe("opus");
+    expect(modelChoice("haiku", aliases)).toBe("haiku");
+    expect(modelChoice("claude-opus-5-5", aliases)).toBe("other");
+    expect(modelChoice("opus", [])).toBe("other");
+    expect(toProfiles(toDrafts([p("x", "X", { model: "sonnet", effort: "max" })]))[0]).toMatchObject({ model: "sonnet", effort: "max" });
+    const cleared = change(toDrafts([p("x", "X", { model: "sonnet", effort: "max" })]), {
+      act: "edit",
+      i: 0,
+      patch: { model: "  ", effort: "" },
+    });
+    expect(toProfiles(cleared)[0]).toMatchObject({ model: null, effort: null });
+  });
+});
+
+describe("pickers", () => {
+  test("Select all of skills adds the missing IDs in order and stops at the limit", () => {
+    expect(addSkills(["b"], ["a", "b", "c"])).toEqual(["b", "a", "c"]);
+    const many = Array.from({ length: LIMITS.skills + 5 }, (_, i) => `s${i}`);
+    expect(addSkills([], many)).toHaveLength(LIMITS.skills);
+  });
+
+  test("Select all of a server ticks the read-only tools at once, asks once for the unmarked ones, and never ticks a blocked one", () => {
+    const tools = [
+      { name: "search", safety: "readOnly" as const },
+      { name: "note", safety: "unmarked" as const },
+      { name: "drop", safety: "blocked" as const },
+      { name: "lookup", safety: "readOnly" as const },
+      { name: "tag", safety: "unmarked" as const },
+    ];
+    const r = selectAll(["tag"], tools);
+    expect(r.tools).toEqual(["tag", "search", "lookup"]);
+    expect(r.unmarked).toEqual(["note"]);
+    expect(r.withUnmarked).toEqual(["tag", "search", "lookup", "note"]);
+    expect(r.withUnmarked).not.toContain("drop");
+    expect(selectAll([], tools.slice(0, 1)).unmarked).toEqual([]);
+    const lots = Array.from({ length: LIMITS.mcpTools + 3 }, (_, i) => ({ name: `t${i}`, safety: "readOnly" as const }));
+    expect(selectAll([], lots).tools).toHaveLength(LIMITS.mcpTools);
+    expect(unmarkedListQuestion(["a"], "s")).toBe(unmarkedQuestion("a", "s"));
+    expect(unmarkedListQuestion(["a", "b"], "s")).toBe(
+      "These 2 tools on s have no read-only mark: a, b. Review Loop cannot check what they do. Allow them in runs of this profile?",
+    );
   });
 });

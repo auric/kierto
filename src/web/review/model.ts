@@ -275,6 +275,11 @@ export function rereviewState(
 export const limitText = (runner: string, text: string | null) =>
   `${text?.trim() ? `${runner}: ${text.trim()}` : `${runner} usage limit reached.`} Review Loop does not retry by itself.`;
 
+// The model and the effort of a run. A run without an init event and without --model shows "default model".
+// A run from before the effort column had no --effort flag, so it shows "default effort" too.
+export const setupText = (run: Pick<RunDto, "model" | "effort">) =>
+  `${run.model ?? "default model"}, ${run.effort && run.effort !== "default" ? run.effort : "default"} effort`;
+
 // ---------- Brief ----------
 
 export const profileOf = (profiles: ProfileDto[], id: string) => profiles.find((p) => p.id === id) ?? profiles[0];

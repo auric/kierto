@@ -99,6 +99,22 @@ export function ruleProblem(r: Draft): string | null {
   return null;
 }
 
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+export const LINK_TEXT = "The task link must be an https URL with {key}. Plain http works only on localhost or 127.0.0.1.";
+
+// The validTaskLink rule of src/server/tasks/rules.ts: https, or http on loopback, with {key} outside the origin and no credentials.
+export function linkProblem(raw: string): string | null {
+  if (!raw) return null;
+  if (!raw.includes("{key}")) return LINK_TEXT;
+  try {
+    const a = new URL(raw.replaceAll("{key}", "A"));
+    const b = new URL(raw.replaceAll("{key}", "B"));
+    if (a.origin !== b.origin || a.username || a.password) return LINK_TEXT;
+    if (a.protocol === "https:" || (a.protocol === "http:" && LOOPBACK.has(a.hostname))) return null;
+  } catch {}
+  return LINK_TEXT;
+}
+
 // The worker error is "Invalid regular expression: /x/: <reason>". The user needs only the reason.
 export const syntaxText = (error: string) => `This is not a valid regular expression: ${error.split(": ").at(-1)}.`;
 

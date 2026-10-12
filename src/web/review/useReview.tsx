@@ -125,6 +125,8 @@ export function useReview(
     reveal: (thread: number) => void;
     announce: (text: string) => void;
     onSettings: () => void;
+    // Opens the settings at one profile.
+    onProfile: (id: string) => void;
     // Focuses the line of a draft in the diff.
     showInDiff: (draft: number) => void;
   },
@@ -543,6 +545,7 @@ export function useReview(
         }
         onRun={(p) => (p ? runNow(p) : rerun())}
         onBrief={openBrief}
+        onEditProfile={() => o.onProfile(state.profile)}
       />
     ),
     // Plan r3 Feature C: every run kind reads the fetched task text. While the brief is closed, its task row shows here,

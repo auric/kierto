@@ -65,7 +65,7 @@ function TrackerSettings({ tracker, settings }: { tracker: Tracker; settings: Se
           {name}
         </h2>
         <p className="m-0 text-xs text-muted-foreground">
-          Press Save {name} settings to keep the changes. The save checks the token with {name} first.
+          Press Save {name} settings to keep the changes. The save tests the token with {name} first, so it does not save by itself.
         </p>
       </div>
       <p className="m-0 text-sm text-ink-2">

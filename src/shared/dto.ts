@@ -45,7 +45,7 @@ export const CHECK_CHOICES = [30, 60, 120, 300, 600, 900] as const;
 
 const profileId = z.string().regex(/^[a-z0-9-]{1,40}$/);
 
-export const MAX_PROFILE_SKILLS = 20;
+export const MAX_PROFILE_SKILLS = 200;
 // A Claude Code skill: "<skill>" in the user skills folder, or "<plugin>:<skill>". Each part is a folder name.
 export const skillId = z.string().regex(/^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
 
@@ -78,9 +78,30 @@ export type McpToolSafety = "blocked" | "unmarked" | "readOnly";
 export const mcpToolSafety = (t: Pick<McpToolDto, "readOnlyHint" | "destructiveHint">): McpToolSafety =>
   t.destructiveHint === true || t.readOnlyHint === false ? "blocked" : t.readOnlyHint === true ? "readOnly" : "unmarked";
 
+// The --effort choices of Claude Code 2.1.295 without "ultracode" (code.claude.com/docs/en/cli-reference).
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+// A model alias such as opus, or a full model ID such as claude-opus-5-5 or opus[1m]. It goes into argv, so it never starts with "-".
+export const modelName = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/@[\]-]{0,199}$/);
+// auto: the main agent decides when to call rl-reviewer. always: it splits the changed files across rl-reviewer calls. off: no rl-reviewer.
+export const REVIEWER_MODES = ["auto", "always", "off"] as const;
+export type ReviewerMode = (typeof REVIEWER_MODES)[number];
+// null model or effort: no flag and no agent field, so Claude Code uses its own default.
+export const reviewerSetup = z.object({
+  model: modelName.nullable().default(null),
+  effort: z.enum(EFFORTS).nullable().default(null),
+  mode: z.enum(REVIEWER_MODES).default("auto"),
+});
+export type ReviewerSetup = z.infer<typeof reviewerSetup>;
+export const DEFAULT_REVIEWER: ReviewerSetup = { model: null, effort: null, mode: "auto" };
+
 // prompt: the profile part of both agent prompts. docs: the run gets the documentation servers.
 // skills: the run gets a copy of each skill in ./skills. Absent in profiles saved before skills existed.
 // mcp: servers of the user's Claude config with the chosen tools. Absent in profiles saved before this field existed.
+// model, effort: --model and --effort of every run of the profile. reviewer: the rl-reviewer agent of review runs. Absent in older profiles.
 export const profileInput = z.object({
   id: profileId,
   name: z.string().trim().min(1).max(60),
@@ -99,6 +120,9 @@ export const profileInput = z.object({
     .max(MAX_PROFILE_MCP)
     .default([])
     .refine((l) => new Set(l.map((m) => m.server)).size === l.length, "Each MCP server can occur only once."),
+  model: modelName.nullable().default(null),
+  effort: z.enum(EFFORTS).nullable().default(null),
+  reviewer: reviewerSetup.default(() => ({ ...DEFAULT_REVIEWER })),
 });
 export type ProfileInput = z.infer<typeof profileInput>;
 
@@ -329,7 +353,10 @@ export type RunDto = {
   via: "pull-request-ref" | "branch" | null;
   sessionId: string | null;
   cliVersion: string | null;
+  // The model from the init event, else the --model value of the run. null: no init event and no --model value.
   model: string | null;
+  // The --effort value of the run, or "default" for no flag. null for runs made before it was stored.
+  effort: string | null;
   usage: RunUsage | null;
   // Ended runs with a valid result only.
   summary: RunSummary | null;
@@ -621,8 +648,17 @@ export type RunConflict = ApiError & { running: { run: number; pr: number } };
 export type MetaDto = {
   forge: { name: string };
   // check: the cached runner check. null before the first check. Each run refreshes it.
-  // login: the command that signs the runner in with the subscription.
-  runner: { name: string; short: string; initials: string; login: string; check: RunnerCheckDto | null };
+  // login: the command that signs the runner in with the subscription. models: the model aliases that the settings offer.
+  // modelExample: a full model ID for the placeholder of the model ID field.
+  runner: {
+    name: string;
+    short: string;
+    initials: string;
+    login: string;
+    models: string[];
+    modelExample: string;
+    check: RunnerCheckDto | null;
+  };
   // Run log labels, keyed by RunEvent.tool.
   tools: Record<string, string>;
   profiles: ProfileDto[];

@@ -21,6 +21,7 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
   sessionId: null,
   cliVersion: "2.1.295",
   model: "m",
+  effort: null,
   usage: { costUsd: 0, turns: 3, durationMs: 9000, tokens: { input_tokens: 1200, output_tokens: 300 } },
   summary: {
     summary: "flush() has two callers.",

@@ -349,6 +349,45 @@ describe("safety", () => {
     });
   });
 
+  test("--model and --effort go out only when set; the review agent gets its own model and effort fields", async () => {
+    const { runner, spec, app, calls } = setup({ fixture: flatSuccess() });
+    await runner.run({ ...spec, model: null, effort: null });
+    const plain = calls().at(-1)?.argv ?? [];
+    expect(plain).not.toContain("--model");
+    expect(plain).not.toContain("--effort");
+    const reviewer = spec.agents["rl-reviewer"] as RunSpec["main"];
+    await runner.run({
+      ...spec,
+      model: "claude-opus-5-5",
+      effort: "xhigh",
+      agents: { "rl-reviewer": { ...reviewer, model: "haiku", effort: "low" } },
+    });
+    const argv = calls().at(-1)?.argv ?? [];
+    expect(argv.slice(argv.indexOf("--max-turns"))).toEqual([
+      "--max-turns",
+      "40",
+      "--model",
+      "claude-opus-5-5",
+      "--effort",
+      "xhigh",
+      "--no-session-persistence",
+    ]);
+    const agents = JSON.parse(readFileSync(join(app, "agents.json"), "utf8"));
+    expect(agents["rl-reviewer"]).toMatchObject({ model: "haiku", effort: "low", omitClaudeMd: true });
+    expect(agents["rl-main"]).not.toHaveProperty("model");
+    expect(agents["rl-main"]).not.toHaveProperty("effort");
+    // A value that could read as a flag, or an effort that the CLI does not know, never reaches the command line.
+    const before = calls().length;
+    await expect(runner.run({ ...spec, model: "--bare" })).rejects.toThrow("Invalid model name");
+    await expect(runner.run({ ...spec, effort: "turbo" as RunSpec["effort"] })).rejects.toThrow("Invalid effort");
+    await expect(runner.run({ ...spec, agents: { "rl-reviewer": { ...reviewer, model: "a b" } } })).rejects.toThrow("Invalid model name");
+    expect(
+      calls()
+        .slice(before)
+        .some((c) => c.argv[0] === "-p"),
+    ).toBe(false);
+  });
+
   test("names that break the flag lists are refused", async () => {
     const { runner, spec } = setup({ fixture: flatSuccess() });
     await expect(runner.run({ ...spec, agents: { "a,b": spec.main } })).rejects.toThrow("Invalid");
