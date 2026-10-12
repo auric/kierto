@@ -3,10 +3,10 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server/app";
-import { dbPath, readConfig } from "../src/server/config";
+import { dbPath, PROFILES_VERSION, readConfig } from "../src/server/config";
 import { createLive } from "../src/server/live";
 import { log } from "../src/server/log";
-import { SHIPPED_PROFILES } from "../src/server/review/catalog";
+import { type Profile, SHIPPED_PROFILES } from "../src/server/review/catalog";
 import { createSecrets, type SecretBackend } from "../src/server/secrets";
 import { createSettings, type Settings } from "../src/server/settings";
 import type { SettingsDto } from "../src/shared/dto";
@@ -106,6 +106,7 @@ describe("settings API", () => {
       baseUrl: fake.url,
       userSlug: "jdoe",
       notifications: true,
+      profilesVersion: PROFILES_VERSION,
     });
     expect(s.settings.db()).not.toBeNull();
     expect(await (await s.settings.provider())?.currentUser()).toBe("jdoe");
@@ -244,6 +245,30 @@ describe("settings API", () => {
     writeFileSync(file, JSON.stringify(broken));
     const again = setup();
     expect(await again.get()).toMatchObject({ baseUrl: fake.url, notifications: true, profiles: SHIPPED_PROFILES, checkSeconds: 60 });
+  });
+
+  test("an old config gets the new caps on unedited shipped profiles and keeps edited ones", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
+    s.settings.close();
+    const file = join(dir, "config.json");
+    const [general, over, security, explain] = SHIPPED_PROFILES as [Profile, Profile, Profile, Profile];
+    const oldGeneral = { ...general, maxTurns: 40 };
+    const editedOver = { ...over, maxTurns: 40, note: "My note" };
+    const ownSecurity = { ...security, maxTurns: 30 };
+    const oldExplain = { ...explain, maxTurns: 12 };
+    const { profilesVersion, ...old } = JSON.parse(readFileSync(file, "utf8"));
+    expect(profilesVersion).toBe(PROFILES_VERSION);
+    writeFileSync(file, JSON.stringify({ ...old, profiles: [oldGeneral, editedOver, ownSecurity, oldExplain, custom] }));
+    const upgraded = [general, editedOver, ownSecurity, explain, custom];
+    const again = setup();
+    expect((await again.get()).profiles).toEqual(upgraded);
+    // A save stamps the version, so a cap of 40 set after the update stays.
+    expect((await again.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ profiles: upgraded, profilesVersion: PROFILES_VERSION });
+    expect((await again.put({ baseUrl: fake.url, profiles: [oldGeneral] })).status).toBe(200);
+    again.settings.close();
+    expect((await setup().get()).profiles).toEqual([oldGeneral]);
   });
 
   test("401 gives 400 and stores nothing", async () => {

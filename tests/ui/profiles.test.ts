@@ -82,8 +82,8 @@ describe("profile editor model", () => {
     expect(moved.map((x) => x.key)).toEqual([0, 2, 1].map((i) => d[i]?.key ?? -1));
     expect(change(d, { act: "move", i: 0, d: -1 })).toBe(d);
     expect(change(d, { act: "move", i: 2, d: 1 })).toBe(d);
-    // A new profile starts as a review profile: no name, no prompt, 40 turns, documentation on.
-    expect(change(d, { act: "add" }).at(-1)).toMatchObject({ id: null, name: "", prompt: "", explain: false, docs: true, maxTurns: "40" });
+    // A new profile starts as a review profile: no name, no prompt, 100 turns, documentation on.
+    expect(change(d, { act: "add" }).at(-1)).toMatchObject({ id: null, name: "", prompt: "", explain: false, docs: true, maxTurns: "100" });
   });
 
   test("focus keeps the place after each change", () => {

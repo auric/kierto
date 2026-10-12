@@ -54,6 +54,7 @@ import {
   fixAgent,
   GIT_SERVER,
   type ListTools,
+  MIN_EDIT_TURNS,
   mainAgent,
   type Profile,
   profileOf,
@@ -971,7 +972,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         cwd: ws.work,
         appDir: ws.app,
         ...spec,
-        maxTurns: profile.maxTurns,
+        maxTurns: reply || fix ? Math.max(profile.maxTurns, MIN_EDIT_TURNS) : profile.maxTurns,
         // Only a review gets subagents. With agents {}, the CLI gets no Agent tool.
         agents: j.kind === "review" && !profile.explain ? { [REVIEWER]: reviewerAgent(profile) } : {},
         mcpServers,

@@ -8,6 +8,7 @@ import { createApp } from "../../src/server/app";
 import { writeConfig } from "../../src/server/config";
 import { createLive } from "../../src/server/live";
 import { buildPlan } from "../../src/server/publish/plan";
+import { MIN_EDIT_TURNS, SHIPPED_PROFILES } from "../../src/server/review/catalog";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import { validateReplies } from "../../src/server/review/validate";
 import { createSecrets } from "../../src/server/secrets";
@@ -174,6 +175,28 @@ async function setup() {
   const item = (id: number) => db.query("SELECT status, revision, body FROM review_item WHERE id = $id").get({ id });
   return { db, pr, review, scenario, json, start, finish, run, runCalls, act, item, comment };
 }
+
+describe("turn cap", () => {
+  test(
+    "a reply run gets at least MIN_EDIT_TURNS, whatever the profile cap",
+    async () => {
+      const h = await setup();
+      const caps: string[] = [];
+      for (const maxTurns of [7, 150]) {
+        const put = await h.json("/api/settings", {
+          method: "PUT",
+          body: { baseUrl: "http://127.0.0.1:9", profiles: [{ ...SHIPPED_PROFILES[0], maxTurns }] },
+        });
+        expect(put.status).toBe(200);
+        await h.run();
+        caps.push(flag(h.runCalls().at(-1)?.argv ?? [], "--max-turns") ?? "");
+      }
+      expect(MIN_EDIT_TURNS).toBe(100);
+      expect(caps).toEqual(["100", "150"]);
+    },
+    SLOW,
+  );
+});
 
 describe("thread selection", () => {
   test(

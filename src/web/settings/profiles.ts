@@ -4,8 +4,8 @@ import { MAX_NOTE, MAX_PROFILES, type ProfileInput } from "../../shared/dto";
 // The inline limits of profileInput in src/shared/dto.ts. tests/ui/profiles.test.ts pins them.
 export const LIMITS = { profiles: MAX_PROFILES, id: 40, name: 60, note: 200, prompt: MAX_NOTE, minTurns: 2, maxTurns: 200 } as const;
 
-// D6: a new profile starts as a review profile with 40 turns and the documentation servers.
-const NEW_TURNS = "40";
+// A new profile starts as a review profile with 100 turns and the documentation servers.
+const NEW_TURNS = "100";
 
 // key: a stable React key, so a moved profile keeps its DOM nodes. id: the saved ID, or null for a new profile.
 // maxTurns: the text of the field.

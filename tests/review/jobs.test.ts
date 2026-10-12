@@ -354,7 +354,7 @@ describe("run pipeline", () => {
       expect(d.events.every((e) => e.status !== "running")).toBe(true);
 
       const argv = h.runCall()?.argv ?? [];
-      expect(flag(argv, "--max-turns")).toBe("40");
+      expect(flag(argv, "--max-turns")).toBe("100");
       expect(flag(argv, "--tools")).toBe("Read,Grep,Glob,Agent");
       expect(flag(argv, "--allowedTools")).toBe("Read,Grep,Glob,mcp__rl-git,mcp__learn,mcp__deepwiki");
       // The worktree goes after validation.
@@ -414,7 +414,7 @@ describe("run pipeline", () => {
   );
 
   test(
-    "the Explain profile keeps only questions, runs no subagent, and caps turns at 12",
+    "the Explain profile keeps only questions, runs no subagent, and caps turns at 50",
     async () => {
       const h = await setup();
       h.scenario({ fixture: derive(join(REAL, "b6-hostile-repo.jsonl"), { tools: EXPLAIN_TOOLS, structured: RESULT }) });
@@ -425,7 +425,7 @@ describe("run pipeline", () => {
       expect(d.items.map((i) => i.kind)).toEqual(["question"]);
       expect(d.run.summary?.dropped).toEqual([]);
       const argv = h.runCall()?.argv ?? [];
-      expect(flag(argv, "--max-turns")).toBe("12");
+      expect(flag(argv, "--max-turns")).toBe("50");
       expect(flag(argv, "--tools")).toBe("Read,Grep,Glob");
       expect(flag(argv, "--allowedTools")).toBe("Read,Grep,Glob,mcp__rl-git");
       expect(h.runCall()?.stdin).not.toContain(DOCS_RULE);
@@ -797,10 +797,10 @@ describe("brief and meta", () => {
       check: null,
     });
     expect(meta.profiles.map((p) => [p.id, p.name, p.explain, p.maxTurns])).toEqual([
-      ["general", "General", false, 40],
-      ["over", "Over-engineering", false, 40],
-      ["security", "Security", false, 40],
-      ["explain", "Explain", true, 12],
+      ["general", "General", false, 100],
+      ["over", "Over-engineering", false, 100],
+      ["security", "Security", false, 100],
+      ["explain", "Explain", true, 50],
     ]);
     expect(meta.tools["mcp__rl-git__git_log"]).toBe("Git log");
     expect(meta.context).toEqual([{ id: "jira", name: "Jira", configured: false }]);
@@ -869,7 +869,7 @@ describe("editable profiles (M4)", () => {
       const meta = (await h.json<MetaDto>("/api/meta")).body;
       expect(meta.profiles).toEqual([
         { id: "perf", name: "Performance", note: "", explain: false, maxTurns: 9 },
-        { id: "general", name: "General", note: general.note, explain: false, maxTurns: 40 },
+        { id: "general", name: "General", note: general.note, explain: false, maxTurns: 100 },
       ]);
       const d = await h.finish((await h.start()).body.id);
       expect(d.run).toMatchObject({ profile: "perf", profileName: "Performance" });

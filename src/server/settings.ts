@@ -16,12 +16,12 @@ import {
 import type { PullRequest } from "../shared/types";
 import { ForgeError } from "./bitbucket/client";
 import { createBitbucketProvider, type ForgeProvider } from "./bitbucket/provider";
-import { type Config, dataDir, dbPath, readConfig, writeConfig } from "./config";
+import { type Config, dataDir, dbPath, PROFILES_VERSION, readConfig, writeConfig } from "./config";
 import { createJiraSource } from "./context/jira";
 import { ContextError, type ContextSource } from "./context/source";
 import { listPrs } from "./inbox/queries";
 import { log } from "./log";
-import { type Profile, SHIPPED_PROFILES } from "./review/catalog";
+import { type Profile, SHIPPED_PROFILES, upgradeProfile } from "./review/catalog";
 import { createSecrets, type Secrets } from "./secrets";
 import { openDb } from "./storage/db";
 import {
@@ -50,6 +50,8 @@ const activeRules = (c: Config): TaskRule[] => rulesOf(c).flatMap(({ timedOut, .
 
 const DEFAULT_CHECK_SECONDS = 60;
 const profilesOf = (c: Config | null): Profile[] => c?.profiles ?? SHIPPED_PROFILES;
+const upgradeConfig = (c: Config | null): Config | null =>
+  c?.profiles && c.profilesVersion !== PROFILES_VERSION ? { ...c, profiles: c.profiles.map(upgradeProfile) } : c;
 const checkSecondsOf = (c: Config | null) => c?.checkSeconds ?? DEFAULT_CHECK_SECONDS;
 
 const originOf = (url: string) => new URL(url).origin;
@@ -85,7 +87,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets; jiraSecr
 
   const current = () => {
     if (!loaded) {
-      config = readConfig(dir);
+      config = upgradeConfig(readConfig(dir));
       loaded = true;
     }
     return config;

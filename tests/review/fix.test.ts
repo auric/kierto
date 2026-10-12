@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createApp } from "../../src/server/app";
 import { writeConfig } from "../../src/server/config";
 import { createLive } from "../../src/server/live";
+import { MIN_EDIT_TURNS, SHIPPED_PROFILES } from "../../src/server/review/catalog";
 import { type FixFile, validateFix } from "../../src/server/review/fix";
 import { git, gitEnv } from "../../src/server/review/git";
 import { createReviewJobs } from "../../src/server/review/jobs";
@@ -231,6 +232,31 @@ async function setup(o: { baseUrl?: string } = {}) {
 
 const edit = (thread: number, path: string, old: string, next = `${old} changed`): FixEdit => ({ thread, path, old, new: next });
 const note = (thread: number, reason = `Fixed ${thread}.`, fixed = true) => ({ thread, fixed, reason });
+
+describe("turn cap", () => {
+  test(
+    "a fix run gets at least MIN_EDIT_TURNS, whatever the profile cap",
+    async () => {
+      const h = await setup();
+      h.draft(101, 103, "valid");
+      const caps: string[] = [];
+      for (const maxTurns of [7, 150]) {
+        const put = await h.json("/api/settings", {
+          method: "PUT",
+          body: { baseUrl: "http://127.0.0.1:9", profiles: [{ ...SHIPPED_PROFILES[0], maxTurns }] },
+        });
+        expect(put.status).toBe(200);
+        const r = await h.start();
+        expect(r.status).toBe(202);
+        await h.finish(r.body.id);
+        caps.push(flag(h.runCalls().at(-1)?.argv ?? [], "--max-turns") ?? "");
+      }
+      expect(MIN_EDIT_TURNS).toBe(100);
+      expect(caps).toEqual(["100", "150"]);
+    },
+    SLOW,
+  );
+});
 
 describe("thread selection and refusals", () => {
   test(

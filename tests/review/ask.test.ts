@@ -134,7 +134,7 @@ describe("ask runs", () => {
       const [c] = h.runCalls() as [Call];
       expect(flag(c.argv, "--tools").split(",")).not.toContain("Agent");
       expect(flag(c.argv, "--json-schema")).toBe(JSON.stringify(askJsonSchema()));
-      expect(flag(c.argv, "--max-turns")).toBe("40");
+      expect(flag(c.argv, "--max-turns")).toBe("100");
       for (const canary of CANARIES) expect(c.stdin).not.toContain(canary);
       const section = c.stdin.slice(c.stdin.indexOf("# Your instructions"), c.stdin.indexOf("# Metadata"));
       expect(section.trim()).toBe(`# Your instructions\n\n${question}`);

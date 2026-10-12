@@ -34,7 +34,7 @@ export const TOOL_LABELS: Record<string, string> = {
   mcp__deepwiki__read_wiki_structure: "DeepWiki structure",
 };
 
-// prompt: the profile part of both agent prompts. D6: 40 turns for reviews, 12 for Explain. docs: the run gets DOC_SERVERS.
+// prompt: the profile part of both agent prompts. 100 turns for reviews, 50 for Explain. docs: the run gets DOC_SERVERS.
 export type Profile = ProfileInput;
 
 export const SHIPPED_PROFILES: Profile[] = [
@@ -43,7 +43,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     name: "General",
     note: "Correctness, concurrency, effects outside the diff",
     explain: false,
-    maxTurns: 40,
+    maxTurns: 100,
     docs: true,
     prompt:
       "Find defects in the change: wrong logic, missed edge cases, races and lock order, resource leaks, error handling, and effects on callers outside the diff.",
@@ -53,7 +53,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     name: "Over-engineering",
     note: "What to delete or simplify",
     explain: false,
-    maxTurns: 40,
+    maxTurns: 100,
     docs: true,
     prompt:
       "Find code that the change can delete or simplify: abstractions with one use, code that the standard library or the platform already gives, unneeded dependencies, settings for fixed values, and dead code.",
@@ -63,7 +63,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     name: "Security",
     note: "Trust boundaries, secrets, unsafe memory",
     explain: false,
-    maxTurns: 40,
+    maxTurns: 100,
     docs: true,
     prompt:
       "Find security defects: trust boundaries, input validation, injection, secrets in code or logs, authentication and authorization, unsafe memory use, and unsafe defaults.",
@@ -73,7 +73,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     name: "Explain",
     note: "Summary and questions only, at lower cost",
     explain: true,
-    maxTurns: 12,
+    maxTurns: 50,
     docs: false,
     prompt:
       "Explain the change for a reviewer: what it does, why, and which parts need attention. Ask a question where the intent is not clear. Report no findings.",
@@ -88,6 +88,17 @@ export const profileRevision = (p: Profile) =>
     .update(JSON.stringify(p, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
     .digest("hex");
 export const DEFAULT_PROFILE: ProfileId = "general";
+// Fix and reply runs get at least this turn cap, whatever the profile.
+export const MIN_EDIT_TURNS = 100;
+
+// The turn caps of the shipped profiles before PROFILES_VERSION 2 (src/server/config.ts).
+const FORMER_TURNS: Record<string, number> = { general: 40, over: 40, security: 40, explain: 12 };
+// A saved profile equal to a former shipped profile was never edited, so it gets the current shipped profile.
+export function upgradeProfile(p: Profile): Profile {
+  const shipped = SHIPPED_PROFILES.find((s) => s.id === p.id);
+  const turns = FORMER_TURNS[p.id];
+  return shipped && turns !== undefined && profileRevision(p) === profileRevision({ ...shipped, maxTurns: turns }) ? shipped : p;
+}
 
 // Returns the tool names of a remote MCP server. It throws when the server does not answer.
 export type ListTools = (url: string) => Promise<string[]>;

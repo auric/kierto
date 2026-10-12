@@ -25,11 +25,16 @@ const config = z.object({
   checkSeconds: settingsInput.shape.checkSeconds.catch(undefined),
   // Absent: SHIPPED_PROFILES (src/server/review/catalog.ts).
   profiles: profileList.optional().catch(undefined),
+  // Absent: a config from before PROFILES_VERSION. settings.ts upgrades its unedited shipped profiles.
+  profilesVersion: z.number().optional().catch(undefined),
   // Absent: no Jira connection. The Jira token lives in the secret store under "jira-token".
   jira: z.object({ baseUrl: z.string(), caFile: z.string().optional() }).optional().catch(undefined),
 });
 
 export type Config = z.infer<typeof config>;
+
+// Version 2: the shipped turn caps went from 40 and 12 to 100 and 50.
+export const PROFILES_VERSION = 2;
 
 export function dataDir(): string {
   const env = process.env;
@@ -57,7 +62,7 @@ export function readConfig(dir: string): Config | null {
 export function writeConfig(dir: string, value: Config) {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, "config.json");
-  writeFileSync(`${file}.tmp`, `${JSON.stringify(value, null, 2)}\n`);
+  writeFileSync(`${file}.tmp`, `${JSON.stringify({ ...value, profilesVersion: PROFILES_VERSION }, null, 2)}\n`);
   renameSync(`${file}.tmp`, file);
 }
 
