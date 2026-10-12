@@ -81,7 +81,13 @@ async function setup(mark = false) {
     },
   });
   const dir = mkdtempSync(join(tmpdir(), "rl-wp13-"));
-  writeConfig(dir, { baseUrl: fake.url, userSlug: FAKE_USER, notifications: false, ...(mark ? {} : { markAi: false }) });
+  writeConfig(dir, {
+    baseUrl: fake.url,
+    userSlug: FAKE_USER,
+    notifications: false,
+    markSeverity: false,
+    ...(mark ? {} : { markAi: false }),
+  });
   const secrets = createSecrets(null);
   await secrets.set(FAKE_TOKEN);
   const settings = createSettings({ dir, secrets });

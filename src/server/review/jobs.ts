@@ -588,12 +588,12 @@ function capped(blocks: string[][], max: number, left: (n: number) => string): s
   return out;
 }
 
-// context/history.md of an ask, reply, or fix run: the newest finished review with its findings, and the earlier answers.
-// head: the current source head. null when no earlier result exists.
-export function historyFile(db: Database, pr: number, head: string): ContextFile | null {
+// context/history.md of an ask, reply, fix, or plain review run: the newest finished review with its findings, and the earlier answers.
+// head: the current source head. null when no earlier result exists. review: null also when no earlier review exists.
+export function historyFile(db: Database, pr: number, head: string, review = false): ContextFile | null {
   const run = db.query(`${SQL.run} ${SQL.baseRun}`).get({ pr }) as RunRow | null;
   const asks = db.query(`${SQL.run} ${SQL.historyAsks}`).all({ pr }) as RunRow[];
-  if (!run && !asks.length) return null;
+  if (!run && (review || !asks.length)) return null;
   const out: string[] = [];
   if (run) {
     const summary = run.summary_json ? (JSON.parse(run.summary_json) as RunSummary).summary : "";
@@ -1018,7 +1018,13 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const { files, attachments } = taskContext(j.db, j.pr, dataDir);
     const carry = j.carry;
     const earlier = carry?.items.filter((r) => r.kind === "finding") ?? [];
-    const history = j.kind === "review" ? null : historyFile(j.db, j.pr, pr.source_head);
+    // A re-review gets findings.md instead. An explain run gets no history.
+    const history =
+      j.kind !== "review"
+        ? historyFile(j.db, j.pr, pr.source_head)
+        : carry || j.profile.explain
+          ? null
+          : historyFile(j.db, j.pr, pr.source_head, true);
     const extra = [...(carry && earlier.length ? [findingsFile(current(j.db, earlier), carry)] : []), ...(history ? [history] : [])];
     try {
       ws = await prepareWorkspace({

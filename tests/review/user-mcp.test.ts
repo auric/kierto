@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { mainAgent, profileRevision, REMOTE_RULE, reviewerAgent, SHIPPED_PROFILES, withMcp } from "../../src/server/review/catalog";
 import type { UserMcpEntry } from "../../src/server/review/claude";
 import { buildPrompt, type PromptInput } from "../../src/server/review/prompt";
@@ -211,6 +211,20 @@ describe("user MCP tools", () => {
         { name: "delete_item", description: "Deletes one fake record.", readOnlyHint: false, destructiveHint: null },
         { name: "expanded_tool", description: "An extra tool.", readOnlyHint: null, destructiveHint: null },
       ]);
+    },
+    SLOW,
+  );
+
+  test(
+    "a stdio server starts in a fresh empty folder that is gone after the listing",
+    async () => {
+      const tools = await listUserTools(fakeEntry(["--cwd"]));
+      const probe = tools.find((t) => t.name === "cwd_probe");
+      const { cwd, entries } = JSON.parse(probe?.description ?? "{}") as { cwd: string; entries: number };
+      expect(resolve(cwd)).not.toBe(resolve(tmpdir()));
+      expect(basename(cwd)).toStartWith("rl-mcp-");
+      expect(entries).toBe(0);
+      expect(existsSync(cwd)).toBe(false);
     },
     SLOW,
   );

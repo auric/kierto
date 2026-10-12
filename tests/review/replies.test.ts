@@ -566,6 +566,8 @@ test("R15: a reply item posts under its parent and never joins the general comme
   const posts = buildPlan({
     me: FAKE_USER,
     mark: false,
+    // On: a question and a reply still get no severity.
+    severity: true,
     runs: [run],
     comments: [],
     items: [

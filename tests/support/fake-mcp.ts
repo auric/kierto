@@ -1,6 +1,7 @@
 // Fake stdio MCP server for tests. It has three tools and never touches the network.
-// Usage: bun tests/support/fake-mcp.ts [--extra=<tool name>]...
-// search and lookup say readOnlyHint true. delete_item says false. bad.name is not valid in a CLI flag. Each --extra adds a tool with no hint.
+// Usage: bun tests/support/fake-mcp.ts [--extra=<tool name>]... [--cwd]
+// search and lookup say readOnlyHint true. delete_item says false. bad.name is not valid in a CLI flag. Each --extra adds a tool with no hint. --cwd adds cwd_probe: its description is JSON { cwd, entries } of the start folder.
+import { readdirSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
@@ -18,5 +19,9 @@ if (import.meta.main) {
   server.registerTool("bad.name", { description: "A name with a dot." }, async () => text("bad"));
   for (const a of process.argv.slice(2))
     if (a.startsWith("--extra=")) server.registerTool(a.slice(8), { description: "An extra tool." }, async () => text("extra"));
+  if (process.argv.includes("--cwd")) {
+    const description = JSON.stringify({ cwd: process.cwd(), entries: readdirSync(process.cwd()).length });
+    server.registerTool("cwd_probe", { description }, async () => text("cwd"));
+  }
   await server.connect(new StdioServerTransport());
 }

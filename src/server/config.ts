@@ -14,6 +14,8 @@ const config = z.object({
   notifications: z.boolean(),
   // Absent: on. Posts built from AI items start with AI_MARK (src/server/publish/plan.ts).
   markAi: z.boolean().optional(),
+  // Absent: on. Posted findings start with their severity in bold (src/server/publish/plan.ts).
+  markSeverity: z.boolean().optional(),
   // Absent: DEFAULT_TASK_RULES (src/server/tasks/rules.ts).
   taskRules: z
     .array(taskRuleInput.extend({ timedOut: z.boolean().optional() }))

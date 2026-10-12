@@ -70,6 +70,7 @@ describe("settings API", () => {
       caFile: null,
       notifications: false,
       markAi: true,
+      markSeverity: true,
       taskRules: DEFAULT_RULES,
       taskLink: null,
       checkSeconds: 60,
@@ -93,6 +94,7 @@ describe("settings API", () => {
       caFile: null,
       notifications: true,
       markAi: true,
+      markSeverity: true,
       taskRules: DEFAULT_RULES,
       taskLink: null,
       checkSeconds: 60,
@@ -169,6 +171,25 @@ describe("settings API", () => {
     const again = setup();
     expect(await again.get()).toMatchObject({ markAi: false, notifications: true });
     expect(again.settings.config()?.markAi).toBe(false);
+  });
+
+  test("markSeverity saves without a Bitbucket request and persists across a restart", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
+    expect((await s.get()).markSeverity).toBe(true);
+    const before = fake.requests.length;
+    const res = await s.put({ baseUrl: fake.url, markSeverity: false });
+    expect(res.status).toBe(200);
+    expect((await res.json()).markSeverity).toBe(false);
+    expect(fake.requests.length).toBe(before);
+    // A PUT without markSeverity keeps the stored value.
+    expect((await s.put({ baseUrl: fake.url, markAi: false })).status).toBe(200);
+    expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).markSeverity).toBe(false);
+    expect((await s.put({ baseUrl: fake.url, markSeverity: "no" })).status).toBe(400);
+    s.settings.close();
+    const again = setup();
+    expect(await again.get()).toMatchObject({ markSeverity: false, markAi: false });
+    expect(again.settings.config()?.markSeverity).toBe(false);
   });
 
   test("GET gives the four shipped profiles with their full prompts", async () => {

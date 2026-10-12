@@ -33,6 +33,7 @@ export function planInput(review: ReviewJobs, settings: Settings, pr: number): P
   return {
     me: settings.config()?.userSlug ?? null,
     mark: settings.config()?.markAi ?? true,
+    severity: settings.config()?.markSeverity ?? true,
     runs: db.query(SQL.runs).all({ pr }) as PlanRun[],
     items: (db.query(SQL.items).all({ pr }) as ItemRow[]).map(toItemDto),
     comments: (db.query(SQL.comments).all({ pr }) as C[]).map(({ anchor_json, ...c }) => ({ ...c, anchor: parse(anchor_json) })),

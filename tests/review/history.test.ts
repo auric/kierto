@@ -1,4 +1,4 @@
-// context/history.md of ask, reply, and fix runs. An in-memory database, no runner.
+// context/history.md of ask, reply, fix, and plain review runs. An in-memory database, no runner.
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { HISTORY_ASK_BYTES, HISTORY_FINDING_BYTES, historyFile } from "../../src/server/review/jobs";
@@ -128,6 +128,27 @@ describe("historyFile", () => {
     expect(t).toContain("## Ask run");
     run(db, pr, { summary: "S" });
     expect(historyFile(db, pr, HEAD)?.text).toContain("No findings.");
+  });
+
+  test("a plain review gets the file only when an earlier review exists; each finding keeps its state", () => {
+    const { db, pr } = setup();
+    run(db, pr, { kind: "ask", question: "Q?", answer: "A" });
+    run(db, pr, { profile: "explain", explain: 1, summary: "E" });
+    expect(historyFile(db, pr, HEAD, true)).toBeNull();
+    const r = run(db, pr, { summary: "S" });
+    const states = ["new", "accepted", "discarded", "posted"];
+    for (const [i, status] of states.entries()) finding(db, r, { severity: "major", body: `BODY-${status}`, line: i + 1, status });
+    const t = historyFile(db, pr, HEAD, true)?.text ?? "";
+    expect(t).toContain(`- Run: ${r}
+`);
+    for (const status of states)
+      expect(t).toContain(`- State: ${status}
+
+Text:
+
+    BODY-${status}
+`);
+    expect(t).toContain("## Ask run");
   });
 
   test("the byte caps keep the first findings and the newest asks", () => {

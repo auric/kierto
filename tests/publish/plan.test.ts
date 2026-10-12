@@ -56,6 +56,7 @@ type F = {
   body?: string;
   oldPath?: string;
   excerpt?: ExcerptLine[];
+  severity?: AnchoredFinding["severity"];
 };
 function findingPayload(o: F): AnchoredFinding {
   const side = o.side ?? "new";
@@ -67,7 +68,7 @@ function findingPayload(o: F): AnchoredFinding {
     line,
     lineEnd: null,
     anchorText: "c2",
-    severity: "minor",
+    severity: o.severity ?? "minor",
     category: "naming",
     body: o.body ?? "Body.",
     evidence: "",
@@ -85,9 +86,15 @@ function findingPayload(o: F): AnchoredFinding {
   };
 }
 
-async function setup(mark = false) {
+async function setup(mark = false, severity = false) {
   const dir = mkdtempSync(join(tmpdir(), "rl-wp12-"));
-  writeConfig(dir, { baseUrl: "http://127.0.0.1:9", userSlug: FAKE_USER, notifications: false, ...(mark ? {} : { markAi: false }) });
+  writeConfig(dir, {
+    baseUrl: "http://127.0.0.1:9",
+    userSlug: FAKE_USER,
+    notifications: false,
+    ...(mark ? {} : { markAi: false }),
+    ...(severity ? {} : { markSeverity: false }),
+  });
   const secrets = createSecrets(null);
   await secrets.set(FAKE_TOKEN);
   const settings = createSettings({ dir, secrets });
@@ -184,15 +191,17 @@ async function setup(mark = false) {
     expect(r.status).toBe(200);
     return r.body;
   };
-  const markAi = async (on: boolean) => {
+  const put = async (body: Record<string, boolean>) => {
     const res = await app.request(`${ORIGIN}/api/settings`, {
       method: "PUT",
       headers: HEADERS,
-      body: JSON.stringify({ baseUrl: "http://127.0.0.1:9", markAi: on }),
+      body: JSON.stringify({ baseUrl: "http://127.0.0.1:9", ...body }),
     });
     expect(res.status).toBe(200);
   };
-  return { db, pr, run, finding, question, comment, act, accept, plan, call, markAi };
+  const markAi = (on: boolean) => put({ markAi: on });
+  const markSeverity = (on: boolean) => put({ markSeverity: on });
+  return { db, pr, run, finding, question, comment, act, accept, plan, call, markAi, markSeverity };
 }
 
 describe("post plan", () => {
@@ -419,6 +428,7 @@ describe("post plan", () => {
     const posts = buildPlan({
       me: FAKE_USER,
       mark: false,
+      severity: false,
       runs,
       items: [item(5, 2), item(3, 1), { ...item(4, 1), status: "new" }],
       comments: [],
@@ -460,5 +470,45 @@ describe("AI mark", () => {
       `${AI_MARK}Already marked.`,
       "\u{1F916}Bare emoji.",
     ]);
+  });
+});
+
+describe("severity", () => {
+  test("on by default: each finding starts with its bold severity, after the AI mark; questions get none; off: no severity", async () => {
+    const s = await setup(false, true);
+    const ids = [
+      s.finding({ severity: "blocker" }),
+      s.finding({ line: 4, severity: "major" }),
+      s.finding({ path: "b.ts", severity: "minor" }),
+      s.finding({ state: "outside", severity: "nit" }),
+      s.question("Q1?", "W1."),
+    ];
+    for (const id of ids) await s.accept(id);
+    const bodies = async () => (await s.plan()).posts.map((p) => p.body);
+    expect(await bodies()).toEqual([
+      "**Blocker:** Body.",
+      "**Major:** Body.",
+      "**Minor:** Body.",
+      "src/app.ts:3: **Nit:** Body.\n\nQ1? W1.",
+    ]);
+    await s.markAi(true);
+    expect(await bodies()).toEqual([
+      `${AI_MARK}**Blocker:** Body.`,
+      `${AI_MARK}**Major:** Body.`,
+      `${AI_MARK}**Minor:** Body.`,
+      `${AI_MARK}src/app.ts:3: **Nit:** Body.\n\nQ1? W1.`,
+    ]);
+    await s.markSeverity(false);
+    expect(await bodies()).toEqual([`${AI_MARK}Body.`, `${AI_MARK}Body.`, `${AI_MARK}Body.`, `${AI_MARK}src/app.ts:3: Body.\n\nQ1? W1.`]);
+  });
+
+  test("a body that already starts with the AI mark gets the severity after it, with the mark on or off", async () => {
+    const s = await setup(false, true);
+    await s.accept(s.finding({ body: `${AI_MARK}Already marked.`, severity: "major" }));
+    await s.accept(s.finding({ path: "b.ts", body: "\u{1F916}Bare emoji.", severity: "nit" }));
+    const bodies = async () => (await s.plan()).posts.map((p) => p.body);
+    expect(await bodies()).toEqual([`${AI_MARK}**Major:** Already marked.`, `${AI_MARK}**Nit:** Bare emoji.`]);
+    await s.markAi(true);
+    expect(await bodies()).toEqual([`${AI_MARK}**Major:** Already marked.`, `${AI_MARK}**Nit:** Bare emoji.`]);
   });
 });

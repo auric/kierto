@@ -103,7 +103,7 @@ test("a push after a review: c reviews the new commits, carries the open draft, 
 
   const sent = await posts();
   expect(sent).toHaveLength(1);
-  expect(sent[0]?.text).toBe(MARK + LOCK);
+  expect(sent[0]?.text).toBe(`${MARK}**Blocker:** ${LOCK}`);
   expect(sent[0]?.anchor).toMatchObject({ path: "src/cache/flush.ts", line: 3 });
   expect(String(sent[0]?.anchor?.toHash)).toMatch(new RegExp(`^${to}[0-9a-f]{33}$`));
 });

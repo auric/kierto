@@ -1,5 +1,5 @@
 // MCP servers of the user's Claude config (user scope) and of the enabled plugins for review profiles. Entries can hold secrets: no URL, header, command, args, or env value leaves this module except into the run's mcp.json.
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -168,13 +168,15 @@ export const listUserTools: ListUserTools = async (entry) => {
   const env = childEnv();
   let transport: Transport;
   let stdio: StdioClientTransport | null = null;
+  let cwd: string | null = null;
   if (entry.type === "stdio") {
+    // The CLI starts the server in the run folder. Discovery has no run folder. An empty folder keeps scans such as codegraph short.
+    cwd = mkdtempSync(join(tmpdir(), "rl-mcp-"));
     stdio = new StdioClientTransport({
       command: expand(entry.command, env),
       args: entry.args.map((a) => expand(a, env)),
       env: { ...env, ...expandAll(entry.env, env) },
-      // The CLI starts the server in the run folder. Discovery has no run folder.
-      cwd: tmpdir(),
+      cwd,
       stderr: "ignore",
     });
     transport = stdio;
@@ -211,6 +213,11 @@ export const listUserTools: ListUserTools = async (entry) => {
     const pid = stdio?.pid;
     if (pid && process.platform === "win32") await killTree(pid).catch(() => {});
     await client.close().catch(() => {});
+    // Windows locks the cwd of a live process. The retries cover the exit after the kill. A folder left behind does not fail the listing.
+    if (cwd)
+      try {
+        rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      } catch {}
   }
 };
 

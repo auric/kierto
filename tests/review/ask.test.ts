@@ -181,7 +181,7 @@ describe("ask runs", () => {
   );
 
   test(
-    "ask, reply, and fix runs get history.md with the earlier review and answers; pr.md marks tasks",
+    "ask, reply, fix, and plain review runs get history.md with the earlier review and answers; pr.md marks tasks",
     async () => {
       const h = await setup();
       const answered = await h.finish((await h.ask("FIRST-QUESTION?")).body.id);
@@ -217,6 +217,7 @@ describe("ask runs", () => {
         ["ask", () => h.ask("SECOND?")],
         ["reply", () => h.json<Start>(`/api/prs/${h.pr}/reply-run`, { body: { threads: [101] } })],
         ["fix", () => h.json<Start>(`/api/prs/${h.pr}/fix-run`, { body: { threads: [101] } })],
+        ["review", () => h.json<Start>(`/api/prs/${h.pr}/review`, { method: "POST" })],
       ];
       for (const [kind, start] of starts) {
         h.scenario({ hang: true });
@@ -227,6 +228,7 @@ describe("ask runs", () => {
         expect(await waitFor(() => hung() > before)).toBe(true);
         const c = h.runCalls().at(-1) as Call;
         expect(c.stdin).toContain("- ./context/history.md holds the earlier review and the earlier answers");
+        expect(c.stdin.includes("Do not raise a discarded finding again")).toBe(kind === "review");
         const history = readFileSync(join(c.cwd, "context", "history.md"), "utf8");
         expect(history.startsWith(UNTRUSTED)).toBe(true);
         expect(history).toContain(`- Run: ${rev}

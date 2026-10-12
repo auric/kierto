@@ -336,6 +336,22 @@ function AiMark({ settings }: { settings: SettingsDto }) {
           </FieldDescription>
         </FieldContent>
       </Field>
+      <Field orientation="horizontal">
+        <Switch
+          id="mark-severity"
+          aria-describedby="mark-severity-help"
+          checked={settings.markSeverity}
+          disabled={save.isPending}
+          onCheckedChange={(markSeverity) => save.mutate({ baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", markSeverity })}
+        />
+        <FieldContent>
+          <FieldLabel htmlFor="mark-severity">Add the severity to posted findings</FieldLabel>
+          <FieldDescription id="mark-severity-help">
+            Each finding starts with its severity in bold, such as <strong>Nit:</strong> at the start. Questions and replies get no
+            severity.
+          </FieldDescription>
+        </FieldContent>
+      </Field>
       {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
     </section>
   );

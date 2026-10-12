@@ -112,6 +112,8 @@ test("A8: two of the drafts are accepted, and exactly those two texts post after
   await expect(items.nth(0)).toContainText("flush.ts:3");
   await expect(items.nth(0)).toContainText("Inline comment");
   await expect(items.nth(0)).toContainText(LOCK);
+  // The default markSeverity setting starts each finding with its severity in bold.
+  await expect(items.nth(0).locator("strong", { hasText: "Blocker:" })).toHaveCount(1);
   await expect(items.nth(1)).toContainText("flush.ts:5");
   await postButton(box).click();
   await expect(box).toBeHidden();
@@ -123,7 +125,7 @@ test("A8: two of the drafts are accepted, and exactly those two texts post after
   await expect(page.locator("#nav-post")).toHaveAccessibleName("Ready to post: 0");
 
   const sent = await posts();
-  expect(sent.map((b) => b.text)).toEqual([MARK + LOCK, MARK + RELEASE]);
+  expect(sent.map((b) => b.text)).toEqual([`${MARK}**Blocker:** ${LOCK}`, `${MARK}**Minor:** ${RELEASE}`]);
   expect(sent.map((b) => [b.anchor?.path, b.anchor?.line, b.parent])).toEqual([
     ["src/cache/flush.ts", 3, undefined],
     ["src/cache/flush.ts", 5, undefined],
@@ -184,12 +186,12 @@ test("a failed inline post shows the reason and moves to the general comment", a
   await page.keyboard.press("p");
   const box = confirmBox(page);
   await expect(box).toContainText("General comment");
-  await expect(box).toContainText(`src/cache/flush.ts:3: ${LOCK}`);
+  await expect(box).toContainText(`src/cache/flush.ts:3: Blocker: ${LOCK}`);
   await postButton(box).click();
   await expect(out).toContainText("Posted.");
   const sent = await posts();
   expect(sent).toHaveLength(1);
-  expect(sent[0]?.text).toBe(`${MARK}src/cache/flush.ts:3: ${LOCK}`);
+  expect(sent[0]?.text).toBe(`${MARK}src/cache/flush.ts:3: **Blocker:** ${LOCK}`);
   expect(sent[0]?.anchor).toBeUndefined();
 });
 

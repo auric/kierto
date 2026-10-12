@@ -117,6 +117,8 @@ export const settingsInput = z.object({
   notifications: z.boolean().optional(),
   // Absent keeps the stored value.
   markAi: z.boolean().optional(),
+  // Absent keeps the stored value.
+  markSeverity: z.boolean().optional(),
   // Absent keeps the stored rules.
   taskRules: z.array(taskRuleInput).max(MAX_TASK_RULES).optional(),
   // Absent keeps the stored template. Empty clears it.
@@ -143,6 +145,7 @@ export type SettingsDto = {
   caFile: string | null;
   notifications: boolean;
   markAi: boolean;
+  markSeverity: boolean;
   taskRules: TaskRuleDto[];
   taskLink: string | null;
   checkSeconds: number;
