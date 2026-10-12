@@ -1,7 +1,22 @@
-// List pane (prototype/v3 renderList): Needs you, Waiting on others, and a folded Done group. The Review runs view is one flat list.
-import { BellOff, ChevronRight, CircleAlert, Hourglass, LoaderCircle, Menu, Plus, Reply, Search, User, X } from "lucide-react";
+// List pane (prototype/v3 renderList): Needs you, Waiting on others, and a folded Done group.
+// The Review runs, Ready to post, and Archive views are one flat list.
+import {
+  ArchiveRestore,
+  BellOff,
+  ChevronRight,
+  CircleAlert,
+  Hourglass,
+  LoaderCircle,
+  Menu,
+  Plus,
+  Reply,
+  Search,
+  User,
+  X,
+} from "lucide-react";
 import { memo, type Ref, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -9,7 +24,7 @@ import type { PrRow, RunDto } from "../../shared/dto";
 import type { PrRef } from "../../shared/types";
 import { runWhy } from "../review/model";
 import { createHints, Hint, type Hints, HintTrigger, SharedHint } from "./Hint";
-import { ago, incompleteText, type ListGroup, prKey, taskHint, why } from "./model";
+import { ago, archiveWhy, incompleteText, type ListGroup, prKey, restoreWords, taskHint, why } from "./model";
 
 // prototype/v3 kbd: an outlined mono key.
 const kbd = "border border-rule-strong bg-transparent font-mono text-[11px] text-ink-2";
@@ -44,6 +59,8 @@ export function ListPane(props: {
   runs: ReadonlyMap<number, RunDto> | null;
   // The Ready to post view: what each row posts. Its why-line names the comments (prototype/v3 whyPost).
   ready: ReadonlyMap<number, string> | null;
+  // The Archive view: each row names why it is there and has a Restore button.
+  onRestore: ((p: PrRow) => void) | null;
   candidate: PrRef | null;
   following: boolean;
   followError: string | null;
@@ -74,6 +91,7 @@ export function ListPane(props: {
           selected={p.id === props.selected}
           onSelect={props.onSelect}
           onOpen={props.onOpen}
+          onRestore={props.onRestore}
         />
       ))}
     </ul>
@@ -254,6 +272,7 @@ const Row = memo(function Row({
   selected,
   onSelect,
   onOpen,
+  onRestore,
 }: {
   p: PrRow;
   now: number;
@@ -264,13 +283,15 @@ const Row = memo(function Row({
   selected: boolean;
   onSelect: (id: number) => void;
   onOpen: (id: number) => void;
+  onRestore: ((p: PrRow) => void) | null;
 }) {
-  const w = why(p, now);
+  const w = onRestore ? archiveWhy(p, now) : why(p, now);
   const time = run ? (run.finishedAt ?? run.startedAt) : p.lastActivity;
   const task = p.tasks[0];
   const incomplete = incompleteText(p.checkpoint, forge);
+  const { verb } = restoreWords(p);
   return (
-    <li>
+    <li className={cn(onRestore && "relative")}>
       <button
         type="button"
         id={`row-${p.id}`}
@@ -327,7 +348,8 @@ const Row = memo(function Row({
         ) : run ? (
           <RunWhyLine run={run} />
         ) : (
-          <span className="flex min-w-0 items-baseline gap-2 text-sm text-ink-2">
+          // The Restore button sits over the end of this line.
+          <span className={cn("flex min-w-0 items-baseline gap-2 text-sm text-ink-2", onRestore && "pr-24")}>
             {w.closed && <b className="shrink-0 font-semibold text-foreground">{w.closed}</b>}
             {w.turn?.kind === "your" && (
               <span className="inline-flex shrink-0 items-center gap-1.5 self-center font-semibold whitespace-nowrap text-turn">
@@ -347,7 +369,7 @@ const Row = memo(function Row({
                 {w.text}
               </span>
             )}
-            {p.unread > 0 && (
+            {p.unread > 0 && !onRestore && (
               <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 self-center text-xs font-semibold whitespace-nowrap text-foreground">
                 <span aria-hidden className="size-[7px] rounded-full bg-foreground" />
                 {p.unread} new
@@ -356,6 +378,19 @@ const Row = memo(function Row({
           </span>
         )}
       </button>
+      {onRestore && (
+        // A sibling of the row button: a button never holds another one.
+        <Button
+          variant="outline"
+          size="xs"
+          aria-label={`${verb} ${prKey(p)}`}
+          className="absolute right-4 bottom-[calc(var(--row-y)-2px)]"
+          onClick={() => onRestore(p)}
+        >
+          <ArchiveRestore aria-hidden data-icon="inline-start" />
+          {verb}
+        </Button>
+      )}
     </li>
   );
 });

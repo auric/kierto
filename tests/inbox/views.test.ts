@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrRow } from "../../src/shared/dto";
-import { byInbox, VIEWS } from "../../src/shared/views";
+import { archived, byArchive, byInbox, VIEWS } from "../../src/shared/views";
 
 const row = (o: Partial<PrRow>): PrRow => ({
   id: 1,
@@ -21,6 +21,7 @@ const row = (o: Partial<PrRow>): PrRow => ({
   reviewers: [],
   onDashboard: true,
   followed: true,
+  archivedAt: null,
   unread: 0,
   group: "quiet",
   yourTurn: 0,
@@ -75,5 +76,28 @@ describe("view predicates", () => {
       row({ id: 7, lastActivity: 2, group: "review" }),
     ];
     expect(list.sort(byInbox).map((r) => r.id)).toEqual([4, 7, 2, 3, 6, 1, 5]);
+  });
+});
+
+describe("Archive view", () => {
+  test("it holds archived PRs and unfollowed PRs off the dashboard, which no other view shows", () => {
+    const at = 5;
+    expect(archived(row({ archivedAt: at }))).toBe(true);
+    expect(archived(row({ archivedAt: at, followed: false }))).toBe(true);
+    expect(archived(row({ followed: false, onDashboard: false }))).toBe(true);
+    expect(views(row({ followed: false, onDashboard: false }))).toEqual([]);
+    // Plan m1: an unfollowed dashboard PR stays in its role view, and a followed PR off the dashboard stays in Following.
+    expect(archived(row({ followed: false }))).toBe(false);
+    expect(archived(row({ onDashboard: false }))).toBe(false);
+  });
+
+  test("the newest archive time comes first; an unfollowed PR sorts by its last activity", () => {
+    const list = [
+      row({ id: 1, archivedAt: 100, lastActivity: 900 }),
+      row({ id: 2, followed: false, onDashboard: false, lastActivity: 150 }),
+      row({ id: 3, archivedAt: 300, lastActivity: 1 }),
+      row({ id: 4, archivedAt: 100, lastActivity: 2 }),
+    ];
+    expect(list.sort(byArchive).map((r) => r.id)).toEqual([3, 2, 4, 1]);
   });
 });

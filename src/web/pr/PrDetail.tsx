@@ -5,6 +5,7 @@ import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect,
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommentDto, PrRow } from "../../shared/dto";
+import { archived } from "../../shared/views";
 import { AskPanel } from "../ask/AskPanel";
 import { fileCount, useDiffIndex } from "../diff/data";
 import { type DiffCtx, DiffSection, useDiffView } from "../diff/FileDiff";
@@ -17,7 +18,7 @@ import { type Focus, useReview } from "../review/useReview";
 import { ApiError, sendSeen, usePr } from "../shell/data";
 import { createHints, SharedHint } from "../shell/Hint";
 import { useMinute } from "../shell/ListPane";
-import { Calm } from "../states";
+import { ArchiveNotice, Calm } from "../states";
 import { Header, webLink } from "./Header";
 import type { ReplyTarget } from "./ReplyComposer";
 import { CommitsFold, Overview } from "./Sections";
@@ -74,17 +75,20 @@ function flash(el: HTMLElement) {
 }
 
 // onLeave: the shell moves the selection away before the PR leaves the list. onSettings: the brief links to the task ID rules.
+// onRestore: the Archive view brings the PR back.
 export function PrDetail({
   pr: row,
   me,
   onLeave,
   onSettings,
+  onRestore,
   ref,
 }: {
   pr: PrRow;
   me: string | null;
   onLeave: () => void;
   onSettings: () => void;
+  onRestore: (pr: PrRow) => void;
   ref: Ref<DetailApi | null>;
 }) {
   const q = usePr(row.id);
@@ -383,6 +387,7 @@ export function PrDetail({
         run={review.run}
       />
       <div data-mounting={!steady || undefined} className="px-6 pb-16 max-[759px]:px-4">
+        {archived(pr) && <ArchiveNotice pr={pr} now={now} onRestore={() => onRestore(pr)} />}
         {data ? (
           <>
             <Overview detail={data} me={me} summary={review.summary} />
@@ -442,8 +447,8 @@ export function PrDetail({
             )}
           </>
         ) : q.error ? (
-          <Calm title={notFound ? "This pull request left the inbox" : "Cannot load this pull request"}>
-            <p className="m-0">{notFound ? "It was archived or is no longer on your dashboard." : q.error.message}</p>
+          <Calm title={notFound ? "Cannot find this pull request" : "Cannot load this pull request"}>
+            <p className="m-0">{notFound ? "Review Loop has no data for it. Select another pull request." : q.error.message}</p>
           </Calm>
         ) : (
           <div role="status" aria-busy="true" aria-label="Loading the pull request" className="grid max-w-[86ch] gap-3 pt-6">

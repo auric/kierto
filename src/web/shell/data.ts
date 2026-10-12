@@ -1,9 +1,11 @@
-// Server state through TanStack Query. Keys: ['prs'], ['pr', id], ['status'], ['settings'], ['meta'], ['task-preview', ...].
+// Server state through TanStack Query. Keys: ['prs'], ['prs', 'archive'], ['pr', id], ['status'], ['settings'], ['meta'], ['task-preview', ...].
+// An invalidation of ['prs'] also refreshes ['prs', 'archive'].
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/components/ui/toast";
 import type { CheckpointDto, ClaimedEvent, FollowState, PrDetail, PrRow, SettingsDto, SettingsInput, SyncStatus } from "../../shared/dto";
 import { api } from "../api";
 import type { AckItem } from "../pr/ack";
+import { ARCHIVED_TEXT, prKey, restoreWords, unfollowText } from "./model";
 
 export class ApiError extends Error {
   constructor(
@@ -40,6 +42,8 @@ export async function read<T>(res: Res): Promise<T> {
 export type Status = { sync: SyncStatus; dashboard: CheckpointDto | null };
 
 export const usePrs = () => useQuery({ queryKey: ["prs"], queryFn: async () => read<PrRow[]>(await api.api.prs.$get()) });
+export const useArchived = (enabled: boolean) =>
+  useQuery({ queryKey: ["prs", "archive"], enabled, queryFn: async () => read<PrRow[]>(await api.api.archive.$get()) });
 export const useStatus = () => useQuery({ queryKey: ["status"], queryFn: async () => read<Status>(await api.api.status.$get()) });
 export const useSettings = () =>
   useQuery({ queryKey: ["settings"], queryFn: async () => read<SettingsDto>(await api.api.settings.$get()) });
@@ -61,20 +65,54 @@ export const claimEvents = async () => read<ClaimedEvent[]>(await api.api.notifi
 export const sendRead = async (pr: number, items: AckItem[]) =>
   read<{ updated: number }>(await api.api.read.$post({ json: { pr, items } }, { init: { keepalive: true } }));
 
-export function useFollow() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, followed }: { id: number; followed: boolean }) =>
-      read<FollowState>(await api.api.prs[":id"].follow.$post({ param: { id: String(id) }, json: { followed } })),
-    onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["prs"] });
-      qc.invalidateQueries({ queryKey: ["pr", id] });
-    },
-  });
-}
+// Follow also clears archived_at and starts a check.
+const postFollow = async (id: number, followed: boolean) =>
+  read<FollowState>(await api.api.prs[":id"].follow.$post({ param: { id: String(id) }, json: { followed } }));
 
 const postArchive = async (id: number, archived: boolean) =>
   read<FollowState>(await api.api.prs[":id"].archive.$post({ param: { id: String(id) }, json: { archived } }));
+
+const undoFailed = (e: Error) => toast.add({ title: "Undo failed", description: e.message });
+
+// An unfollow can take the PR out of every view but Archive, so its toast offers Undo.
+export function useFollow() {
+  const qc = useQueryClient();
+  const refresh = (id: number) => {
+    qc.invalidateQueries({ queryKey: ["prs"] });
+    qc.invalidateQueries({ queryKey: ["pr", id] });
+  };
+  return useMutation({
+    mutationFn: ({ pr, followed }: { pr: PrRow; followed: boolean }) => postFollow(pr.id, followed),
+    onSuccess: (_, { pr, followed }) => {
+      if (followed) return;
+      toast.add({
+        title: `Stopped following ${prKey(pr)}`,
+        description: unfollowText(pr),
+        actionProps: { children: "Undo", onClick: () => postFollow(pr.id, true).then(() => refresh(pr.id), undoFailed) },
+      });
+    },
+    onError: (e, { followed }) => toast.add({ title: followed ? "Follow failed" : "Unfollow failed", description: e.message }),
+    onSettled: (_, __, { pr }) => refresh(pr.id),
+  });
+}
+
+// The Archive view. The row leaves the view before the request.
+export function useRestore() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pr: PrRow) => postFollow(pr.id, true),
+    onMutate: async (pr) => {
+      await qc.cancelQueries({ queryKey: ["prs", "archive"] });
+      qc.setQueryData<PrRow[]>(["prs", "archive"], (old) => old?.filter((p) => p.id !== pr.id));
+    },
+    onSuccess: (_, pr) => toast.add({ title: `${restoreWords(pr).done} ${prKey(pr)}`, description: "It is back in Following." }),
+    onError: (e, pr) => toast.add({ title: `${restoreWords(pr).verb} failed`, description: e.message }),
+    onSettled: (_, __, pr) => {
+      qc.invalidateQueries({ queryKey: ["prs"] });
+      qc.invalidateQueries({ queryKey: ["pr", pr.id] });
+    },
+  });
+}
 
 // The PR leaves the list before the request, so its detail unmounts and never refetches into a 404.
 // Hook-level callbacks run also after the detail unmounts. Per-call callbacks would not.
@@ -90,11 +128,8 @@ export function useArchive() {
     onSuccess: (_, { id, label }) =>
       toast.add({
         title: `Archived ${label}`,
-        description: "It no longer shows in any view.",
-        actionProps: {
-          children: "Undo",
-          onClick: () => postArchive(id, false).then(refresh, (e: Error) => toast.add({ title: "Undo failed", description: e.message })),
-        },
+        description: ARCHIVED_TEXT,
+        actionProps: { children: "Undo", onClick: () => postArchive(id, false).then(refresh, undoFailed) },
       }),
     onError: (e) => toast.add({ title: "Archive failed", description: e.message }),
     onSettled: refresh,

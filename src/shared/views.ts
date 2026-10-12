@@ -28,3 +28,11 @@ const ORDER: readonly Group[] = GROUPS.flatMap((g) => g[2]);
 // prototype/v3 byReason: reason order, then unread first, then the newest activity.
 export const byInbox = (a: PrRow, b: PrRow) =>
   ORDER.indexOf(a.group) - ORDER.indexOf(b.group) || Number(b.unread > 0) - Number(a.unread > 0) || b.lastActivity - a.lastActivity;
+
+// The Archive view: the PRs that no other view shows (plan m1: archived, or unfollowed and off the dashboard).
+// GET /api/archive gives these rows, GET /api/prs gives the others. Sync does not check their comments.
+export const archived = (p: Pick<PrRow, "archivedAt" | "followed" | "onDashboard">) =>
+  p.archivedAt !== null || (!p.followed && !p.onDashboard);
+
+// Newest first. An unfollowed PR has no unfollow time, so its last activity stands in.
+export const byArchive = (a: PrRow, b: PrRow) => (b.archivedAt ?? b.lastActivity) - (a.archivedAt ?? a.lastActivity) || b.id - a.id;

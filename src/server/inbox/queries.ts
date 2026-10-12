@@ -17,28 +17,41 @@ import type {
 } from "../../shared/dto";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
 import type { Reviewer, Role } from "../../shared/types";
-import { byInbox } from "../../shared/views";
+import { byArchive, byInbox } from "../../shared/views";
 
 const CLAIMED_TTL_MS = 30 * 86_400_000;
 const UNREAD = "c.pr = p.id AND p.followed = 1 AND c.tombstoned_at IS NULL AND (c.ack_version IS NULL OR c.ack_version < c.version)";
-const LISTED = "p.archived_at IS NULL AND (p.followed = 1 OR p.on_dashboard = 1) AND ($id IS NULL OR p.id = $id)";
+const LISTED = "p.archived_at IS NULL AND (p.followed = 1 OR p.on_dashboard = 1)";
+// The complement of LISTED, so each PR shows in one list (views.ts archived).
+const ARCHIVED = "p.archived_at IS NOT NULL OR (p.followed = 0 AND p.on_dashboard = 0)";
 // prototype/v3 snippet(): the default length.
 const SNIPPET = 110;
 
-const SQL = {
-  rows: `SELECT p.id, p.project, p.repo, p.pr_id, p.title, p.author_slug, p.author_name, p.my_role, p.state, p.my_status, p.last_reviewed_commit,
+// The rows, their comments, and their tasks in one scope. $id limits each query to one PR.
+function scoped(scope: string) {
+  const where = `(${scope}) AND ($id IS NULL OR p.id = $id)`;
+  return {
+    rows: `SELECT p.id, p.project, p.repo, p.pr_id, p.title, p.author_slug, p.author_name, p.my_role, p.state, p.my_status, p.last_reviewed_commit,
       p.source_head, p.source_branch, p.target_branch, p.web_url, b.source_url AS source_branch_url, b.target_url AS target_branch_url,
-      p.on_dashboard, p.followed, p.reviewers_json, p.seen_at,
+      p.on_dashboard, p.followed, p.archived_at, p.reviewers_json, p.seen_at,
       (SELECT COUNT(*) FROM comment c WHERE ${UNREAD}) AS unread,
       MAX(COALESCE(p.updated_date, 0), COALESCE((SELECT MAX(c.updated_at) FROM comment c WHERE c.pr = p.id), 0)) AS last_activity,
       k.scope IS NOT NULL AS has_checkpoint, k.last_complete_at, k.incomplete_reason, k.last_error
     FROM pull_request p LEFT JOIN sync_checkpoint k ON k.scope = 'pr:' || p.id LEFT JOIN pr_branch_link b ON b.pr = p.id
-    WHERE ${LISTED}`,
-  // One query for the comments of all listed PRs.
-  turns: `SELECT c.pr, c.comment_id, c.root_id, c.author_slug, c.author_name, c.author_login, c.text, c.thread_resolved, c.created_at,
+    WHERE ${where}`,
+    // One query for the comments of all PRs in the scope.
+    turns: `SELECT c.pr, c.comment_id, c.root_id, c.author_slug, c.author_name, c.author_login, c.text, c.thread_resolved, c.created_at,
       c.tombstoned_at IS NOT NULL AS deleted, p.followed = 1 AND c.tombstoned_at IS NULL AND (c.ack_version IS NULL OR c.ack_version < c.version) AS unread
-    FROM comment c JOIN pull_request p ON p.id = c.pr WHERE ${LISTED}`,
-  tasks: `SELECT t.pr, t.key, t.source, t.url FROM pr_task t JOIN pull_request p ON p.id = t.pr WHERE ${LISTED} ORDER BY t.pr, t.ord`,
+    FROM comment c JOIN pull_request p ON p.id = c.pr WHERE ${where}`,
+    tasks: `SELECT t.pr, t.key, t.source, t.url FROM pr_task t JOIN pull_request p ON p.id = t.pr WHERE ${where} ORDER BY t.pr, t.ord`,
+  };
+}
+
+type Scope = ReturnType<typeof scoped>;
+// "any": the detail opens a PR of either list.
+const SCOPE = { listed: scoped(LISTED), archived: scoped(ARCHIVED), any: scoped("1") };
+
+const SQL = {
   comments: `SELECT comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json, thread_resolved, created_at, updated_at,
       ack_version, tombstoned_at, severity, task_state, excerpt_json FROM comment WHERE pr = $pr ORDER BY created_at, comment_id`,
   commits: "SELECT hash, message, author_name AS author, ts AS at FROM pr_commit WHERE pr = $pr ORDER BY ord",
@@ -87,6 +100,7 @@ type RawRow = {
   seen_at: number | null;
   on_dashboard: number;
   followed: number;
+  archived_at: number | null;
   unread: number;
   last_activity: number;
   has_checkpoint: number;
@@ -185,6 +199,7 @@ const toRow = (r: RawRow, t: Turns, tasks: PrTask[]): PrRow => ({
       : (JSON.parse(r.reviewers_json) as (Omit<Reviewer, "login"> & { login?: string })[]).map((x) => ({ ...x, login: x.login ?? null })),
   onDashboard: r.on_dashboard === 1,
   followed: r.followed === 1,
+  archivedAt: r.archived_at,
   unread: r.unread,
   group: groupOf(r, t),
   yourTurn: t.yourTurn,
@@ -196,9 +211,9 @@ const toRow = (r: RawRow, t: Turns, tasks: PrTask[]): PrRow => ({
   checkpoint: r.has_checkpoint ? toCheckpoint(r) : null,
 });
 
-function selectRows(db: Database, me: string, id: number | null): PrRow[] {
+function selectRows(db: Database, me: string, sql: Scope, id: number | null): PrRow[] {
   const msgs = new Map<number, Msg[]>();
-  for (const c of db.query(SQL.turns).all({ id }) as TurnRow[]) {
+  for (const c of db.query(sql.turns).all({ id }) as TurnRow[]) {
     const m: Msg = {
       id: c.comment_id,
       rootId: c.root_id,
@@ -215,8 +230,8 @@ function selectRows(db: Database, me: string, id: number | null): PrRow[] {
     if (list) list.push(m);
     else msgs.set(c.pr, [m]);
   }
-  const tasks = Map.groupBy(db.query(SQL.tasks).all({ id }) as (PrTask & { pr: number })[], (t) => t.pr);
-  return (db.query(SQL.rows).all({ id }) as RawRow[]).map((r) =>
+  const tasks = Map.groupBy(db.query(sql.tasks).all({ id }) as (PrTask & { pr: number })[], (t) => t.pr);
+  return (db.query(sql.rows).all({ id }) as RawRow[]).map((r) =>
     toRow(
       r,
       turnsOf(msgs.get(r.id) ?? [], me, r.my_role === "AUTHOR"),
@@ -226,12 +241,16 @@ function selectRows(db: Database, me: string, id: number | null): PrRow[] {
 }
 
 export function listPrs(db: Database, me: string): PrRow[] {
-  return selectRows(db, me, null).sort(byInbox);
+  return selectRows(db, me, SCOPE.listed, null).sort(byInbox);
 }
 
-// null for an unknown, archived, or unlisted PR.
+export function listArchived(db: Database, me: string): PrRow[] {
+  return selectRows(db, me, SCOPE.archived, null).sort(byArchive);
+}
+
+// null for an unknown PR. An archived PR opens from the Archive view.
 export function prDetail(db: Database, me: string, id: number): PrDetail | null {
-  const pr = selectRows(db, me, id)[0];
+  const pr = selectRows(db, me, SCOPE.any, id)[0];
   if (!pr) return null;
   type Raw = {
     comment_id: number;

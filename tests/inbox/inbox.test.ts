@@ -12,7 +12,7 @@ import { createSettings } from "../../src/server/settings";
 import { openDb } from "../../src/server/storage/db";
 import type { SyncEngine } from "../../src/server/sync/engine";
 import type { ClaimedEvent, FollowState, PrDetail, PrRow } from "../../src/shared/dto";
-import { VIEWS } from "../../src/shared/views";
+import { archived, VIEWS } from "../../src/shared/views";
 import { FAKE_TOKEN, FAKE_USER, type FakeBitbucket, fixture, key, startFakeBitbucket } from "../support/fake-bitbucket";
 import { DASHBOARD_PATH, PR_PATH } from "../support/scenarios";
 
@@ -562,6 +562,58 @@ describe("GET /api/prs and /api/prs/:id", () => {
     const body = await detail.json();
     const flag: boolean | undefined = body.comments[0]?.unread;
     expect(flag).toBe(false);
+    const archive = await (await client.api.archive.$get()).json();
+    const at: number | null | undefined = archive[0]?.archivedAt;
+    expect(at).toBeUndefined();
+  });
+});
+
+describe("GET /api/archive", () => {
+  test("it lists every PR that GET /api/prs leaves out, newest archive first", async () => {
+    const h = await setup();
+    const listed = h.pr();
+    const unfollowed = h.pr({ followed: 0 });
+    const followedAway = h.pr({ on_dashboard: 0 });
+    const old = h.pr({ archived_at: 10 });
+    const recent = h.pr({ archived_at: 50, followed: 0 });
+    const away = h.pr({ followed: 0, on_dashboard: 0, updated_date: 30 });
+    h.comment(old, 1);
+    const { status, body } = await h.json<PrRow[]>("/api/archive");
+    expect(status).toBe(200);
+    // old has newer activity (2000), but its archive time sorts it.
+    expect(body.map((r) => [r.id, r.archivedAt, r.followed])).toEqual([
+      [recent, 50, false],
+      [away, null, false],
+      [old, 10, true],
+    ]);
+    expect(body.every((r) => archived(r))).toBe(true);
+    const rows = await h.rows();
+    expect(rows.map((r) => r.id).sort()).toEqual([listed, unfollowed, followedAway].sort());
+    expect(rows.every((r) => r.archivedAt === null && !archived(r))).toBe(true);
+  });
+
+  test("the detail opens an archived PR and an unfollowed PR off the dashboard", async () => {
+    const h = await setup();
+    const p = h.pr({ archived_at: 5 });
+    h.comment(p, 1);
+    const { status, body } = await h.json<PrDetail>(`/api/prs/${p}`);
+    expect(status).toBe(200);
+    expect(body.pr).toMatchObject({ id: p, archivedAt: 5, followed: true });
+    expect(body.comments.map((c) => c.id)).toEqual([1]);
+    const away = h.pr({ followed: 0, on_dashboard: 0 });
+    expect((await h.json<PrDetail>(`/api/prs/${away}`)).body.pr).toMatchObject({ followed: false, onDashboard: false, archivedAt: null });
+  });
+
+  test("restore through follow moves the PR back to GET /api/prs, keeps its comments, and starts a sync", async () => {
+    const h = await setup();
+    const p = h.pr({ archived_at: 5, followed: 0 });
+    h.comment(p, 1, { ack_version: 0 });
+    expect((await h.json<PrRow[]>("/api/archive")).body.map((r) => r.id)).toEqual([p]);
+    expect((await h.json<FollowState>(`/api/prs/${p}/follow`, { body: { followed: true } })).status).toBe(200);
+    expect((await h.json<PrRow[]>("/api/archive")).body).toEqual([]);
+    expect(await h.row(p)).toMatchObject({ followed: true, archivedAt: null });
+    expect((await h.json<PrDetail>(`/api/prs/${p}`)).body.comments.map((c) => c.id)).toEqual([1]);
+    expect(h.syncs.count).toBe(1);
   });
 });
 

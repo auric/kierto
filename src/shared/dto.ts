@@ -160,6 +160,8 @@ export type PrRow = {
   reviewers: (Omit<Reviewer, "login"> & { login: string | null })[];
   onDashboard: boolean;
   followed: boolean;
+  // Local clock in ms. null for every row of GET /api/prs.
+  archivedAt: number | null;
   // 0 for an unfollowed PR.
   unread: number;
   group: Group;

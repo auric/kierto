@@ -1,9 +1,34 @@
-// Detail states from plan section 6: no access, incomplete sync, gone.
+// Detail states from plan section 6: no access, incomplete sync, gone. The archive notice.
+import { Archive, ArchiveRestore, BellOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import type { CheckpointDto } from "../shared/dto";
+import { Button } from "@/components/ui/button";
+import type { CheckpointDto, PrRow } from "../shared/dto";
 import { useForge } from "./meta";
-import { clock, reasonLabel } from "./shell/model";
+import { ago, clock, reasonLabel, restoreWords } from "./shell/model";
+
+// An archived PR, or an unfollowed PR off the dashboard. Sync does not check its comments, so the page can be out of date.
+export function ArchiveNotice({ pr, now, onRestore }: { pr: PrRow; now: number; onRestore: () => void }) {
+  const { verb } = restoreWords(pr);
+  const when = pr.archivedAt === null ? null : ago(pr.archivedAt, now);
+  const Icon = pr.archivedAt === null ? BellOff : Archive;
+  return (
+    <Alert role="status" data-archive-notice className="mt-4 max-w-[760px]">
+      <Icon aria-hidden />
+      <AlertTitle>{when === null ? "Not followed" : when === "now" ? "Archived just now" : `Archived ${when} ago`}</AlertTitle>
+      <AlertDescription>
+        {when === null
+          ? "It is not on your dashboard, so Review Loop does not check it. This page can be out of date."
+          : "Review Loop does not check it while it is archived. This page can be out of date."}{" "}
+        {pr.followed ? `${verb} it to check it again.` : `${verb} it to follow it and check it again.`}
+      </AlertDescription>
+      <Button size="sm" className="col-start-2 mt-2 w-fit" onClick={onRestore}>
+        <ArchiveRestore aria-hidden data-icon="inline-start" />
+        {verb}
+      </Button>
+    </Alert>
+  );
+}
 
 const NO_ACCESS = new Set(["forbidden", "not_found"]);
 

@@ -3,7 +3,9 @@ import type { PrRow, SyncStatus } from "../../src/shared/dto";
 import { byInbox } from "../../src/shared/views";
 import { reduceKey } from "../../src/web/keys";
 import {
+  ARCHIVED_TEXT,
   ago,
+  archiveWhy,
   filterRows,
   followCandidate,
   freezeOrder,
@@ -13,8 +15,10 @@ import {
   movedCount,
   navIds,
   repoTree,
+  restoreWords,
   statusInfo,
   taskHint,
+  unfollowText,
   unreadTotal,
   viewCounts,
   why,
@@ -39,6 +43,7 @@ const row = (o: Partial<PrRow>): PrRow => ({
   reviewers: [],
   onDashboard: true,
   followed: true,
+  archivedAt: null,
   unread: 0,
   group: "quiet",
   yourTurn: 0,
@@ -131,6 +136,39 @@ describe("why-lines", () => {
     expect(merged).toMatchObject({ closed: "Merged.", turn: { kind: "your", text: "Your turn" } });
     expect(why(row({ group: "comments", state: "DECLINED", cause }), NOW).closed).toBe("Declined.");
     expect(why(row({ group: "your", yourTurn: 1, cause }), NOW).closed).toBeNull();
+  });
+});
+
+describe("Archive rows and texts", () => {
+  test("a row names the archive time or the missing follow, and says that sync does not check it", () => {
+    expect(archiveWhy(row({ archivedAt: NOW - 2 * 86_400_000, state: "MERGED", group: "your", yourTurn: 1, cause }), NOW)).toEqual({
+      closed: "Merged.",
+      turn: null,
+      lead: "Archived 2d ago.",
+      text: "Not checked while archived.",
+    });
+    expect(archiveWhy(row({ archivedAt: NOW }), NOW).lead).toBe("Archived just now.");
+    expect(archiveWhy(row({ followed: false, onDashboard: false }), NOW)).toMatchObject({
+      lead: "Not followed.",
+      text: "Not on your dashboard, so not checked.",
+    });
+  });
+
+  test("an archived PR that I follow is unarchived; any other row is restored", () => {
+    expect(restoreWords({ archivedAt: 5, followed: true })).toEqual({ verb: "Unarchive", done: "Unarchived" });
+    expect(restoreWords({ archivedAt: 5, followed: false })).toEqual({ verb: "Restore", done: "Restored" });
+    expect(restoreWords({ archivedAt: null, followed: false })).toEqual({ verb: "Restore", done: "Restored" });
+  });
+
+  test("the unfollow toast names the role view on the dashboard, else Archive", () => {
+    expect(unfollowText({ onDashboard: true, role: "REVIEWER" })).toBe(
+      "It stays in Reviewing while it is on your dashboard. Then it moves to Archive.",
+    );
+    expect(unfollowText({ onDashboard: true, role: "AUTHOR" })).toBe(
+      "It stays in My PRs while it is on your dashboard. Then it moves to Archive.",
+    );
+    expect(unfollowText({ onDashboard: false, role: "REVIEWER" })).toBe(ARCHIVED_TEXT);
+    expect(ARCHIVED_TEXT).toContain("Archive");
   });
 });
 

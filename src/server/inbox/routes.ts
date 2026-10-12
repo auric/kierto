@@ -14,6 +14,7 @@ import {
   cleanupEvents,
   dashboardCheckpoint,
   followKey,
+  listArchived,
   listPrs,
   markRead,
   markSeen,
@@ -60,6 +61,10 @@ export function createInboxRoutes(opts: { settings: Settings; sync: SyncEngine; 
     .get("/prs", (c) => {
       const s = open();
       return c.json(s ? listPrs(s.db, s.me) : []);
+    })
+    .get("/archive", (c) => {
+      const s = open();
+      return c.json(s ? listArchived(s.db, s.me) : []);
     })
     .get("/prs/:id", idParam, (c) => {
       const s = open();

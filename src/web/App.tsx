@@ -1,5 +1,5 @@
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ArrowLeft, Send, Terminal } from "lucide-react";
+import { Archive, ArrowLeft, Send, Terminal } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -26,9 +26,11 @@ import {
   isStopped,
   retry,
   type Status,
+  useArchived,
   useCheckNow,
   useFollowUrl,
   usePrs,
+  useRestore,
   useSettings,
   useStatus,
 } from "./shell/data";
@@ -79,7 +81,8 @@ export function App() {
 const INITIAL: KeyState = { focus: "list", mobile: "list", selected: null, help: false, settings: false, chord: null };
 
 // "runs" and "post": the Review runs and Ready to post views of the AI review group (prototype/v3 AIVIEWS).
-type ListView = View | "runs" | "post";
+// "archive": the PRs that no other view shows (views.ts archived).
+type ListView = View | "runs" | "post" | "archive";
 
 const EMPTY: Record<Exclude<ListView, "post">, string> = {
   needs: "Nothing needs you. New replies and review requests show here.",
@@ -87,6 +90,7 @@ const EMPTY: Record<Exclude<ListView, "post">, string> = {
   mine: "You have no open pull requests.",
   following: "You follow no pull requests. Paste a pull request URL into the filter to follow it.",
   runs: "No review has run yet. Open a pull request and press r to start one.",
+  archive: "Nothing is archived.",
 };
 
 function Shell({ stale }: { stale: boolean }) {
@@ -96,6 +100,7 @@ function Shell({ stale }: { stale: boolean }) {
   const settings = useSettings();
   const checkNow = useCheckNow();
   const follow = useFollowUrl();
+  const restore = useRestore();
   const [view, setView] = useState<ListView>("needs");
   const [repo, setRepo] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -120,20 +125,26 @@ function Shell({ stale }: { stale: boolean }) {
   const readyWhy = useMemo(() => new Map([...ready].map(([id, posts]) => [id, destText(posts)])), [ready]);
   // A repository replaces the view (prototype/v3 aiMode), so filterRows then ignores the view argument.
   const aiView = (view === "runs" || view === "post") && !repo;
-  const live = !aiView
-    ? filterRows(all, view === "runs" || view === "post" ? "following" : view, repo, query)
-    : view === "runs"
-      ? runRows(all, latest, query)
-      : all.filter((p) => ready.has(p.id) && matches(p, query));
+  const archiveView = view === "archive" && !repo;
+  const archive = useArchived(archiveView);
+  // The Archive rows are not in all. The kept row comes from the list on screen.
+  const pool = archiveView ? (archive.data ?? []) : all;
+  const live = archiveView
+    ? pool.filter((p) => matches(p, query))
+    : !aiView
+      ? filterRows(all, view === "runs" || view === "post" || view === "archive" ? "following" : view, repo, query)
+      : view === "runs"
+        ? runRows(all, latest, query)
+        : all.filter((p) => ready.has(p.id) && matches(p, query));
   const layout = (list: PrRow[], groupOf?: (p: PrRow) => Group): ListGroup[] =>
-    aiView ? (list.length ? [{ id: "runs", label: "", rows: list }] : []) : groupRows(list, groupOf);
+    aiView || archiveView ? (list.length ? [{ id: "flat", label: "", rows: list }] : []) : groupRows(list, groupOf);
   // A view, repository, or filter change, or the re-sort chip, gives the server order again.
   const scope = JSON.stringify([view, repo, query]);
   const prev = frozen.scope === scope ? frozen.slots : [];
   // The selected PR stays in the list after it stops matching, for example after its read. Else the next row is shown and read.
   const kept =
     ks.selected !== null && prev.some((s) => s.id === ks.selected) && !live.some((p) => p.id === ks.selected)
-      ? all.find((p) => p.id === ks.selected)
+      ? pool.find((p) => p.id === ks.selected)
       : undefined;
   const slots = freezeOrder(prev, kept ? [...live, kept] : live);
   const byId = new Map([...live, ...(kept ? [kept] : [])].map((p) => [p.id, p]));
@@ -260,6 +271,17 @@ function Shell({ stale }: { stale: boolean }) {
     [locked],
   );
 
+  // The selection leaves a restored row, as it leaves an archived one. Focus stays in the list without a scroll.
+  const restoreRef = useRef((_: PrRow) => {});
+  restoreRef.current = (p) => {
+    if (p.id === selected) {
+      const i = ids.indexOf(p.id);
+      go({ selected: ids[i + 1] ?? ids[i - 1] ?? null, focus: "list" }, "focus-list");
+    } else document.getElementById("rows")?.focus({ preventScroll: true });
+    restore.mutate(p);
+  };
+  const onRestore = useCallback((p: PrRow) => restoreRef.current(p), []);
+
   if (isStopped(prs.error) || isStopped(status.error) || isStopped(settings.error) || isStopped(meta.error)) return <Stopped />;
   // Every product name comes from meta. It is one local request, sent together with the others.
   if (!meta.data) return null;
@@ -296,7 +318,10 @@ function Shell({ stale }: { stale: boolean }) {
       />
       <main className="contents">
         <ListPane
-          title={repo ?? (view === "runs" ? "Review runs" : view === "post" ? "Ready to post" : VIEW_LABEL[view])}
+          title={
+            repo ??
+            (view === "runs" ? "Review runs" : view === "post" ? "Ready to post" : view === "archive" ? "Archive" : VIEW_LABEL[view])
+          }
           count={rows.length}
           groups={groups}
           updated={updated}
@@ -304,7 +329,7 @@ function Shell({ stale }: { stale: boolean }) {
             setFrozen({ scope, slots: [] });
             go({ focus: "list" }, "focus-list");
           }}
-          loading={prs.isPending}
+          loading={archiveView ? archive.isPending : prs.isPending}
           repo={repo}
           query={query}
           empty={
@@ -318,6 +343,7 @@ function Shell({ stale }: { stale: boolean }) {
           forge={forge}
           runs={aiView && view === "runs" ? latest : null}
           ready={aiView && view === "post" ? readyWhy : null}
+          onRestore={archiveView ? onRestore : null}
           candidate={candidate}
           following={follow.isPending}
           followError={follow.error && !isStale(follow.error) ? follow.error.message : null}
@@ -367,7 +393,7 @@ function Shell({ stale }: { stale: boolean }) {
               onBack={() => go({ settings: false, mobile: "list", focus: "list" }, "focus-list")}
               onSaved={() => go({ settings: false, mobile: "list" })}
             />
-          ) : prs.isPending || settings.isPending ? (
+          ) : prs.isPending || settings.isPending || (archiveView && archive.isPending) ? (
             <DetailSkeleton />
           ) : current ? (
             <>
@@ -384,6 +410,7 @@ function Shell({ stale }: { stale: boolean }) {
                     const i = ids.indexOf(current.id);
                     setKs((k) => ({ ...k, selected: ids[i + 1] ?? ids[i - 1] ?? null }));
                   }}
+                  onRestore={onRestore}
                 />
               </div>
             </>
@@ -415,6 +442,19 @@ function Shell({ stale }: { stale: boolean }) {
                       Go to Review runs
                     </Button>
                   </EmptyContent>
+                </Empty>
+              ) : archiveView && !rows.length && !query.trim() ? (
+                <Empty className="my-10 flex-none">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <Archive aria-hidden />
+                    </EmptyMedia>
+                    <EmptyTitle>Nothing is archived</EmptyTitle>
+                    <EmptyDescription>
+                      A pull request that you archive shows here. So does one that you stop following after it leaves your dashboard.
+                      Restore it to follow it again.
+                    </EmptyDescription>
+                  </EmptyHeader>
                 </Empty>
               ) : (
                 <div className="mx-auto my-10 grid max-w-[52ch] gap-3 px-6 text-ink-2">

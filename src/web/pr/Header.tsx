@@ -7,6 +7,7 @@ import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { PrRow } from "../../shared/dto";
+import { archived } from "../../shared/views";
 import { useMeta } from "../meta";
 import { useArchive, useFollow } from "../shell/data";
 import { Hint } from "../shell/Hint";
@@ -162,6 +163,8 @@ export function Header(props: {
     archive.mutate({ id: pr.id, label: key });
   };
   const following = pr.followed ? "Following. Select to stop." : "Follow";
+  // The archive notice of the detail holds the one action for an archived PR.
+  const listed = !archived(pr);
   const pad = "px-6 max-[759px]:px-4";
   return (
     <>
@@ -219,31 +222,39 @@ export function Header(props: {
                 </a>
               </Hint>
             )}
-            <Hint label={following}>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className={iconBtn}
-                aria-label="Follow"
-                aria-pressed={pr.followed}
-                disabled={follow.isPending}
-                onClick={() => follow.mutate({ id: pr.id, followed: !pr.followed })}
-              >
-                <Star aria-hidden className={cn(pr.followed && "fill-current")} />
-              </Button>
-            </Hint>
-            <Hint label="Archive">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className={iconBtn}
-                aria-label="Archive"
-                disabled={archive.isPending}
-                onClick={onArchive}
-              >
-                <Archive aria-hidden />
-              </Button>
-            </Hint>
+            {listed && (
+              <>
+                <Hint label={following}>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className={iconBtn}
+                    aria-label="Follow"
+                    aria-pressed={pr.followed}
+                    disabled={follow.isPending}
+                    onClick={() => {
+                      // Off the dashboard, an unfollowed PR leaves every list but Archive.
+                      if (pr.followed && !pr.onDashboard) props.onLeave();
+                      follow.mutate({ pr, followed: !pr.followed });
+                    }}
+                  >
+                    <Star aria-hidden className={cn(pr.followed && "fill-current")} />
+                  </Button>
+                </Hint>
+                <Hint label="Archive">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className={iconBtn}
+                    aria-label="Archive"
+                    disabled={archive.isPending}
+                    onClick={onArchive}
+                  >
+                    <Archive aria-hidden />
+                  </Button>
+                </Hint>
+              </>
+            )}
           </span>
         </div>
         <h1 className="m-0 min-w-0 text-(length:--fs-title) leading-tight font-bold tracking-[-0.015em] text-balance [overflow-wrap:anywhere]">

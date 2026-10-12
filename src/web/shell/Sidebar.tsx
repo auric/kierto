@@ -1,5 +1,6 @@
-// Sidebar (prototype/v3 renderSide): inbox views, the AI review view, repositories, check status, theme, density, and settings.
+// Sidebar (prototype/v3 renderSide): inbox views, Archive, the AI review view, repositories, check status, theme, density, and settings.
 import {
+  Archive,
   Bell,
   Circle,
   CircleAlert,
@@ -62,7 +63,7 @@ const heading = "rl-lbl m-0 px-2 py-1 text-xs font-semibold text-muted-foregroun
 
 export function Sidebar(props: {
   // null: a repository or the settings take the list or the detail. "runs" and "post": the AI review views.
-  view: View | "runs" | "post" | null;
+  view: View | "runs" | "post" | "archive" | null;
   counts: Record<View, number>;
   // The PRs with a review run, and whether a review runs now.
   runs: { count: number; running: boolean };
@@ -72,7 +73,7 @@ export function Sidebar(props: {
   repo: string | null;
   status: StatusInfo | null;
   checking: boolean;
-  onView: (v: View | "runs" | "post") => void;
+  onView: (v: View | "runs" | "post" | "archive") => void;
   onRepo: (r: string | null) => void;
   onCheck: () => void;
   onSettings: () => void;
@@ -124,6 +125,20 @@ export function Sidebar(props: {
               </Hint>
             );
           })}
+          {/* No count: the archive only grows, and nothing in it waits on the user. */}
+          <Hint label="Archive" disabled={!rail} side="right">
+            <button
+              type="button"
+              id="nav-archive"
+              className={cn(navItem, "mt-1", props.view === "archive" && current)}
+              aria-current={props.view === "archive" ? "page" : undefined}
+              aria-label="Archive"
+              onClick={() => props.onView("archive")}
+            >
+              <Archive aria-hidden className="size-[15px] shrink-0" />
+              <span className="rl-lbl truncate">Archive</span>
+            </button>
+          </Hint>
         </div>
         <div className="grid gap-px">
           <h2 className={heading}>AI review</h2>

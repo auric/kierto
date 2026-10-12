@@ -3,7 +3,7 @@
 import type { CheckpointDto, CheckpointReason, Group, PrRow, PrTask, SyncStatus, TaskSource } from "../../shared/dto";
 import { parsePrUrl } from "../../shared/pr-url";
 import type { PrRef } from "../../shared/types";
-import { GROUPS, VIEWS, type View } from "../../shared/views";
+import { GROUPS, VIEW_LABEL, VIEWS, type View } from "../../shared/views";
 
 export const repoOf = (p: Pick<PrRow, "project" | "repo">) => `${p.project}/${p.repo}`;
 export const prKey = (p: Pick<PrRow, "project" | "repo" | "prId">) => `${repoOf(p)} #${p.prId}`;
@@ -71,8 +71,8 @@ export function filterRows(prs: PrRow[], view: View, repo: string | null, q: str
   return prs.filter((p) => (repo ? repoOf(p) === repo : VIEWS[view](p)) && matches(p, q));
 }
 
-// "runs": the flat list of the Review runs view. Its label is empty, so the list shows no group head.
-export type ListGroup = { id: (typeof GROUPS)[number][0] | "runs"; label: string; rows: PrRow[] };
+// "flat": the one list of the Review runs, Ready to post, and Archive views. Its label is empty, so the list shows no group head.
+export type ListGroup = { id: (typeof GROUPS)[number][0] | "flat"; label: string; rows: PrRow[] };
 
 // prototype/v3 grouped(): the three inbox groups, without empty ones. Rows keep the given order.
 // groupOf: the reason that places a row. A frozen list gives the reason at freeze time.
@@ -167,6 +167,26 @@ export function why(p: PrRow, now: number): Why {
       return { ...out, text: "No new messages." };
   }
 }
+
+// The why-line of an Archive row. Sync does not check the comments of these PRs.
+export function archiveWhy(p: PrRow, now: number): Why {
+  const out: Why = { closed: CLOSED[p.state ?? ""] ?? null, turn: null, lead: null, text: null };
+  if (p.archivedAt === null) return { ...out, lead: "Not followed.", text: "Not on your dashboard, so not checked." };
+  const when = ago(p.archivedAt, now);
+  return { ...out, lead: when === "now" ? "Archived just now." : `Archived ${when} ago.`, text: "Not checked while archived." };
+}
+
+// Both actions follow the PR, which also clears archived_at. A followed PR only leaves the archive.
+export const restoreWords = (p: Pick<PrRow, "archivedAt" | "followed">) =>
+  p.archivedAt !== null && p.followed ? { verb: "Unarchive", done: "Unarchived" } : { verb: "Restore", done: "Restored" };
+
+export const ARCHIVED_TEXT = "It moved to Archive. Restore it there at any time.";
+
+// Plan m1: an unfollowed PR stays in its role view while it is on the dashboard (an OPEN review or my own PR).
+export const unfollowText = (p: Pick<PrRow, "onDashboard" | "role">) =>
+  p.onDashboard
+    ? `It stays in ${VIEW_LABEL[p.role === "AUTHOR" ? "mine" : "reviewing"]} while it is on your dashboard. Then it moves to Archive.`
+    : ARCHIVED_TEXT;
 
 const SOURCE_WORD: Record<TaskSource, string> = { branch: "branch", title: "title", description: "description" };
 
