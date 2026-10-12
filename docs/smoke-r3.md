@@ -105,6 +105,21 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 
 1. Run the "Linux binary under WSL" check of docs/smoke-m4.md with the binary of this build. Record the result here.
 
+## Capture U2 and U12 (Gate A)
+
+This part records the range comment (U2) and the orphaned comment after a push (U12) of integration-check.md, Gate v3. The script sends GET requests only. It uses the token from `bun scripts/gate0/set-token.ts`.
+
+1. Step a: in the Bitbucket web UI, open the test pull request diff. Select two or more lines and add one comment on that range.
+2. Run `bun scripts/gate0/capture-a.ts --pr <TEST_PR_URL> --step a`.
+3. Step b: push one commit to the source branch that changes the line of an existing inline comment. Do not delete that comment.
+4. Run `bun scripts/gate0/capture-a.ts --pr <TEST_PR_URL> --step b`. If you did both steps before the first run, use `--step both` once.
+5. Expect `hits=0 structure diffs=0` in the sanitizer line. Raw responses go to `.gate0/a-capture/raw/` (gitignored). Sanitized copies go to `fixtures/bitbucket/real-u2-*.json` and `real-u12-*.json`.
+6. Open each `real-u2-*` and `real-u12-*` file. Search for names, e-mail addresses, the host, project and repository keys, file paths, code, and comment text. If you find one, delete the file and report the field name only. Do not commit it.
+7. Send back the full console output of each run. It holds key names, enum values, line numbers, flags, and counts only.
+8. Delete your range comment by hand. Revert the step b commit if the test branch needs it.
+
+`bun scripts/gate0/capture-a.ts --dry-run` runs the sanitizer and the summary on existing fixtures. It sends no request.
+
 ## H. Record
 
 - The build commit from the startup line.

@@ -44,6 +44,10 @@ The v3 probe (`bitbucket-probe.ts --v3`) writes these files. `sanitize-fixtures.
 | `activities-rescoped-orphaned-range.json` | v3-p2-activities-p0 | Written. No push and no range comment occurred. The file holds no RESCOPED activity, no orphaned anchor, and no range comment. |
 | `pull-request-commits-after-push.json` | v3-p2-commits-p0 | Written. No push occurred. The file shows the same single commit. |
 
+## Gate A capture fixtures (U2, U12)
+
+`scripts/gate0/capture-a.ts` writes `real-u2-*.json` (after manual step a) and `real-u12-*.json` (after manual step b). It reads the PR, all activity pages, the comments of each commented file (`comments?path=<path>&anchorState=ALL`, all pages), the diff of each commented file (`withComments=true`), and for U12 all commit pages. Raw files go to `.gate0/a-capture/raw/`. The script then runs `sanitize-fixtures.ts --raw .gate0/a-capture/raw --prefix real-`. This mode has its own value mapping, so fake IDs and hashes do not match the files above. See docs/smoke-r3.md, "Capture U2 and U12".
+
 ## Synthetic scenarios
 
 `tests/support/scenarios.ts` derives synthetic states from these files at test time: page splits, both last-page forms, a missing cursor, duplicates, reordering, a version-0 state before the recorded edit, comments by a second user, new nested replies, a higher comment version, a merged PR, and a new source head. The server did not send these states. The second user comes from `dashboard-reviewer-page.json`, because every recorded comment is by the token owner.

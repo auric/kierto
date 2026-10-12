@@ -1,20 +1,25 @@
 // Regenerates fixtures/bitbucket/ from the Gate 0 probe output in .gate0/raw/.
-// Usage: bun scripts/gate0/sanitize-fixtures.ts
+// Usage: bun scripts/gate0/sanitize-fixtures.ts [--raw <dir> [--prefix <p>]] [--out <dir>] [--no-scan]
+// With --raw, every .json file in <dir> becomes <out>/<p><name>. --no-scan is for input that is already fake.
 // Every sensitive string and number comes from .gate0/raw/ at run time. This file holds no real values.
 // Output is counts only. Exit code 1 when a scan hit or a structure difference exists.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "../..");
-const RAW = join(ROOT, ".gate0/raw");
-const OUT = join(ROOT, "fixtures/bitbucket");
+const opt = (name: string) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined);
+const RAW_ARG = opt("--raw");
+const RAW = RAW_ARG ? resolve(RAW_ARG) : join(ROOT, ".gate0/raw");
+const OUT = resolve(opt("--out") ?? join(ROOT, "fixtures/bitbucket"));
 const SCAN_TARGETS = [OUT, join(ROOT, "integration-check.md")];
 const FAKE_HOST = "bitbucket.example.test";
 const FAKE_TRACKER_HOST = "jira.example.test";
 const FAKE_SSH_PORT = "7999";
 
 // Raw probe step -> fixture file.
-const FILES: Record<string, string> = {
+const FILES: Record<string, string> = RAW_ARG
+  ? Object.fromEntries(readdirSync(RAW).filter((f) => f.endsWith(".json")).map((f) => [f, `${opt("--prefix") ?? ""}${f}`]))
+  : {
   "01-pull-request.json": "pull-request.json",
   "02-application-properties.json": "application-properties.json",
   "03-dashboard-REVIEWER.json": "dashboard-reviewer-page.json",
@@ -44,7 +49,7 @@ const FILES: Record<string, string> = {
   "v3-p1-activities-after-write-p0.json": "activities-v3-after-write.json",
   "v3-p2-activities-p0.json": "activities-rescoped-orphaned-range.json",
   "v3-p2-commits-p0.json": "pull-request-commits-after-push.json",
-};
+  };
 for (const src of Object.keys(FILES)) if (src.startsWith("v3-") && !existsSync(join(RAW, src))) delete FILES[src];
 
 const readJson = (p: string) => JSON.parse(readFileSync(p, "utf8"));
@@ -97,6 +102,11 @@ for (const r of raw) {
       // Issue links from the Jira integration use the key "url".
       if (k === "url" && /^https?:\/\//i.test(v)) trackerHosts.add(new URL(v).hostname.toLowerCase());
       if (["key", "jira-key", "message", "title", "description", "displayId", "url"].includes(k)) for (const m of v.match(ISSUE_KEY) ?? []) issueKeys.add(m);
+      // An anchor holds the file path as one string. Its file can be absent from every diff in the raw set.
+      if (k === "path" || k === "srcPath") {
+        const parts = v.split("/");
+        parts.forEach((c, i) => add(c, "pc", (n) => (i === parts.length - 1 ? `sample${n}${c.match(/\.[^.]+$/)?.[0] ?? ""}` : `dir${n}`)));
+      }
       if (["title", "description", "text", "line"].includes(k) && v.length >= 6 && !v.includes("review-loop gate0 probe")) freeText.add(v.toLowerCase());
     }
     if (!v || typeof v !== "object" || Array.isArray(v)) return;
@@ -260,7 +270,7 @@ const strTokens = [...new Set([...strMap.keys(), ...scanOnly, ...hashMap.keys()]
 const idTokens = [...idMap.keys()];
 let hits = 0;
 let checked = 0;
-for (const f of SCAN_TARGETS.flatMap(files)) {
+for (const f of process.argv.includes("--no-scan") ? [] : SCAN_TARGETS.flatMap(files)) {
   const s = readFileSync(f, "utf8").toLowerCase();
   const inFixtures = f.startsWith(OUT);
   const res: RegExp[] = [
