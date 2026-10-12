@@ -8,7 +8,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { DIFF_PAGE_ROWS, type DiffIndexDto, type DiffPageDto, type DiffRowDto } from "../../shared/dto";
+import { type ChangedFile, DIFF_PAGE_ROWS, type DiffIndexDto, type DiffPageDto, type DiffRowDto } from "../../shared/dto";
 import { api } from "../api";
 import { ApiError, read } from "../shell/data";
 
@@ -46,6 +46,10 @@ export const pageQuery = (pr: number, path: string, start: number) =>
   });
 
 export const useDiffIndex = (pr: number, enabled: boolean) => useQuery({ ...indexQuery(pr), enabled });
+
+// The one count of Files, for its head and the summary line: the git index once it loads, else the forge list. null: no list.
+export const fileCount = (index: DiffIndex | undefined, files: ChangedFile[] | undefined) =>
+  index && !("fetch" in index) ? index.files.length : files?.length || null;
 
 export type Pages = {
   // The rows of the loaded pages up to the first page without data.

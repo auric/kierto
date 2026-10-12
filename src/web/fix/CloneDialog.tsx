@@ -1,12 +1,93 @@
 // The folder of the user's clone (plan r3): one path per repository, kept in the app database. The server checks it on save.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, type KeyboardEvent, useState } from "react";
+import { Check, Copy, FolderOpen } from "lucide-react";
+import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { toast } from "@/components/ui/toast";
+import { copyText } from "@/lib/clipboard";
 import type { CloneDto } from "../../shared/dto";
-import { cloneKey, dropClone, putClone } from "./data";
+import { Hint } from "../shell/Hint";
+import { cloneKey, clonesChanged, dropClone, openCloneFolder, putClone } from "./data";
+
+// Open folder and Copy path for the clone of the repository of PR pr. The server opens only the stored path, never this one.
+// icons: icon buttons with the path in the tooltip, for the fix bar. of: the repository, for unique button names in a list.
+// The status sits inside the component, so a screen reader reads it also inside a modal dialog.
+export function CloneFolder({ pr, path, icons, of }: { pr: number; path: string; icons?: boolean; of?: string }) {
+  // A count, so a second copy within 1.5 s starts the time again.
+  const [copied, setCopied] = useState(0);
+  const [said, setSaid] = useState({ text: "", n: 0 });
+  const copyRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const h = setTimeout(() => setCopied(0), 1500);
+    return () => clearTimeout(h);
+  }, [copied]);
+  const say = (text: string) => setSaid((s) => ({ text, n: s.n + 1 }));
+  const open = async () => {
+    try {
+      const r = await openCloneFolder(pr);
+      if (!r) return say("Opened the clone folder.");
+      toast.add({ title: r.error });
+      say(r.error);
+      copyRef.current?.focus();
+    } catch (e) {
+      toast.add({ title: "The folder did not open", description: (e as Error).message });
+    }
+  };
+  const copy = () =>
+    copyText(path).then((ok) => {
+      if (!ok) return toast.add({ title: "The clipboard is blocked here. Select the path and press Ctrl+C." });
+      setCopied((n) => n + 1);
+      say("Copied the clone path.");
+    });
+  const suffix = of && <span className="sr-only"> of {of}</span>;
+  const CopyIcon = copied ? Check : Copy;
+  const status = (
+    <span role="status" className="sr-only">
+      <span key={said.n}>{said.text}</span>
+    </span>
+  );
+  if (icons)
+    return (
+      <span className="inline-flex items-center gap-0.5">
+        <Hint label={`Open the clone folder: ${path}`}>
+          <Button variant="ghost" size="icon-sm" className="text-ink-2" aria-label="Open the clone folder" onClick={() => void open()}>
+            <FolderOpen aria-hidden />
+          </Button>
+        </Hint>
+        <Hint label={copied ? "Copied" : `Copy the clone path: ${path}`}>
+          <Button
+            ref={copyRef}
+            variant="ghost"
+            size="icon-sm"
+            className="text-ink-2"
+            aria-label="Copy the clone path"
+            onClick={() => void copy()}
+          >
+            <CopyIcon key={copied} aria-hidden className={copied ? "rl-pop" : undefined} />
+          </Button>
+        </Hint>
+        {status}
+      </span>
+    );
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <Button variant="ghost" size="sm" className="text-ink-2" onClick={() => void open()}>
+        <FolderOpen aria-hidden data-icon="inline-start" />
+        Open folder{suffix}
+      </Button>
+      <Button ref={copyRef} variant="ghost" size="sm" className="text-ink-2" onClick={() => void copy()}>
+        <CopyIcon key={copied} aria-hidden data-icon="inline-start" className={copied ? "rl-pop" : undefined} />
+        {copied ? "Copied" : "Copy path"}
+        {suffix}
+      </Button>
+      {status}
+    </span>
+  );
+}
 
 // Keys in a dialog never reach the shell key handler, so no detail key acts behind the dialog. Esc closes only this dialog.
 export const dialogKeys = (close: () => void) => (e: KeyboardEvent) => {
@@ -41,6 +122,7 @@ function CloneForm(props: { pr: number; repo: string; path: string | null; onClo
   const save = useMutation({
     mutationFn: (p: string) => putClone(props.pr, p),
     onSuccess: (c) => {
+      clonesChanged(qc, props.pr);
       qc.setQueryData(cloneKey(props.pr), c);
       props.onSaved(c);
     },
@@ -48,7 +130,7 @@ function CloneForm(props: { pr: number; repo: string; path: string | null; onClo
   const clear = useMutation({
     mutationFn: () => dropClone(props.pr),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: cloneKey(props.pr) });
+      clonesChanged(qc);
       props.onSaved(null);
     },
   });

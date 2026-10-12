@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { CloneDto, FixCommitDto, FixDto, FixMode } from "../../shared/dto";
 import { shortHash } from "../review/model";
-import { CloneDialog, dialogKeys } from "./CloneDialog";
+import { CloneDialog, CloneFolder, dialogKeys } from "./CloneDialog";
 import { commitFix } from "./data";
 import { FetchCommands, type FixCtx } from "./FixCard";
 import { applyText, commitText, defaultMessage } from "./model";
@@ -135,8 +135,8 @@ function ApplyBody(props: Parameters<typeof ApplyDialog>[0] & { target: ApplyTar
         <h3 id="apply-clone-h" className="m-0 text-sm font-semibold">
           Your clone
         </h3>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <FolderGit2 aria-hidden className={cn(icon, "text-muted-foreground")} />
+        <div className="flex items-start gap-2">
+          <FolderGit2 aria-hidden className={cn(icon, "mt-0.5 text-muted-foreground")} />
           {c === undefined && !clone.error ? (
             <Skeleton className="h-5 w-64" />
           ) : (
@@ -144,9 +144,6 @@ function ApplyBody(props: Parameters<typeof ApplyDialog>[0] & { target: ApplyTar
               {c?.path ?? <span className="font-sans text-muted-foreground">No folder set</span>}
             </span>
           )}
-          <Button size="sm" variant="outline" onClick={() => setCloneOpen(true)}>
-            {c?.path ? "Change" : "Set the folder"}
-          </Button>
         </div>
         {c?.branch && (
           <p className="m-0 pl-[23px] text-xs text-muted-foreground">
@@ -166,6 +163,12 @@ function ApplyBody(props: Parameters<typeof ApplyDialog>[0] & { target: ApplyTar
             .
           </p>
         )}
+        <div className="flex flex-wrap items-center gap-1 pl-[23px]">
+          <Button size="sm" variant="outline" onClick={() => setCloneOpen(true)}>
+            {c?.path ? "Change" : "Set the folder"}
+          </Button>
+          {c?.path && <CloneFolder pr={props.pr} path={c.path} />}
+        </div>
         {clone.error && (
           <p className="m-0 flex items-start gap-1.5 pl-[23px] text-sm text-destructive">
             <CircleAlert aria-hidden className={cn(icon, "mt-0.5")} />

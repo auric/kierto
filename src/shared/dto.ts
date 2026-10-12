@@ -551,6 +551,9 @@ export type CloneDto = {
   branch: string | null;
   head: string | null;
 };
+// GET /api/clones: one row per repository with a clone folder. pr: a PR of the repository, for the /prs/:id/clone routes.
+// missing: the folder does not exist now.
+export type CloneRowDto = { project: string; repo: string; path: string; pr: number; missing: boolean };
 // POST /api/fix-runs/:run/commit gives 409 with this body when a clone check fails.
 export type FixConflict = ApiError & { problems: CloneDto["problems"] };
 export const cloneInput = z.object({ path: z.string().trim().min(1).max(4096) });

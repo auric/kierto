@@ -1,6 +1,6 @@
 // Detail header (prototype/v3 renderDetail .dh): key, branches, task IDs, title, the action bar, and the summary lines.
 // The action bar sticks to the top of the pane. When the title leaves the view, the bar shows the key and the title.
-import { Archive, Check, Copy, ExternalLink, MessageCircleQuestionMark, Reply, Star } from "lucide-react";
+import { Archive, Check, Copy, ExternalLink, FileDiff, MessageCircleQuestionMark, Reply, Star } from "lucide-react";
 import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
@@ -136,6 +136,8 @@ export function Header(props: {
   now: number;
   fresh: number;
   sum: { your: number; unresolved: number; tasks: number };
+  // The Files link of the summary line. n: the count of Files, null while no list is known. null: the PR is not loaded.
+  files: { n: number | null; onOpen: () => void } | null;
   onNextNew: () => void;
   onNextYour: () => void;
   onLeave: () => void;
@@ -268,7 +270,7 @@ export function Header(props: {
       </ActionBar>
       <div className={cn("grid gap-1.5 border-b pb-3.5", pad)}>
         {props.brief}
-        {(sum.your > 0 || sum.unresolved > 0 || sum.tasks > 0) && (
+        {(sum.your > 0 || sum.unresolved > 0 || sum.tasks > 0 || props.files) && (
           <p className="rl-sum m-0 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-2">
             {sum.your > 0 && (
               <Hint label="Key: y">
@@ -287,6 +289,28 @@ export function Header(props: {
             {sum.tasks > 0 && (
               <span>
                 {sum.tasks} open {sum.tasks === 1 ? "task" : "tasks"}
+              </span>
+            )}
+            {props.files && (
+              // The span keeps the dot of the summary line outside the button.
+              <span className="inline-flex items-center">
+                <Hint label="Open Files and the first file">
+                  <button
+                    type="button"
+                    onClick={props.files.onOpen}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded font-medium text-pen hover:underline"
+                  >
+                    <FileDiff aria-hidden className="size-[15px]" />
+                    Files
+                    {/* The space keeps the name "Files 3". A flex box does not lay it out. */}
+                    {props.files.n !== null && (
+                      <>
+                        {" "}
+                        <span className="font-normal text-muted-foreground">{props.files.n}</span>
+                      </>
+                    )}
+                  </button>
+                </Hint>
               </span>
             )}
           </p>

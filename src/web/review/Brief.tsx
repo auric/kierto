@@ -16,7 +16,18 @@ import {
   ShieldAlert,
   Trash2,
 } from "lucide-react";
-import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -39,7 +50,6 @@ import {
 } from "../../shared/dto";
 import { api } from "../api";
 import { dialogKeys } from "../fix/CloneDialog";
-import { Markdown } from "../pr/Markdown";
 import { read } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { putBrief } from "./data";
@@ -65,6 +75,9 @@ import {
   sourceTime,
   typeText,
 } from "./tasks";
+
+// The Markdown renderer loads on first use, as in Thread.tsx. Plain text shows until then.
+const Markdown = lazy(() => import("../pr/Markdown").then((m) => ({ default: m.Markdown })));
 
 // The note saves this long after the last key. Start, Cancel, Esc, and a profile change save at once.
 const SAVE_MS = 600;
@@ -145,12 +158,15 @@ export function ReviewButton(props: {
 // Text converted from the rendered HTML shows as Markdown. Rows from before Release 3 hold plain text: wiki markup shows as typed.
 // A downloaded attachment image shows in the text, never wider than the text.
 function TaskText({ t, text, images }: { t: TaskContextDto; text: string; images: (src: string) => string | null }) {
+  const plain = <p className="m-0 whitespace-pre-wrap">{text}</p>;
   return t.format === "markdown" ? (
     <div className="[&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-md [&_img]:border">
-      <Markdown text={text} images={images} />
+      <Suspense fallback={plain}>
+        <Markdown text={text} images={images} />
+      </Suspense>
     </div>
   ) : (
-    <p className="m-0 whitespace-pre-wrap">{text}</p>
+    plain
   );
 }
 

@@ -483,6 +483,7 @@ const activities = new Map<Pr, () => S.Activity[]>([
 ]);
 
 // Commits and changed files of each PR (plan v3 WP4). PR 81 has one commit after my review.
+// Every PR head is HEAD_A or HEAD_B of the demo remote, and every target head is remote.target.
 const [recorded] = fixture<{ values: Record<string, unknown>[] }>("pull-request-commits-page.json").body.values;
 const commit = (id: string, parent: string, message: string, author: User, minutes: number) => ({
   ...S.clone(recorded),
@@ -495,36 +496,26 @@ const commit = (id: string, parent: string, message: string, author: User, minut
   committerTimestamp: min(minutes),
   parents: [{ id: parent, displayId: parent.slice(0, 11) }],
 });
-const FILES = new Map<Pr, [string, string][]>([
-  [
-    prs.yourTurn,
-    [
-      ["MODIFY", "src/cache/evict.ts"],
-      ["MODIFY", "src/cache/trim.ts"],
-      ["ADD", "src/cache/evict.test.ts"],
-    ],
-  ],
-  [
-    prs.commits,
-    [
-      ["MODIFY", "src/sync/worker.ts"],
-      ["DELETE", "src/sync/legacy-queue.ts"],
-    ],
-  ],
-  [
-    prs.authored,
-    [
-      ["MODIFY", "src/date/format.ts"],
-      ["MOVE", "src/date/parse.ts"],
-    ],
-  ],
-  [fixing, [["MODIFY", "src/cache/flush.ts"]]],
+// The changed files as Bitbucket lists them: the diff from the merge base to the source head, read from the demo remote.
+// So the forge list and the git diff of Files give the same files.
+const CHANGE_TYPE: Record<string, string> = { A: "ADD", M: "MODIFY", D: "DELETE", R: "MOVE", C: "COPY", T: "MODIFY" };
+async function changesOf(head: string) {
+  const g = async (args: string[]) => git(["--git-dir", remote.remote, ...args], { env: gitEnv(join(claudeDir, "empty.gitconfig")) });
+  const base = (await g(["merge-base", remote.target, head])).trim();
+  const out = (await g(["diff", "--name-status", "-z", "-M", base, head])).split("\0").filter(Boolean);
+  const list: { path: { toString: string }; srcPath?: { toString: string }; type: string }[] = [];
+  for (let i = 0; i < out.length; ) {
+    const kind = (out[i++] ?? "")[0] ?? "";
+    const src = kind === "R" || kind === "C" ? out[i++] : undefined;
+    const path = out[i++] ?? "";
+    list.push({ path: { toString: path }, ...(src && { srcPath: { toString: src } }), type: CHANGE_TYPE[kind] ?? "MODIFY" });
+  }
+  return list;
+}
+const CHANGES = new Map([
+  [HEAD_A, await changesOf(HEAD_A)],
+  [HEAD_B, await changesOf(HEAD_B)],
 ]);
-const change = ([type, path]: [string, string]) => ({
-  path: { toString: path },
-  ...(type === "MOVE" && { srcPath: { toString: path.replace("src/date/", "src/util/") } }),
-  type,
-});
 
 // Merged and declined in phase 2. Both leave the dashboard and stay followed.
 const closed = new Map<Pr, string>([
@@ -550,7 +541,7 @@ for (const [pr, list] of activities) {
       ? [commit(HEAD_B, HEAD_A, "Flush the batch before the write lock", author, 60), commit(HEAD_A, remote.target, title, author, 500)]
       : [commit(head, remote.target, title, author, 500)];
   fake.routes[key("GET", `${pathOf(pr)}/commits`)] = { status: 200, body: S.onePage(commits) };
-  fake.routes[key("GET", `${pathOf(pr)}/changes`)] = { status: 200, body: S.onePage((FILES.get(pr) ?? []).map(change)) };
+  fake.routes[key("GET", `${pathOf(pr)}/changes`)] = { status: 200, body: S.onePage(CHANGES.get(head) ?? []) };
   fake.routes[key("GET", pathOf(pr))] = () => {
     const state = phase === 2 ? closed.get(pr) : undefined;
     return { status: 200, body: state ? { ...pr, state, updatedDate: min(15) } : pr };

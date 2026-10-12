@@ -1,11 +1,13 @@
 // Fix it API (plan r3 S-APPLY): the clone routes, commit, and undo. Git in the user's clone runs no network command.
 import type { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
 import { Hono } from "hono";
 import { validator } from "hono/validator";
 import {
   type ApiError,
   type CloneDto,
   type CloneProblem,
+  type CloneRowDto,
   cloneInput,
   type FixCommitDto,
   type FixCommitInput,
@@ -15,6 +17,7 @@ import {
 import type { ReplyPayload } from "../../shared/review";
 import { newestLive, type TurnMsg } from "../../shared/turn";
 import type { PullRequest } from "../../shared/types";
+import { openFolder } from "../context/attachments";
 import type { Live } from "../live";
 import type { Settings } from "../settings";
 import {
@@ -54,6 +57,9 @@ const SQL = {
   saveClone: `INSERT INTO repo_clone (project, repo, path, updated_at) VALUES ($project, $repo, $path, $now)
     ON CONFLICT (project, repo) DO UPDATE SET path = excluded.path, updated_at = excluded.updated_at`,
   dropClone: "DELETE FROM repo_clone WHERE project = $project AND repo = $repo",
+  // PUT /prs/:id/clone writes a row only for a stored PR, and the app never deletes a PR row.
+  clones: `SELECT c.project, c.repo, c.path, MAX(p.id) AS pr FROM repo_clone c
+    JOIN pull_request p ON p.project = c.project AND p.repo = c.repo GROUP BY c.project, c.repo ORDER BY c.project, c.repo`,
   run: `SELECT r.id AS run, r.kind, r.source_head AS source, p.id AS pr, p.project, p.repo, p.pr_id
     FROM review_run r JOIN pull_request p ON p.id = r.pr WHERE r.id = $id`,
   edits: "SELECT id, thread, path, old, new FROM fix_edit WHERE run = $run ORDER BY ord",
@@ -93,8 +99,15 @@ const UNDO_BLOCKS: CloneProblem[] = ["missing", "not_repo", "detached", "branch"
 type Out = { status: 200 | 201; dto: FixCommitDto } | { status: 404 | 409 | 502; body: ApiError | FixConflict };
 const conflict = (error: string, problems: FixConflict["problems"] = []): Out => ({ status: 409, body: { error, problems } });
 
-export function createFixRoutes(opts: { review: ReviewJobs; settings: Settings; live: Live }) {
+// openFolder: the tests pass a recorder.
+export function createFixRoutes(opts: {
+  review: ReviewJobs;
+  settings: Settings;
+  live: Live;
+  openFolder?: (path: string) => Promise<boolean>;
+}) {
   const { review, settings, live } = opts;
+  const opener = opts.openFolder ?? openFolder;
   // syncCache keys the cache and its lock by the long path of the data folder.
   const dataDir = () => longPath(review.dataDir);
   const env = () => gitSetup(dataDir()).env;
@@ -344,6 +357,28 @@ export function createFixRoutes(opts: { review: ReviewJobs; settings: Settings; 
       if (!pr) return c.json(notFound("Pull request"), 404);
       db.query(SQL.dropClone).run({ project: pr.project, repo: pr.repo });
       return c.body(null, 204);
+    })
+    .post("/prs/:id/clone/open-folder", prParam, async (c) => {
+      // The path comes from the stored clone row only. 501: no file manager. The client then offers Copy.
+      const db = review.open();
+      if (!db) return c.json(unconfigured, 409);
+      const pr = prRow(db, c.req.valid("param").id);
+      if (!pr) return c.json(notFound("Pull request"), 404);
+      const path = cloneOf(db, pr);
+      if (path === null) return c.json<ApiError>({ error: CLONE_TEXT.not_set }, 404);
+      if (!existsSync(path)) return c.json<ApiError>({ error: CLONE_TEXT.missing }, 409);
+      if (!(await opener(path))) return c.json({ error: "No file manager opened the folder. Copy the path.", path }, 501);
+      return c.body(null, 204);
+    })
+    .get("/clones", (c) => {
+      const db = review.open();
+      if (!db) return c.json(unconfigured, 409);
+      const rows = db.query(SQL.clones).all() as Omit<CloneRowDto, "missing">[];
+      c.header("Cache-Control", "no-store");
+      return c.json(
+        rows.map((r): CloneRowDto => ({ ...r, missing: !existsSync(r.path) })),
+        200,
+      );
     })
     .post(
       "/fix-runs/:id/commit",

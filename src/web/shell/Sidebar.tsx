@@ -39,16 +39,24 @@ const STATUS_ICON: Record<StatusInfo["tone"], { icon: LucideIcon; className?: st
 
 const THEME_ICON: Record<Theme, LucideIcon> = { system: Monitor, light: Sun, dark: Moon };
 
-// The rail layout (760 to 1099 px) hides the words, so only then the tooltips show them.
-const railQuery = window.matchMedia("(min-width: 760px) and (max-width: 1099px)");
+// The rail layout (760 to 1279 px, index.css) hides the words, so only then the tooltips show them.
+const railQuery = window.matchMedia("(min-width: 760px) and (max-width: 1279px)");
 const onRail = (fn: () => void) => {
   railQuery.addEventListener("change", fn);
   return () => railQuery.removeEventListener("change", fn);
 };
 const useRail = () => useSyncExternalStore(onRail, () => railQuery.matches);
 
+// The count on the rail. The button name holds the count, so a screen reader skips the badge.
+const Badge = ({ n }: { n: number }) =>
+  n > 0 ? (
+    <span aria-hidden className="rl-badge">
+      {n > 99 ? "99+" : n}
+    </span>
+  ) : null;
+
 const navItem =
-  "rl-center rl-nav flex min-h-8 w-full min-w-0 cursor-pointer items-center gap-2.5 rounded-md border-0 bg-transparent px-2 py-[5px] text-left text-ink-2 hover:bg-hover hover:text-foreground";
+  "rl-center rl-nav relative flex min-h-8 w-full min-w-0 cursor-pointer items-center gap-2.5 rounded-md border-0 bg-transparent px-2 py-[5px] text-left text-ink-2 hover:bg-hover hover:text-foreground";
 const current = "bg-pane font-semibold text-foreground shadow-[inset_0_0_0_1px_var(--border)] hover:bg-pane";
 const heading = "rl-lbl m-0 px-2 py-1 text-xs font-semibold text-muted-foreground";
 
@@ -111,6 +119,7 @@ export function Sidebar(props: {
                   <Icon aria-hidden className="size-[15px] shrink-0" />
                   <span className="rl-lbl truncate">{VIEW_LABEL[v]}</span>
                   <span className="rl-lbl ml-auto text-xs font-medium text-muted-foreground">{n || ""}</span>
+                  <Badge n={n} />
                 </button>
               </Hint>
             );
@@ -131,6 +140,7 @@ export function Sidebar(props: {
               <Send aria-hidden className="size-[15px] shrink-0" />
               <span className="rl-lbl truncate">Ready to post</span>
               <span className="rl-lbl ml-auto text-xs font-medium text-muted-foreground">{props.post || ""}</span>
+              <Badge n={props.post} />
             </button>
           </Hint>
         </div>
@@ -218,6 +228,7 @@ function RunsItem(props: { count: number; running: boolean; rail: boolean; curre
         <Icon aria-hidden className={cn("size-[15px] shrink-0", props.running && "animate-spin")} />
         <span className="rl-lbl truncate">Review runs</span>
         <span className="rl-lbl ml-auto text-xs font-medium text-muted-foreground">{props.count || ""}</span>
+        <Badge n={props.count} />
       </button>
     </Hint>
   );

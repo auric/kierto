@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommentDto, PrRow } from "../../shared/dto";
 import { AskPanel } from "../ask/AskPanel";
+import { fileCount, useDiffIndex } from "../diff/data";
 import { type DiffCtx, DiffSection, useDiffView } from "../diff/FileDiff";
 import type { Card } from "../diff/model";
 import type { Layer } from "../keys";
@@ -230,6 +231,8 @@ export function PrDetail({
   draftReply.current = review.api.draftReply;
   const openFiles = useCallback(() => setSecs((s) => (s.has("files") ? s : new Set(s).add("files"))), []);
   const diff = useDiffView(row.id, { ...review.diff, threads, forge, openFold: openFiles, focusAfter });
+  // The same query as Files, so the summary line and the head of Files show the same count.
+  const files = fileCount(useDiffIndex(row.id, secs.has("files")).data, data?.files);
   showDiff.current = diff.show;
   const { openDraft } = review.api;
   const onThreads = useCallback(
@@ -369,6 +372,7 @@ export function PrDetail({
         now={now}
         fresh={fresh}
         sum={summary(threads)}
+        files={data && diffCtx ? { n: files, onOpen: diff.first } : null}
         onNextNew={() => nextNew(1)}
         onNextYour={nextYour}
         onLeave={onLeave}

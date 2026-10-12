@@ -223,8 +223,8 @@ details[open] > summary .rl-chev {
   transform: rotate(90deg);
 }
 
-/* App grid (prototype/v3:86-88): sidebar | list | detail. A rail from 760 to 1099 px. One pane below 760 px.
-   Unlayered, so these display rules win over the Tailwind utilities on the same elements. */
+/* App grid (prototype/v3:86-88): sidebar | list | detail. A rail from 760 to 1279 px, so a 1100 px window keeps 720 px for the detail.
+   One pane below 760 px. Unlayered, so these display rules win over the Tailwind utilities on the same elements. */
 .rl-app {
   height: 100%;
   display: grid;
@@ -241,13 +241,34 @@ details[open] > summary .rl-chev {
 .pane-edge {
   box-shadow: inset 0 2px 0 var(--pen);
 }
-@media (min-width: 760px) and (max-width: 1099px) {
+/* The count of a view on the rail. The words carry it in the wide layout. */
+.rl-badge {
+  display: none;
+}
+@media (min-width: 760px) and (max-width: 1279px) {
   .rl-app {
     grid-template-columns: 60px 320px minmax(0, 1fr);
   }
   .rl-side .rl-lbl,
   .rl-side .rl-repos {
     display: none;
+  }
+  .rl-side .rl-badge {
+    display: block;
+    position: absolute;
+    top: 1px;
+    right: 3px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--ink-2);
+    color: var(--pane);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 16px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
   }
   .rl-side .rl-lbl-sr {
     position: absolute;

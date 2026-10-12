@@ -463,6 +463,48 @@ test("long repository and branch names stay inside their panes", async ({ page }
   }
 });
 
+test("at 1100 px the sidebar is a rail: names, tooltips, and count badges stay, and j, k, and the views work", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await connect(page, false);
+  const side = page.locator("nav[aria-label='Views']");
+  const detail = page.locator("section[aria-label='Details']");
+  expect((await side.boundingBox())?.width).toBe(60);
+  const reviewing = side.locator("#nav-reviewing");
+  await expect(reviewing.locator(".rl-lbl").first()).toBeHidden();
+  await expect(reviewing).toHaveAccessibleName(/^Reviewing: \d+$/);
+  const n = ((await reviewing.getAttribute("aria-label")) ?? "").split(": ")[1];
+  await expect(reviewing.locator(".rl-badge")).toHaveText(n ?? "");
+  await reviewing.hover();
+  await expect(page.locator("[data-slot='tooltip-content']")).toHaveText(`Reviewing: ${n}`);
+
+  // A click and Enter switch the view.
+  await reviewing.click();
+  await expect(page.locator("#view-name")).toHaveText("Reviewing");
+  await expect(reviewing).toHaveAttribute("aria-current", "page");
+  await side.locator("#nav-needs").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#view-name")).toHaveText("Needs you");
+  await reviewing.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#view-name")).toHaveText("Reviewing");
+
+  // j and k move the selection as in the wide layout.
+  const rows = page.locator("[data-row]");
+  await expect(rows).toHaveCount(3);
+  const ids = await rows.evaluateAll((els) => els.map((e) => e.id));
+  const current = page.locator("[data-row][aria-current='true']");
+  await rows.nth(0).click();
+  await expect(detail).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(current).toBeFocused();
+  await page.keyboard.press("j");
+  await expect(current).toHaveId(String(ids[1]));
+  await page.keyboard.press("k");
+  await expect(current).toHaveId(String(ids[0]));
+  expect(await outside(side)).toEqual([]);
+  expect(await outside(detail, "#s-overview, #s-overview *")).toEqual([]);
+});
+
 test("a read row keeps its place, so the next unread row is not shown and read; the chip sorts again", async ({ page, request }) => {
   await connect(page);
   await park(page, TITLE.b);

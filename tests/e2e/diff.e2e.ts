@@ -139,6 +139,37 @@ test("get the code, open flush.ts, cards on their lines, Show in diff and back, 
   expect(await writes()).toEqual([`POST ${PR_PATH}/comments`]);
 });
 
+test("the Files link of the summary line opens Files and its first file; without the code it goes to Get the code", async ({ page }) => {
+  await connect(page);
+  const link = page.locator(".rl-sum").getByRole("button", { name: /^Files/ });
+  const first = page.locator("#df-0");
+  // The e2e data has no forge file list, so the count waits for the git index.
+  await expect(link).toHaveText("Files");
+  await link.click();
+  await expect(files(page)).toHaveAttribute("open", "");
+  await expect(page.locator("#diff-get")).toBeFocused();
+  await getCode(page, "src/cache/flush.ts");
+  await expect(first).toHaveAttribute("aria-expanded", "false");
+  // One count for the link and the head of Files.
+  await expect(link).toHaveText("Files 1");
+  await expect(page.locator("#s-files-sum")).toHaveText("Files1");
+
+  await link.click();
+  await expect(first).toHaveAttribute("aria-expanded", "true");
+  await expect(first).toBeFocused();
+  await expect(page.locator("#dl-0-n3")).toContainText("const lock = cache.lock();");
+
+  // From a closed Files with a closed file, the link opens both.
+  await first.click();
+  await page.locator("#s-files-sum").click();
+  await expect(files(page)).not.toHaveAttribute("open", "");
+  await link.click();
+  await expect(files(page)).toHaveAttribute("open", "");
+  await expect(first).toHaveAttribute("aria-expanded", "true");
+  await expect(first).toBeFocused();
+  expect(await writes()).toEqual([]);
+});
+
 test("after a push, the drafts of the older head go to the list above the lines", async ({ page }) => {
   await connect(page);
   await review(page);

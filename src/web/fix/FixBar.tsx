@@ -16,7 +16,8 @@ import type { Focus } from "../review/useReview";
 import type { Hints } from "../shell/Hint";
 import { prKey, repoOf } from "../shell/model";
 import { ApplyDialog, type ApplyTarget } from "./ApplyDialog";
-import { cloneKey, fixesKey, getClone, undoFix, useClone, useFixes, useStartFix } from "./data";
+import { CloneFolder } from "./CloneDialog";
+import { cloneKey, fixesKey, getClone, undoFix, useClone, useClones, useFixes, useStartFix } from "./data";
 import { FixCard, type FixCtx } from "./FixCard";
 import { handoffText } from "./handoff";
 import { applyText, fixAllButton, fixState, fixThreads, selection } from "./model";
@@ -226,15 +227,18 @@ export function useFix(
     const s = selection(f, i === 0, ticks);
     return s.edits.length ? [{ f, s }] : [];
   });
+  const clones = useClones(author && open.length > 0).data;
+  const folder = clones?.find((c) => c.project === pr.project && c.repo === pr.repo && !c.missing)?.path;
   const bar = author && open.length > 0 && (
     <div data-fixbar className="border-t border-rule-strong bg-pane px-6 text-sm max-[759px]:px-4">
-      {open.map(({ f, s }) => (
+      {open.map(({ f, s }, i) => (
         <div key={f.run.id} className="flex flex-wrap items-center gap-x-3.5 gap-y-2 py-2.5">
           <span className="inline-flex items-center gap-1.5 text-ink-2">
             <Wrench aria-hidden className="size-[15px] shrink-0" />
             {meta.runner.short} proposed {plural(f.edits.length, "edit")} on {shortHash(f.run.sourceHead)}.
           </span>
           <span className="flex-1" />
+          {i === 0 && folder && <CloneFolder pr={pr.id} path={folder} icons />}
           <Button
             id={`fix-apply-${f.run.id}`}
             size="sm"

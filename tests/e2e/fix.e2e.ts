@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, cloneState, control, E2E_TOKEN, FAKE_URL, makeClone, pushClone, writes } from "./control";
+import { APP_PORT, cloneState, control, E2E_TOKEN, FAKE_URL, makeClone, openFolder, pushClone, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Release the write lock after each entry";
@@ -238,7 +238,7 @@ test("a dirty clone keeps Apply disabled; a clean one commits; Undo resets the c
   expect(git(path, ["status", "--porcelain"])).toBe("");
   await expect(draft(page, LOCK)).toContainText(`Discarded reply draft: Fixed in ${short}.`);
   // The edit is free again, so the bar offers it again.
-  await expect(page.locator("[data-fixbar]").getByRole("button")).toHaveText("Apply 1 edit from 1 comment");
+  await expect(page.locator("[data-fixbar]").getByRole("button", { name: /^Apply / })).toHaveText("Apply 1 edit from 1 comment");
   expect(await writes()).toEqual([]);
 });
 
@@ -311,7 +311,7 @@ test("a failing pre-commit hook leaves the edits staged; the dialog shows its st
   await page.keyboard.press("Escape");
   await expect(box).toBeHidden();
   await expect(fixCard(page, LOCK)).toBeFocused();
-  await expect(page.locator("[data-fixbar]").getByRole("button")).toHaveText("Apply 1 edit from 1 comment");
+  await expect(page.locator("[data-fixbar]").getByRole("button", { name: /^Apply / })).toHaveText("Apply 1 edit from 1 comment");
   expect(await writes()).toEqual([]);
 });
 
@@ -350,5 +350,74 @@ test("Commit to an app branch: the two shown commands bring the commit into the 
   await expect(fixCard(page, LOCK)).toContainText(`Committed ${short} to an app branch.`);
   // GET /fixes can name the cache by another spelling of the same folder, such as a Windows short name.
   await expect(page.locator("#fxc-5000001 code")).toHaveText([new RegExp(`^git fetch ".+" ${ref}$`), "git merge --ff-only FETCH_HEAD"]);
+  expect(await writes()).toEqual([]);
+});
+
+test("Open folder and Copy path of the clone work in the Apply dialog, the fix bar, and the Clones settings", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: APP });
+  const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+  const toast = page.locator("[data-slot='toast']");
+  await connect(page);
+  await draftReplies(page);
+  await control("claude", { stream: "tree", fix: FIX });
+  await draft(page, LOCK).getByRole("button", { name: "Fix the code for this comment" }).click();
+  await expect(fixCard(page, LOCK)).toContainText("Proposed fix, 1 edit", { timeout: RUN_MS });
+
+  // No clone folder yet: the bar offers only Apply.
+  const bar = page.locator("[data-fixbar]");
+  await expect(bar.getByRole("button")).toHaveText("Apply 1 edit from 1 comment");
+  const path = await makeClone(1004);
+  await bar.getByRole("button", { name: "Apply 1 edit from 1 comment" }).click();
+  const box = applyDialog(page);
+  await setClone(page, path);
+
+  // No file manager: a toast, and the focus goes to Copy path. serve.ts gives the server a recorder, so no window opens.
+  await box.getByRole("button", { name: "Open folder" }).click();
+  await expect(toast).toContainText("No file manager opened the folder. Copy the path.");
+  const copy = box.getByRole("button", { name: "Copy path" });
+  await expect(copy).toBeFocused();
+  await copy.click();
+  await expect(box.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect.poll(clipboard).toBe(path);
+  await openFolder({ opens: true });
+  await box.getByRole("button", { name: "Open folder" }).click();
+  await expect(box.getByRole("status").filter({ hasText: "Opened the clone folder." })).toHaveCount(1);
+  // The server opens the stored path, never a path from the page.
+  expect(await openFolder()).toEqual([path, path]);
+  await page.keyboard.press("Escape");
+  await expect(box).toBeHidden();
+
+  // The fix bar has the same two actions as icons.
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await bar.getByRole("button", { name: "Open the clone folder" }).click();
+  await expect.poll(openFolder).toEqual([path, path, path]);
+  await bar.getByRole("button", { name: "Copy the clone path" }).click();
+  await expect.poll(clipboard).toBe(path);
+
+  // Settings lists the clone with Open folder, Copy path, Change, and Remove.
+  await page.locator("nav[aria-label='Views']").getByRole("button", { name: "Settings" }).click();
+  const clones = page.getByRole("region", { name: "Clones" });
+  const item = clones.locator("[data-clone='PROJ1/sample-repo-4']");
+  await expect(item).toContainText(path);
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await item.getByRole("button", { name: "Open folder of PROJ1/sample-repo-4" }).click();
+  await expect.poll(openFolder).toEqual([path, path, path, path]);
+  await item.getByRole("button", { name: "Copy path of PROJ1/sample-repo-4" }).click();
+  await expect.poll(clipboard).toBe(path);
+  await item.getByRole("button", { name: "Change the clone folder of PROJ1/sample-repo-4" }).click();
+  const form = page.getByRole("dialog", { name: "Your clone of PROJ1/sample-repo-4" });
+  await expect(form.getByLabel("Clone folder")).toHaveValue(path);
+  await form.getByRole("button", { name: "Cancel" }).click();
+  await expect(form).toBeHidden();
+  await item.getByRole("button", { name: "Remove the clone folder of PROJ1/sample-repo-4" }).click();
+  await expect(item).toHaveCount(0);
+  await expect(clones).toContainText("No clone folder is set.");
+  await expect(clones.getByRole("heading", { name: "Clones" })).toBeFocused();
+
+  // The removed folder leaves the fix bar and the Apply dialog too.
+  await page.keyboard.press("Escape");
+  await expect(bar.getByRole("button")).toHaveText("Apply 1 edit from 1 comment");
+  await bar.getByRole("button", { name: "Apply 1 edit from 1 comment" }).click();
+  await expect(box.getByRole("button", { name: "Set the folder" })).toBeVisible();
   expect(await writes()).toEqual([]);
 });

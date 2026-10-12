@@ -37,7 +37,7 @@ import { AiAvatar, Severity } from "../review/Drafts";
 import { plural } from "../review/model";
 import type { Focus } from "../review/useReview";
 import { type Hints, HintTrigger } from "../shell/Hint";
-import { cachedIndex, type DiffIndex, loadUntil, useDiffIndex, useDiffPages, useGetCode } from "./data";
+import { cachedIndex, type DiffIndex, fileCount, loadUntil, useDiffIndex, useDiffPages, useGetCode } from "./data";
 import {
   type Card,
   cardKey,
@@ -95,6 +95,7 @@ export type DiffView = {
   more: (name: string) => void;
   // Opens Files and the file, loads the pages up to the line, then focuses its row.
   show: (card: Card) => void;
+  first: () => void;
 };
 
 export function useDiffView(
@@ -166,7 +167,25 @@ export function useDiffView(
     o.focusAfter({ id: id ?? `df-${i}`, block: "center", flash: true });
   };
 
-  return { open, pages, toggle, more, show: (card) => void show(card) };
+  // Opens Files and its first file, then focuses that file. Without the code, it focuses Get the code. Files shows an error itself.
+  const first = async () => {
+    o.openFold();
+    const list = { id: "s-files-sum", block: "start", flash: false } as const;
+    let index: DiffIndex;
+    try {
+      index = await cachedIndex(qc, pr);
+    } catch {
+      return o.focusAfter(list);
+    }
+    if ("fetch" in index) return o.focusAfter({ id: "diff-get", block: "center", flash: false });
+    const f = index.files[0];
+    if (!f) return o.focusAfter(list);
+    const name = fileName(f);
+    setOpen((s) => (s.has(name) ? s : new Set(s).add(name)));
+    o.focusAfter({ id: "df-0", block: "start", flash: false });
+  };
+
+  return { open, pages, toggle, more, show: (card) => void show(card), first: () => void first() };
 }
 
 // ---------- Files section ----------
@@ -184,7 +203,7 @@ export function DiffSection(props: {
   const { ctx, forge } = props;
   const q = useDiffIndex(ctx.pr, props.open);
   const index = q.data && !("fetch" in q.data) ? q.data : null;
-  const n = index ? index.files.length : props.files?.length || null;
+  const n = fileCount(q.data, props.files);
   let state: ReactNode = null;
   if (q.error)
     state = (

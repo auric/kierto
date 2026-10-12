@@ -171,4 +171,4 @@ export const dropFile = (rows: TaskContextDto[] | undefined, key: string, id: st
 
 // The confirm text of Remove. files: the count of downloaded attachments that the server deletes with the text.
 export const removeText = (key: string, files: number) =>
-  `The app deletes the stored text of ${key}.` + (files ? ` It also deletes ${files} downloaded attachment${files === 1 ? "" : "s"}.` : "");
+  `The app deletes the stored text of ${key}.${files ? ` It also deletes ${files} downloaded attachment${files === 1 ? "" : "s"}.` : ""}`;

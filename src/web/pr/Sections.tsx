@@ -24,8 +24,13 @@ export function Overview({ detail, me, summary }: { detail: PrDetail; me: string
   const long = blocks.length > 1;
   const opener = pr.role === "AUTHOR" ? "you" : (pr.authorName ?? pr.authorSlug);
   return (
-    <section id="s-overview" aria-labelledby="h-overview" className="grid max-w-[86ch] scroll-mt-3 justify-items-start gap-2.5 pt-6">
-      <h2 id="h-overview" className={`${h2} w-full`}>
+    // minmax(0, 1fr): a one-line summary must not widen the column past the pane.
+    <section
+      id="s-overview"
+      aria-labelledby="h-overview"
+      className="grid max-w-[86ch] scroll-mt-3 grid-cols-[minmax(0,1fr)] justify-items-start gap-2.5 pt-6"
+    >
+      <h2 id="h-overview" className={`${h2} w-full flex-wrap gap-y-0.5`}>
         Overview
         {opener && <span className="ml-auto text-xs font-normal text-muted-foreground">Opened by {opener}</span>}
       </h2>

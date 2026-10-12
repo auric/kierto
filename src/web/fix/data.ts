@@ -1,7 +1,7 @@
 // Fix it server state (plan r3 UI-FIX). Keys ["pr", pr, "fixes"] and ["pr", pr, "clone"]: a live `changed` that names the PR
 // refreshes both. A commit or an undo names the PR too.
-import { useQuery } from "@tanstack/react-query";
-import type { CloneDto, FixCommitDto, FixCommitInput, FixConflict, FixDto } from "../../shared/dto";
+import { type QueryClient, useQuery } from "@tanstack/react-query";
+import type { CloneDto, CloneRowDto, FixCommitDto, FixCommitInput, FixConflict, FixDto } from "../../shared/dto";
 import { api } from "../api";
 import { type RunStart, runBody, started, useStart } from "../review/data";
 import { read } from "../shell/data";
@@ -30,6 +30,25 @@ export const putClone = async (pr: number, path: string) =>
 export async function dropClone(pr: number) {
   const res = await api.api.prs[":id"].clone.$delete(param(pr));
   if (!res.ok) await read(res);
+}
+
+// GET /api/clones: every clone folder, with no git command. A save or a clear of a clone changes it.
+export const clonesKey = ["clones"] as const;
+export const useClones = (enabled = true) =>
+  useQuery({ queryKey: clonesKey, enabled, queryFn: async () => read<CloneRowDto[]>(await api.api.clones.$get()) });
+
+// A clone change shows in the clone list and in the clone check of each PR. except: a PR whose clone state the caller sets.
+export const clonesChanged = (qc: QueryClient, except?: number) => {
+  void qc.invalidateQueries({ queryKey: clonesKey });
+  void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "pr" && q.queryKey[2] === "clone" && q.queryKey[1] !== except });
+};
+
+// null: the folder opened. path: no file manager opened it (501), so the user copies the path.
+export async function openCloneFolder(pr: number): Promise<{ error: string; path: string } | null> {
+  const res = await api.api.prs[":id"].clone["open-folder"].$post(param(pr));
+  if (res.status === 501) return (await res.json()) as { error: string; path: string };
+  if (!res.ok) await read(res);
+  return null;
 }
 
 // POST /api/prs/:id/fix-run. Absent threads: each thread with a valid or partly valid reply draft.

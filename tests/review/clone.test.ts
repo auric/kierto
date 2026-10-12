@@ -186,7 +186,13 @@ async function setup() {
   const sync = createSyncEngine({ settings, live });
   const review = createReviewJobs({ settings, live, dataDir: dir, runnerCommand: [process.execPath, "--version"] });
   const outbox = createOutbox({ settings, live });
-  const app = createApp({ port: PORT, token: SESSION, live, settings, sync, review, outbox });
+  // No test opens the OS file manager. opens: the answer of the next calls.
+  const folders = { opens: true, paths: [] as string[] };
+  const openFolder = async (path: string) => {
+    folders.paths.push(path);
+    return folders.opens;
+  };
+  const app = createApp({ port: PORT, token: SESSION, live, settings, sync, review, outbox, openFolder });
   cleanup.push(async () => {
     await outbox.stop();
     sync.stop();
@@ -263,7 +269,7 @@ async function setup() {
         )
         .get({ pr: id, root: ROOT }) as { comment_id: number }
     ).comment_id;
-  return { pr, fake, db, id, run, ids, edit, draft, dir, cache, call, setClone, apply, undo, row, items, newest };
+  return { pr, fake, db, id, run, ids, edit, draft, dir, cache, call, setClone, apply, undo, row, items, newest, folders };
 }
 
 // HEAD and the status, to prove that a refused apply changed nothing.
@@ -297,6 +303,42 @@ describe("clone path", () => {
       expect(gone.body.problems.map((p) => p.kind)).toEqual(["not_set"]);
       const apply = await s.apply([s.ids[0] as number]);
       expect([apply.status, apply.body.problems?.map((p) => p.kind)]).toEqual([409, ["not_set"]]);
+    },
+    SLOW,
+  );
+
+  test(
+    "open-folder opens the stored clone path only, never a path from the request; no file manager gives 501 with the path",
+    async () => {
+      const s = await setup();
+      const open = (id: number, body?: unknown) =>
+        s.call<{ error?: string; path?: string }>("POST", `/api/prs/${id}/clone/open-folder`, body);
+      expect(await open(s.id)).toEqual({ status: 404, body: { error: "Set the folder of your clone of this repository." } });
+      expect((await open(999_999)).status).toBe(404);
+      expect(s.folders.paths).toEqual([]);
+
+      const clone = await makeClone();
+      expect((await s.setClone(clone)).status).toBe(200);
+      expect((await s.call("GET", "/api/clones")).body).toEqual([
+        { project: PR_REF.project, repo: PR_REF.repo, path: clone, pr: s.id, missing: false },
+      ]);
+      // A path in the body changes nothing.
+      expect((await open(s.id, { path: root })).status).toBe(204);
+      expect(s.folders.paths).toEqual([clone]);
+      s.folders.opens = false;
+      expect(await open(s.id)).toEqual({
+        status: 501,
+        body: { error: "No file manager opened the folder. Copy the path.", path: clone },
+      });
+      expect(s.folders.paths).toEqual([clone, clone]);
+
+      // A clone folder that moved: no opener call, and the list marks it.
+      rmSync(clone, { recursive: true, force: true, maxRetries: 3 });
+      expect(await open(s.id)).toEqual({ status: 409, body: { error: "The clone folder does not exist." } });
+      expect(s.folders.paths).toEqual([clone, clone]);
+      expect((await s.call<{ missing: boolean }[]>("GET", "/api/clones")).body.map((c) => c.missing)).toEqual([true]);
+      expect((await s.call("DELETE", `/api/prs/${s.id}/clone`)).status).toBe(204);
+      expect((await s.call("GET", "/api/clones")).body).toEqual([]);
     },
     SLOW,
   );
