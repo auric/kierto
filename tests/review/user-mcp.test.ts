@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { mainAgent, profileRevision, REMOTE_RULE, reviewerAgent, SHIPPED_PROFILES, withMcp } from "../../src/server/review/catalog";
@@ -11,6 +11,7 @@ import {
   discoverMcpServers,
   listUserTools,
   McpListError,
+  readServers,
   readUserServers,
   userServers,
 } from "../../src/server/review/user-mcp";
@@ -94,6 +95,107 @@ describe("user MCP discovery", () => {
       env: { TOKEN: "ENV-SECRET" },
     });
   });
+});
+
+// biome-ignore-start lint/suspicious/noTemplateCurlyInString: the plugin config syntax.
+// A config folder with plugins alpha (wrapped .mcp.json, then a path list in plugin.json), beta (flat .mcp.json, a path string),
+// gamma (an inline object), and the disabled plugin off.
+function pluginConfig() {
+  const config = temp();
+  const write = (path: string, v: unknown) => {
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, JSON.stringify(v));
+  };
+  const dir = (n: string) => join(config, "plugins", "cache", "m", n, "1.0.0");
+  write(join(config, "settings.json"), { enabledPlugins: { "alpha@m": true, "beta@m": true, "gamma@m": true, "off@m": false } });
+  write(join(config, "plugins", "installed_plugins.json"), {
+    version: 2,
+    plugins: Object.fromEntries(["alpha", "beta", "gamma", "off"].map((n) => [`${n}@m`, [{ scope: "user", installPath: dir(n) }]])),
+  });
+  write(join(dir("alpha"), ".mcp.json"), {
+    mcpServers: {
+      idx: { command: "${CLAUDE_PLUGIN_ROOT}/old", args: ["ARG-SECRET"] },
+      cfg: { command: "node", env: { KEY: "${user_config.api_key}" } },
+    },
+  });
+  write(join(dir("alpha"), ".claude-plugin", "plugin.json"), { name: "alpha", mcpServers: ["./more.json", "../escape.json", "./b.mcpb"] });
+  write(join(dir("alpha"), "more.json"), {
+    web: { type: "http", url: "https://mcp.example.test/URL-SECRET", headers: { Authorization: "Bearer HEADER-SECRET" } },
+    idx: { command: "${CLAUDE_PLUGIN_ROOT}/bin/srv", args: ["${CLAUDE_PLUGIN_DATA}/db", "${HOME}"], env: { TOKEN: "ENV-SECRET" } },
+  });
+  write(join(dir("alpha"), "..", "escape.json"), { esc: { command: "node" } });
+  write(join(dir("beta"), ".mcp.json"), {
+    srv: { command: process.execPath, args: [FAKE_MCP] },
+    "bad.name": { command: "node" },
+    dup: { command: "node" },
+  });
+  write(join(dir("beta"), ".claude-plugin", "plugin.json"), { name: "beta", mcpServers: "./servers.json" });
+  write(join(dir("beta"), "servers.json"), { mcpServers: { extra: { type: "sse", url: "https://mcp.example.test/sse" } } });
+  write(join(dir("gamma"), ".claude-plugin", "plugin.json"), { name: "gamma", mcpServers: { g: { command: "${CLAUDE_PLUGIN_ROOT}/g" } } });
+  write(join(dir("off"), ".mcp.json"), { gone: { command: "node" } });
+  const file = configFile({ local: { command: "node" }, plugin_beta_dup: { command: "node" } }, config);
+  return { config, file, dir };
+}
+// biome-ignore-end lint/suspicious/noTemplateCurlyInString: the plugin config syntax.
+
+describe("plugin MCP discovery", () => {
+  test("lists the servers of enabled plugins by <plugin>:<server>, never their values", () => {
+    const { config, file, dir } = pluginConfig();
+    const list = discoverMcpServers(file, config);
+    expect(list).toEqual([
+      { name: "local", transport: "stdio", source: "user" },
+      { name: "plugin_beta_dup", transport: "stdio", source: "user" },
+      { name: "alpha:idx", transport: "stdio", source: "plugin", plugin: "alpha" },
+      { name: "alpha:web", transport: "http", source: "plugin", plugin: "alpha" },
+      { name: "beta:srv", transport: "stdio", source: "plugin", plugin: "beta" },
+      { name: "beta:extra", transport: "sse", source: "plugin", plugin: "beta" },
+      { name: "gamma:g", transport: "stdio", source: "plugin", plugin: "gamma" },
+    ]);
+    const text = JSON.stringify(list);
+    for (const s of [...SECRETS, "example.test", "bin/srv", config, dir("alpha")]) expect(text).not.toContain(s);
+  });
+
+  test("expands the plugin variables, keeps the CLI key, and exports the variables to a stdio server", () => {
+    const { config, file, dir } = pluginConfig();
+    const servers = readServers(file, config);
+    const data = join(config, "plugins", "data", "alpha-m");
+    expect(servers.get("alpha:idx")).toEqual({
+      key: "plugin_alpha_idx",
+      plugin: "alpha",
+      entry: {
+        type: "stdio",
+        command: `${dir("alpha")}/bin/srv`,
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: the CLI expands other variables itself.
+        args: [`${data}/db`, "${HOME}"],
+        env: { CLAUDE_PLUGIN_ROOT: dir("alpha"), CLAUDE_PLUGIN_DATA: data, TOKEN: "ENV-SECRET" },
+      },
+    });
+    expect(existsSync(data)).toBe(true);
+    expect(servers.get("gamma:g")?.entry).toMatchObject({ command: `${dir("gamma")}/g` });
+    expect(existsSync(join(config, "plugins", "data", "gamma-m"))).toBe(false);
+    expect(servers.get("alpha:web")).toMatchObject({ key: "plugin_alpha_web", entry: { url: "https://mcp.example.test/URL-SECRET" } });
+    // A disabled plugin, a path out of the plugin folder, a bundle, ${user_config}, a bad name, and a used key give no server.
+    for (const id of ["off:gone", "alpha:esc", "alpha:cfg", "beta:bad.name", "beta:dup"]) expect(servers.has(id)).toBe(false);
+  });
+
+  test(
+    "run setup copies a picked plugin server under its key",
+    async () => {
+      const { config, file } = pluginConfig();
+      const r = await userServers(
+        [
+          { server: "beta:srv", tools: ["search"] },
+          { server: "off:gone", tools: ["x"] },
+        ],
+        file,
+        config,
+      );
+      expect(Object.keys(r.servers)).toEqual(["plugin_beta_srv"]);
+      expect(r.servers.plugin_beta_srv).toMatchObject({ tools: ["search"], deny: ["lookup", "delete_item"] });
+      expect(r.gaps).toEqual(["MCP server off:gone: not found in the Claude config"]);
+    },
+    SLOW,
+  );
 });
 
 describe("user MCP tools", () => {
@@ -206,6 +308,9 @@ describe("user MCP prompts and profiles", () => {
     expect(ok([{ server: "a", tools: ["x", "x"] }])).toBe(true);
     expect(profileInput.parse({ ...general, mcp: [{ server: "a", tools: ["x", "x"] }] }).mcp).toEqual([{ server: "a", tools: ["x"] }]);
     expect(ok([{ server: "a.b", tools: [] }])).toBe(false);
+    expect(ok([{ server: "my.plugin:srv-1", tools: [] }])).toBe(true);
+    expect(ok([{ server: "a:b:c", tools: [] }])).toBe(false);
+    expect(ok([{ server: "a:b.c", tools: [] }])).toBe(false);
     expect(ok([{ server: "a", tools: ["x,y"] }])).toBe(false);
     expect(
       ok([

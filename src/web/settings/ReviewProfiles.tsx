@@ -465,7 +465,7 @@ function McpPicker(props: { d: Draft; i: number; servers: ServerList; failed: bo
         </p>
         {props.failed && <p className="m-0 text-xs text-destructive">Could not list the MCP servers.</p>}
         {!servers && !props.failed && <p className="m-0 text-xs text-muted-foreground">Loading MCP servers…</p>}
-        {servers && servers.size === 0 && <p className="m-0 text-xs text-muted-foreground">{runner} has no user MCP servers.</p>}
+        {servers && servers.size === 0 && <p className="m-0 text-xs text-muted-foreground">{runner} has no MCP servers.</p>}
         <ul className="m-0 grid list-none gap-3 p-0">
           {missing.map((m) => row(m.server, undefined))}
           {[...(servers?.values() ?? [])].map((s) => row(s.name, s))}
@@ -540,9 +540,7 @@ function McpServerRow(props: {
           <span className="text-xs break-words text-muted-foreground">
             {!server
               ? warn(`Not found in ${props.runner}. Runs go on without it.`)
-              : server.transport === "stdio"
-                ? "Local command"
-                : `Remote server (${server.transport})`}
+              : `${server.transport === "stdio" ? "Local command" : `Remote server (${server.transport})`}${server.plugin ? `, plugin ${server.plugin}` : ""}`}
           </span>
         </span>
       </label>

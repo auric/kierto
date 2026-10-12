@@ -1042,7 +1042,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const profile = j.profile;
     const [docs, user] = await Promise.all([
       docServers(profile),
-      userServers(profile.mcp, claudeJsonPath(opts.claudeConfigDir ?? process.env.CLAUDE_CONFIG_DIR)),
+      userServers(
+        profile.mcp,
+        claudeJsonPath(opts.claudeConfigDir ?? process.env.CLAUDE_CONFIG_DIR),
+        opts.claudeConfigDir ?? claudeConfigDir(),
+      ),
     ]);
     if (j.cancelled) return cancelled();
     const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...docs.servers, ...user.servers };

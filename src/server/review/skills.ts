@@ -25,7 +25,7 @@ export const skillFolder = (id: string) => id.replace(":", "+");
 
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-function readJson(path: string): unknown {
+export function readJson(path: string): unknown {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
   } catch {
@@ -77,18 +77,23 @@ function installOf(entries: unknown): { path: string; version?: string } | null 
   return { path: e.installPath as string, ...(typeof e.version === "string" && { version: e.version }) };
 }
 
-// Reads the disk on each call. Missing files and bad JSON give fewer skills, never an error.
-export function discoverSkills(config = claudeConfigDir()): Skill[] {
-  const out = skillsIn(join(config, "skills"), "user");
+// The enabled plugins at user scope. key: "<plugin>@<marketplace>". Missing files and bad JSON give fewer plugins, never an error.
+export function enabledPlugins(config = claudeConfigDir()): { key: string; plugin: string; path: string; version?: string }[] {
   const settings = readJson(join(config, "settings.json"));
   const installed = readJson(join(config, "plugins", "installed_plugins.json"));
   const enabled = record(settings) && record(settings.enabledPlugins) ? settings.enabledPlugins : {};
   const plugins = record(installed) && record(installed.plugins) ? installed.plugins : {};
-  for (const [key, on] of Object.entries(enabled)) {
+  return Object.entries(enabled).flatMap(([key, on]) => {
     const plugin = key.split("@")[0] ?? "";
     const install = on === true && PART.test(plugin) ? installOf(plugins[key]) : null;
-    if (install) out.push(...skillsIn(join(install.path, "skills"), "plugin", plugin, install.version));
-  }
+    return install ? [{ key, plugin, ...install }] : [];
+  });
+}
+
+// Reads the disk on each call. Missing files and bad JSON give fewer skills, never an error.
+export function discoverSkills(config = claudeConfigDir()): Skill[] {
+  const out = skillsIn(join(config, "skills"), "user");
+  for (const p of enabledPlugins(config)) out.push(...skillsIn(join(p.path, "skills"), "plugin", p.plugin, p.version));
   const seen = new Set<string>();
   return out.filter((s) => !seen.has(s.id) && !!seen.add(s.id));
 }

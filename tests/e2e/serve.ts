@@ -40,7 +40,7 @@ const runner = fakeRunner(claudeDir);
 const runnerCommand = runner.command;
 console.log(`Fake claude CLI: ${runnerCommand.join(" ")}`);
 
-// A synthetic Claude Code config folder: one user skill and one skill of an enabled plugin. Skill discovery reads only this folder.
+// A synthetic Claude Code config folder: one user skill, and one skill and one MCP server of an enabled plugin. Skill discovery reads only this folder.
 const claudeConfig = join(claudeDir, "config");
 const skillFile = (dir: string, name: string, description: string) => {
   mkdirSync(dir, { recursive: true });
@@ -53,6 +53,20 @@ skillFile(join(claudeConfig, "skills", "test-check"), "test-check", "Finds chang
 writeFileSync(join(claudeConfig, "skills", "test-check", "notes.md"), "Extra notes.\n");
 const pluginDir = join(claudeConfig, "plugins", "cache", "e2e-market", "e2e-plugin", "1.2.0");
 skillFile(join(pluginDir, "skills", "style"), "style", "Checks the naming style.");
+// One MCP server of the plugin: the local fake stdio server again.
+writeFileSync(
+  join(pluginDir, ".mcp.json"),
+  JSON.stringify({
+    mcpServers: {
+      docs: {
+        command: process.execPath,
+        args: [join(import.meta.dir, "../support/fake-mcp.ts")],
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: the plugin config syntax.
+        env: { RL_E2E_ROOT: "${CLAUDE_PLUGIN_ROOT}" },
+      },
+    },
+  }),
+);
 writeFileSync(join(claudeConfig, "settings.json"), JSON.stringify({ enabledPlugins: { "e2e-plugin@e2e-market": true } }));
 writeFileSync(
   join(claudeConfig, "plugins", "installed_plugins.json"),

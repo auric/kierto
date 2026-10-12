@@ -837,7 +837,6 @@ async function b6() {
     rmSync(repo, { recursive: true, force: true });
     git(cache, "worktree", "add", "-q", "--detach", repo, head);
     const san = sanitizeWorktree(repo, git);
-    writeFileSync(join(work, "context/files.txt"), git(repo, "ls-files"));
 
     const left: string[] = [];
     const scan = (dir: string) => {

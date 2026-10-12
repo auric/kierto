@@ -217,13 +217,14 @@ test("a skill picked in a profile is saved and copied into the run folder", asyn
   await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
 });
 
-// serve.ts gives the app a Claude config with the user MCP server fake-docs: the local fake stdio server of tests/support/fake-mcp.ts.
+// serve.ts gives the app a Claude config with the user MCP server fake-docs and the plugin server e2e-plugin:docs. Both run tests/support/fake-mcp.ts.
 test("an MCP server picked in a profile gets only its ticked tools in the run", async ({ page, request }) => {
   await connect(page);
   await openSettings(page);
   const picker = page.locator("#profile-0-mcp");
   await picker.locator("summary").click();
   const group = page.getByRole("group", { name: "MCP servers of profile 1" });
+  await expect(group.getByRole("checkbox", { name: /^e2e-plugin:docs Local command, plugin e2e-plugin$/ })).toBeVisible();
   await group.getByRole("checkbox", { name: /^fake-docs Local command/ }).check();
   const tools = page.getByRole("group", { name: "Tools of fake-docs" });
   // Only the tools with readOnlyHint true start ticked.

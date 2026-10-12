@@ -1,15 +1,16 @@
-// MCP servers of the user's Claude config (user scope) for review profiles. Entries can hold secrets: no URL, header, command, args, or env value leaves this module except into the run's mcp.json.
-import { existsSync, readFileSync } from "node:fs";
+// MCP servers of the user's Claude config (user scope) and of the enabled plugins for review profiles. Entries can hold secrets: no URL, header, command, args, or env value leaves this module except into the run's mcp.json.
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { McpPick, McpServerDto, McpToolDto } from "../../shared/dto";
+import { type McpPick, type McpServerDto, type McpToolDto, mcpServerId } from "../../shared/dto";
 import { DOC_SERVERS, GIT_SERVER } from "./catalog";
 import { childEnv, killTree, NAME, type UserMcpEntry, type UserServerSpec } from "./claude";
+import { claudeConfigDir, enabledPlugins, readJson } from "./skills";
 
 const LIST_TIMEOUT_MS = 10_000;
 const MAX_PAGES = 10;
@@ -76,8 +77,69 @@ export function readUserServers(file = claudeJsonPath()): Map<string, UserMcpEnt
   return out;
 }
 
-export const discoverMcpServers = (file = claudeJsonPath()): McpServerDto[] =>
-  [...readUserServers(file)].map(([name, e]) => ({ name, transport: e.type, source: "user" }));
+// key: the server name in the run's mcp.json. plugin: the plugin that declares the server.
+export type FoundServer = { key: string; entry: UserMcpEntry; plugin?: string };
+
+// A file of plugin servers: { mcpServers: {...} } or the bare map.
+const serverMap = (j: unknown): Record<string, unknown> => (record(j) && record(j.mcpServers) ? j.mcpServers : record(j) ? j : {});
+
+// code.claude.com/docs/en/plugins-reference, "mcpServers": .mcp.json first, then each plugin.json shape in order. A later name replaces an earlier one.
+// A .json path must stay in the plugin folder. MCP bundles (.mcpb, .dxt) are not supported.
+function pluginServerMap(root: string): Record<string, unknown> {
+  const out = { ...serverMap(readJson(join(root, ".mcp.json"))) };
+  const manifest = readJson(join(root, ".claude-plugin", "plugin.json"));
+  const declared = record(manifest) ? manifest.mcpServers : undefined;
+  for (const d of Array.isArray(declared) ? declared : [declared]) {
+    if (record(d)) Object.assign(out, d);
+    else if (typeof d === "string" && d.endsWith(".json")) {
+      const path = resolve(root, d);
+      const rel = relative(root, path);
+      if (rel && !rel.startsWith("..") && !isAbsolute(rel)) Object.assign(out, serverMap(readJson(path)));
+    }
+  }
+  return out;
+}
+
+// The user servers by name, then the servers of each enabled plugin by <plugin>:<server>. Reads the disk on each call.
+// A plugin server gets the key plugin_<plugin>_<server>, as in the CLI. A key that is already in use drops the plugin server.
+export function readServers(file = claudeJsonPath(), config = claudeConfigDir()): Map<string, FoundServer> {
+  const out = new Map<string, FoundServer>();
+  for (const [name, entry] of readUserServers(file)) out.set(name, { key: name, entry });
+  const keys = new Set([...RESERVED, ...out.keys()]);
+  for (const p of enabledPlugins(config)) {
+    // code.claude.com/docs/en/plugins-reference, "Environment variables": the CLI resolves these in command, args, env, url, and headers.
+    const vars = {
+      CLAUDE_PLUGIN_ROOT: p.path,
+      CLAUDE_PLUGIN_DATA: join(config, "plugins", "data", p.key.replace(/[^A-Za-z0-9_-]/g, "-")),
+    };
+    for (const [name, raw] of Object.entries(pluginServerMap(p.path))) {
+      const id = `${p.plugin}:${name}`;
+      const key = `plugin_${p.plugin}_${name}`.replace(/[^A-Za-z0-9_-]/g, "_");
+      const text = JSON.stringify(raw);
+      // The CLI fills ${user_config.KEY} from values that the app cannot read. Such a server cannot start.
+      if (!NAME.test(name) || !mcpServerId.safeParse(id).success || keys.has(key) || text.includes("${user_config.")) continue;
+      const entry = entryOf(
+        JSON.parse(text, (_, v) =>
+          typeof v === "string" ? v.replace(/\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_PLUGIN_DATA)\}/g, (_m, k: keyof typeof vars) => vars[k]) : v,
+        ),
+      );
+      if (!entry) continue;
+      if (entry.type === "stdio") {
+        // The CLI exports both variables to a stdio server and creates the data folder on first reference.
+        entry.env = { ...vars, ...entry.env };
+        if (/\$\{CLAUDE_PLUGIN_DATA\}/.test(text)) mkdirSync(vars.CLAUDE_PLUGIN_DATA, { recursive: true });
+      }
+      keys.add(key);
+      out.set(id, { key, entry, plugin: p.plugin });
+    }
+  }
+  return out;
+}
+
+export const discoverMcpServers = (file = claudeJsonPath(), config = claudeConfigDir()): McpServerDto[] =>
+  [...readServers(file, config)].map(([name, s]) =>
+    s.plugin ? { name, transport: s.entry.type, source: "plugin", plugin: s.plugin } : { name, transport: s.entry.type, source: "user" },
+  );
 
 // code.claude.com/docs/en/mcp, "Environment variable expansion": ${VAR} and ${VAR:-default}. The run's CLI expands the copied entry itself.
 const expand = (s: string, env: Record<string, string>) =>
@@ -156,21 +218,22 @@ export const listUserTools: ListUserTools = async (entry) => {
 export async function userServers(
   picks: McpPick[],
   file = claudeJsonPath(),
+  configDir = claudeConfigDir(),
   list: ListUserTools = listUserTools,
 ): Promise<{ servers: Record<string, UserServerSpec>; gaps: string[] }> {
   const servers: Record<string, UserServerSpec> = {};
   const gaps: string[] = [];
   const used = picks.filter((p) => p.tools.length);
   if (!used.length) return { servers, gaps };
-  const config = readUserServers(file);
+  const config = readServers(file, configDir);
   const found = await Promise.allSettled(
     used.map(async (p) => {
-      const user = config.get(p.server);
-      return user ? { user, tools: (await list(user)).map((t) => t.name) } : null;
+      const s = config.get(p.server);
+      return s ? { key: s.key, user: s.entry, tools: (await list(s.entry)).map((t) => t.name) } : null;
     }),
   );
   used.forEach((p, i) => {
-    const r = found[i] as PromiseSettledResult<{ user: UserMcpEntry; tools: string[] } | null>;
+    const r = found[i] as PromiseSettledResult<{ key: string; user: UserMcpEntry; tools: string[] } | null>;
     if (r.status === "rejected") {
       gaps.push(`MCP server ${p.server}: unavailable (${r.reason instanceof McpListError ? r.reason.message : "error"})`);
       return;
@@ -179,10 +242,10 @@ export async function userServers(
       gaps.push(`MCP server ${p.server}: not found in the Claude config`);
       return;
     }
-    const { user, tools } = r.value;
+    const { key, user, tools } = r.value;
     for (const t of p.tools) if (!tools.includes(t)) gaps.push(`MCP tool ${p.server}/${t}: not found`);
     const chosen = p.tools.filter((t) => tools.includes(t));
-    if (chosen.length) servers[p.server] = { user, tools: chosen, deny: tools.filter((t) => !chosen.includes(t)) };
+    if (chosen.length) servers[key] = { user, tools: chosen, deny: tools.filter((t) => !chosen.includes(t)) };
   });
   return { servers, gaps };
 }

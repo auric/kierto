@@ -56,9 +56,11 @@ export const MAX_PROFILE_MCP = 10;
 export const MAX_MCP_TOOLS = 100;
 // A server or tool name goes into CLI flags as mcp__<server>__<tool>. src/server/review/claude.ts NAME has the same characters.
 export const mcpName = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
-// One server of the user's Claude config and the tools that a run may call.
+// A server ID: the name of a user server, or <plugin>:<server> for a server of an enabled plugin. The plugin part is a skillId part.
+export const mcpServerId = z.string().regex(/^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[A-Za-z0-9_-]{1,128}$/);
+// One server of the user's Claude config or of an enabled plugin, and the tools that a run may call.
 export const mcpPick = z.object({
-  server: mcpName,
+  server: mcpServerId,
   tools: z
     .array(mcpName)
     .max(MAX_MCP_TOOLS)
@@ -67,7 +69,8 @@ export const mcpPick = z.object({
 export type McpPick = z.infer<typeof mcpPick>;
 
 // GET /api/mcp-servers. It never holds the URL, headers, command, args, or env of a server.
-export type McpServerDto = { name: string; transport: "stdio" | "http" | "sse"; source: "user" };
+// name: the server ID. plugin: the plugin name of a plugin server.
+export type McpServerDto = { name: string; transport: "stdio" | "http" | "sse"; source: "user" | "plugin"; plugin?: string };
 // POST /api/mcp-servers/:name/tools. readOnlyHint: null when the server does not say.
 export type McpToolDto = { name: string; description: string; readOnlyHint: boolean | null };
 
