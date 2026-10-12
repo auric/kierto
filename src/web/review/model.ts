@@ -145,69 +145,52 @@ export function rereviewCount(items: ReviewItemDto[]): string {
   return [`${fresh} new, ${open} carried, ${closed} fixed or outdated`, q ? plural(q, "question") : ""].filter(Boolean).join(", ");
 }
 
+// result: the outcome in a few words. It is empty while the items or the edits load.
+// calls: null while the log loads.
 export type RunLineState =
   | { kind: "running"; agents: number; calls: number; startedAt: number }
-  | {
-      kind: "done";
-      verb: "reviewed" | "explained" | "drafted replies on" | "answered a question on" | "proposed fixes on";
-      head: string;
-      at: number;
-      count: string;
-      tokens: number | null;
-      gaps: boolean;
-      since: string | null;
-      // A re-review: from is the short head of its base run. full: the range fell back to the full change.
-      changes: { from: string; full: boolean } | null;
-    }
+  | { kind: "done"; result: string; tokens: number | null; gaps: boolean }
   | { kind: "failed"; text: string; raw: boolean }
   | { kind: "limit"; text: string }
-  | { kind: "cancelled"; calls: number };
+  | { kind: "cancelled"; calls: number | null };
 
 // Plan v3 section 7, Stale: "Reviewed <hash>. N commits since." commits: newest first.
-function staleText(r: RunDto, commits: CommitDto[] | undefined): string | null {
+export function staleText(r: RunDto, commits: CommitDto[] | undefined): string | null {
   if (!r.stale) return null;
   if (!r.stale.source) return "The target branch moved since";
   const i = commits?.findIndex((c) => c.hash === r.sourceHead) ?? -1;
   return i > 0 ? `${plural(i, "commit")} since` : "New commits since";
 }
 
-export function runLine(d: RunDetail, profiles: ProfileDto[], commits?: CommitDto[]): RunLineState {
-  const r = d.run;
+// The outcome of an ended run. items, edits: undefined while they load.
+function doneText(r: RunDto, items: ReviewItemDto[] | undefined, edits: number | undefined, profiles: ProfileDto[]): string {
+  if (r.kind === "ask") return "Answered";
+  if (r.kind === "fix") return edits === undefined ? "" : edits ? plural(edits, "edit") : "No edits";
+  // The flag stored at the start wins over the current profile. null falls back to the current profile.
+  if (r.kind === "review" && (r.explain ?? profiles.find((p) => p.id === r.profile)?.explain)) {
+    const q = items?.filter((i) => i.kind === "question").length ?? 0;
+    return ["Explained the change", q ? plural(q, "question") : ""].filter(Boolean).join(", ");
+  }
+  if (!items) return "";
+  return r.since ? rereviewCount(items) : countText(items, r.status === "incomplete", r.kind);
+}
+
+// One row of the run list (R14). d: the detail of r, undefined while it loads. edits: the edit count of a fix run.
+export function runLine(r: RunDto, d: RunDetail | undefined, profiles: ProfileDto[], edits?: number): RunLineState {
   switch (r.status) {
     case "running":
-      return { kind: "running", agents: agentCount(d.events), calls: toolCalls(d.events), startedAt: r.startedAt };
+      return { kind: "running", agents: agentCount(d?.events ?? []), calls: toolCalls(d?.events ?? []), startedAt: r.startedAt };
     case "cancelled":
-      return { kind: "cancelled", calls: toolCalls(d.events) };
+      return { kind: "cancelled", calls: d ? toolCalls(d.events) : null };
     case "failed":
       if (r.errorKind === "usage_limit") return { kind: "limit", text: r.errorText ?? "" };
       return { kind: "failed", text: r.errorText ?? "No reason was recorded.", raw: r.hasRaw };
-    default: {
-      const gaps = r.status === "incomplete";
-      return {
-        kind: "done",
-        verb:
-          r.kind === "reply"
-            ? "drafted replies on"
-            : r.kind === "ask"
-              ? "answered a question on"
-              : r.kind === "fix"
-                ? "proposed fixes on"
-                : (r.explain ?? profiles.find((p) => p.id === r.profile)?.explain)
-                  ? "explained"
-                  : "reviewed",
-        head: shortHash(r.sourceHead),
-        at: r.finishedAt ?? r.startedAt,
-        count: r.since ? rereviewCount(d.items) : countText(d.items, gaps, r.kind),
-        tokens: tokenTotal(r.usage),
-        gaps,
-        since: staleText(r, commits),
-        changes: r.since && { from: shortHash(r.since.head), full: !r.since.incremental },
-      };
-    }
+    default:
+      return { kind: "done", result: doneText(r, d?.items, edits, profiles), tokens: tokenTotal(r.usage), gaps: r.status === "incomplete" };
   }
 }
 
-// The kind label of the run line (R14): the newest run of any kind shows there.
+// The words of each run kind (R14). running: the state of a running run in the run list.
 // doing: "<runner> is <doing> <PR>" while the run holds the only slot. now: "<profile>: <now> now." in the Review runs view.
 export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancelled: string; doing: string; now: string }> = {
   review: { running: "Reviewing…", failed: "Review failed.", cancelled: "the review", doing: "reviewing", now: "reviewing" },
@@ -237,13 +220,13 @@ export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancel
 // R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, and the brief.
 export const latestReview = (runs: RunDto[] | undefined) => runs?.find((r) => r.kind === "review") ?? null;
 
-// ---------- The newest run of the other kinds ----------
+// ---------- One row per run kind ----------
 
 export const KIND_LABEL: Record<RunKind, string> = { review: "Review", reply: "Reply drafts", fix: "Fixes", ask: "Ask" };
 
-// The newest run of each kind that the run line does not show, newest first. runs: newest first.
-export function otherRuns(runs: RunDto[] | undefined, line: RunDto | null): RunDto[] {
-  const seen = new Set<RunKind>(line ? [line.kind] : []);
+// The newest run of each kind, newest first. runs: newest first.
+export function kindRuns(runs: RunDto[] | undefined): RunDto[] {
+  const seen = new Set<RunKind>();
   const out: RunDto[] = [];
   for (const r of runs ?? []) {
     if (seen.has(r.kind)) continue;
@@ -251,25 +234,6 @@ export function otherRuns(runs: RunDto[] | undefined, line: RunDto | null): RunD
     out.push(r);
   }
   return out;
-}
-
-// The outcome of a run in a few words. items: the items of the run. edits: the edit count of a fix run.
-// Either one is undefined while it loads. Then only the state shows.
-export function runResult(r: RunDto, items: ReviewItemDto[] | undefined, edits: number | undefined): string {
-  switch (r.status) {
-    case "running":
-      return RUN_TEXT[r.kind].running;
-    case "cancelled":
-      return "Cancelled";
-    case "failed":
-      return r.errorKind === "usage_limit" ? "Usage limit reached" : "Failed";
-    default:
-      if (r.kind === "ask") return "Answered";
-      if (r.kind === "fix") return edits === undefined ? "" : edits ? plural(edits, "edit") : "No edits";
-      if (r.kind === "review" && (r.explain ?? r.profile === "explain")) return "Explained the change";
-      if (!items) return "";
-      return r.since ? rereviewCount(items) : countText(items, r.status === "incomplete", r.kind);
-  }
 }
 
 export type Severity = AnchoredFinding["severity"];

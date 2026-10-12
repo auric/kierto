@@ -36,6 +36,8 @@ const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
 });
 
 const runLine = (page: Page) => page.locator("#runline");
+// The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
+const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 const box = (page: Page) => page.getByLabel("Your question");
 const answers = (page: Page) => page.locator("[data-ask]");
 const runLog = (page: Page) => page.getByRole("dialog", { name: "Claude Code run log" });
@@ -64,7 +66,8 @@ test("q opens Ask, Ctrl+Enter asks, the answer is safe Markdown, and Log opens t
   await box(page).fill(QUESTION);
   await box(page).press("Control+Enter");
   await expect(box(page)).toHaveValue("");
-  await expect(runLine(page)).toContainText(/Claude answered a question on [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page, "ask")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  await expect(runRow(page, "ask")).toContainText("Answered");
   await expect(page.locator("#s-ask-sum")).toHaveText("Ask Claude1");
 
   const a = answers(page).first();
@@ -109,7 +112,7 @@ test("a 409 keeps the typed question, also after a reload, and a running answer 
   await expect(box(page)).toHaveValue(QUESTION);
 
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
-  await expect(runLine(page)).toContainText("You cancelled the review", { timeout: RUN_MS });
+  await expect(runRow(page)).toContainText(/Cancelled after \d+ tool calls?/, { timeout: RUN_MS });
   await box(page).press("Control+Enter");
   await expect(runLine(page)).toContainText("Answering…", { timeout: RUN_MS });
   const a = answers(page).first();
@@ -117,7 +120,7 @@ test("a 409 keeps the typed question, also after a reload, and a running answer 
   await expect(page.locator("#s-ask-sum")).toHaveText("Ask Claude1, 1 running");
   await a.getByRole("button", { name: "Cancel" }).click();
   await expect(a.getByRole("status")).toContainText("You cancelled the question.", { timeout: RUN_MS });
-  await expect(runLine(page)).toContainText(/You cancelled the question after \d+ tool calls?\./);
+  await expect(runRow(page, "ask")).toContainText(/Cancelled after \d+ tool calls?/);
 });
 
 test("a failed answer shows the reason and its raw output", async ({ page }) => {

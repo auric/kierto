@@ -135,8 +135,9 @@ test("profile menus: Draft replies runs once with another profile, the run line 
   await expect(menu).toContainText("Profile for these replies");
   await expect(menu.getByRole("menuitem", { name: /^General.*Default$/ })).toBeVisible();
   await menu.getByRole("menuitem", { name: /^Security/ }).click();
-  await expect(page.locator("#runline")).toContainText(/Claude drafted replies on [0-9a-f]{7}/, { timeout: RUN_MS });
-  await expect(page.locator("#runline")).toContainText("Security profile");
+  const replies = page.locator("#runline [data-run-kind='reply']");
+  await expect(replies).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  await expect(replies).toContainText("Security profile");
   await expect(page.locator("#review-btn")).toHaveText(/Review · General/);
 
   // Keyboard: the menu button opens the menu. Letters stay in the menu. Esc closes it and gives the focus back.

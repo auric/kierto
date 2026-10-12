@@ -224,10 +224,12 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
 
 const RUN_MS = 60_000;
 const runLine = (page: Page) => page.locator("#runline");
+// The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
+const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 // The task row next to the run buttons while the brief is closed, and the one of the Ask section.
 const runChips = (page: Page) => page.locator("[data-task-chips='tk-runs']");
 const askChips = (page: Page) => page.locator("[data-task-chips='tk-ask']");
-const runTasks = (page: Page, ids: string) => page.getByTitle(`Task text that this run read: ${ids}`);
+const runTasks = (page: Page, ids: string, kind = "review") => runRow(page, kind).getByTitle(`Task text that this run read: ${ids}`);
 const downloads = async () => (await jiraRequests()).filter((r) => r.includes("/secure/attachment/"));
 
 async function connectJira(page: Page) {
@@ -265,7 +267,7 @@ test("the run buttons and the Ask section share the task chips of the brief, and
 
   // A review records the fetched tasks at its start.
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(runLine(page)).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runTasks(page, JIRA_ISSUE)).toBeVisible();
 
   // Remove changes the PR tasks, not the record of the run.
@@ -289,8 +291,8 @@ test("the run buttons and the Ask section share the task chips of the brief, and
   await expect(ask).toContainText(`${JIRA_ISSUE} · fetched today`);
   await page.getByLabel("Your question").fill("Which callers of the flush need the lock?");
   await page.getByLabel("Your question").press("Control+Enter");
-  await expect(runLine(page)).toContainText(/Claude answered a question on [0-9a-f]{7}/, { timeout: RUN_MS });
-  await expect(runTasks(page, JIRA_ISSUE)).toBeVisible();
+  await expect(runRow(page, "ask")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  await expect(runTasks(page, JIRA_ISSUE, "ask")).toBeVisible();
 });
 
 test("attachments: download all, the inline image, save, include after the policy confirm, a run gets the image, open folder, delete", async ({
@@ -364,7 +366,7 @@ test("attachments: download all, the inline image, save, include after the polic
   await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
   await expect.poll(runAttachments, { timeout: RUN_MS }).toEqual(["10100.png"]);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
-  await expect(runLine(page)).toContainText("You cancelled the review", { timeout: RUN_MS });
+  await expect(runRow(page)).toContainText(/Cancelled after \d+ tool calls?/, { timeout: RUN_MS });
 
   // Open folder without a file manager shows the path with Copy. serve.ts gives the server a recorder, so no window opens.
   await page.keyboard.press("Shift+R");

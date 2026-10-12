@@ -68,7 +68,7 @@ export type McpPick = z.infer<typeof mcpPick>;
 
 // GET /api/mcp-servers. It never holds the URL, headers, command, args, or env of a server.
 export type McpServerDto = { name: string; transport: "stdio" | "http" | "sse"; source: "user" };
-// GET /api/mcp-servers/:name/tools. readOnlyHint: null when the server does not say.
+// POST /api/mcp-servers/:name/tools. readOnlyHint: null when the server does not say.
 export type McpToolDto = { name: string; description: string; readOnlyHint: boolean | null };
 
 // prompt: the profile part of both agent prompts. docs: the run gets the documentation servers.

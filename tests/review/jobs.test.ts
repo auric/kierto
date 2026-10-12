@@ -875,16 +875,24 @@ describe("editable profiles (M4)", () => {
           { name: "remote", transport: "http", source: "user" },
         ]);
         expect(JSON.stringify(list.body)).not.toMatch(/SECRET|example\.test|fake-mcp/);
-        const tools = await h.json<{ name: string; readOnlyHint: boolean | null }[]>("/api/mcp-servers/fake/tools");
+        const post = { method: "POST" };
+        const tools = await h.json<{ name: string; readOnlyHint: boolean | null }[]>("/api/mcp-servers/fake/tools", post);
         expect(tools.status).toBe(200);
         expect(tools.body.map((t) => [t.name, t.readOnlyHint])).toEqual([
           ["search", true],
           ["lookup", true],
           ["delete_item", false],
         ]);
-        expect((await h.json("/api/mcp-servers/nope/tools")).status).toBe(404);
-        expect((await h.json("/api/mcp-servers/bad.name/tools")).status).toBe(400);
-        const broken = await h.json<{ error: string }>("/api/mcp-servers/broken/tools");
+        // The call can start a process, so it needs the session token (BRIEF 3.6). A GET starts nothing.
+        const bare = await h.app.request(`${ORIGIN}/api/mcp-servers/fake/tools`, {
+          method: "POST",
+          headers: { host: HEADERS.host, origin: ORIGIN },
+        });
+        expect(bare.status).toBe(403);
+        expect((await h.call("/api/mcp-servers/fake/tools")).status).toBe(404);
+        expect((await h.json("/api/mcp-servers/nope/tools", post)).status).toBe(404);
+        expect((await h.json("/api/mcp-servers/bad.name/tools", post)).status).toBe(400);
+        const broken = await h.json<{ error: string }>("/api/mcp-servers/broken/tools", post);
         expect(broken.status).toBe(502);
         expect(broken.body.error).toMatch(/^Could not list the tools of broken: /);
         expect(broken.body.error).not.toContain("rl-no-such-command");

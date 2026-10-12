@@ -31,6 +31,8 @@ const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
 
 const row = (page: Page) => page.locator("[data-row]", { hasText: TITLE }).first();
 const runLine = (page: Page) => page.locator("#runline");
+// The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
+const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 const drafts = (page: Page) => page.locator("[data-draft]");
 const thread = (page: Page, id: number) => page.locator(`#t-${id}`);
 const card = (page: Page, id: number) => thread(page, id).locator("[data-reply-draft]");
@@ -56,8 +58,8 @@ async function startReview(page: Page) {
 test("A7: a push after the review marks it stale, and the post stays blocked with the reason", async ({ page }) => {
   await connect(page);
   await startReview(page);
-  await expect(runLine(page)).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
-  const head = (await runLine(page).locator("code").textContent()) ?? "";
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  const head = (await runRow(page).locator("code").first().textContent()) ?? "";
   await drafts(page).nth(0).getByRole("button", { name: "Accept" }).click();
   await expect(page.getByText("Ready to post: 1 inline comment")).toBeVisible();
   // The focus moves on to the next draft, so the live region says what happened to this one.
@@ -66,7 +68,7 @@ test("A7: a push after the review marks it stale, and the post stays blocked wit
   await control("state", { push: true });
   // The result stays tied to the reviewed commit and says that it is stale.
   await expect(runLine(page)).toContainText("New commits since");
-  await expect(runLine(page).locator("code")).toHaveText(head);
+  await expect(runRow(page).locator("code").first()).toHaveText(head);
   await expect(drafts(page)).toHaveCount(3);
 
   await page.keyboard.press("p");
@@ -85,7 +87,7 @@ test("A10: a wrong login stops the review before it starts, the button says why,
   await control("claude", { stream: "tree", login: "console" });
   await connect(page);
   await startReview(page);
-  await expect(runLine(page)).toContainText("Review failed. authMethod is console. Review needs the claude.ai login.", {
+  await expect(runLine(page)).toContainText("Failed. authMethod is console. Review needs the claude.ai login.", {
     timeout: RUN_MS,
   });
   await expect(page.locator("#review-note")).toContainText("Review needs the subscription login");
@@ -108,8 +110,8 @@ test("A11: an unreadable result shows no clean result, and nothing from it can p
   await control("claude", { stream: "schema" });
   await connect(page);
   await startReview(page);
-  await expect(runLine(page)).toContainText("Review failed. The result does not match the review schema.", { timeout: RUN_MS });
-  await expect(runLine(page)).not.toContainText("reviewed");
+  await expect(runLine(page)).toContainText("Failed. The result does not match the review schema.", { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "failed");
   await expect(drafts(page)).toHaveCount(0);
   await expect(page.locator("#ai-sum")).toHaveCount(0);
   await expect(page.locator("[data-postbar]")).toHaveCount(0);
@@ -122,7 +124,7 @@ test("A11, A12: a cut read and a documentation server that did not connect are c
   await control("claude", { stream: "gaps" });
   await connect(page);
   await startReview(page);
-  await expect(runLine(page)).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runLine(page)).toContainText("No findings in what it read");
   await expect(page.getByText(/no issues/i)).toHaveCount(0);
   await runLine(page).getByRole("button", { name: "Coverage gaps" }).click();
@@ -164,7 +166,7 @@ test("A17: a comment that tells the AI to answer another thread is data; no draf
   const btn = page.getByRole("button", { name: /^Draft replies · / });
   await expect(btn).toHaveAccessibleName("Draft replies · General, 1 thread");
   await btn.click();
-  await expect(runLine(page)).toContainText(/Claude drafted replies on [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runLine(page)).toContainText("1 reply draft");
 
   await expect(card(page, 1000101)).toContainText(asked);

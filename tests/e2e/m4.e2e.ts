@@ -31,6 +31,8 @@ const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
 const row = (page: Page) => page.locator("[data-row]", { hasText: TITLE }).first();
 const reviewButton = (page: Page) => page.locator("#review-btn");
 const runLine = (page: Page) => page.locator("#runline");
+// The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
+const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 const runLog = (page: Page) => page.getByRole("dialog", { name: "Claude Code run log" });
 const field = (page: Page, label: string, n: number) => page.getByLabel(`${label} of profile ${n}`, { exact: true });
 const names = (page: Page) =>
@@ -108,7 +110,7 @@ test("a renamed profile shows in the Review button and in the run labels; a run 
   await page.keyboard.press("Shift+R");
   await expect(page.getByRole("radio", { name: /^Correctness/ })).toBeChecked();
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(runLine(page)).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await page.keyboard.press("3");
   await expect(runLog(page)).toContainText("Correctness profile");
   await page.keyboard.press("Escape");
@@ -121,7 +123,7 @@ test("a renamed profile shows in the Review button and in the run labels; a run 
   await saveProfiles(page);
   await closeSettings(page);
   await expect(reviewButton(page)).toHaveText(/Review · Logic/);
-  await expect(runLine(page)).toContainText(/Claude reviewed [0-9a-f]{7}/);
+  await expect(runRow(page)).toContainText("Correctness profile");
   await page.keyboard.press("3");
   await expect(runLog(page)).toContainText("Correctness profile");
   await page.keyboard.press("Escape");
@@ -212,7 +214,7 @@ test("a skill picked in a profile is saved and copied into the run folder", asyn
   await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
   await expect.poll(runSkills, { timeout: RUN_MS }).toEqual(["e2e-plugin+style/SKILL.md", "test-check/SKILL.md", "test-check/notes.md"]);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
-  await expect(runLine(page)).toContainText("You cancelled the review", { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
 });
 
 // serve.ts gives the app a Claude config with the user MCP server fake-docs: the local fake stdio server of tests/support/fake-mcp.ts.
@@ -249,5 +251,5 @@ test("an MCP server picked in a profile gets only its ticked tools in the run", 
   expect(run?.allowed).not.toContain("mcp__fake-docs__lookup");
   expect(run?.denied?.split(",").sort()).toEqual(["mcp__fake-docs__delete_item", "mcp__fake-docs__lookup"]);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
-  await expect(runLine(page)).toContainText("You cancelled the review", { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
 });

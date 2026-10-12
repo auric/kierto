@@ -13,11 +13,11 @@ import {
   closedLabel,
   countText,
   draftExcerpt,
+  kindRuns,
   latestByPr,
   latestReview,
   limitText,
   logTree,
-  otherRuns,
   RUN_TEXT,
   repliesButton,
   replyCard,
@@ -25,10 +25,10 @@ import {
   rereviewCount,
   rereviewState,
   runLine,
-  runResult,
   runRows,
   runWhy,
   severityJumps,
+  staleText,
   tokenTotal,
   triageText,
 } from "../../src/web/review/model";
@@ -172,49 +172,53 @@ describe("log tree", () => {
   });
 });
 
+// The row of a run. items absent: the detail is still loading.
+const line = (r: RunDto, items?: ReviewItemDto[], edits?: number, events: RunEvent[] = []) =>
+  runLine(r, items && detail(r, events, items), PROFILES, edits);
+// The result of an ended run, else the state kind.
+const result = (r: RunDto, items?: ReviewItemDto[], edits?: number) => {
+  const l = line(r, items, edits);
+  return l.kind === "done" ? l.result : l.kind;
+};
+
 describe("run line", () => {
   const events = [ev("r1", 0), agent("ag", 1, "x", { status: "running", endedAt: null }), ev("c1", 2, { parent: "ag" })];
 
   test("running: agents, finished tool calls, and the start", () => {
-    expect(runLine(detail(run({ status: "running", finishedAt: null }), events), PROFILES)).toEqual({
-      kind: "running",
-      agents: 1,
-      calls: 2,
-      startedAt: 1_000,
-    });
+    const r = run({ status: "running", finishedAt: null });
+    expect(line(r, [], undefined, events)).toEqual({ kind: "running", agents: 1, calls: 2, startedAt: 1_000 });
+    expect(line(r)).toEqual({ kind: "running", agents: 0, calls: 0, startedAt: 1_000 });
   });
 
-  test("completed: verb, short head, counts, and tokens", () => {
+  test("completed: counts and tokens", () => {
     const usage = {
       costUsd: 0,
       turns: 3,
       durationMs: 1,
       tokens: { input_tokens: 6, output_tokens: 1897, cache_read_input_tokens: 12131, other: 5 },
     };
-    const l = runLine(detail(run({ usage }), [], [finding(1), finding(2), question(3)]), PROFILES);
-    expect(l).toMatchObject({ kind: "done", verb: "reviewed", head: "a3f9e21", at: 61_000, count: "2 findings, 1 question", gaps: false });
-    expect(l.kind === "done" && l.tokens).toBe(14034);
-    expect(runLine(detail(run({ profile: "explain" }), [], [question(1)]), PROFILES)).toMatchObject({
-      verb: "explained",
-      count: "1 question",
+    expect(line(run({ usage }), [finding(1), finding(2), question(3)])).toEqual({
+      kind: "done",
+      result: "2 findings, 1 question",
+      tokens: 14034,
+      gaps: false,
     });
+    expect(result(run({ profile: "explain" }), [question(1)])).toBe("Explained the change, 1 question");
+    expect(result(run({ profile: "explain" }), [])).toBe("Explained the change");
     // The flag stored at the start wins over the current profile. null falls back to the current profile.
-    expect(runLine(detail(run({ profile: "explain", explain: false })), PROFILES)).toMatchObject({ verb: "reviewed" });
-    expect(runLine(detail(run({ profile: "gone", explain: true })), PROFILES)).toMatchObject({ verb: "explained" });
+    expect(result(run({ profile: "explain", explain: false }), [])).toBe("No findings");
+    expect(result(run({ profile: "gone", explain: true }))).toBe("Explained the change");
   });
 
   test("incomplete never says no issues; complete without items says no findings", () => {
-    expect(runLine(detail(run({ status: "incomplete" })), PROFILES)).toMatchObject({ count: "No findings in what it read", gaps: true });
-    expect(runLine(detail(run()), PROFILES)).toMatchObject({ count: "No findings", gaps: false });
+    expect(line(run({ status: "incomplete" }), [])).toMatchObject({ result: "No findings in what it read", gaps: true });
+    expect(line(run(), [])).toMatchObject({ result: "No findings", gaps: false });
     expect(countText([question(1)], true)).toBe("No findings in what it read, 1 question");
   });
 
   test("stale: the commits since the reviewed head, else the target branch", () => {
     const commits = ["new2", "new1", "a3f9e2100000000000000000000000000000000"].map((hash) => ({ hash, message: "", author: "", at: 0 }));
-    const stale = (s: RunDto["stale"], c = commits) => {
-      const l = runLine(detail(run({ stale: s })), PROFILES, c);
-      return l.kind === "done" ? l.since : "?";
-    };
+    const stale = (s: RunDto["stale"], c = commits) => staleText(run({ stale: s }), c);
     expect(stale({ source: true, target: false })).toBe("2 commits since");
     expect(stale({ source: true, target: true }, [])).toBe("New commits since");
     expect(stale({ source: false, target: true })).toBe("The target branch moved since");
@@ -223,16 +227,14 @@ describe("run line", () => {
 
   test("failed, usage limit, and cancelled", () => {
     const failed = run({ status: "failed", errorKind: "schema", errorText: "The result does not match the review schema." });
-    expect(runLine(detail(failed), PROFILES)).toEqual({ kind: "failed", text: "The result does not match the review schema.", raw: true });
-    expect(runLine(detail({ ...failed, errorText: null, hasRaw: false }), PROFILES)).toEqual({
-      kind: "failed",
-      text: "No reason was recorded.",
-      raw: false,
-    });
+    expect(line(failed, [])).toEqual({ kind: "failed", text: "The result does not match the review schema.", raw: true });
+    expect(line({ ...failed, errorText: null, hasRaw: false })).toEqual({ kind: "failed", text: "No reason was recorded.", raw: false });
     const limit = run({ status: "failed", errorKind: "usage_limit", errorText: "Usage limit reached." });
-    expect(runLine(detail(limit), PROFILES)).toEqual({ kind: "limit", text: "Usage limit reached." });
+    expect(line(limit)).toEqual({ kind: "limit", text: "Usage limit reached." });
     const stopped = run({ status: "cancelled" });
-    expect(runLine(detail(stopped, events), PROFILES)).toEqual({ kind: "cancelled", calls: 2 });
+    expect(line(stopped, [], undefined, events)).toEqual({ kind: "cancelled", calls: 2 });
+    // The tool calls show only when the log is loaded.
+    expect(line(stopped)).toEqual({ kind: "cancelled", calls: null });
   });
 
   test("the usage limit line quotes the CLI message and says that nothing retries", () => {
@@ -408,22 +410,15 @@ describe("reply drafts", () => {
     expect(latestReview(undefined)).toBeNull();
   });
 
-  test("the run line names the kind of the newest run", () => {
+  test("the reply row counts the drafts and the threads that need no reply", () => {
     const items = [
       reply(1, 101, 105),
       reply(2, 102, 205),
       reply(3, 103, 305, { body: "", status: "discarded" }, { action: "none", body: "" }),
     ];
-    expect(runLine(detail(run({ kind: "reply" }), [], items), PROFILES)).toMatchObject({
-      kind: "done",
-      verb: "drafted replies on",
-      count: "2 reply drafts, 1 thread needs no reply",
-    });
+    expect(result(run({ kind: "reply" }), items)).toBe("2 reply drafts, 1 thread needs no reply");
     // An explain profile explains a review, but a reply run still drafts replies.
-    expect(runLine(detail(run({ kind: "reply", profile: "explain" })), PROFILES)).toMatchObject({
-      verb: "drafted replies on",
-      count: "No reply drafts",
-    });
+    expect(result(run({ kind: "reply", profile: "explain" }), [])).toBe("No reply drafts");
     expect(countText([reply(3, 103, 305, {}, { action: "none" }), reply(4, 104, 405, {}, { action: "none" })], false, "reply")).toBe(
       "No reply drafts, 2 threads need no reply",
     );
@@ -439,17 +434,13 @@ describe("reply drafts", () => {
   });
 
   // Plan r2 section 7: an ask run is never labeled as a review. It has no items, so its count is empty.
-  test("an ask run reads Answering… while it runs and answered a question on when done, with an empty count", () => {
+  test("an ask run reads Answering… while it runs and Answered when done", () => {
     expect(RUN_TEXT.ask.running).toBe("Answering…");
     expect(RUN_TEXT.ask.doing).toBe("answering a question on");
     expect(runWhy(run({ kind: "ask", status: "running" })).text).toBe("General: answering a question now.");
     expect(runWhy(run({ kind: "review", status: "running" })).text).toBe("General: reviewing now.");
-    // The Explain flag names a review "explained". An ask run keeps its own verb.
-    expect(runLine(detail(run({ kind: "ask", profile: "explain", question: "Why?" })), PROFILES)).toMatchObject({
-      kind: "done",
-      verb: "answered a question on",
-      count: "",
-    });
+    // The Explain flag names a review "explained". An ask run keeps its own result.
+    expect(result(run({ kind: "ask", profile: "explain", question: "Why?" }), [])).toBe("Answered");
     expect(countText([], false, "ask")).toBe("");
   });
 
@@ -504,21 +495,13 @@ describe("re-review", () => {
   // A finding copied by a re-review. The payload type of the DTO allows carried on every kind.
   const copy = (id: number, verdict: Carried["verdict"], o: Partial<ReviewItemDto> = {}) => finding(id, o, carried(verdict));
 
-  test("the run line names the range and counts new, carried, and closed findings", () => {
+  test("the review row counts new, carried, and closed findings", () => {
     const r = run({ since: { head: since, incremental: true } });
     const items = [finding(1), copy(2, "open"), copy(3, "fixed", { status: "discarded" }), copy(4, "outdated", { status: "discarded" })];
-    expect(runLine(detail(r, [], [...items, question(5)]), PROFILES)).toMatchObject({
-      verb: "reviewed",
-      head: "a3f9e21",
-      count: "1 new, 1 carried, 2 fixed or outdated, 1 question",
-      changes: { from: "1111111", full: false },
-    });
+    expect(result(r, [...items, question(5)])).toBe("1 new, 1 carried, 2 fixed or outdated, 1 question");
     // The server fell back to the full change.
-    expect(runLine(detail(run({ since: { head: since, incremental: false } })), PROFILES)).toMatchObject({
-      count: "0 new, 0 carried, 0 fixed or outdated",
-      changes: { from: "1111111", full: true },
-    });
-    expect(runLine(detail(run()), PROFILES)).toMatchObject({ changes: null, count: "No findings" });
+    expect(result(run({ since: { head: since, incremental: false } }), [])).toBe("0 new, 0 carried, 0 fixed or outdated");
+    expect(result(run(), [])).toBe("No findings");
     expect(rereviewCount([copy(1, "open", { status: "accepted" }), copy(2, "open", { status: "discarded" })])).toBe(
       "0 new, 2 carried, 0 fixed or outdated",
     );
@@ -562,7 +545,7 @@ describe("re-review", () => {
   });
 });
 
-describe("the newest run of the other kinds", () => {
+describe("one row per run kind", () => {
   const replyItem = (id: number, action: ReplyPayload["action"]): ReviewItemDto => {
     const payload: ReplyPayload = { thread: id, action, body: "Ok.", reason: "", evidenceStatus: "code", replyTo: id };
     return {
@@ -578,7 +561,7 @@ describe("the newest run of the other kinds", () => {
     };
   };
 
-  test("one run per kind that the run line does not show, newest first", () => {
+  test("the newest run of each kind, newest first", () => {
     const runs = [
       run({ id: 5, kind: "fix" }),
       run({ id: 4, kind: "reply" }),
@@ -586,28 +569,26 @@ describe("the newest run of the other kinds", () => {
       run({ id: 2, kind: "reply" }),
       run({ id: 1, kind: "ask" }),
     ];
-    expect(otherRuns(runs, runs[0] ?? null).map((r) => r.id)).toEqual([4, 3, 1]);
-    expect(otherRuns(runs, run({ id: 3 })).map((r) => r.id)).toEqual([5, 4, 1]);
-    expect(otherRuns(undefined, null)).toEqual([]);
+    expect(kindRuns(runs).map((r) => r.id)).toEqual([5, 4, 3, 1]);
+    expect(kindRuns(undefined)).toEqual([]);
   });
 
-  test("the result names the outcome of each kind, and only the state while the items load", () => {
+  test("the result names the outcome of each kind, and it is empty while the items load", () => {
     const items = [replyItem(1, "reply"), replyItem(2, "reply"), replyItem(3, "none")];
-    expect(runResult(run({ kind: "reply" }), items, undefined)).toBe("2 reply drafts, 1 thread needs no reply");
-    expect(runResult(run({ kind: "reply" }), undefined, undefined)).toBe("");
-    expect(runResult(run(), [finding(1), finding(2), question(3)], undefined)).toBe("2 findings, 1 question");
-    expect(runResult(run({ status: "incomplete" }), [], undefined)).toBe("No findings in what it read");
-    expect(runResult(run({ profile: "explain" }), [], undefined)).toBe("Explained the change");
-    expect(runResult(run({ kind: "fix" }), [], 2)).toBe("2 edits");
-    expect(runResult(run({ kind: "fix" }), [], 0)).toBe("No edits");
-    expect(runResult(run({ kind: "fix" }), [], undefined)).toBe("");
-    expect(runResult(run({ kind: "ask" }), [], undefined)).toBe("Answered");
-    expect(runResult(run({ status: "cancelled" }), [], undefined)).toBe("Cancelled");
-    expect(runResult(run({ status: "failed", errorKind: "usage_limit" }), [], undefined)).toBe("Usage limit reached");
-    expect(runResult(run({ status: "failed", errorKind: "schema" }), [], undefined)).toBe("Failed");
-    expect(runResult(run({ kind: "reply", status: "running" }), undefined, undefined)).toBe("Drafting replies…");
+    expect(result(run({ kind: "reply" }), items)).toBe("2 reply drafts, 1 thread needs no reply");
+    expect(result(run({ kind: "reply" }))).toBe("");
+    expect(result(run(), [finding(1), finding(2), question(3)])).toBe("2 findings, 1 question");
+    expect(result(run({ status: "incomplete" }), [])).toBe("No findings in what it read");
+    expect(result(run({ kind: "fix" }), [], 2)).toBe("2 edits");
+    expect(result(run({ kind: "fix" }), [], 0)).toBe("No edits");
+    expect(result(run({ kind: "fix" }), [])).toBe("");
+    expect(result(run({ kind: "ask" }))).toBe("Answered");
+    expect(result(run({ status: "cancelled" }), [])).toBe("cancelled");
+    expect(result(run({ status: "failed", errorKind: "usage_limit" }), [])).toBe("limit");
+    expect(result(run({ status: "failed", errorKind: "schema" }), [])).toBe("failed");
+    expect(result(run({ kind: "reply", status: "running" }))).toBe("running");
     const since = { head: "d".repeat(40), incremental: true };
-    expect(runResult(run({ since }), [finding(1)], undefined)).toBe("1 new, 0 carried, 0 fixed or outdated");
+    expect(result(run({ since }), [finding(1)])).toBe("1 new, 0 carried, 0 fixed or outdated");
   });
 
   test("severity jumps: open drafts per severity in severity order, each with its first draft", () => {

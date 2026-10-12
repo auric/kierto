@@ -75,7 +75,8 @@ export function createApp(opts: AppOptions) {
     .get("/api/skills", (c) => c.json(discoverSkills().map(skillDto)))
     // The MCP servers of the user's Claude config: names and transports only.
     .get("/api/mcp-servers", (c) => c.json(discoverMcpServers()))
-    .get(
+    // POST: the call can start a process from the user's config, so it needs the session token (BRIEF 3.6).
+    .post(
       "/api/mcp-servers/:name/tools",
       validator("param", (v: Record<string, string>, c) => {
         const r = mcpName.safeParse(v.name);

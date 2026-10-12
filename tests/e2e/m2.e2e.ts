@@ -29,6 +29,8 @@ const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
 
 const row = (page: Page) => page.locator("[data-row]", { hasText: TITLE }).first();
 const runLine = (page: Page) => page.locator("#runline");
+// The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
+const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 const runLog = (page: Page) => page.getByRole("dialog", { name: "Claude Code run log" });
 
 async function connect(page: Page) {
@@ -67,7 +69,7 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(page.locator("#brief")).toHaveCount(0);
 
-  await expect(runLine(page)).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runLine(page)).toContainText("3 findings, 1 question");
   // One button per severity of the open drafts. Each one goes to the first draft of its severity.
   await expect(runLine(page).locator("[data-severity]")).toHaveText(["1 Blocker", "1 Minor", "1 Nit"]);
@@ -109,7 +111,7 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await page.keyboard.press("r");
   await expect.poll(async () => (await runs(request)).length, { timeout: RUN_MS }).toBe(2);
   expect((await runs(request))[0]).toMatchObject({ profile: "security", note: NOTE });
-  await expect(runLine(page)).toContainText(/Claude reviewed/, { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(page.locator("#nav-runs")).toHaveAccessibleName("Review runs: 1");
 
   // The Review runs row names the state, the findings, and the time of the newest run.
@@ -136,7 +138,7 @@ test("Esc closes the brief; cancel stops a running review, and nothing from it s
   await expect(runLog(page).locator("footer")).toContainText("Running.");
   await page.keyboard.press("Escape");
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
-  await expect(runLine(page)).toContainText(/You cancelled the review after \d+ tool calls?\./, { timeout: RUN_MS });
+  await expect(runRow(page)).toContainText(/Cancelled after \d+ tool calls?/, { timeout: RUN_MS });
   await page.keyboard.press("3");
   await expect(runLog(page).locator("footer")).toContainText("You cancelled the run. Nothing from it can be posted.");
   await expect(page.locator("[data-draft]")).toHaveCount(0);
@@ -165,7 +167,7 @@ test("a failed run shows its raw output, read-only, with Copy", async ({ page, c
   await control("claude", { stream: "schema" });
   await connect(page);
   await startWithBrief(page);
-  await expect(runLine(page)).toContainText("Review failed. The result does not match the review schema.", { timeout: RUN_MS });
+  await expect(runLine(page)).toContainText("Failed. The result does not match the review schema.", { timeout: RUN_MS });
   await runLine(page).getByRole("button", { name: "Show raw output" }).click();
   const raw = page.locator("#raw-out");
   await expect(raw).toContainText("SCHEMA-CANARY");
@@ -196,7 +198,7 @@ test("two pages share one run: the same brief joins it, and a cancel in one page
   expect((await runs(request)).length).toBe(1);
 
   await runLine(other).getByRole("button", { name: "Cancel" }).click();
-  await expect(runLine(page)).toContainText("You cancelled the review", { timeout: RUN_MS });
-  await expect(runLine(other)).toContainText("You cancelled the review");
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
+  await expect(runRow(other)).toHaveAttribute("data-run-state", "cancelled");
   await expect(page.locator("#nav-runs")).toHaveAccessibleName("Review runs: 1");
 });

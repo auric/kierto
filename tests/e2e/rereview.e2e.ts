@@ -30,6 +30,8 @@ const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
 });
 
 const runLine = (page: Page) => page.locator("#runline");
+// The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
+const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 const drafts = (page: Page) => page.locator("[data-draft]");
 const rereviewButton = (page: Page) => page.getByRole("button", { name: /^Review changes since [0-9a-f]{7}$/ });
 
@@ -49,13 +51,13 @@ async function reviewed(page: Page): Promise<string> {
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").fill("ABC-1: check the lock scope.");
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(runLine(page)).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(drafts(page)).toHaveCount(3);
-  return (await runLine(page).locator("code").first().textContent()) ?? "";
+  return (await runRow(page).locator("code").first().textContent()) ?? "";
 }
 
-// The run line of a re-review names the head of the base run, then the new head.
-const range = (page: Page) => runLine(page).getByRole("status").locator("code").allTextContents();
+// The review row of a re-review names the head of the base run, then the new head.
+const range = (page: Page) => runRow(page).locator("code").allTextContents();
 
 test("a push after a review: c reviews the new commits, carries the open draft, closes the others, and the post goes to the new head", async ({
   page,
@@ -73,7 +75,8 @@ test("a push after a review: c reviews the new commits, carries the open draft, 
   await rereviewButton(page).click();
   await expect(runLine(page)).toContainText(`Reviewing changes since ${head}…`);
   // The arrow is hidden from screen readers. They read "to" instead.
-  await expect(runLine(page)).toContainText(/Claude reviewed changes [0-9a-f]{7}→ to [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  await expect(runRow(page)).toContainText(/[0-9a-f]{7}→ to [0-9a-f]{7}/);
   const [from, to = "?"] = await range(page);
   expect(from).toBe(head);
   expect(to).not.toBe(head);

@@ -63,7 +63,7 @@ async function connect(page: Page) {
 async function review(page: Page) {
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(page.locator("#runline")).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(page.locator("#runline [data-run-kind='review']")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(drafts(page)).toHaveCount(3);
 }
 

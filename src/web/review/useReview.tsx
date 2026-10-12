@@ -5,7 +5,7 @@ import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
-import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../shared/dto";
+import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunConflict, RunDetail, RunDto, RunKind } from "../../shared/dto";
 import { useFix } from "../fix/FixBar";
 import { canFix, fixWaiting } from "../fix/model";
 import type { Layer } from "../keys";
@@ -32,8 +32,8 @@ import {
 import {
   briefState,
   drafts,
+  kindRuns,
   latestReview,
-  otherRuns,
   plural,
   questions,
   RUN_TEXT,
@@ -42,13 +42,13 @@ import {
   replyOf,
   rereviewState,
   runLine,
-  runResult,
   severityJumps,
+  staleText,
   triageText,
 } from "./model";
 import { DraftRepliesButton, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft";
-import { OtherRuns, RunLine, SeverityJumps } from "./RunLine";
-import { BriefLine, type LogTarget, RunLog } from "./RunLog";
+import { RunLines, SeverityJumps } from "./RunLine";
+import { type LogTarget, RunLog } from "./RunLog";
 import { TaskChips } from "./TaskChips";
 import type { TriageAction, TriageCtx } from "./Triage";
 
@@ -133,15 +133,16 @@ export function useReview(
   const qc = useQueryClient();
   const brief = useBrief(pr.id);
   const prRuns = usePrRuns(pr.id).data;
-  // R14: the newest run of any kind drives the run line. The newest review run drives the drafts, the summary, and the brief.
+  // R14: the run list shows the newest run of each kind. The newest review run drives the drafts, the summary, and the brief.
   const newest = prRuns?.[0] ?? null;
   const latest = latestReview(prRuns);
+  const kinds = kindRuns(prRuns);
+  const newestOf = (k: RunKind) => kinds.find((r) => r.kind === k)?.id ?? null;
   const run = useRun(latest?.id ?? null);
-  const other = useRun(newest && newest.id !== latest?.id ? newest.id : null);
-  // The newest run of each kind that the run line does not show. Only a reply run needs its own items for its result.
-  const others = otherRuns(prRuns, newest);
-  const otherReply = others.find((r) => r.kind === "reply") ?? null;
-  const replyRun = useRun(otherReply?.id ?? null);
+  // Each row reads the log and the items of its run.
+  const replyRun = useRun(newestOf("reply"));
+  const fixRun = useRun(newestOf("fix"));
+  const askRun = useRun(newestOf("ask"));
   const replies = useReplyDrafts(pr.id);
   const active = useRuns().data?.find((r) => r.status === "running") ?? null;
   const start = useStartReview(pr.id);
@@ -166,7 +167,6 @@ export function useReview(
   const opener = useRef<HTMLElement | null>(null);
 
   const detail = detailOf(latest, run.data);
-  const line = newest && newest.id !== latest?.id ? detailOf(newest, other.data) : detail;
   const items = detail?.items ?? NO_ITEMS;
   const replyItems = replies.data ?? NO_ITEMS;
   const state = briefState(brief.data, latest, active, pr.id, meta.profiles);
@@ -510,15 +510,18 @@ export function useReview(
 
   const head = latest?.sourceHead ?? null;
   const forDiff = useMemo(() => ({ drafts: ds, head, replies: byThread }), [ds, head, byThread]);
-  const lineState = line ? runLine(line, meta.profiles, o.commits) : null;
-  // The severity buttons follow the result of the newest review run, on the run line or on its own line below.
-  const jumps = <SeverityJumps jumps={severityJumps(ds)} onJump={openDraft} />;
-  const itemsOf = (r: RunDto) => [run.data, replyRun.data].find((d) => d?.run.id === r.id)?.items;
-  const otherList = others.map((r) => ({
-    run: r,
-    result: runResult(r, itemsOf(r), fix.fixes?.find((f) => f.run.id === r.id)?.edits.length),
-    jumps: r.id === latest?.id ? jumps : null,
-  }));
+  const details = [run.data, replyRun.data, fixRun.data, askRun.data, pinned.data];
+  const rows = kinds.map((r) => {
+    const d = details.find((x) => x?.run.id === r.id);
+    const shown = d ? { ...d.run, stale: r.stale } : r;
+    return {
+      run: shown,
+      state: runLine(shown, d, meta.profiles, fix.fixes?.find((f) => f.run.id === r.id)?.edits.length),
+      stale: staleText(shown, o.commits),
+      // The severity buttons follow the result of the newest review run.
+      jumps: r.id === latest?.id ? <SeverityJumps jumps={severityJumps(ds)} onJump={openDraft} /> : null,
+    };
+  });
   const logRun = typeof log?.of === "number" ? log.of : (log?.of === "review" ? latest : newest)?.id;
   const your = o.threads.filter((t) => t.turn === "your").length;
   return {
@@ -573,24 +576,17 @@ export function useReview(
         onSettings={o.onSettings}
       />
     ),
-    run: line && lineState && (
-      <>
-        <RunLine
-          state={lineState}
-          run={line.run}
-          meta={meta}
-          now={o.now}
-          cancelling={cancel.isPending}
-          jumps={line.run.id === latest?.id ? jumps : null}
-          onLog={() => openLog(null)}
-          onRaw={() => openLog(null, true)}
-          onCancel={() => cancel.mutate(line.run.id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
-          // Only a review run has a summary section. The log of a reply or ask run lists the gaps.
-          onGaps={() => (line.run.kind === "review" ? openSummary() : openLog(null))}
-        />
-        <BriefLine run={line.run} />
-        <OtherRuns list={otherList} now={o.now} onLog={(id) => openLog(null, false, id)} />
-      </>
+    run: (
+      <RunLines
+        rows={rows}
+        meta={meta}
+        now={o.now}
+        cancelling={cancel.isPending}
+        onLog={(id, raw) => openLog(null, raw, id)}
+        onCancel={(id) => cancel.mutate(id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
+        // Only a review run has a summary section. The log of another run kind lists the gaps.
+        onGaps={(r) => (r.kind === "review" ? openSummary() : openLog(null, false, r.id))}
+      />
     ),
     summary: detail?.run.summary && (
       <AiSummary run={detail.run} items={items} pr={pr} meta={meta} open={sumOpen} onOpen={setSumOpen} triage={triage} ctx={triageCtx} />
@@ -599,7 +595,7 @@ export function useReview(
     cards,
     sheet: log && (
       <RunLog
-        detail={[run.data, other.data, pinned.data].find((d) => d && d.run.id === logRun)}
+        detail={details.find((d) => d && d.run.id === logRun)}
         meta={meta}
         prKey={prKey(pr)}
         now={o.now}

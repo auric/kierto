@@ -443,6 +443,20 @@ r[key("POST", "/__control/push")] = async (req) => {
   p.pr.fromRef.latestCommit = head;
   return ok({ head });
 };
+// Windows keeps a folder busy for a short time after a process in it ends. The loop tries for at most 5 s.
+async function removeDir(dir: string) {
+  for (let i = 0; ; i++) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (i >= 50 || !(code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY")) throw e;
+      await Bun.sleep(100);
+    }
+  }
+}
+
 // Undoes every push and deletes the clones.
 async function resetClones() {
   for (const id of pushed.keys()) {
@@ -451,7 +465,7 @@ async function resetClones() {
     await remoteGit(["update-ref", `refs/pull-requests/${id}/from`, remote.source]);
   }
   pushed.clear();
-  rmSync(clonesDir, { recursive: true, force: true, maxRetries: 3 });
+  await removeDir(clonesDir);
 }
 
 // Open folder (plan r3 S-ATT): the app calls this recorder, never the OS file manager. opens: the answer of the next calls.
@@ -501,7 +515,7 @@ async function halt() {
 const NO_CONTENT: Reply = { status: 204 };
 r[key("POST", "/__control/reset")] = async () => {
   await halt();
-  rmSync(dataDir, { recursive: true, force: true });
+  await removeDir(dataDir);
   mkdirSync(dataDir);
   secrets = createSecrets(null);
   jiraSecrets = createSecrets(null, "jira-token");

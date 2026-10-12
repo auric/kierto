@@ -38,6 +38,8 @@ const drafts = (page: Page) => page.locator("[data-draft]");
 const thread = (page: Page, id: number) => page.locator(`#t-${id}`);
 const card = (page: Page, id: number) => thread(page, id).locator("[data-reply-draft]");
 const runline = (page: Page) => page.locator("#runline");
+// The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
+const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 const repliesButton = (page: Page) => page.getByRole("button", { name: /^Draft replies · / });
 const confirmBox = (page: Page) => page.getByRole("dialog", { name: /^Post .* to PROJ1\/sample-repo-2 #1001\?$/ });
 const postButton = (box: Locator) => box.getByRole("button", { name: "Post", exact: true });
@@ -70,7 +72,7 @@ test("Draft replies: three your-turn threads get inline drafts, one needs no rep
   const btn = repliesButton(page);
   await expect(btn).toHaveAccessibleName("Draft replies · General, 3 threads");
   await btn.click();
-  await expect(runline(page)).toContainText(/Claude drafted replies on [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runline(page)).toContainText("2 reply drafts, 1 thread needs no reply");
   // Key 2 with no review drafts goes to the first reply draft.
   await page.keyboard.press("2");
@@ -122,11 +124,11 @@ test("review drafts stay after a reply run (R14), and a per-thread draft replace
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").fill("ABC-1: check the lock scope.");
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(runline(page)).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(drafts(page)).toHaveCount(3);
 
   await repliesButton(page).click();
-  await expect(runline(page)).toContainText(/Claude drafted replies on [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   // The newest review run still drives the drafts, the summary, and the brief.
   await expect(drafts(page)).toHaveCount(3);
   await expect(page.locator("#ai-sum-head")).toContainText("Claude's summary");
@@ -189,7 +191,7 @@ test("cancel stops a reply run: the pending card goes, and no draft appears", as
   await expect(card(page, 1000101)).toContainText("Claude is drafting a reply…");
   await expect(runline(page)).toContainText("Drafting replies…", { timeout: RUN_MS });
   await runline(page).getByRole("button", { name: "Cancel" }).click();
-  await expect(runline(page)).toContainText(/You cancelled the reply drafts after \d+ tool calls?\./, { timeout: RUN_MS });
+  await expect(runRow(page, "reply")).toContainText(/Cancelled after \d+ tool calls?/, { timeout: RUN_MS });
   await expect(card(page, 1000101)).toHaveCount(0);
   await expect(thread(page, 1000101).getByRole("button", { name: "Draft reply" })).toBeVisible();
   expect(await posts()).toEqual([]);

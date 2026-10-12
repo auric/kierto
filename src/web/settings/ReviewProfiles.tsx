@@ -494,7 +494,7 @@ function McpServerRow(props: {
     // Each call can start a process. The list stays until the page reloads.
     staleTime: Number.POSITIVE_INFINITY,
     retry: false,
-    queryFn: async () => read<McpToolDto[]>(await api.api["mcp-servers"][":name"].tools.$get({ param: { name } })),
+    queryFn: async () => read<McpToolDto[]>(await api.api["mcp-servers"][":name"].tools.$post({ param: { name } })),
   });
   useEffect(() => {
     if (!fresh.current || !pick || !tools.data) return;

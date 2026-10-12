@@ -57,7 +57,8 @@ const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
 const thread = (page: Page, id: number) => page.locator(`#t-${id}`);
 const draft = (page: Page, id: number) => thread(page, id).locator("[data-reply-draft]");
 const fixCard = (page: Page, id: number) => thread(page, id).locator("[data-fix]");
-const runline = (page: Page) => page.locator("#runline");
+// The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
+const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 const applyDialog = (page: Page) => page.getByRole("dialog", { name: /^Apply \d+ edits? from \d+ comments?$/ });
 // The user's own git, as the app runs it in the clone. The control state uses an empty git config, so its status can differ when
 // the user config sets core.autocrlf.
@@ -87,7 +88,7 @@ async function openThread(page: Page, id: number) {
 async function draftReplies(page: Page) {
   await expect(page.getByRole("button", { name: /^Fix all valid/ })).toHaveAccessibleName(/^Fix all valid\. No reply draft finds/);
   await page.getByRole("button", { name: /^Draft replies · / }).click();
-  await expect(runline(page)).toContainText(/Claude drafted replies on [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   for (const id of [LOCK, LOOP]) await openThread(page, id);
   await expect(draft(page, LOCK).locator("[data-judgement]")).toHaveText("Valid");
   await expect(draft(page, LOOP).locator("[data-judgement]")).toHaveText("Partly valid");
@@ -116,11 +117,12 @@ test("Fix all valid: the edits show, one is unticked, Apply commits it in the cl
   const all = page.getByRole("button", { name: /^Fix all valid/ });
   await expect(all).toHaveAccessibleName("Fix all valid, 2 comments");
   await all.click();
-  await expect(runline(page)).toContainText(/Claude proposed fixes on [0-9a-f]{7}/, { timeout: RUN_MS });
-  // The run line shows the fix run. The reply run keeps its result on its own line, and its Log opens its log.
-  const replies = page.locator("#runline-other [data-run-kind='reply']");
-  await expect(replies).toContainText("Reply drafts: 2 reply drafts");
-  await replies.getByRole("button", { name: "Log of the reply drafts" }).click();
+  await expect(runRow(page, "fix")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  // The fix run takes the first row. The reply row keeps its result, and its Log opens its log.
+  await expect(page.locator("#runline > li").first()).toHaveAttribute("data-run-kind", "fix");
+  const replies = runRow(page, "reply");
+  await expect(replies).toContainText("2 reply drafts");
+  await replies.getByRole("button", { name: "Log of the reply drafts run" }).click();
   const log = page.getByRole("dialog", { name: "Claude Code run log" });
   await expect(log.locator("footer")).toContainText("Result: 2 reply drafts.");
   await page.keyboard.press("Escape");
@@ -200,7 +202,7 @@ test("a dirty clone keeps Apply disabled; a clean one commits; Undo resets the c
 
   // Fix on one reply draft runs for that thread only.
   await draft(page, LOCK).getByRole("button", { name: "Fix the code for this comment" }).click();
-  await expect(runline(page)).toContainText(/Claude proposed fixes on [0-9a-f]{7}/, { timeout: RUN_MS });
+  await expect(runRow(page, "fix")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(fixCard(page, LOCK)).toContainText("Proposed fix, 1 edit");
   // The validator drops the edit of the thread that the run did not ask for.
   await expect(fixCard(page, LOOP)).toHaveCount(0);
