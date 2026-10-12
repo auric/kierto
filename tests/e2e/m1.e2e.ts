@@ -462,3 +462,38 @@ test("long repository and branch names stay inside their panes", async ({ page }
     expect((await page.getByLabel("Filter the list").boundingBox())?.width).toBeGreaterThanOrEqual(96);
   }
 });
+
+test("a read row keeps its place, so the next unread row is not shown and read; the chip sorts again", async ({ page, request }) => {
+  await connect(page);
+  await park(page, TITLE.b);
+  await control("state", { reply: "new", merge: "reply" });
+  await expect(row(page, TITLE.a)).toContainText("1 new");
+  await expect(row(page, TITLE.c)).toContainText("1 new");
+
+  await nav(page, "Needs you").click();
+  const rows = page.locator("[data-row]");
+  const [first, second] = await Promise.all([rows.nth(0).innerText(), rows.nth(1).innerText()]);
+  const firstTitle = first.includes(TITLE.a) ? TITLE.a : TITLE.c;
+  const secondTitle = firstTitle === TITLE.a ? TITLE.c : TITLE.a;
+  expect(second).toContain(secondTitle);
+  await expect(detailTitle(page)).toHaveText(firstTitle);
+  // The default row is read. On the server it now sorts below the other unread row.
+  await expect.poll(async () => (await prRow(request, firstTitle)).unread).toBe(0);
+  await expect(row(page, firstTitle)).not.toContainText("1 new");
+  const chip = page.getByRole("button", { name: "1 updated · re-sort" });
+  await expect(chip).toBeVisible();
+  // Longer than the 1 s ack batch plus one retry window.
+  await page.waitForTimeout(2500);
+  await expect(rows.nth(0)).toContainText(firstTitle);
+  await expect(detailTitle(page)).toHaveText(firstTitle);
+  await expect(row(page, secondTitle)).toContainText("1 new");
+  expect((await prRow(request, secondTitle)).unread).toBe(1);
+
+  await chip.click();
+  await expect(chip).toHaveCount(0);
+  await expect(rows.nth(0)).toContainText(secondTitle);
+  // The selection follows the PR, not the first place.
+  await expect(detailTitle(page)).toHaveText(firstTitle);
+  await expect(row(page, firstTitle)).toHaveAttribute("aria-current", "true");
+  expect((await prRow(request, secondTitle)).unread).toBe(1);
+});

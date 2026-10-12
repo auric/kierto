@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import type { Group, PrRow } from "../shared/dto";
 import { VIEW_LABEL, VIEWS, type View } from "../shared/views";
 import { type Effect, type KeyState, type Layer, reduceKey } from "./keys";
 import { useLive } from "./live";
@@ -35,11 +36,15 @@ import { ListPane } from "./shell/ListPane";
 import {
   filterRows,
   followCandidate,
+  freezeOrder,
   groupRows,
   incompleteText,
+  type ListGroup,
   matches,
+  movedCount,
   navIds,
   repoTree,
+  type Slot,
   statusInfo,
   unreadTotal,
   viewCounts,
@@ -95,6 +100,7 @@ function Shell({ stale }: { stale: boolean }) {
   const [query, setQuery] = useState("");
   const [doneOpen, setDoneOpen] = useState(false);
   const [ks, setKs] = useState<KeyState>(INITIAL);
+  const [frozen, setFrozen] = useState<{ scope: string; slots: Slot[] }>({ scope: "", slots: [] });
   const filterRef = useRef<HTMLInputElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const detailApi = useRef<DetailApi | null>(null);
@@ -113,12 +119,27 @@ function Shell({ stale }: { stale: boolean }) {
   const readyWhy = useMemo(() => new Map([...ready].map(([id, posts]) => [id, destText(posts)])), [ready]);
   // A repository replaces the view (prototype/v3 aiMode), so filterRows then ignores the view argument.
   const aiView = (view === "runs" || view === "post") && !repo;
-  const rows = !aiView
+  const live = !aiView
     ? filterRows(all, view === "runs" || view === "post" ? "following" : view, repo, query)
     : view === "runs"
       ? runRows(all, latest, query)
       : all.filter((p) => ready.has(p.id) && matches(p, query));
-  const groups = aiView ? (rows.length ? [{ id: "runs" as const, label: "", rows }] : []) : groupRows(rows);
+  const layout = (list: PrRow[], groupOf?: (p: PrRow) => Group): ListGroup[] =>
+    aiView ? (list.length ? [{ id: "runs", label: "", rows: list }] : []) : groupRows(list, groupOf);
+  // A view, repository, or filter change, or the re-sort chip, gives the server order again.
+  const scope = JSON.stringify([view, repo, query]);
+  const prev = frozen.scope === scope ? frozen.slots : [];
+  // The selected PR stays in the list after it stops matching, for example after its read. Else the next row is shown and read.
+  const kept =
+    ks.selected !== null && prev.some((s) => s.id === ks.selected) && !live.some((p) => p.id === ks.selected)
+      ? all.find((p) => p.id === ks.selected)
+      : undefined;
+  const slots = freezeOrder(prev, kept ? [...live, kept] : live);
+  const byId = new Map([...live, ...(kept ? [kept] : [])].map((p) => [p.id, p]));
+  const rows = slots.flatMap((x) => byId.get(x.id) ?? []);
+  const slotGroup = new Map(slots.map((x) => [x.id, x.group]));
+  const groups = layout(rows, (p) => slotGroup.get(p.id) ?? p.group);
+  const updated = movedCount(groups, layout(live));
   const ids = navIds(groups, doneOpen);
   // The first open row is the default. A row of the folded Done group stays selected only after a click.
   const selected = rows.some((p) => p.id === ks.selected) ? ks.selected : (ids[0] ?? null);
@@ -145,6 +166,22 @@ function Shell({ stale }: { stale: boolean }) {
   useEffect(() => {
     document.title = unread > 0 ? `(${unread}) Review Loop` : "Review Loop";
   }, [unread]);
+
+  // The default row becomes the selection, so the selection follows the PR and not the first place.
+  useEffect(() => {
+    if (selected !== null && selected !== ks.selected) setKs((k) => ({ ...k, selected }));
+  }, [selected, ks.selected]);
+
+  useEffect(() => {
+    const same =
+      frozen.scope === scope &&
+      frozen.slots.length === slots.length &&
+      slots.every((x, i) => {
+        const y = frozen.slots[i];
+        return y?.id === x.id && y.group === x.group;
+      });
+    if (!same) setFrozen({ scope, slots });
+  });
 
   // Runs the focus effect of the last key after the new state renders.
   useLayoutEffect(() => {
@@ -259,6 +296,11 @@ function Shell({ stale }: { stale: boolean }) {
           title={repo ?? (view === "runs" ? "Review runs" : view === "post" ? "Ready to post" : VIEW_LABEL[view])}
           count={rows.length}
           groups={groups}
+          updated={updated}
+          onResort={() => {
+            setFrozen({ scope, slots: [] });
+            go({ focus: "list" }, "focus-list");
+          }}
           loading={prs.isPending}
           repo={repo}
           query={query}

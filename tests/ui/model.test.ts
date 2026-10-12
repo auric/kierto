@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { PrRow, SyncStatus } from "../../src/shared/dto";
+import { byInbox } from "../../src/shared/views";
 import { reduceKey } from "../../src/web/keys";
 import {
   ago,
   filterRows,
   followCandidate,
+  freezeOrder,
   groupRows,
   incompleteText,
   initials,
+  movedCount,
   navIds,
   repoTree,
   statusInfo,
@@ -138,6 +141,71 @@ describe("task ID on a row", () => {
   test("the filter matches task IDs", () => {
     const prs = [row({ id: 1, tasks: [{ key: "ABC-10145", source: "title", url: null }] }), row({ id: 2 })];
     expect(filterRows(prs, "following", null, "abc-1014").map((p) => p.id)).toEqual([1]);
+  });
+});
+
+describe("frozen list order", () => {
+  const ids = (slots: { id: number }[]) => slots.map((x) => x.id);
+  const shown = (rows: PrRow[], slots: ReturnType<typeof freezeOrder>) => {
+    const at = new Map(slots.map((x) => [x.id, x.group]));
+    const byId = new Map(rows.map((p) => [p.id, p]));
+    return groupRows(
+      slots.flatMap((x) => byId.get(x.id) ?? []),
+      (p) => at.get(p.id) ?? p.group,
+    );
+  };
+
+  test("an empty earlier order gives the server order", () => {
+    const rows = [row({ id: 3 }), row({ id: 1 }), row({ id: 2 })];
+    expect(freezeOrder([], rows)).toEqual([
+      { id: 3, group: "quiet" },
+      { id: 1, group: "quiet" },
+      { id: 2, group: "quiet" },
+    ]);
+  });
+
+  test("a read row keeps its place and group, so the second unread row stays second", () => {
+    const before = [
+      row({ id: 2, group: "comments", unread: 1, lastActivity: 100 }),
+      row({ id: 1001, group: "comments", unread: 2, lastActivity: 90 }),
+    ];
+    const slots = freezeOrder([], [...before].sort(byInbox));
+    // The read moves PR 2 to Done on the server.
+    const after = [row({ id: 2, group: "quiet", lastActivity: 100 }), before[1] as PrRow].sort(byInbox);
+    expect(ids(after)).toEqual([1001, 2]);
+    const frozen = freezeOrder(slots, after);
+    expect(frozen).toEqual(slots);
+    const groups = shown(after, frozen);
+    expect(navIds(groups, false)).toEqual([2, 1001]);
+    expect(movedCount(groups, groupRows(after))).toBe(1);
+  });
+
+  test("a new row goes after its server predecessor, and a gone row drops", () => {
+    const prev = [
+      { id: 1, group: "your" as const },
+      { id: 2, group: "comments" as const },
+      { id: 3, group: "quiet" as const },
+    ];
+    const rows = [row({ id: 2, group: "your" }), row({ id: 9, group: "your" }), row({ id: 1, group: "quiet" })];
+    expect(freezeOrder(prev, rows)).toEqual([
+      { id: 1, group: "your" },
+      { id: 2, group: "comments" },
+      { id: 9, group: "your" },
+    ]);
+    expect(ids(freezeOrder(prev, [row({ id: 8 }), row({ id: 3 })]))).toEqual([8, 3]);
+  });
+
+  test("the moved count names the rows that change place or group", () => {
+    const rows = [row({ id: 1, group: "your" }), row({ id: 2, group: "your" }), row({ id: 3, group: "waiting" })];
+    const g = groupRows(rows);
+    expect(movedCount(g, g)).toBe(0);
+    expect(movedCount(groupRows([rows[2], rows[0], rows[1]] as PrRow[]), g)).toBe(0);
+    expect(movedCount(groupRows([rows[1], rows[0], rows[2]] as PrRow[]), g)).toBe(1);
+    // Same place, other group.
+    expect(movedCount(groupRows([rows[0], rows[1], row({ id: 3, group: "review" })] as PrRow[]), g)).toBe(1);
+    // A kept row that the server list no longer holds.
+    expect(movedCount(groupRows([...rows, row({ id: 4, group: "quiet" })]), g)).toBe(1);
+    expect(movedCount([], [])).toBe(0);
   });
 });
 

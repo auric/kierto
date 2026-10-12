@@ -28,6 +28,9 @@ export function ListPane(props: {
   title: string;
   count: number;
   groups: ListGroup[];
+  // The rows that change place when the list sorts again. The list keeps its order while the user works in it.
+  updated: number;
+  onResort: () => void;
   loading: boolean;
   repo: string | null;
   query: string;
@@ -104,6 +107,17 @@ export function ListPane(props: {
           <span className="text-sm text-muted-foreground">
             {props.loading ? "" : props.count}
             <span className="sr-only"> pull requests</span>
+          </span>
+          <span aria-live="polite" className="ml-auto self-center">
+            {props.updated > 0 && (
+              <button
+                type="button"
+                className="inline-flex h-[22px] cursor-pointer items-center gap-1 rounded-full bg-sel px-2 text-xs font-semibold whitespace-nowrap text-foreground hover:bg-hover"
+                onClick={props.onResort}
+              >
+                {props.updated} updated · re-sort
+              </button>
+            )}
           </span>
         </div>
         <div className="flex h-[34px] items-center gap-2 rounded-[7px] border border-input bg-pane px-2.5 text-muted-foreground focus-within:border-pen focus-within:shadow-[0_0_0_1px_var(--pen)]">

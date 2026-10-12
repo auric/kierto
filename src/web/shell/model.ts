@@ -1,6 +1,6 @@
 // Pure list and sidebar rules. No DOM access, so bun test runs them directly.
 
-import type { CheckpointDto, CheckpointReason, PrRow, PrTask, SyncStatus, TaskSource } from "../../shared/dto";
+import type { CheckpointDto, CheckpointReason, Group, PrRow, PrTask, SyncStatus, TaskSource } from "../../shared/dto";
 import { parsePrUrl } from "../../shared/pr-url";
 import type { PrRef } from "../../shared/types";
 import { GROUPS, VIEWS, type View } from "../../shared/views";
@@ -74,13 +74,55 @@ export function filterRows(prs: PrRow[], view: View, repo: string | null, q: str
 // "runs": the flat list of the Review runs view. Its label is empty, so the list shows no group head.
 export type ListGroup = { id: (typeof GROUPS)[number][0] | "runs"; label: string; rows: PrRow[] };
 
-// prototype/v3 grouped(): the three inbox groups, without empty ones. Rows keep the server order.
-export function groupRows(rows: PrRow[]): ListGroup[] {
+// prototype/v3 grouped(): the three inbox groups, without empty ones. Rows keep the given order.
+// groupOf: the reason that places a row. A frozen list gives the reason at freeze time.
+export function groupRows(rows: PrRow[], groupOf: (p: PrRow) => Group = (p) => p.group): ListGroup[] {
   return GROUPS.map(([id, label, groups]) => ({
     id,
     label,
-    rows: rows.filter((p) => (groups as readonly string[]).includes(p.group)),
+    rows: rows.filter((p) => (groups as readonly string[]).includes(groupOf(p))),
   })).filter((g) => g.rows.length > 0);
+}
+
+// A list row as the user saw it: the PR and its inbox reason at that time.
+export type Slot = { id: number; group: Group };
+
+// The list order stays while the user works in it, so a read row does not move and the next row is not shown and read.
+// Known rows keep their earlier place and reason. A new row goes after its predecessor in the server order. A row not in rows drops.
+export function freezeOrder(prev: readonly Slot[], rows: PrRow[]): Slot[] {
+  const ids = new Set(rows.map((p) => p.id));
+  const out = prev.filter((s) => ids.has(s.id));
+  const known = new Set(out.map((s) => s.id));
+  rows.forEach((p, i) => {
+    if (known.has(p.id)) return;
+    const before = rows[i - 1];
+    const at = before ? out.findIndex((s) => s.id === before.id) + 1 : 0;
+    out.splice(at, 0, { id: p.id, group: p.group });
+  });
+  return out;
+}
+
+// The rows that change place or group when the list sorts again: all rows outside the longest common order of both layouts.
+export function movedCount(shown: ListGroup[], server: ListGroup[]): number {
+  const keys = (gs: ListGroup[]) => gs.flatMap((g) => g.rows.map((p) => `${g.id}:${p.id}`));
+  const a = keys(shown);
+  const b = keys(server);
+  const at = new Map(a.map((k, i) => [k, i]));
+  // Patience sort: tails[n] is the smallest last index of a rising run of length n + 1.
+  const tails: number[] = [];
+  for (const k of b) {
+    const i = at.get(k);
+    if (i === undefined) continue;
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((tails[mid] ?? 0) < i) lo = mid + 1;
+      else hi = mid;
+    }
+    tails[lo] = i;
+  }
+  return Math.max(a.length, b.length) - tails.length;
 }
 
 // prototype/v3 orderedRows(): j and k skip the rows of the folded Done group.
