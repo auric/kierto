@@ -152,6 +152,9 @@ export type PrRow = {
   sourceBranch: string | null;
   targetBranch: string | null;
   webUrl: string | null;
+  // The branch pages on the forge. The source branch of a PR from a fork is in the fork. null until a sync cycle gets them.
+  sourceBranchUrl: string | null;
+  targetBranchUrl: string | null;
   // Empty until the first sync cycle that writes the PR.
   // login: null for reviewers stored before the username was kept.
   reviewers: (Omit<Reviewer, "login"> & { login: string | null })[];
@@ -239,6 +242,10 @@ export type ProfileId = string;
 
 // PUT /api/prs/:id/brief. POST /api/prs/:id/review runs the stored brief.
 export const briefInput = z.object({ note: z.string().max(MAX_NOTE), profile: profileId });
+// A profile for one run only. Absent: the brief profile. The route refuses an ID that the settings do not list.
+const runProfile = profileId.optional();
+// The query of POST /api/prs/:id/review.
+export const reviewRunInput = z.object({ profile: runProfile });
 export type BriefInput = z.infer<typeof briefInput>;
 // updatedAt: null for a PR without a stored brief. The defaults then apply.
 export type BriefDto = BriefInput & { updatedAt: number | null };
@@ -389,12 +396,12 @@ export type PostDto = {
 export type ConfirmDto = { posts: PostDto[]; warning: string | null };
 
 // POST /api/prs/:id/reply-run. Absent threads: every thread where it is my turn. A thread is the ID of its root comment.
-export const replyRunInput = z.object({ threads: z.array(positiveInt).min(1).max(MAX_REPLY_THREADS).optional() });
+export const replyRunInput = z.object({ threads: z.array(positiveInt).min(1).max(MAX_REPLY_THREADS).optional(), profile: runProfile });
 
 // ---------- Ask (plan r2 S-ASK) ----------
 
 // POST /api/prs/:id/ask. GET /api/prs/:id/asks gives AskDto[], newest first, at most 20.
-export const askInput = z.object({ question: z.string().trim().min(1).max(MAX_QUESTION) });
+export const askInput = z.object({ question: z.string().trim().min(1).max(MAX_QUESTION), profile: runProfile });
 export type AskInput = z.infer<typeof askInput>;
 // answer: null until the run ends with a valid result.
 export type AskDto = { run: RunDto; answer: string | null };
@@ -480,7 +487,7 @@ export type DiffFetchNeeded = ApiError & { fetch: true };
 // ---------- Fix it (plan r3) ----------
 
 // POST /api/prs/:id/fix-run. Absent threads: the newest valid or partly reply draft of each thread.
-export const fixRunInput = z.object({ threads: z.array(positiveInt).min(1).max(MAX_REPLY_THREADS).optional() });
+export const fixRunInput = z.object({ threads: z.array(positiveInt).min(1).max(MAX_REPLY_THREADS).optional(), profile: runProfile });
 
 // One stored edit. added, removed: the line counts of rows.
 export type FixEditDto = { id: number; thread: number; path: string; added: number; removed: number; rows: DiffRowDto[] };

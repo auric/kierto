@@ -2,7 +2,8 @@
 // raw output, item triage. Every mutation broadcasts `changed`.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import { type ApiError, askInput, briefInput, fixRunInput, itemActionInput, replyRunInput } from "../../shared/dto";
+import type { z } from "zod";
+import { type ApiError, askInput, briefInput, fixRunInput, itemActionInput, replyRunInput, reviewRunInput } from "../../shared/dto";
 import type { Live } from "../live";
 import { triage } from "./items";
 import type { ReviewJobs } from "./jobs";
@@ -17,6 +18,9 @@ const runParam = positiveId("run");
 const itemParam = positiveId("item");
 
 const unconfigured = { error: "Configure the Bitbucket URL and token first." } satisfies ApiError;
+const UNKNOWN_PROFILE = "Unknown review profile.";
+// A bad profile ID gets its own message. Any other bad field gets `what`.
+const invalid = (e: z.ZodError, what: string) => (e.issues.some((i) => i.path[0] === "profile") ? UNKNOWN_PROFILE : what);
 const notFound = (what: string) => ({ error: `${what} not found.` }) satisfies ApiError;
 
 export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
@@ -39,21 +43,32 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
         if (!db) return c.json(unconfigured, 409);
         const id = c.req.valid("param").id;
         const input = c.req.valid("json");
-        if (!review.hasProfile(input.profile)) return c.json<ApiError>({ error: "Unknown review profile." }, 400);
+        if (!review.hasProfile(input.profile)) return c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
         const brief = review.saveBrief(db, id, input);
         if (!brief) return c.json(notFound("Pull request"), 404);
         live.broadcast("changed", { prs: [id] });
         return c.json(brief, 200);
       },
     )
-    .post("/prs/:id/review", prParam, (c) => {
-      const db = review.open();
-      if (!db) return c.json(unconfigured, 409);
-      const r = review.review(db, c.req.valid("param").id);
-      if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
-      if ("conflict" in r) return c.json(r.conflict, 409);
-      return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
-    })
+    .post(
+      "/prs/:id/review",
+      prParam,
+      // A query, not a body: clients from before the profile option send no body.
+      validator("query", (v, c) => {
+        const r = reviewRunInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const { profile } = c.req.valid("query");
+        if (profile && !review.hasProfile(profile)) return c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
+        const r = review.review(db, c.req.valid("param").id, profile);
+        if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
+        if ("conflict" in r) return c.json(r.conflict, 409);
+        return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
+      },
+    )
     .post("/prs/:id/rereview", prParam, (c) => {
       const db = review.open();
       if (!db) return c.json(unconfigured, 409);
@@ -67,12 +82,14 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       prParam,
       validator("json", (v, c) => {
         const r = askInput.safeParse(v);
-        return r.success ? r.data : c.json<ApiError>({ error: "Invalid question." }, 400);
+        return r.success ? r.data : c.json<ApiError>({ error: invalid(r.error, "Invalid question.") }, 400);
       }),
       (c) => {
         const db = review.open();
         if (!db) return c.json(unconfigured, 409);
-        const r = review.ask(db, c.req.valid("param").id, c.req.valid("json").question);
+        const { question, profile } = c.req.valid("json");
+        if (profile && !review.hasProfile(profile)) return c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
+        const r = review.ask(db, c.req.valid("param").id, question, profile);
         if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
         if ("conflict" in r) return c.json(r.conflict, 409);
         return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
@@ -89,12 +106,14 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       prParam,
       validator("json", (v, c) => {
         const r = replyRunInput.safeParse(v);
-        return r.success ? r.data : c.json<ApiError>({ error: "Invalid thread list." }, 400);
+        return r.success ? r.data : c.json<ApiError>({ error: invalid(r.error, "Invalid thread list.") }, 400);
       }),
       (c) => {
         const db = review.open();
         if (!db) return c.json(unconfigured, 409);
-        const r = review.draftReplies(db, c.req.valid("param").id, c.req.valid("json").threads);
+        const { threads, profile } = c.req.valid("json");
+        if (profile && !review.hasProfile(profile)) return c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
+        const r = review.draftReplies(db, c.req.valid("param").id, threads, profile);
         if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
         if ("conflict" in r) return c.json(r.conflict, 409);
         if (r.status === 400) return c.json({ error: r.error }, 400);
@@ -111,12 +130,14 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       prParam,
       validator("json", (v, c) => {
         const r = fixRunInput.safeParse(v);
-        return r.success ? r.data : c.json<ApiError>({ error: "Invalid thread list." }, 400);
+        return r.success ? r.data : c.json<ApiError>({ error: invalid(r.error, "Invalid thread list.") }, 400);
       }),
       (c) => {
         const db = review.open();
         if (!db) return c.json(unconfigured, 409);
-        const r = review.fix(db, c.req.valid("param").id, c.req.valid("json").threads);
+        const { threads, profile } = c.req.valid("json");
+        if (profile && !review.hasProfile(profile)) return c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
+        const r = review.fix(db, c.req.valid("param").id, threads, profile);
         if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
         if ("conflict" in r) return c.json(r.conflict, 409);
         if (r.status === 400) return c.json({ error: r.error }, 400);

@@ -283,14 +283,17 @@ export function briefState(
 ): BriefState {
   const p = profileOf(profiles, brief?.profile ?? "general");
   const rerun = latest || (brief && brief.updatedAt !== null) ? "start" : "compose";
-  const open = "Open the review brief: task, your note, and profile. Key: Shift+R.";
-  const again = rerun === "start" ? ` Key r runs the brief: ${p?.name ?? ""}${brief?.note.trim() ? " with your note" : ""}.` : "";
+  // The Review button does what r does. Shift+R opens the brief.
+  const hint =
+    rerun === "start"
+      ? `Run the review brief: ${p?.name ?? ""}${brief?.note.trim() ? " with your note" : ""}. Key: r. Shift+R opens the brief.`
+      : "Open the review brief: task, your note, and profile. Key: r.";
   return {
     profile: p?.id ?? "general",
     name: p?.name ?? "",
     rerun,
     busy: active ? { pr: active.pr, same: active.pr === pr } : null,
-    hint: open + again,
+    hint,
   };
 }
 

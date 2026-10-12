@@ -117,7 +117,7 @@ function makePr(o: Spec): Pr {
   });
   pr.fromRef.latestCommit = o.head;
   (pr.toRef as { latestCommit: string }).latestCommit = remote.target;
-  (refs[0] as { displayId: string }).displayId = o.branch;
+  Object.assign(refs[0] as object, { id: `refs/heads/${o.branch}`, displayId: o.branch });
   return pr;
 }
 
@@ -272,9 +272,8 @@ const own = Object.assign(S.ownPr() as Pr, {
   links: { self: [{ href: `${fake.url}/users/${FAKE_USER}/repos/sample-repo-1/pull-requests/2` }] },
 });
 own.fromRef.latestCommit = remote.source;
-(own.toRef as { repository: { links: unknown } }).repository.links = {
-  self: [{ href: `${fake.url}/users/${FAKE_USER}/repos/sample-repo-1/browse` }],
-};
+for (const r of [own.fromRef, own.toRef] as unknown as { repository: { links: unknown } }[])
+  r.repository.links = { self: [{ href: `${fake.url}/users/${FAKE_USER}/repos/sample-repo-1/browse` }] };
 (own.toRef as { latestCommit: string }).latestCommit = remote.target;
 // Fix it (plan r3): my PR. The reviewer asks for three changes. A reply run judges them valid, partly valid, and not valid.
 // The demo clone below is the clone of PROJ1/sample-repo-4, so Apply commits there.

@@ -1004,3 +1004,27 @@ describe("forge data", () => {
     expect(h.unread()).toBe(0);
   });
 });
+
+describe("branch links", () => {
+  type Ref = { repository: { links: unknown } };
+  const self = (href: string) => ({ self: [{ href }] });
+
+  test("each cycle stores the branch pages from the repository link of each ref; a link of another host stores null", async () => {
+    const own = ownPr() as ReturnType<typeof ownPr> & { fromRef: Ref; toRef: Ref };
+    // A PR from a fork: the source repository is another one.
+    own.fromRef.repository.links = self(`${fake.url}/users/asmith/repos/sample-repo-1/browse`);
+    own.toRef.repository.links = self(`${fake.url}/users/jdoe/repos/sample-repo-1/browse`);
+    world.author = [own];
+    const h = await setup();
+    const link = () =>
+      h.db().query("SELECT l.source_url, l.target_url FROM pr_branch_link l JOIN pull_request p ON p.id = l.pr WHERE p.pr_id = 2").get();
+    await h.cycle();
+    expect(link()).toEqual({
+      source_url: `${fake.url}/users/asmith/repos/sample-repo-1/browse?at=refs%2Fheads%2Ftopic%2Fsample-1`,
+      target_url: `${fake.url}/users/jdoe/repos/sample-repo-1/browse?at=refs%2Fheads%2Ftopic%2Fsample-2`,
+    });
+    own.toRef.repository.links = self("https://elsewhere.example.test/users/jdoe/repos/sample-repo-1/browse");
+    await h.cycle();
+    expect(link()).toMatchObject({ target_url: null });
+  });
+});

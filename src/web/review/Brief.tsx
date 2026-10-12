@@ -2,7 +2,6 @@
 // The note is the user's instruction. The server keeps the pull request text out of the prompt (plan v3 WP10).
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import {
-  ChevronDown,
   ChevronRight,
   CircleAlert,
   Copy,
@@ -21,6 +20,7 @@ import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEf
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut } from "@/components/ui/dropdown-menu";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -44,6 +44,7 @@ import { read } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { putBrief } from "./data";
 import type { BriefState } from "./model";
+import { RunSplit } from "./RunSplit";
 import { keyParam, TaskChips, taskKey, useTaskChips } from "./TaskChips";
 import {
   type AttachmentRow,
@@ -78,11 +79,20 @@ function runnerNote(meta: MetaDto): { short: string; message: string } | null {
     : { short: `${meta.runner.name} is not available`, message: c.message };
 }
 
-// extra: buttons before the Review button, such as Draft replies (WP18).
-export function ReviewButton(props: { state: BriefState; open: boolean; meta: MetaDto; extra?: ReactNode; onClick: () => void }) {
+// The parts are items of the action bar (Header.tsx). extra: buttons before the Review button, such as Draft replies (WP18).
+// onRun: the r key without a profile, else a review with that profile only. onBrief: the Shift+R key.
+export function ReviewButton(props: {
+  state: BriefState;
+  meta: MetaDto;
+  extra?: ReactNode;
+  onRun: (profile?: string) => void;
+  onBrief: () => void;
+}) {
   const note = runnerNote(props.meta);
+  // Open brief moves the focus into the note, not back to the menu button.
+  const toBrief = useRef(false);
   return (
-    <div className="mt-px flex flex-wrap items-center justify-end gap-2">
+    <>
       {note && (
         <Hint label={note.message}>
           <span id="review-note" className="inline-flex items-center gap-1.5 text-xs text-destructive">
@@ -93,22 +103,42 @@ export function ReviewButton(props: { state: BriefState; open: boolean; meta: Me
         </Hint>
       )}
       {props.extra}
-      <Hint label={props.state.hint}>
-        <Button
-          id="review-btn"
-          size="sm"
-          className="pr-2 pl-3.5"
-          aria-expanded={props.open}
-          aria-controls={props.open ? "brief" : undefined}
-          aria-describedby={note ? "review-note" : undefined}
-          aria-keyshortcuts="Shift+R"
-          onClick={props.onClick}
-        >
-          Review · {props.state.name}
-          <ChevronDown aria-hidden data-icon="inline-end" className="rl-chev-d" />
-        </Button>
-      </Hint>
-    </div>
+      <RunSplit
+        id="review-btn"
+        variant="default"
+        hint={props.state.hint}
+        keys="r"
+        describedBy={note ? "review-note" : undefined}
+        menu="Review with another profile"
+        heading="Profile for this review"
+        profiles={props.meta.profiles}
+        current={props.state.profile}
+        onRun={props.onRun}
+        finalFocus={() => {
+          const brief = toBrief.current;
+          toBrief.current = false;
+          return brief ? document.getElementById("brief-note") : true;
+        }}
+        more={
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                onClick={() => {
+                  toBrief.current = true;
+                  props.onBrief();
+                }}
+              >
+                Open brief
+                <DropdownMenuShortcut>Shift+R</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </>
+        }
+      >
+        Review<span className="@max-[560px]/detail:sr-only"> · {props.state.name}</span>
+      </RunSplit>
+    </>
   );
 }
 

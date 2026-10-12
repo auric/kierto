@@ -264,6 +264,23 @@ describe("ask runs", () => {
   );
 
   test(
+    "a listed profile answers this question only; an unknown or bad profile ID gives 400",
+    async () => {
+      const h = await setup();
+      const ask = (profile: unknown) => h.json<RunDto & ApiError>(`/api/prs/${h.pr}/ask`, { body: { question: "Why?", profile } });
+      const refused = (r: { status: number; body: ApiError }) => [r.status, r.body.error];
+      expect(refused(await ask("nope"))).toEqual([400, "Unknown review profile."]);
+      expect(refused(await ask("a b"))).toEqual([400, "Unknown review profile."]);
+      expect(h.runCalls()).toEqual([]);
+      const r = await ask("security");
+      expect(r.status).toBe(202);
+      expect(r.body).toMatchObject({ kind: "ask", profile: "security", profileName: "Security" });
+      await h.finish(r.body.id);
+    },
+    SLOW,
+  );
+
+  test(
     "an auth refusal starts no process",
     async () => {
       const h = await setup();

@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { CloneDto, FixCommitDto, FixCommitInput, FixConflict, FixDto } from "../../shared/dto";
 import { api } from "../api";
-import { started, useStart } from "../review/data";
+import { type RunStart, runBody, started, useStart } from "../review/data";
 import { read } from "../shell/data";
 
 const param = (id: number) => ({ param: { id: String(id) } });
@@ -34,9 +34,7 @@ export async function dropClone(pr: number) {
 
 // POST /api/prs/:id/fix-run. Absent threads: each thread with a valid or partly valid reply draft.
 export const useStartFix = (pr: number) =>
-  useStart(pr, async (threads: number[] | undefined) =>
-    started(await api.api.prs[":id"]["fix-run"].$post({ ...param(pr), json: threads ? { threads } : {} })),
-  );
+  useStart(pr, async (o: RunStart) => started(await api.api.prs[":id"]["fix-run"].$post({ ...param(pr), json: runBody(o) })));
 
 // 409 with problems: a clone check failed. 409 without problems: another refusal, such as a failed hook with the stderr tail;
 // then the edits stay staged. 502: the forge did not give the pull request, so the user can try again.

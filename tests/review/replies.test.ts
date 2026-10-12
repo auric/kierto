@@ -262,6 +262,40 @@ describe("thread selection", () => {
   );
 });
 
+describe("profile for one run", () => {
+  test(
+    "reply and review runs take a listed profile for that run only; the brief keeps its profile; unknown IDs give 400",
+    async () => {
+      const h = await setup();
+      const reply = (body: unknown) => h.json<RunDto & ApiError>(`/api/prs/${h.pr}/reply-run`, { body });
+      const refused = (r: { status: number; body: ApiError }) => [r.status, r.body.error];
+      expect(refused(await reply({ profile: "nope" }))).toEqual([400, "Unknown review profile."]);
+      expect(refused(await reply({ profile: "Security" }))).toEqual([400, "Unknown review profile."]);
+      expect(refused(await reply({ threads: [], profile: "security" }))).toEqual([400, "Invalid thread list."]);
+      expect(h.runCalls()).toEqual([]);
+
+      const r = await reply({ threads: [101], profile: "security" });
+      expect(r.status).toBe(202);
+      expect(r.body).toMatchObject({ kind: "reply", profile: "security", profileName: "Security" });
+      expect((await h.finish(r.body.id)).run.status).toBe("completed");
+      expect((await h.json<{ profile: string }>(`/api/prs/${h.pr}/brief`)).body.profile).toBe("general");
+      // The same threads without a profile are another run, with the brief profile.
+      const plain = await h.run([101]);
+      expect(plain.run).toMatchObject({ profile: "general", profileName: "General" });
+
+      const review = (profile: string) => h.json<RunDto & ApiError>(`/api/prs/${h.pr}/review?profile=${profile}`, { method: "POST" });
+      expect(refused(await review("nope"))).toEqual([400, "Unknown review profile."]);
+      expect(refused(await review("a%20b"))).toEqual([400, "Unknown review profile."]);
+      const v = await review("explain");
+      expect(v.status).toBe(202);
+      expect(v.body).toMatchObject({ kind: "review", profile: "explain", explain: true });
+      await h.finish(v.body.id);
+      expect((await h.json<{ profile: string }>(`/api/prs/${h.pr}/brief`)).body.profile).toBe("general");
+    },
+    SLOW,
+  );
+});
+
 describe("R11 injection guard", () => {
   test(
     "comment text never reaches stdin, the note only in its section, and an answer for an unrequested thread drops",

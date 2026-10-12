@@ -645,7 +645,7 @@ details[open] > summary .rl-chev {
     grid-template-columns: minmax(0, 1fr) minmax(200px, 250px);
   }
 }
-/* Review button: the chevron points down, and up while the brief is open. */
+/* Profile menu of a run button: the chevron points down, and up while the menu is open. */
 .rl-chev-d {
   transition: transform 150ms var(--ease-out);
 }

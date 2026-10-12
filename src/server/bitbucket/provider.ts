@@ -78,6 +78,11 @@ export function newestFirst(list: Commit[]): Commit[] {
   return out;
 }
 
+// The branch page: the repository browse link with the full ref name, as the file links use `?at=` (Gate v3 U5).
+// ponytail: "?at=<ref>" is not verified on a real server, as the file link suffix. Verify it in the browser.
+export const branchUrl = (repoUrl: string | undefined, ref: string | undefined): string | undefined =>
+  repoUrl && ref ? `${repoUrl.replace(/\/+$/, "")}?at=${encodeURIComponent(ref)}` : undefined;
+
 // A new-side line of the diff between two fixed commits. fromHash: the target head. toHash: the reviewed source head (I8).
 // line: the new-side line of an added line, the old-side line of a context line (Gate v3 U4).
 export type NewAnchor = { path: string; srcPath: string | null; line: number; lineType: "add" | "ctx"; fromHash: string; toHash: string };
@@ -97,6 +102,7 @@ export function createBitbucketProvider(opts: ClientOptions) {
   };
 
   function toPr(p: z.infer<typeof pullRequest>): PullRequest {
+    const repoUrl = own(p.toRef.repository.links?.self?.[0]?.href);
     return {
       ref: { project: p.toRef.repository.project.key, repo: p.toRef.repository.slug, id: p.id },
       version: p.version,
@@ -110,7 +116,9 @@ export function createBitbucketProvider(opts: ClientOptions) {
       sourceBranch: p.fromRef.displayId,
       targetBranch: p.toRef.displayId,
       webUrl: own(p.links?.self?.[0]?.href),
-      repoUrl: own(p.toRef.repository.links?.self?.[0]?.href),
+      repoUrl,
+      sourceBranchUrl: branchUrl(own(p.fromRef.repository.links?.self?.[0]?.href), p.fromRef.id),
+      targetBranchUrl: branchUrl(repoUrl, p.toRef.id),
       updatedDate: p.updatedDate,
     };
   }

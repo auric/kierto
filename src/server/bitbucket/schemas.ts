@@ -8,7 +8,9 @@ export const user = z.object({ name: z.string(), slug: z.string(), displayName: 
 const links = z.object({ self: z.array(z.object({ href: z.string() })).optional() }).optional();
 
 // repository.links.self: the browse link (Gate v3 U5). A personal repository uses /users/<slug>/, so the app never builds it from the key.
+// id: the full ref name, such as refs/heads/main. fromRef.repository is the fork for a PR from a fork.
 const ref = z.object({
+  id: z.string().optional(),
   displayId: z.string(),
   latestCommit: z.string(),
   repository: z.object({ slug: z.string(), project: z.object({ key: z.string() }), links }),

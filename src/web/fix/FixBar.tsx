@@ -11,8 +11,9 @@ import type { ThreadModel } from "../pr/threads";
 import { planKey } from "../publish/data";
 import { replyKey } from "../review/data";
 import { plural, shortHash } from "../review/model";
+import { RunSplit } from "../review/RunSplit";
 import type { Focus } from "../review/useReview";
-import { Hint, type Hints } from "../shell/Hint";
+import type { Hints } from "../shell/Hint";
 import { prKey, repoOf } from "../shell/model";
 import { ApplyDialog, type ApplyTarget } from "./ApplyDialog";
 import { cloneKey, fixesKey, getClone, undoFix, useClone, useFixes, useStartFix } from "./data";
@@ -20,28 +21,34 @@ import { FixCard, type FixCtx } from "./FixCard";
 import { handoffText } from "./handoff";
 import { applyText, fixAllButton, fixState, fixThreads, selection } from "./model";
 
-// A disabled button stays focusable, so the tooltip and the screen reader can give the reason.
-function FixAllButton(props: { n: number; profile: string; busy: boolean; onClick: () => void }) {
-  const s = fixAllButton(props.n, props.profile);
+// profile: the brief profile. The menu leaves out the Explain profiles: the server refuses them (jobs.ts fix).
+function FixAllButton(props: {
+  n: number;
+  meta: MetaDto;
+  profile: { id: string; name: string };
+  busy: boolean;
+  onRun: (profile?: string) => void;
+}) {
+  const s = fixAllButton(props.n, props.profile.name);
   return (
-    <Hint label={s.hint}>
-      <Button
-        id="fix-all-btn"
-        size="sm"
-        variant="outline"
-        disabled={s.disabled || props.busy}
-        focusableWhenDisabled
-        aria-label={`Fix all valid${s.disabled ? `. ${s.hint}` : `, ${plural(props.n, "comment")}`}`}
-        className="aria-disabled:cursor-default aria-disabled:opacity-50"
-        onClick={props.onClick}
-      >
-        <Wrench aria-hidden data-icon="inline-start" />
-        Fix all valid
-        <span aria-hidden className="rounded-[4px] bg-sel px-1 text-xs font-semibold text-ink-2">
-          {props.n}
-        </span>
-      </Button>
-    </Hint>
+    <RunSplit
+      id="fix-all-btn"
+      variant="outline"
+      hint={s.hint}
+      disabled={s.disabled || props.busy}
+      label={`Fix all valid${s.disabled ? `. ${s.hint}` : `, ${plural(props.n, "comment")}`}`}
+      menu="Fix with another profile"
+      heading="Profile for this fix run"
+      profiles={props.meta.profiles.filter((p) => !p.explain)}
+      current={props.profile.id}
+      onRun={props.onRun}
+    >
+      <Wrench aria-hidden data-icon="inline-start" />
+      Fix all valid
+      <span aria-hidden className="rounded-[4px] bg-sel px-1 text-xs font-semibold text-ink-2">
+        {props.n}
+      </span>
+    </RunSplit>
   );
 }
 
@@ -54,7 +61,8 @@ export type FixUi = {
   dialog: ReactNode;
   fixes: FixDto[] | undefined;
   // threads absent: each thread with a valid or partly valid reply draft, as the server selects them.
-  run: (threads?: number[]) => void;
+  // profile absent: the brief profile.
+  run: (threads?: number[], profile?: string) => void;
   // Copies the runner prompt of the thread. Call it in the click handler. Resolves to the next step, or null.
   copyPrompt: (thread: number) => Promise<string | null>;
 };
@@ -68,8 +76,8 @@ export function useFix(
     hints: Hints;
     threads: ThreadModel[];
     replies: ReviewItemDto[] | undefined;
-    // The brief profile. Fix runs use it.
-    profile: string;
+    // The brief profile. Fix runs use it, unless the menu of Fix all valid gives another one.
+    profile: { id: string; name: string };
     announce: (text: string) => void;
     focusAfter: (f: Focus) => void;
     onLog: (run: number) => void;
@@ -96,17 +104,22 @@ export function useFix(
   const live = new Set(o.threads.flatMap((t) => (t.last ? [t.id] : [])));
   const valid = fixThreads(o.replies, live);
 
-  const run = (ids?: number[]) => {
+  const run = (ids?: number[], profile?: string) => {
     const shown = ids ?? valid;
-    start.mutate(ids, {
-      onSuccess: (r) => {
-        if ("conflict" in r) return o.slotTaken(r.conflict);
-        setAsked({ run: r.run.id, threads: shown });
-        void qc.invalidateQueries({ queryKey: fixesKey(pr.id) });
-        announce(ids ? "Proposing a fix." : `Proposing fixes for ${plural(shown.length, "comment")}.`);
+    start.mutate(
+      { threads: ids, profile },
+      {
+        onSuccess: (r) => {
+          if ("conflict" in r) return o.slotTaken(r.conflict);
+          setAsked({ run: r.run.id, threads: shown });
+          void qc.invalidateQueries({ queryKey: fixesKey(pr.id) });
+          announce(
+            `${ids ? "Proposing a fix" : `Proposing fixes for ${plural(shown.length, "comment")}`}${profile ? ` with the ${r.run.profileName} profile` : ""}.`,
+          );
+        },
+        onError: (e) => toast.add({ title: "The fix run did not start", description: e.message }),
       },
-      onError: (e) => toast.add({ title: "The fix run did not start", description: e.message }),
-    });
+    );
   };
 
   const refresh = () => {
@@ -258,7 +271,9 @@ export function useFix(
   );
 
   return {
-    button: author && <FixAllButton n={valid.length} profile={o.profile} busy={start.isPending} onClick={() => run()} />,
+    button: author && (
+      <FixAllButton n={valid.length} meta={meta} profile={o.profile} busy={start.isPending} onRun={(p) => run(undefined, p)} />
+    ),
     cards,
     bar,
     dialog,

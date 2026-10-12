@@ -173,8 +173,9 @@ export function useReview(
     });
   };
 
-  const runNow = () =>
-    start.mutate(undefined, {
+  // profile: a profile for this review only. Absent: the brief profile.
+  const runNow = (profile?: string) =>
+    start.mutate(profile, {
       onSuccess: (r) => {
         if ("conflict" in r) return slotTaken(r.conflict);
         setComposer(false);
@@ -199,17 +200,21 @@ export function useReview(
     });
   };
 
-  // threads absent: every thread where it is my turn, as the server selects them (WP17).
-  const draftReplies = (threads?: number[]) => {
+  // threads absent: every thread where it is my turn, as the server selects them (WP17). profile absent: the brief profile.
+  const draftReplies = (threads?: number[], profile?: string) => {
     const ids = threads ?? o.threads.filter((t) => t.turn === "your").map((t) => t.id);
-    startReplies.mutate(threads, {
-      onSuccess: (r) => {
-        if ("conflict" in r) return slotTaken(r.conflict);
-        setAsked({ run: r.run.id, threads: ids });
-        o.announce(threads ? "Drafting a reply." : `Drafting replies for ${plural(ids.length, "thread")}.`);
+    startReplies.mutate(
+      { threads, profile },
+      {
+        onSuccess: (r) => {
+          if ("conflict" in r) return slotTaken(r.conflict);
+          setAsked({ run: r.run.id, threads: ids });
+          const what = threads ? "Drafting a reply" : `Drafting replies for ${plural(ids.length, "thread")}`;
+          o.announce(`${what}${profile ? ` with the ${r.run.profileName} profile` : ""}.`);
+        },
+        onError: (e) => toast.add({ title: "The reply drafts did not start", description: e.message }),
       },
-      onError: (e) => toast.add({ title: "The reply drafts did not start", description: e.message }),
-    });
+    );
   };
 
   const openBrief = () => {
@@ -375,7 +380,7 @@ export function useReview(
     hints: o.hints,
     threads: o.threads,
     replies: replies.data,
-    profile: state.name,
+    profile: { id: state.profile, name: state.name },
     announce: o.announce,
     focusAfter,
     onLog: (id) => openLog(null, false, id),
@@ -434,9 +439,10 @@ export function useReview(
     return out;
   }, [o.threads, byThread, pending, triage, replyCtx, fixCards, fixes, commits, author]);
 
+  // The open brief can hold an unsaved note. There, Ctrl+Enter saves and starts, so r only focuses the note.
+  const rerun = () => (composer || state.rerun === "compose" ? openBrief() : runNow());
   const api: ReviewApi = {
-    // The open brief can hold an unsaved note. There, Ctrl+Enter saves and starts, so r only focuses the note.
-    rerun: () => (composer || state.rerun === "compose" ? openBrief() : runNow()),
+    rerun,
     rereview,
     brief: openBrief,
     drafts() {
@@ -498,16 +504,21 @@ export function useReview(
     action: (
       <ReviewButton
         state={state}
-        open={composer}
         meta={meta}
         extra={
           <>
             {"since" in rr && <RereviewButton since={rr.since} busy={startRereview.isPending} onClick={rereview} />}
-            <DraftRepliesButton your={your} profile={state.name} onClick={() => draftReplies()} />
+            <DraftRepliesButton
+              your={your}
+              meta={meta}
+              profile={{ id: state.profile, name: state.name }}
+              onRun={(p) => draftReplies(undefined, p)}
+            />
             {fix.button}
           </>
         }
-        onClick={() => (composer ? closeBrief() : openBrief())}
+        onRun={(p) => (p ? runNow(p) : rerun())}
+        onBrief={openBrief}
       />
     ),
     // Plan r3 Feature C: every run kind reads the fetched task text. While the brief is closed, its task row shows here,

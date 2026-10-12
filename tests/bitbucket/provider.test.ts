@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ForgeError } from "../../src/server/bitbucket/client";
-import { createBitbucketProvider, excerptOf } from "../../src/server/bitbucket/provider";
+import { branchUrl, createBitbucketProvider, excerptOf } from "../../src/server/bitbucket/provider";
 import { FAKE_TOKEN, type FakeBitbucket, fixture, key, type Route, startFakeBitbucket } from "../support/fake-bitbucket";
 import {
   ACTIVITIES_PATH,
@@ -456,6 +456,60 @@ describe("forge data", () => {
     const link = body.body.toRef.repository.links.self[0];
     if (link) link.href = `${fake.url}/users/jdoe/repos/sample-repo-1/browse`;
     expect((await p.getPullRequest(PR_REF)).repoUrl).toBe(`${fake.url}/users/jdoe/repos/sample-repo-1/browse`);
+  });
+
+  test("branchUrl adds the full ref name to the repository browse link", () => {
+    expect(branchUrl("https://h.test/projects/P/repos/r/browse", "refs/heads/fix/a b")).toBe(
+      "https://h.test/projects/P/repos/r/browse?at=refs%2Fheads%2Ffix%2Fa%20b",
+    );
+    expect(branchUrl("https://h.test/users/jdoe/repos/r/browse/", "refs/heads/main")).toBe(
+      "https://h.test/users/jdoe/repos/r/browse?at=refs%2Fheads%2Fmain",
+    );
+    expect(branchUrl(undefined, "refs/heads/main")).toBeUndefined();
+    expect(branchUrl("https://h.test/projects/P/repos/r/browse", undefined)).toBeUndefined();
+  });
+
+  type BrowseRepo = { project: { key: string }; slug: string; links: { self: { href: string }[] } };
+  type Refs = { fromRef: { id: string; repository: BrowseRepo }; toRef: { id: string; repository: BrowseRepo } };
+  const setSelf = (r: BrowseRepo, href: string) => {
+    r.links.self = [{ href }];
+  };
+
+  test("the branch links come from the repository links of each ref, from the configured origin only", async () => {
+    const body = clone(fixture<Refs>("pull-request.json"));
+    const p = setup({ [key("GET", PR_PATH)]: body });
+    // The recorded links have another host.
+    expect(await p.getPullRequest(PR_REF)).toMatchObject({ sourceBranchUrl: undefined, targetBranchUrl: undefined });
+    setSelf(body.body.fromRef.repository, `${fake.url}/users/jdoe/repos/sample-repo-1/browse`);
+    setSelf(body.body.toRef.repository, `${fake.url}/users/jdoe/repos/sample-repo-1/browse`);
+    expect(await p.getPullRequest(PR_REF)).toMatchObject({
+      sourceBranchUrl: `${fake.url}/users/jdoe/repos/sample-repo-1/browse?at=refs%2Fheads%2Ftopic%2Fsample-1`,
+      targetBranchUrl: `${fake.url}/users/jdoe/repos/sample-repo-1/browse?at=refs%2Fheads%2Ftopic%2Fsample-2`,
+    });
+  });
+
+  test("a PR from a fork links its source branch in the fork and its target branch in the PR repository", async () => {
+    const body = clone(fixture<Refs>("pull-request.json"));
+    const p = setup({ [key("GET", PR_PATH)]: body });
+    const from = body.body.fromRef;
+    from.id = "refs/heads/feature/x";
+    Object.assign(from.repository, { slug: "sample-repo-1", project: { key: "~ASMITH" } });
+    setSelf(from.repository, `${fake.url}/users/asmith/repos/sample-repo-1/browse`);
+    setSelf(body.body.toRef.repository, `${fake.url}/projects/PROJ1/repos/sample-repo-1/browse`);
+    const pr = await p.getPullRequest(PR_REF);
+    expect(pr.sourceBranchUrl).toBe(`${fake.url}/users/asmith/repos/sample-repo-1/browse?at=refs%2Fheads%2Ffeature%2Fx`);
+    expect(pr.targetBranchUrl).toBe(`${fake.url}/projects/PROJ1/repos/sample-repo-1/browse?at=refs%2Fheads%2Ftopic%2Fsample-2`);
+    expect(pr.repoUrl).toBe(`${fake.url}/projects/PROJ1/repos/sample-repo-1/browse`);
+  });
+
+  test("a ref without its full name gets no branch link", async () => {
+    const body = clone(fixture<Refs>("pull-request.json"));
+    const p = setup({ [key("GET", PR_PATH)]: body });
+    setSelf(body.body.fromRef.repository, `${fake.url}/users/jdoe/repos/sample-repo-1/browse`);
+    delete (body.body.fromRef as { id?: string }).id;
+    const pr = await p.getPullRequest(PR_REF);
+    expect(pr.sourceBranch).toBe("topic/sample-1");
+    expect(pr.sourceBranchUrl).toBeUndefined();
   });
 
   test("U15: the recorded commits page maps the confirmed fields", async () => {

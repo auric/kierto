@@ -27,11 +27,12 @@ const SNIPPET = 110;
 
 const SQL = {
   rows: `SELECT p.id, p.project, p.repo, p.pr_id, p.title, p.author_slug, p.author_name, p.my_role, p.state, p.my_status, p.last_reviewed_commit,
-      p.source_head, p.source_branch, p.target_branch, p.web_url, p.on_dashboard, p.followed, p.reviewers_json, p.seen_at,
+      p.source_head, p.source_branch, p.target_branch, p.web_url, b.source_url AS source_branch_url, b.target_url AS target_branch_url,
+      p.on_dashboard, p.followed, p.reviewers_json, p.seen_at,
       (SELECT COUNT(*) FROM comment c WHERE ${UNREAD}) AS unread,
       MAX(COALESCE(p.updated_date, 0), COALESCE((SELECT MAX(c.updated_at) FROM comment c WHERE c.pr = p.id), 0)) AS last_activity,
       k.scope IS NOT NULL AS has_checkpoint, k.last_complete_at, k.incomplete_reason, k.last_error
-    FROM pull_request p LEFT JOIN sync_checkpoint k ON k.scope = 'pr:' || p.id
+    FROM pull_request p LEFT JOIN sync_checkpoint k ON k.scope = 'pr:' || p.id LEFT JOIN pr_branch_link b ON b.pr = p.id
     WHERE ${LISTED}`,
   // One query for the comments of all listed PRs.
   turns: `SELECT c.pr, c.comment_id, c.root_id, c.author_slug, c.author_name, c.author_login, c.text, c.thread_resolved, c.created_at,
@@ -80,6 +81,8 @@ type RawRow = {
   source_branch: string | null;
   target_branch: string | null;
   web_url: string | null;
+  source_branch_url: string | null;
+  target_branch_url: string | null;
   reviewers_json: string | null;
   seen_at: number | null;
   on_dashboard: number;
@@ -174,6 +177,8 @@ const toRow = (r: RawRow, t: Turns, tasks: PrTask[]): PrRow => ({
   sourceBranch: r.source_branch,
   targetBranch: r.target_branch,
   webUrl: r.web_url,
+  sourceBranchUrl: r.source_branch_url,
+  targetBranchUrl: r.target_branch_url,
   reviewers:
     r.reviewers_json === null
       ? []

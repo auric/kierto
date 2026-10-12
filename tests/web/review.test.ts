@@ -260,10 +260,8 @@ describe("brief state", () => {
   test("the button names the stored profile, and the hint names r and the note", () => {
     const s = briefState(brief({ profile: "security", note: "Check X", updatedAt: 5 }), null, null, 7, PROFILES);
     expect(s.name).toBe("Security");
-    expect(s.hint).toBe(
-      "Open the review brief: task, your note, and profile. Key: Shift+R. Key r runs the brief: Security with your note.",
-    );
-    expect(briefState(brief(), null, null, 7, PROFILES).hint).toBe("Open the review brief: task, your note, and profile. Key: Shift+R.");
+    expect(s.hint).toBe("Run the review brief: Security with your note. Key: r. Shift+R opens the brief.");
+    expect(briefState(brief(), null, null, 7, PROFILES).hint).toBe("Open the review brief: task, your note, and profile. Key: r.");
     expect(briefState(brief({ profile: "over" }), null, null, 7, PROFILES).name).toBe("General");
   });
 

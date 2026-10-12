@@ -287,6 +287,15 @@ export function PrDetail({
     const hit = list[i < 0 ? (d > 0 ? 0 : list.length - 1) : (i + d + list.length) % list.length];
     if (hit) jump(hit[0], hit[1]);
   };
+  // The q key and the Ask button.
+  const openAsk = () => {
+    if (!data) {
+      toast.add({ title: "The pull request is still loading." });
+      return;
+    }
+    setSecs((s) => new Set(s).add("ask"));
+    focusAfter({ id: "ask-q", block: "center", flash: false });
+  };
   const nextYour = () => {
     const ids = ordered(threads, needMe)
       .filter((t) => t.turn === "your")
@@ -336,14 +345,7 @@ export function PrDetail({
       else if (t) diff.show({ kind: "thread", id: Number(t) });
       else toast.add({ title: "Move to an inline thread or a draft first. Then g d shows its line in the diff." });
     },
-    ask() {
-      if (!data) {
-        toast.add({ title: "The pull request is still loading." });
-        return;
-      }
-      setSecs((s) => new Set(s).add("ask"));
-      focusAfter({ id: "ask-q", block: "center", flash: false });
-    },
+    ask: openAsk,
     ...review.api,
     // prototype/v3 Esc order: an edit, the brief, the post confirm, the run log.
     layer(target) {
@@ -370,6 +372,8 @@ export function PrDetail({
         onNextNew={() => nextNew(1)}
         onNextYour={nextYour}
         onLeave={onLeave}
+        onAsk={openAsk}
+        announce={announce}
         action={review.action}
         brief={review.brief}
         run={review.run}

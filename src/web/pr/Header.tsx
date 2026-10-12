@@ -1,10 +1,13 @@
-// Detail header (prototype/v3 renderDetail .dh): key, branches, task IDs, actions, title, and the summary lines.
-import { Archive, ExternalLink, Reply, Star } from "lucide-react";
-import type { ReactNode } from "react";
+// Detail header (prototype/v3 renderDetail .dh): key, branches, task IDs, title, the action bar, and the summary lines.
+// The action bar sticks to the top of the pane. When the title leaves the view, the bar shows the key and the title.
+import { Archive, Check, Copy, ExternalLink, MessageCircleQuestionMark, Reply, Star } from "lucide-react";
+import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { toast } from "@/components/ui/toast";
+import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { PrRow } from "../../shared/dto";
-import { useForge } from "../meta";
+import { useMeta } from "../meta";
 import { useArchive, useFollow } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { prKey, taskHint } from "../shell/model";
@@ -23,8 +26,110 @@ export function webLink(url: string | null): string | null {
 
 const iconBtn = "text-ink-2 hover:bg-hover hover:text-foreground";
 
+// The branch name links to its page on the forge. The copy button shows on hover and on focus, and always on a touch screen.
+function BranchRef({ name, url, forge, announce }: { name: string; url: string | null; forge: string; announce: (text: string) => void }) {
+  // A count, so a second copy within 1.5 s starts the time again.
+  const [copied, setCopied] = useState(0);
+  useEffect(() => {
+    if (!copied) return;
+    const h = setTimeout(() => setCopied(0), 1500);
+    return () => clearTimeout(h);
+  }, [copied]);
+  const href = webLink(url);
+  const copy = () =>
+    copyText(name).then((ok) => {
+      if (!ok) return toast.add({ title: "The clipboard is blocked here. Select the branch name and press Ctrl+C." });
+      setCopied((n) => n + 1);
+      announce(`Copied ${name}.`);
+    });
+  const text = "min-w-0 font-mono text-ink-2 [overflow-wrap:anywhere]";
+  return (
+    <span data-branch={name} className="group/br inline-flex min-w-0 items-center">
+      {href ? (
+        <Hint label={`Open the branch in ${forge}`}>
+          <a href={href} target="_blank" rel="noopener noreferrer" className={cn(text, "rounded hover:text-pen hover:underline")}>
+            {name}
+          </a>
+        </Hint>
+      ) : (
+        <code className={text}>{name}</code>
+      )}
+      <Hint label={copied ? "Copied" : "Copy the branch name"}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Copy ${name}`}
+          className="ml-0.5 text-muted-foreground opacity-0 group-focus-within/br:opacity-100 group-hover/br:opacity-100 hover:text-foreground pointer-coarse:opacity-100"
+          onClick={() => void copy()}
+        >
+          {copied ? <Check key={copied} aria-hidden className="rl-pop" /> : <Copy aria-hidden />}
+        </Button>
+      </Hint>
+    </span>
+  );
+}
+
+// The bar sticks once the header part above it leaves the view. Then it shows the key and the title.
+// It sets the scroll padding of the pane to its height, so a scroll target stops below it.
+function ActionBar({
+  top,
+  label,
+  title,
+  children,
+}: {
+  top: RefObject<HTMLElement | null>;
+  label: string;
+  title: string;
+  children: ReactNode;
+}) {
+  const bar = useRef<HTMLDivElement>(null);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const el = top.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => e && setStuck(!e.isIntersecting && e.boundingClientRect.top < (e.rootBounds?.top ?? 0)), {
+      root: bar.current?.closest<HTMLElement>("[data-scroll]") ?? null,
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [top]);
+  useLayoutEffect(() => {
+    const el = bar.current;
+    const pane = el?.closest<HTMLElement>("[data-scroll]");
+    if (!el || !pane) return;
+    const ro = new ResizeObserver(() => {
+      pane.style.scrollPaddingTop = `${el.offsetHeight}px`;
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      pane.style.scrollPaddingTop = "";
+    };
+  }, []);
+  return (
+    <div
+      ref={bar}
+      data-actionbar
+      data-stuck={stuck || undefined}
+      className="sticky top-0 z-[3] flex items-center gap-3 border-b border-transparent bg-pane px-6 py-2 max-[759px]:px-4 data-stuck:border-border"
+    >
+      {stuck && (
+        // The h1 above holds the same words for a screen reader. A narrow pane gives the width to the buttons.
+        <p aria-hidden className="rl-fade rl-wide-pane m-0 flex min-w-0 flex-[1_1_0] items-baseline gap-2 overflow-hidden">
+          <span translate="no" className="max-w-[40%] shrink-0 truncate font-mono text-xs text-muted-foreground">
+            {label}
+          </span>
+          <span className="truncate text-sm font-semibold">{title}</span>
+        </p>
+      )}
+      <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">{children}</div>
+    </div>
+  );
+}
+
 // since: the last visit before this one. fresh: the new messages. sum: the counts of the summary line.
-// action, brief, run: the Review button, the review brief under the title, and the run line (plan v3 WP11).
+// action, brief, run: the run buttons, the review brief under the title, and the run line (plan v3 WP11).
+// onAsk: the q key (plan r2 UI-ASK).
 export function Header(props: {
   pr: PrRow;
   since: number | null;
@@ -34,139 +139,170 @@ export function Header(props: {
   onNextNew: () => void;
   onNextYour: () => void;
   onLeave: () => void;
+  onAsk: () => void;
+  announce: (text: string) => void;
   action: ReactNode;
   brief: ReactNode;
   run: ReactNode;
 }) {
-  const { pr, sum } = props;
+  const { pr, sum, announce } = props;
   const follow = useFollow();
   const archive = useArchive();
-  const forge = useForge();
+  const meta = useMeta().data;
+  const forge = meta?.forge.name ?? "";
+  const runner = meta?.runner.short ?? "";
+  const top = useRef<HTMLElement>(null);
   const key = prKey(pr);
+  const title = pr.title ?? key;
   const web = webLink(pr.webUrl);
   const onArchive = () => {
     props.onLeave();
     archive.mutate({ id: pr.id, label: key });
   };
   const following = pr.followed ? "Following. Select to stop." : "Follow";
+  const pad = "px-6 max-[759px]:px-4";
   return (
-    <header className="grid gap-1.5 border-b px-6 pt-3 pb-3.5 max-[759px]:px-4 max-[759px]:pt-2">
-      <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-muted-foreground">
-        <span translate="no" className="font-mono [overflow-wrap:anywhere]">
-          {key}
-        </span>
-        {pr.sourceBranch && (
-          <span translate="no" className="[overflow-wrap:anywhere] max-[759px]:order-3 max-[759px]:basis-full">
-            <code className="font-mono text-ink-2">{pr.sourceBranch}</code> into{" "}
-            <code className="font-mono text-ink-2">{pr.targetBranch ?? "?"}</code>
+    <>
+      <header ref={top} className={cn("grid gap-1.5 pt-3 max-[759px]:pt-2", pad)}>
+        <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-muted-foreground">
+          <span translate="no" className="font-mono [overflow-wrap:anywhere]">
+            {key}
           </span>
-        )}
-        {pr.tasks.map((t) => {
-          const url = webLink(t.url);
-          const chip =
-            "inline-flex items-baseline rounded-[5px] border px-2 py-0.5 font-mono text-xs whitespace-nowrap max-[759px]:order-4";
-          return (
-            <Hint key={t.key} label={taskHint(t)}>
-              {url ? (
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  translate="no"
-                  className={cn(chip, "text-pen hover:border-rule-strong hover:underline")}
-                >
-                  {t.key}
-                </a>
+          {pr.sourceBranch && (
+            <span translate="no" className="flex min-w-0 flex-wrap items-center gap-x-1 max-[759px]:order-3 max-[759px]:basis-full">
+              <BranchRef name={pr.sourceBranch} url={pr.sourceBranchUrl} forge={forge} announce={announce} />
+              into
+              {pr.targetBranch ? (
+                <BranchRef name={pr.targetBranch} url={pr.targetBranchUrl} forge={forge} announce={announce} />
               ) : (
-                <span translate="no" className={cn(chip, "text-ink-2")}>
-                  {t.key}
-                </span>
+                <code className="font-mono text-ink-2">?</code>
               )}
-            </Hint>
-          );
-        })}
-        <span className="ml-auto flex items-center gap-0.5">
-          {web && (
-            <Hint label={`Open in ${forge}`}>
-              <a
-                href={web}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`Open in ${forge}`}
-                className={buttonVariants({ variant: "ghost", size: "icon-sm", className: iconBtn })}
-              >
-                <ExternalLink aria-hidden />
-              </a>
-            </Hint>
-          )}
-          <Hint label={following}>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={iconBtn}
-              aria-label="Follow"
-              aria-pressed={pr.followed}
-              disabled={follow.isPending}
-              onClick={() => follow.mutate({ id: pr.id, followed: !pr.followed })}
-            >
-              <Star aria-hidden className={cn(pr.followed && "fill-current")} />
-            </Button>
-          </Hint>
-          <Hint label="Archive">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={iconBtn}
-              aria-label="Archive"
-              disabled={archive.isPending}
-              onClick={onArchive}
-            >
-              <Archive aria-hidden />
-            </Button>
-          </Hint>
-        </span>
-      </div>
-      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-        <h1 className="m-0 min-w-0 flex-[1_1_24ch] text-(length:--fs-title) leading-tight font-bold tracking-[-0.015em] text-balance [overflow-wrap:anywhere]">
-          {pr.title ?? key}
-        </h1>
-        {props.action}
-      </div>
-      {props.brief}
-      {(sum.your > 0 || sum.unresolved > 0 || sum.tasks > 0) && (
-        <p className="rl-sum m-0 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-2">
-          {sum.your > 0 && (
-            <Hint label="Key: y">
-              <button
-                type="button"
-                aria-keyshortcuts="y"
-                onClick={props.onNextYour}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded font-semibold text-turn hover:underline"
-              >
-                <Reply aria-hidden className="size-[15px]" />
-                Your turn in {sum.your} {sum.your === 1 ? "thread" : "threads"}
-              </button>
-            </Hint>
-          )}
-          {sum.unresolved > 0 && <span>{sum.unresolved} unresolved</span>}
-          {sum.tasks > 0 && (
-            <span>
-              {sum.tasks} open {sum.tasks === 1 ? "task" : "tasks"}
             </span>
           )}
-        </p>
-      )}
-      {props.fresh > 0 && (
-        <p className="m-0 flex text-sm">
-          <Hint label="Key: n">
-            <button type="button" aria-keyshortcuts="n" onClick={props.onNextNew} className="cursor-pointer rounded hover:underline">
-              <NewMark text={`${props.fresh} new`} />
-              {props.since !== null && <span className="text-ink-2"> since {visitText(props.since, props.now)}</span>}
-            </button>
-          </Hint>
-        </p>
-      )}
-      {props.run}
-    </header>
+          {pr.tasks.map((t) => {
+            const url = webLink(t.url);
+            const chip =
+              "inline-flex items-baseline rounded-[5px] border px-2 py-0.5 font-mono text-xs whitespace-nowrap max-[759px]:order-4";
+            return (
+              <Hint key={t.key} label={taskHint(t)}>
+                {url ? (
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    translate="no"
+                    className={cn(chip, "text-pen hover:border-rule-strong hover:underline")}
+                  >
+                    {t.key}
+                  </a>
+                ) : (
+                  <span translate="no" className={cn(chip, "text-ink-2")}>
+                    {t.key}
+                  </span>
+                )}
+              </Hint>
+            );
+          })}
+          <span className="ml-auto flex items-center gap-0.5">
+            {web && (
+              <Hint label={`Open in ${forge}`}>
+                <a
+                  href={web}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open in ${forge}`}
+                  className={buttonVariants({ variant: "ghost", size: "icon-sm", className: iconBtn })}
+                >
+                  <ExternalLink aria-hidden />
+                </a>
+              </Hint>
+            )}
+            <Hint label={following}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={iconBtn}
+                aria-label="Follow"
+                aria-pressed={pr.followed}
+                disabled={follow.isPending}
+                onClick={() => follow.mutate({ id: pr.id, followed: !pr.followed })}
+              >
+                <Star aria-hidden className={cn(pr.followed && "fill-current")} />
+              </Button>
+            </Hint>
+            <Hint label="Archive">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={iconBtn}
+                aria-label="Archive"
+                disabled={archive.isPending}
+                onClick={onArchive}
+              >
+                <Archive aria-hidden />
+              </Button>
+            </Hint>
+          </span>
+        </div>
+        <h1 className="m-0 min-w-0 text-(length:--fs-title) leading-tight font-bold tracking-[-0.015em] text-balance [overflow-wrap:anywhere]">
+          {title}
+        </h1>
+      </header>
+      <ActionBar top={top} label={key} title={title}>
+        <Hint label={`Ask ${runner} a question about this pull request. Key: q`}>
+          <Button
+            id="ask-btn"
+            size="sm"
+            variant="outline"
+            aria-label={`Ask ${runner}`}
+            aria-keyshortcuts="q"
+            className="@max-[560px]/detail:pr-1.5"
+            onClick={props.onAsk}
+          >
+            <MessageCircleQuestionMark aria-hidden data-icon="inline-start" />
+            {/* A narrow pane keeps the bar on one line where it can. */}
+            <span className="@max-[560px]/detail:sr-only">Ask</span>
+          </Button>
+        </Hint>
+        {props.action}
+      </ActionBar>
+      <div className={cn("grid gap-1.5 border-b pb-3.5", pad)}>
+        {props.brief}
+        {(sum.your > 0 || sum.unresolved > 0 || sum.tasks > 0) && (
+          <p className="rl-sum m-0 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-2">
+            {sum.your > 0 && (
+              <Hint label="Key: y">
+                <button
+                  type="button"
+                  aria-keyshortcuts="y"
+                  onClick={props.onNextYour}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded font-semibold text-turn hover:underline"
+                >
+                  <Reply aria-hidden className="size-[15px]" />
+                  Your turn in {sum.your} {sum.your === 1 ? "thread" : "threads"}
+                </button>
+              </Hint>
+            )}
+            {sum.unresolved > 0 && <span>{sum.unresolved} unresolved</span>}
+            {sum.tasks > 0 && (
+              <span>
+                {sum.tasks} open {sum.tasks === 1 ? "task" : "tasks"}
+              </span>
+            )}
+          </p>
+        )}
+        {props.fresh > 0 && (
+          <p className="m-0 flex text-sm">
+            <Hint label="Key: n">
+              <button type="button" aria-keyshortcuts="n" onClick={props.onNextNew} className="cursor-pointer rounded hover:underline">
+                <NewMark text={`${props.fresh} new`} />
+                {props.since !== null && <span className="text-ink-2"> since {visitText(props.since, props.now)}</span>}
+              </button>
+            </Hint>
+          </p>
+        )}
+        {props.run}
+      </div>
+    </>
   );
 }

@@ -311,6 +311,14 @@ describe("thread selection and refusals", () => {
       expect(explain.status).toBe(409);
       expect(explain.body.error).toBe("The Explain profile proposes no fixes. Pick a review profile first.");
       await h.json(`/api/prs/${h.pr}/brief`, { method: "PUT", body: { note: "", profile: "general" } });
+      // A profile for one run: Explain is refused the same way. An unknown or bad ID is refused before the run checks.
+      const once = (profile: unknown) => h.json<ApiError>(`/api/prs/${h.pr}/fix-run`, { body: { threads: [101], profile } });
+      expect(await once("explain")).toEqual({
+        status: 409,
+        body: { error: "The Explain profile proposes no fixes. Pick a review profile first." },
+      });
+      expect(await once("nope")).toEqual({ status: 400, body: { error: "Unknown review profile." } });
+      expect(await once("Bad ID")).toEqual({ status: 400, body: { error: "Unknown review profile." } });
 
       h.db.query("UPDATE pull_request SET source_head = NULL WHERE id = $pr").run({ pr: h.pr });
       expect((await h.start([101])).body.error).toBe("Sync the pull request first.");

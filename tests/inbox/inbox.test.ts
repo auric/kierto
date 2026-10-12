@@ -135,6 +135,21 @@ async function setup(me = ME) {
   return { dir, settings, app, db, sent, syncs, call, json, pr, comment, ack, rows, row };
 }
 
+describe("branch links", () => {
+  test("a row gives the stored branch pages, and null before a sync stores them", async () => {
+    const h = await setup();
+    const p = h.pr();
+    expect(await h.row(p)).toMatchObject({ sourceBranchUrl: null, targetBranchUrl: null });
+    h.db
+      .query("INSERT INTO pr_branch_link (pr, source_url, target_url) VALUES ($pr, $s, NULL)")
+      .run({ pr: p, s: "https://h.test/users/a/repos/r/browse?at=refs%2Fheads%2Fx" });
+    expect(await h.row(p)).toMatchObject({
+      sourceBranchUrl: "https://h.test/users/a/repos/r/browse?at=refs%2Fheads%2Fx",
+      targetBranchUrl: null,
+    });
+  });
+});
+
 describe("POST /api/read (A2)", () => {
   test("an ack for version 0 leaves a version-1 comment unread", async () => {
     const h = await setup();

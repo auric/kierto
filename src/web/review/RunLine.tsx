@@ -1,5 +1,6 @@
 // Run line (prototype/v3 runLine): one line under the title for the newest run of the PR, of any kind. The words name the kind (R14).
 // Failed, usage-limit, and cancelled runs are one line each. A re-review names its range (plan r2 UI-RR).
+// A running or ended run names its profile.
 import { Bot, Braces, CircleAlert, CircleStop, LoaderCircle, ScrollText } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -69,6 +70,8 @@ export function RunLine(props: {
       </button>
     </Hint>
   );
+  // A menu of a run button can pick another profile than the brief one, so the line names it.
+  const profile = <span data-run-profile>{run.profileName} profile</span>;
   let parts: ReactNode;
   switch (s.kind) {
     case "running":
@@ -78,6 +81,7 @@ export function RunLine(props: {
             <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
             {run.since ? `Reviewing changes since ${shortHash(run.since.head)}…` : words.running}
           </RunStatus>
+          {profile}
           {s.agents > 0 && <span>{plural(s.agents, "agent")}</span>}
           <span>{plural(s.calls, "tool call")}</span>
           <Elapsed from={s.startedAt} />
@@ -108,6 +112,7 @@ export function RunLine(props: {
           <Hint label={fullTime(s.at)}>
             <time dateTime={new Date(s.at).toISOString()}>{agoLong(s.at, props.now)}</time>
           </Hint>
+          {profile}
           {s.count && <span>{s.count}</span>}
           {s.changes?.full && (
             <span>

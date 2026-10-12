@@ -34,6 +34,8 @@ const row = (o: Partial<PrRow>): PrRow => ({
   sourceBranch: "feature",
   targetBranch: "main",
   webUrl: null,
+  sourceBranchUrl: null,
+  targetBranchUrl: null,
   reviewers: [],
   onDashboard: true,
   followed: true,

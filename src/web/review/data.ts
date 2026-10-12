@@ -84,17 +84,22 @@ export function useStart<A>(pr: number, post: (a: A) => Promise<StartResult>) {
   });
 }
 
+// A run start. profile: a profile for this run only. Absent: the brief profile.
+export type RunStart = { threads?: number[]; profile?: string };
+export const runBody = ({ threads, profile }: RunStart) => ({ ...(threads && { threads }), ...(profile && { profile }) });
+
 // POST /api/prs/:id/review runs the stored brief.
-export const useStartReview = (pr: number) => useStart(pr, async () => started(await api.api.prs[":id"].review.$post(param(pr))));
+export const useStartReview = (pr: number) =>
+  useStart(pr, async (profile: string | undefined) =>
+    started(await api.api.prs[":id"].review.$post({ ...param(pr), query: runBody({ profile }) })),
+  );
 
 // POST /api/prs/:id/rereview (plan r2 S-RR) reviews the commits since the newest review run and carries its open items.
 export const useStartRereview = (pr: number) => useStart(pr, async () => started(await api.api.prs[":id"].rereview.$post(param(pr))));
 
 // POST /api/prs/:id/reply-run runs the stored brief as reply drafts. Absent threads: every thread where it is my turn.
 export const useStartReplies = (pr: number) =>
-  useStart(pr, async (threads: number[] | undefined) =>
-    started(await api.api.prs[":id"]["reply-run"].$post({ ...param(pr), json: threads ? { threads } : {} })),
-  );
+  useStart(pr, async (o: RunStart) => started(await api.api.prs[":id"]["reply-run"].$post({ ...param(pr), json: runBody(o) })));
 
 export type ItemResult = { item: ReviewItemDto } | { conflict: ItemConflict };
 

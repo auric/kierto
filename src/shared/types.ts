@@ -26,6 +26,9 @@ export type PullRequest = {
   webUrl?: string;
   // The repository browse link of the target repository. Present only when it has the configured origin.
   repoUrl?: string;
+  // The branch pages. The source branch of a PR from a fork is in the fork. Present only when the repository link has the configured origin.
+  sourceBranchUrl?: string;
+  targetBranchUrl?: string;
   updatedDate: number;
 };
 

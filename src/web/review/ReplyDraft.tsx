@@ -23,32 +23,38 @@ import type { Judgement } from "../../shared/review";
 import { JUDGEMENT } from "../fix/model";
 import { CopyButton, Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
-import { Hint, type Hints } from "../shell/Hint";
+import type { Hints } from "../shell/Hint";
 import { AiAvatar, Inline } from "./Drafts";
 import { EVIDENCE, plural, type ReplyCard, repliesButton, replyOf } from "./model";
+import { RunSplit } from "./RunSplit";
 import { Acts, Editor, RestoreButton, type TriageCtx, type TriageMode } from "./Triage";
 
-// A disabled button stays focusable, so the tooltip and the screen reader can give the reason.
-export function DraftRepliesButton(props: { your: number; profile: string; onClick: () => void }) {
-  const s = repliesButton(props.your, props.profile);
+// profile: the brief profile. onRun: a run with the brief profile, or with the given profile only.
+export function DraftRepliesButton(props: {
+  your: number;
+  meta: MetaDto;
+  profile: { id: string; name: string };
+  onRun: (profile?: string) => void;
+}) {
+  const s = repliesButton(props.your, props.profile.name);
   return (
-    <Hint label={s.hint}>
-      <Button
-        id="replies-btn"
-        size="sm"
-        variant="outline"
-        disabled={s.disabled}
-        focusableWhenDisabled
-        aria-label={`Draft replies · ${props.profile}${s.disabled ? `. ${s.hint}` : `, ${plural(props.your, "thread")}`}`}
-        className="aria-disabled:cursor-default aria-disabled:opacity-50"
-        onClick={props.onClick}
-      >
-        Draft replies · {props.profile}
-        <span aria-hidden className="rounded-[4px] bg-sel px-1 text-xs font-semibold text-ink-2">
-          {props.your}
-        </span>
-      </Button>
-    </Hint>
+    <RunSplit
+      id="replies-btn"
+      variant="outline"
+      hint={s.hint}
+      disabled={s.disabled}
+      label={`Draft replies · ${props.profile.name}${s.disabled ? `. ${s.hint}` : `, ${plural(props.your, "thread")}`}`}
+      menu="Draft replies with another profile"
+      heading="Profile for these replies"
+      profiles={props.meta.profiles}
+      current={props.profile.id}
+      onRun={props.onRun}
+    >
+      Draft replies
+      <span aria-hidden className="rounded-[4px] bg-sel px-1 text-xs font-semibold text-ink-2">
+        {props.your}
+      </span>
+    </RunSplit>
   );
 }
 

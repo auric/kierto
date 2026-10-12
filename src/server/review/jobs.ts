@@ -1260,14 +1260,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     },
 
     // Starts a run of the stored brief. The same key returns the running run (A14).
-    review(db: Database, id: number): StartResult {
+    // profile: a profile for this run only. Absent: the brief profile. The brief keeps its profile.
+    review(db: Database, id: number, profileId?: string): StartResult {
       const pr = prRow(db, id);
       if (!pr) return { status: 404, error: "Pull request not found." };
       const { source_head, target_head } = pr;
       if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
       const brief = briefOf(db, id);
-      const profile = profileOf(settings.profiles(), brief.profile);
-      const key = [id, source_head, target_head, brief.profile, profileRevision(profile), sha256(brief.note)].join(":");
+      const profile = profileOf(settings.profiles(), profileId ?? brief.profile);
+      const key = [id, source_head, target_head, profile.id, profileRevision(profile), sha256(brief.note)].join(":");
       return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "review");
     },
 
@@ -1296,15 +1297,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "review", { carry });
     },
 
-    // Plan r2 S-ASK: answers one question with the brief profile and an empty note. It shares the run slot.
-    ask(db: Database, id: number, question: string): StartResult {
+    // Plan r2 S-ASK: answers one question with the brief profile, or the given one, and an empty note. It shares the run slot.
+    ask(db: Database, id: number, question: string, profileId?: string): StartResult {
       const pr = prRow(db, id);
       if (!pr) return { status: 404, error: "Pull request not found." };
       const { source_head, target_head } = pr;
       if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
       const brief = briefOf(db, id);
-      const profile = profileOf(settings.profiles(), brief.profile);
-      const key = [id, "ask", source_head, target_head, brief.profile, profileRevision(profile), sha256(question)].join(":");
+      const profile = profileOf(settings.profiles(), profileId ?? brief.profile);
+      const key = [id, "ask", source_head, target_head, profile.id, profileRevision(profile), sha256(question)].join(":");
       return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "ask", { question });
     },
 
@@ -1315,7 +1316,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     },
 
     // Starts a reply-draft run of the stored brief (plan replies.md WP17). It shares the run slot with reviews.
-    draftReplies(db: Database, id: number, list?: number[]): StartResult {
+    // profile: a profile for this run only. Absent: the brief profile.
+    draftReplies(db: Database, id: number, list?: number[], profileId?: string): StartResult {
       const pr = prRow(db, id);
       if (!pr) return { status: 404, error: "Pull request not found." };
       const { source_head, target_head } = pr;
@@ -1323,26 +1325,27 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const threads = replyThreads(db, pr, list);
       if (!Array.isArray(threads)) return threads;
       const brief = briefOf(db, id);
-      const profile = profileOf(settings.profiles(), brief.profile);
+      const profile = profileOf(settings.profiles(), profileId ?? brief.profile);
       const at = threads.map((t) => `${t.thread}@${t.replyTo}`);
-      const key = [id, "reply", source_head, target_head, brief.profile, profileRevision(profile), sha256(brief.note), ...at].join(":");
+      const key = [id, "reply", source_head, target_head, profile.id, profileRevision(profile), sha256(brief.note), ...at].join(":");
       return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "reply", { threads });
     },
 
     // Plan r3 S-FIX: proposes edits for the valid and partly valid review points on the user's own PR. It shares the run slot.
-    fix(db: Database, id: number, list?: number[]): StartResult {
+    // profile: a profile for this run only. Absent: the brief profile.
+    fix(db: Database, id: number, list?: number[], profileId?: string): StartResult {
       const pr = prRow(db, id);
       if (!pr) return { status: 404, error: "Pull request not found." };
       const { source_head, target_head } = pr;
       if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
       if (pr.my_role !== "AUTHOR") return { status: 409, error: "Fix runs work only on your own pull requests." };
       const brief = briefOf(db, id);
-      const profile = profileOf(settings.profiles(), brief.profile);
+      const profile = profileOf(settings.profiles(), profileId ?? brief.profile);
       if (profile.explain) return { status: 409, error: "The Explain profile proposes no fixes. Pick a review profile first." };
       const threads = fixThreads(db, pr, list);
       if (!Array.isArray(threads)) return threads;
       const at = threads.map((t) => `${t.thread}@${t.replyTo}`);
-      const key = [id, "fix", source_head, target_head, brief.profile, profileRevision(profile), ...at].join(":");
+      const key = [id, "fix", source_head, target_head, profile.id, profileRevision(profile), ...at].join(":");
       return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "fix", { threads });
     },
 

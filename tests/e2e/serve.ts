@@ -125,6 +125,12 @@ function makePr(project: string, repo: string, id: number, title: string, author
     toRef: { repository: Repo; latestCommit: string };
   };
   for (const r of [pr.fromRef, pr.toRef]) Object.assign(r.repository, { slug: repo, project: { ...r.repository.project, key: project } });
+  // The source repository link gives the source branch link. The target repository keeps the recorded link of another host,
+  // so the posts keep plain file names.
+  pr.fromRef.repository.links = {
+    ...pr.fromRef.repository.links,
+    self: [{ href: `${FAKE_URL}/projects/${project}/repos/${repo}/browse` }],
+  };
   pr.fromRef.latestCommit = remote.source;
   pr.toRef.latestCommit = remote.target;
   Object.assign(pr, {
@@ -137,7 +143,7 @@ function makePr(project: string, repo: string, id: number, title: string, author
   });
   return { pr, path: `${API}/projects/${project}/repos/${repo}/pull-requests/${id}` };
 }
-type Repo = { slug: string; project: { key: string } };
+type Repo = { slug: string; project: { key: string }; links?: Record<string, unknown> };
 
 const A = makePr("PROJ1", "sample-repo-2", 1001, "Batch cache writes in the sync worker", alex, "UNAPPROVED");
 // Long names with few break points test the pane widths.
@@ -152,6 +158,14 @@ const B = makePr(
 Object.assign(B.pr.fromRef, {
   id: "refs/heads/feature/release_pipeline_observability_dashboard_rollout",
   displayId: "feature/release_pipeline_observability_dashboard_rollout",
+});
+// A PR from a fork: the source branch is in the personal repository of its author.
+Object.assign(B.pr.fromRef.repository, {
+  project: { ...B.pr.fromRef.repository.project, key: "~MLOPEZ" },
+  links: {
+    ...B.pr.fromRef.repository.links,
+    self: [{ href: `${FAKE_URL}/users/mlopez/repos/release-pipeline-observability-dashboard/browse` }],
+  },
 });
 const C = makePr("PROJ1", "sample-repo-3", 77, "Drop the legacy export endpoint", kenji, "APPROVED");
 // Plan r3 UI-FIX: a PR of the token owner. The other user asks for code changes in two threads.
