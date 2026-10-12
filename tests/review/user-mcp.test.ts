@@ -15,7 +15,7 @@ import {
   readUserServers,
   userServers,
 } from "../../src/server/review/user-mcp";
-import { profileInput } from "../../src/shared/dto";
+import { mcpToolSafety, profileInput } from "../../src/shared/dto";
 
 const FAKE_MCP = resolve(import.meta.dir, "../support/fake-mcp.ts");
 const SLOW = 30_000;
@@ -125,7 +125,7 @@ function pluginConfig() {
   });
   write(join(dir("alpha"), "..", "escape.json"), { esc: { command: "node" } });
   write(join(dir("beta"), ".mcp.json"), {
-    srv: { command: process.execPath, args: [FAKE_MCP] },
+    srv: { command: process.execPath, args: [FAKE_MCP, "--extra=note_tool"] },
     "bad.name": { command: "node" },
     dup: { command: "node" },
   });
@@ -184,14 +184,15 @@ describe("plugin MCP discovery", () => {
       const { config, file } = pluginConfig();
       const r = await userServers(
         [
-          { server: "beta:srv", tools: ["search"] },
+          { server: "beta:srv", tools: ["search", "note_tool"] },
           { server: "off:gone", tools: ["x"] },
         ],
         file,
         config,
       );
       expect(Object.keys(r.servers)).toEqual(["plugin_beta_srv"]);
-      expect(r.servers.plugin_beta_srv).toMatchObject({ tools: ["search"], deny: ["lookup", "delete_item"] });
+      expect(r.servers.plugin_beta_srv).toMatchObject({ tools: ["search", "note_tool"], deny: ["lookup", "delete_item"] });
+      expect(r.unmarked).toEqual(["note_tool (plugin beta:srv)"]);
       expect(r.gaps).toEqual(["MCP server off:gone: not found in the Claude config"]);
     },
     SLOW,
@@ -205,10 +206,10 @@ describe("user MCP tools", () => {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: the Claude config syntax for env expansion.
       const tools = await listUserTools(fakeEntry(["--extra=${RL_TEST_UNSET_VAR:-expanded_tool}"]));
       expect(tools).toEqual([
-        { name: "search", description: "Searches the fake index.", readOnlyHint: true },
-        { name: "lookup", description: "Looks up one fake record.", readOnlyHint: true },
-        { name: "delete_item", description: "Deletes one fake record.", readOnlyHint: false },
-        { name: "expanded_tool", description: "An extra tool.", readOnlyHint: null },
+        { name: "search", description: "Searches the fake index.", readOnlyHint: true, destructiveHint: null },
+        { name: "lookup", description: "Looks up one fake record.", readOnlyHint: true, destructiveHint: null },
+        { name: "delete_item", description: "Deletes one fake record.", readOnlyHint: false, destructiveHint: null },
+        { name: "expanded_tool", description: "An extra tool.", readOnlyHint: null, destructiveHint: null },
       ]);
     },
     SLOW,
@@ -254,6 +255,30 @@ describe("user MCP tools", () => {
         /^MCP server broken: unavailable \((the command was not found|the server did not start or did not answer)\)$/,
       );
       expect(r.gaps).toHaveLength(3);
+    },
+    SLOW,
+  );
+});
+
+describe("MCP tool safety rule", () => {
+  test("destructiveHint true or readOnlyHint false blocks a tool; no readOnlyHint leaves it unmarked", () => {
+    expect(mcpToolSafety({ readOnlyHint: true, destructiveHint: null })).toBe("readOnly");
+    expect(mcpToolSafety({ readOnlyHint: true, destructiveHint: false })).toBe("readOnly");
+    expect(mcpToolSafety({ readOnlyHint: true, destructiveHint: true })).toBe("blocked");
+    expect(mcpToolSafety({ readOnlyHint: false, destructiveHint: false })).toBe("blocked");
+    expect(mcpToolSafety({ readOnlyHint: null, destructiveHint: true })).toBe("blocked");
+    expect(mcpToolSafety({ readOnlyHint: null, destructiveHint: null })).toBe("unmarked");
+    expect(mcpToolSafety({ readOnlyHint: null, destructiveHint: false })).toBe("unmarked");
+  });
+
+  test(
+    "run setup never allows a blocked tool of a saved profile and lists the allowed unmarked tools",
+    async () => {
+      const file = configFile({ fake: { command: process.execPath, args: [FAKE_MCP, "--extra=note_tool"] } });
+      const r = await userServers([{ server: "fake", tools: ["search", "delete_item", "note_tool"] }], file);
+      expect(r.servers.fake).toMatchObject({ tools: ["search", "note_tool"], deny: ["lookup", "delete_item"] });
+      expect(r.gaps).toEqual(["MCP tool fake/delete_item: blocked by the safety rule"]);
+      expect(r.unmarked).toEqual(["note_tool (fake)"]);
     },
     SLOW,
   );

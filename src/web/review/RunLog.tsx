@@ -331,6 +331,9 @@ function Foot({ detail, meta, raw, onRaw }: { detail: RunDetail; meta: MetaDto; 
             (r.kind !== "review"
               ? ` Coverage has gaps. ${r.summary ? [...r.summary.coverage.skipped, ...r.summary.coverage.unavailable, ...r.summary.coverage.notChecked].join(" ") : ""}`
               : " Coverage has gaps. The summary lists them.")}
+          {r.status === "completed" && r.kind !== "review" && r.summary?.coverage.notChecked.length
+            ? ` ${r.summary.coverage.notChecked.join(" ")}`
+            : null}
         </span>
       );
     }

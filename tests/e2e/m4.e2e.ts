@@ -230,16 +230,33 @@ test("an MCP server picked in a profile gets only its ticked tools in the run", 
   // Only the tools with readOnlyHint true start ticked.
   await expect(tools.getByRole("checkbox", { name: /^search / })).toBeChecked();
   await expect(tools.getByRole("checkbox", { name: /^lookup / })).toBeChecked();
+  // delete_item says readOnlyHint false: the safety rule blocks it.
   const del = tools.getByRole("checkbox", { name: /^delete_item / });
   await expect(del).not.toBeChecked();
+  await expect(del).toBeDisabled();
+  await expect(tools.getByText("Blocked: the server marks this tool as able to change data.")).toHaveCount(1);
+  // note_tool has no hint: a tick asks first.
+  const note = tools.getByRole("checkbox", { name: /^note_tool / });
+  await expect(note).not.toBeChecked();
   await expect(tools.getByText("May change data. Review Loop cannot check this.")).toHaveCount(1);
+  const ask = page.getByRole("dialog", { name: "Allow note_tool?" });
+  await note.click();
+  await expect(ask).toContainText(
+    "note_tool on fake-docs has no read-only mark. Review Loop cannot check what it does. Allow it in runs of this profile?",
+  );
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  await expect(note).not.toBeChecked();
+  await note.click();
+  await ask.getByRole("button", { name: "Allow in runs" }).click();
+  await expect(note).toBeChecked();
   await expect(tools.getByText("bad.name")).toHaveCount(0);
   await tools.getByRole("checkbox", { name: /^lookup / }).uncheck();
-  await expect(picker.locator("summary")).toContainText("fake-docs (1)");
+  await expect(picker.locator("summary")).toContainText("fake-docs (2)");
   await expect(page.getByText("E2E-MCP-SECRET")).toHaveCount(0);
   await saveProfiles(page);
   const saved = (await settingsApi(request)).profiles[0] as { mcp?: unknown };
-  expect(saved.mcp).toEqual([{ server: "fake-docs", tools: ["search"] }]);
+  expect(saved.mcp).toEqual([{ server: "fake-docs", tools: ["search", "note_tool"] }]);
   await closeSettings(page);
 
   await control("claude", { stream: "tree", hang: true });
@@ -248,7 +265,7 @@ test("an MCP server picked in a profile gets only its ticked tools in the run", 
   await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
   await expect.poll(async () => (await runMcp())?.servers?.includes("fake-docs") ?? false, { timeout: RUN_MS }).toBe(true);
   const run = await runMcp();
-  expect(run?.allowed?.split(",")).toContain("mcp__fake-docs__search");
+  expect(run?.allowed?.split(",")).toEqual(expect.arrayContaining(["mcp__fake-docs__search", "mcp__fake-docs__note_tool"]));
   expect(run?.allowed).not.toContain("mcp__fake-docs__lookup");
   expect(run?.denied?.split(",").sort()).toEqual(["mcp__fake-docs__delete_item", "mcp__fake-docs__lookup"]);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();

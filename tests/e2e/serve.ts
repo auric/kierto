@@ -79,7 +79,7 @@ writeFileSync(
     mcpServers: {
       "fake-docs": {
         command: process.execPath,
-        args: [join(import.meta.dir, "../support/fake-mcp.ts")],
+        args: [join(import.meta.dir, "../support/fake-mcp.ts"), "--extra=note_tool"],
         env: { RL_E2E: "E2E-MCP-SECRET" },
       },
     },

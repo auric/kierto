@@ -7,7 +7,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { type McpPick, type McpServerDto, type McpToolDto, mcpServerId } from "../../shared/dto";
+import { type McpPick, type McpServerDto, type McpToolDto, mcpServerId, mcpToolSafety } from "../../shared/dto";
 import { DOC_SERVERS, GIT_SERVER } from "./catalog";
 import { childEnv, killTree, NAME, type UserMcpEntry, type UserServerSpec } from "./claude";
 import { claudeConfigDir, enabledPlugins, readJson } from "./skills";
@@ -198,6 +198,7 @@ export const listUserTools: ListUserTools = async (entry) => {
             name: t.name,
             description: (t.description ?? "").slice(0, MAX_DESCRIPTION),
             readOnlyHint: typeof t.annotations?.readOnlyHint === "boolean" ? t.annotations.readOnlyHint : null,
+            destructiveHint: typeof t.annotations?.destructiveHint === "boolean" ? t.annotations.destructiveHint : null,
           });
       cursor = r.nextCursor;
       if (!cursor) break;
@@ -215,25 +216,27 @@ export const listUserTools: ListUserTools = async (entry) => {
 
 // The servers of the run for the profile picks. It re-reads the config, so a run gets the current entries.
 // gaps: one line for each picked server or tool that the run does not get. A pick with no tools is skipped.
+// unmarked: each allowed tool with no readOnlyHint, as "<tool> (<server>)". A blocked tool is never allowed.
 export async function userServers(
   picks: McpPick[],
   file = claudeJsonPath(),
   configDir = claudeConfigDir(),
   list: ListUserTools = listUserTools,
-): Promise<{ servers: Record<string, UserServerSpec>; gaps: string[] }> {
+): Promise<{ servers: Record<string, UserServerSpec>; gaps: string[]; unmarked: string[] }> {
   const servers: Record<string, UserServerSpec> = {};
   const gaps: string[] = [];
+  const unmarked: string[] = [];
   const used = picks.filter((p) => p.tools.length);
-  if (!used.length) return { servers, gaps };
+  if (!used.length) return { servers, gaps, unmarked };
   const config = readServers(file, configDir);
   const found = await Promise.allSettled(
     used.map(async (p) => {
       const s = config.get(p.server);
-      return s ? { key: s.key, user: s.entry, tools: (await list(s.entry)).map((t) => t.name) } : null;
+      return s ? { key: s.key, user: s.entry, plugin: !!s.plugin, tools: await list(s.entry) } : null;
     }),
   );
   used.forEach((p, i) => {
-    const r = found[i] as PromiseSettledResult<{ key: string; user: UserMcpEntry; tools: string[] } | null>;
+    const r = found[i] as PromiseSettledResult<{ key: string; user: UserMcpEntry; plugin: boolean; tools: McpToolDto[] } | null>;
     if (r.status === "rejected") {
       gaps.push(`MCP server ${p.server}: unavailable (${r.reason instanceof McpListError ? r.reason.message : "error"})`);
       return;
@@ -242,10 +245,15 @@ export async function userServers(
       gaps.push(`MCP server ${p.server}: not found in the Claude config`);
       return;
     }
-    const { key, user, tools } = r.value;
-    for (const t of p.tools) if (!tools.includes(t)) gaps.push(`MCP tool ${p.server}/${t}: not found`);
-    const chosen = p.tools.filter((t) => tools.includes(t));
+    const { key, user, plugin } = r.value;
+    const safety = new Map(r.value.tools.map((t) => [t.name, mcpToolSafety(t)]));
+    const tools = [...safety.keys()];
+    for (const t of p.tools)
+      if (!safety.has(t)) gaps.push(`MCP tool ${p.server}/${t}: not found`);
+      else if (safety.get(t) === "blocked") gaps.push(`MCP tool ${p.server}/${t}: blocked by the safety rule`);
+    const chosen = p.tools.filter((t) => safety.has(t) && safety.get(t) !== "blocked");
+    for (const t of chosen) if (safety.get(t) === "unmarked") unmarked.push(`${t} (${plugin ? "plugin " : ""}${p.server})`);
     if (chosen.length) servers[key] = { user, tools: chosen, deny: tools.filter((t) => !chosen.includes(t)) };
   });
-  return { servers, gaps };
+  return { servers, gaps, unmarked };
 }

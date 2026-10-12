@@ -6,6 +6,7 @@ import {
   MAX_PROFILE_SKILLS,
   MAX_PROFILES,
   type McpPick,
+  type McpToolSafety,
   type ProfileInput,
 } from "../../shared/dto";
 
@@ -212,6 +213,13 @@ export const toggleServer = (list: McpPick[], server: string, on: boolean, tools
 // Sets the tools of one picked server.
 export const setTools = (list: McpPick[], server: string, tools: string[]) =>
   list.map((m) => (m.server === server ? { server, tools } : m));
+
+// What a tick on a tool does. A blocked tool cannot be ticked. An unmarked tool needs a confirm first. Unticking is always allowed.
+export const tickAction = (safety: McpToolSafety, on: boolean): "set" | "confirm" | "none" =>
+  !on || safety === "readOnly" ? "set" : safety === "unmarked" ? "confirm" : "none";
+
+export const unmarkedQuestion = (tool: string, server: string) =>
+  `${tool} on ${server} has no read-only mark. Review Loop cannot check what it does. Allow it in runs of this profile?`;
 
 // Words for a profile in labels. A new profile can have no name yet.
 export const profileLabel = (d: Draft, i: number) => d.name.trim() || `profile ${i + 1}`;

@@ -1053,6 +1053,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     for (const g of user.gaps) log(`Review run ${j.id}: ${g}.`);
     const used = Object.entries(user.servers).map(([server, s]) => ({ server, tools: s.tools, remote: s.user.type !== "stdio" }));
     if (used.length) log(`Review run ${j.id} MCP servers: ${used.map((u) => `${u.server} (${u.tools.length} tools)`).join(", ")}.`);
+    const unmarked = user.unmarked.length ? `Unmarked MCP tools allowed: ${user.unmarked.join(", ")}.` : null;
+    if (unmarked) log(`Review run ${j.id}: ${unmarked}`);
     const skills = copySkills(profile.skills, join(ws.work, "skills"), opts.claudeConfigDir ?? claudeConfigDir());
     for (const g of skills.gaps) log(`Review run ${j.id}: ${g}.`);
     if (skills.copied.length)
@@ -1114,11 +1116,16 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // The runner ignores a cancel that comes after the process ended.
     if (j.cancelled) return cancelled(o);
     const servers = Object.keys(mcpServers);
-    if (reply) return judgeReplies(o, reply, servers, gaps);
-    if (fix) return judgeFix(o, ws, fix, servers, gaps);
-    if (question !== null) return judgeAsk(o, servers, gaps);
+    const noted = (e: Ending): Ending => {
+      if (!unmarked) return e;
+      e.result?.summary.coverage.notChecked.push(unmarked);
+      return { ...e, raw: `${unmarked}\n\n${e.raw}` };
+    };
+    if (reply) return noted(judgeReplies(o, reply, servers, gaps));
+    if (fix) return noted(await judgeFix(o, ws, fix, servers, gaps));
+    if (question !== null) return noted(judgeAsk(o, servers, gaps));
     const rereview = carry && { carry, items: current(j.db, earlier).map(earlierItem) };
-    return judge(o, ws, profile, servers, gaps, rereview);
+    return noted(await judge(o, ws, profile, servers, gaps, rereview));
   }
 
   // The git remote of a PR: the test remote, else the forge provider.

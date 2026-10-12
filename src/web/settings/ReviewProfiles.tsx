@@ -3,10 +3,21 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, CircleAlert, Plus, RotateCcw, X } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FieldError } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
-import type { McpPick, McpServerDto, McpToolDto, ProfileInput, SettingsDto, SkillDto } from "../../shared/dto";
+import {
+  type McpPick,
+  type McpServerDto,
+  type McpToolDto,
+  type McpToolSafety,
+  mcpToolSafety,
+  type ProfileInput,
+  type SettingsDto,
+  type SkillDto,
+} from "../../shared/dto";
 import { api } from "../api";
+import { dialogKeys } from "../fix/CloneDialog";
 import { useMeta } from "../meta";
 import { read, useSaveSettings } from "../shell/data";
 import { Hint } from "../shell/Hint";
@@ -25,10 +36,12 @@ import {
   profileLabel,
   sameProfiles,
   setTools,
+  tickAction,
   toDrafts,
   toggleServer,
   toggleSkill,
   toProfiles,
+  unmarkedQuestion,
 } from "./profiles";
 
 // The TaskRules.tsx control styles.
@@ -488,6 +501,8 @@ function McpServerRow(props: {
   const { name, server, pick, list, onChange } = props;
   // A new pick gets the read-only tools when the tool list arrives.
   const fresh = useRef(false);
+  // The unmarked tool that waits for a confirm.
+  const [asking, setAsking] = useState<string | null>(null);
   const tools = useQuery({
     queryKey: ["mcp-tools", name],
     enabled: !!pick && !!server,
@@ -499,21 +514,27 @@ function McpServerRow(props: {
   useEffect(() => {
     if (!fresh.current || !pick || !tools.data) return;
     fresh.current = false;
-    const readOnly = tools.data.filter((t) => t.readOnlyHint === true).map((t) => t.name);
+    const readOnly = tools.data.filter((t) => mcpToolSafety(t) === "readOnly").map((t) => t.name);
     onChange(setTools(list, name, readOnly.slice(0, LIMITS.mcpTools)));
   }, [pick, tools.data, list, name, onChange]);
   const known = new Set(tools.data?.map((t) => t.name));
   const gone = tools.data && pick ? pick.tools.filter((t) => !known.has(t)) : [];
   const fullTools = !!pick && pick.tools.length >= LIMITS.mcpTools;
-  const tool = (t: string, help: ReactNode) => (
+  const tick = (t: string, on: boolean) => pick && onChange(setTools(list, name, toggleSkill(pick.tools, t, on)));
+  // A gone tool shows only while ticked, so it only unticks.
+  const tool = (t: string, help: ReactNode, safety: McpToolSafety = "readOnly") => (
     <li key={t}>
       <label className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
         <input
           type="checkbox"
           className="mt-0.5 size-4 shrink-0 accent-primary"
           checked={!!pick?.tools.includes(t)}
-          disabled={fullTools && !pick?.tools.includes(t)}
-          onChange={(e) => pick && onChange(setTools(list, name, toggleSkill(pick.tools, t, e.target.checked)))}
+          disabled={(fullTools || safety === "blocked") && !pick?.tools.includes(t)}
+          onChange={(e) => {
+            const act = tickAction(safety, e.target.checked);
+            if (act === "set") tick(t, e.target.checked);
+            else if (act === "confirm") setAsking(t);
+          }}
         />
         <span className="grid min-w-0 gap-px">
           <span className="font-mono text-xs">{t}</span>
@@ -555,18 +576,46 @@ function McpServerRow(props: {
           )}
           <ul className="m-0 grid list-none gap-2 p-0">
             {gone.map((t) => tool(t, warn("Not found in the server. Runs go on without it.")))}
-            {tools.data?.map((t) =>
-              tool(
+            {tools.data?.map((t) => {
+              const safety = mcpToolSafety(t);
+              return tool(
                 t.name,
                 <>
-                  {t.readOnlyHint !== true && warn("May change data. Review Loop cannot check this.")}
+                  {safety === "blocked" && warn("Blocked: the server marks this tool as able to change data.")}
+                  {safety === "unmarked" && warn("May change data. Review Loop cannot check this.")}
                   {t.description && <span>{t.description}</span>}
                 </>,
-              ),
-            )}
+                safety,
+              );
+            })}
           </ul>
         </fieldset>
       )}
+      <Dialog open={asking !== null} onOpenChange={(on) => !on && setAsking(null)}>
+        <DialogContent className="sm:max-w-[480px]" onKeyDown={dialogKeys(() => setAsking(null))}>
+          {asking !== null && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Allow {asking}?</DialogTitle>
+                <DialogDescription>{unmarkedQuestion(asking, name)}</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setAsking(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    tick(asking, true);
+                    setAsking(null);
+                  }}
+                >
+                  Allow in runs
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </li>
   );
 }

@@ -12,10 +12,12 @@ import {
   sameProfiles,
   setTools,
   slug,
+  tickAction,
   toDrafts,
   toggleServer,
   toggleSkill,
   toProfiles,
+  unmarkedQuestion,
 } from "../../src/web/settings/profiles";
 
 const p = (id: string, name: string, o: Partial<ProfileInput> = {}): ProfileInput => ({
@@ -162,6 +164,16 @@ describe("profile editor model", () => {
     expect(toggleSkill(["a"], "b", true)).toEqual(["a", "b"]);
     expect(toggleSkill(["a", "b"], "a", true)).toEqual(["a", "b"]);
     expect(toggleSkill(["a", "b"], "a", false)).toEqual(["b"]);
+  });
+
+  test("a blocked tool cannot be ticked; an unmarked tool asks first; any tool unticks", () => {
+    expect(tickAction("readOnly", true)).toBe("set");
+    expect(tickAction("unmarked", true)).toBe("confirm");
+    expect(tickAction("blocked", true)).toBe("none");
+    for (const s of ["readOnly", "unmarked", "blocked"] as const) expect(tickAction(s, false)).toBe("set");
+    expect(unmarkedQuestion("ctx_execute", "context-mode:context-mode")).toBe(
+      "ctx_execute on context-mode:context-mode has no read-only mark. Review Loop cannot check what it does. Allow it in runs of this profile?",
+    );
   });
 
   test("toggleServer and setTools keep the pick order; a tool edit marks the profile dirty", () => {

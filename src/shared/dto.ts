@@ -71,8 +71,12 @@ export type McpPick = z.infer<typeof mcpPick>;
 // GET /api/mcp-servers. It never holds the URL, headers, command, args, or env of a server.
 // name: the server ID. plugin: the plugin name of a plugin server.
 export type McpServerDto = { name: string; transport: "stdio" | "http" | "sse"; source: "user" | "plugin"; plugin?: string };
-// POST /api/mcp-servers/:name/tools. readOnlyHint: null when the server does not say.
-export type McpToolDto = { name: string; description: string; readOnlyHint: boolean | null };
+// POST /api/mcp-servers/:name/tools. A hint is null when the server does not say.
+export type McpToolDto = { name: string; description: string; readOnlyHint: boolean | null; destructiveHint: boolean | null };
+// blocked: the server marks the tool as able to change data. No run allows it. unmarked: no readOnlyHint. The user must confirm it.
+export type McpToolSafety = "blocked" | "unmarked" | "readOnly";
+export const mcpToolSafety = (t: Pick<McpToolDto, "readOnlyHint" | "destructiveHint">): McpToolSafety =>
+  t.destructiveHint === true || t.readOnlyHint === false ? "blocked" : t.readOnlyHint === true ? "readOnly" : "unmarked";
 
 // prompt: the profile part of both agent prompts. docs: the run gets the documentation servers.
 // skills: the run gets a copy of each skill in ./skills. Absent in profiles saved before skills existed.
