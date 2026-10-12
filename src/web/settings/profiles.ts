@@ -1,5 +1,13 @@
 // Pure model of the review profile editor (M4). No DOM access, so bun test runs it.
-import { MAX_NOTE, MAX_PROFILE_SKILLS, MAX_PROFILES, type ProfileInput } from "../../shared/dto";
+import {
+  MAX_MCP_TOOLS,
+  MAX_NOTE,
+  MAX_PROFILE_MCP,
+  MAX_PROFILE_SKILLS,
+  MAX_PROFILES,
+  type McpPick,
+  type ProfileInput,
+} from "../../shared/dto";
 
 // The inline limits of profileInput in src/shared/dto.ts. tests/ui/profiles.test.ts pins them.
 export const LIMITS = {
@@ -11,13 +19,15 @@ export const LIMITS = {
   minTurns: 2,
   maxTurns: 200,
   skills: MAX_PROFILE_SKILLS,
+  mcp: MAX_PROFILE_MCP,
+  mcpTools: MAX_MCP_TOOLS,
 } as const;
 
 // A new profile starts as a review profile with 100 turns and the documentation servers.
 const NEW_TURNS = "100";
 
 // key: a stable React key, so a moved profile keeps its DOM nodes. id: the saved ID, or null for a new profile.
-// maxTurns: the text of the field. skills: skill IDs in the order the user picked them.
+// maxTurns: the text of the field. skills: skill IDs in the order the user picked them. mcp: MCP servers in the order the user picked them.
 export type Draft = {
   key: number;
   id: string | null;
@@ -28,6 +38,7 @@ export type Draft = {
   docs: boolean;
   maxTurns: string;
   skills: string[];
+  mcp: McpPick[];
 };
 
 let lastKey = 0;
@@ -72,6 +83,7 @@ export function toProfiles(list: Draft[]): ProfileInput[] {
       docs: d.docs,
       maxTurns: turns ? Number(turns) : Number.NaN,
       skills: d.skills,
+      mcp: d.mcp,
     };
   });
 }
@@ -82,7 +94,9 @@ export const sameProfiles = (a: ProfileInput[], b: ProfileInput[]) =>
   a.length === b.length &&
   a.every((p, i) => {
     const o = b[i];
-    return !!o && FIELDS.every((f) => p[f] === o[f]) && p.skills.join() === o.skills.join();
+    return (
+      !!o && FIELDS.every((f) => p[f] === o[f]) && p.skills.join() === o.skills.join() && JSON.stringify(p.mcp) === JSON.stringify(o.mcp)
+    );
   });
 
 export type Field = "name" | "note" | "prompt" | "maxTurns";
@@ -107,7 +121,7 @@ export function problems(d: Draft): Problems {
 export const allValid = (list: Draft[]) =>
   list.length >= 1 && list.length <= LIMITS.profiles && list.every((d) => Object.keys(problems(d)).length === 0);
 
-export type Edit = Partial<Pick<Draft, "name" | "note" | "prompt" | "explain" | "docs" | "maxTurns" | "skills">>;
+export type Edit = Partial<Pick<Draft, "name" | "note" | "prompt" | "explain" | "docs" | "maxTurns" | "skills" | "mcp">>;
 
 export type Change =
   | { act: "add" }
@@ -122,7 +136,18 @@ export function change(list: Draft[], c: Change): Draft[] {
         ? list
         : [
             ...list,
-            { key: ++lastKey, id: null, name: "", note: "", prompt: "", explain: false, docs: true, maxTurns: NEW_TURNS, skills: [] },
+            {
+              key: ++lastKey,
+              id: null,
+              name: "",
+              note: "",
+              prompt: "",
+              explain: false,
+              docs: true,
+              maxTurns: NEW_TURNS,
+              skills: [],
+              mcp: [],
+            },
           ];
     case "remove":
       // The server needs at least one profile.
@@ -141,7 +166,19 @@ export function change(list: Draft[], c: Change): Draft[] {
 }
 
 // DOM ids of the editor controls.
-export type Part = "name" | "note" | "prompt" | "turns" | "explain" | "docs" | "skills" | "up" | "down" | "remove" | `${Field}-error`;
+export type Part =
+  | "name"
+  | "note"
+  | "prompt"
+  | "turns"
+  | "explain"
+  | "docs"
+  | "skills"
+  | "mcp"
+  | "up"
+  | "down"
+  | "remove"
+  | `${Field}-error`;
 export const profileId = (i: number, part: Part) => `profile-${i}-${part}`;
 export const ADD_ID = "profile-add";
 
@@ -167,6 +204,14 @@ export function focusAfter(c: Change, n: number): string | null {
 // Adds or removes one skill ID. A new skill goes to the end.
 export const toggleSkill = (list: string[], id: string, on: boolean) =>
   on ? (list.includes(id) ? list : [...list, id]) : list.filter((x) => x !== id);
+
+// Adds a server with the given tools at the end, or removes it.
+export const toggleServer = (list: McpPick[], server: string, on: boolean, tools: string[] = []) =>
+  on ? (list.some((m) => m.server === server) ? list : [...list, { server, tools }]) : list.filter((m) => m.server !== server);
+
+// Sets the tools of one picked server.
+export const setTools = (list: McpPick[], server: string, tools: string[]) =>
+  list.map((m) => (m.server === server ? { server, tools } : m));
 
 // Words for a profile in labels. A new profile can have no name yet.
 export const profileLabel = (d: Draft, i: number) => d.name.trim() || `profile ${i + 1}`;

@@ -1,7 +1,7 @@
 // M4 browser acceptance (BRIEF US9): the check interval and the review profiles in the settings.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runSkills } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runMcp, runSkills } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -211,6 +211,43 @@ test("a skill picked in a profile is saved and copied into the run folder", asyn
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
   await expect.poll(runSkills, { timeout: RUN_MS }).toEqual(["e2e-plugin+style/SKILL.md", "test-check/SKILL.md", "test-check/notes.md"]);
+  await runLine(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(runLine(page)).toContainText("You cancelled the review", { timeout: RUN_MS });
+});
+
+// serve.ts gives the app a Claude config with the user MCP server fake-docs: the local fake stdio server of tests/support/fake-mcp.ts.
+test("an MCP server picked in a profile gets only its ticked tools in the run", async ({ page, request }) => {
+  await connect(page);
+  await openSettings(page);
+  const picker = page.locator("#profile-0-mcp");
+  await picker.locator("summary").click();
+  const group = page.getByRole("group", { name: "MCP servers of profile 1" });
+  await group.getByRole("checkbox", { name: /^fake-docs Local command/ }).check();
+  const tools = page.getByRole("group", { name: "Tools of fake-docs" });
+  // Only the tools with readOnlyHint true start ticked.
+  await expect(tools.getByRole("checkbox", { name: /^search / })).toBeChecked();
+  await expect(tools.getByRole("checkbox", { name: /^lookup / })).toBeChecked();
+  const del = tools.getByRole("checkbox", { name: /^delete_item / });
+  await expect(del).not.toBeChecked();
+  await expect(tools.getByText("May change data. Review Loop cannot check this.")).toHaveCount(1);
+  await expect(tools.getByText("bad.name")).toHaveCount(0);
+  await tools.getByRole("checkbox", { name: /^lookup / }).uncheck();
+  await expect(picker.locator("summary")).toContainText("fake-docs (1)");
+  await expect(page.getByText("E2E-MCP-SECRET")).toHaveCount(0);
+  await saveProfiles(page);
+  const saved = (await settingsApi(request)).profiles[0] as { mcp?: unknown };
+  expect(saved.mcp).toEqual([{ server: "fake-docs", tools: ["search"] }]);
+  await closeSettings(page);
+
+  await control("claude", { stream: "tree", hang: true });
+  await page.keyboard.press("Shift+R");
+  await page.getByLabel("Your note").press("Control+Enter");
+  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect.poll(async () => (await runMcp())?.servers?.includes("fake-docs") ?? false, { timeout: RUN_MS }).toBe(true);
+  const run = await runMcp();
+  expect(run?.allowed?.split(",")).toContain("mcp__fake-docs__search");
+  expect(run?.allowed).not.toContain("mcp__fake-docs__lookup");
+  expect(run?.denied?.split(",").sort()).toEqual(["mcp__fake-docs__delete_item", "mcp__fake-docs__lookup"]);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
   await expect(runLine(page)).toContainText("You cancelled the review", { timeout: RUN_MS });
 });

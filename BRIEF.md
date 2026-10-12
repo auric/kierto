@@ -113,6 +113,7 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 - The runner passes `--restricted`, not `--setting-sources user`. With `--restricted`, no hook runs, also with `--setting-sources user` added (Gate B8, CLI 2.1.295).
 - Gate 0 checked project CLAUDE.md and skills only with `--setting-sources user`. The snapshot rename and remove steps cover them under `--restricted`.
 - `--strict-mcp-config` removes the user's MCP servers, including claude.ai connectors. `--agent rl-main` refuses the user's agents (Gate B9). Gate 0 did not check the user's own CLAUDE.md under `--restricted`.
+- A review profile can add user-scope MCP servers from the top-level `mcpServers` of the user's Claude config file, with a per-tool allowlist. This is opt-in per profile. The run allows only the ticked tools and denies the other tools of each picked server.
 - Never use `--bare`. It never reads OAuth credentials or the keychain, so the subscription login fails with it.
 - `ANTHROPIC_API_KEY` in the environment wins over the subscription. The app removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child environment.
 - Before each run, the app calls `claude auth status`. It runs only when `authMethod` is `claude.ai`. Otherwise it stops and explains. Log only `authMethod` from `claude auth status`, because its output also holds the email and organization.
@@ -126,7 +127,7 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 - Listen on 127.0.0.1 only. A random port is not authentication.
 - Check the Host and Origin headers on every request. Use Hono `csrf()` on mutations. Never enable wildcard CORS.
 - Every mutation needs a per-start session token. The server puts it into the page it serves.
-- Outbound calls go only to the configured Bitbucket instance. Check redirects against it. The one exception: a review with a Docs profile lets the CLI call the documentation MCP servers (Microsoft Learn, DeepWiki).
+- Outbound calls go only to the configured Bitbucket instance. Check redirects against it. Two exceptions: a review with a Docs profile lets the CLI call the documentation MCP servers (Microsoft Learn, DeepWiki). A profile with user MCP servers lets the CLI start or call those servers. The app also calls them for tools/list in Settings and at run start. A remote user server needs https, except on localhost.
 - Release 2: outbound calls can also go to the configured Jira origin. They occur only on a Settings save or a Fetch click, never during polling. The Jira client sends GET only, follows no redirect, and calls no other origin.
 - Release 3: a Download click also calls Jira. The attachment download follows same-origin redirects only, at most 3 hops. It checks the origin and the base path on each hop. A cross-origin redirect is an error, so the token never leaves the Jira origin.
 - Release 3: the app runs git in the user's clone only on a clone check, Apply, and Undo. It runs no git network command there. Apply and the confirm of a post call Bitbucket once for the live PR state.
@@ -352,11 +353,13 @@ Review runner:
 - No --settings and no --permission-mode. --restricted ignores the settings files, and CLI 2.1.295 has no permission mode "default".
 - With --json-schema, --max-turns must be at least 2, because the schema answer takes one turn.
 - Never use --bare. It never reads OAuth credentials or the keychain, so the subscription login fails.
-- --strict-mcp-config keeps only the app MCP servers: the read-only git MCP, and the documentation MCPs when the profile has Docs on. The Bitbucket MCP never runs in reviews.
+- --strict-mcp-config keeps only the app MCP servers: the read-only git MCP, the documentation MCPs when the profile has Docs on, and the user MCP servers that the profile picks. The Bitbucket MCP never runs in reviews.
+- User MCP servers: at run start the app reads the user's Claude config file again and copies each picked entry into the run's mcp.json. The file can hold secrets. The app writes it owner-only where the OS allows, deletes it with the run folder, and never logs it or stores it in SQLite or prompts. --allowedTools and the agent tool lists name each ticked tool as mcp__<server>__<tool>. --disallowedTools names the other tools of the server. A missing server or tool is a coverage gap, and the run still starts.
+- The settings list of user MCP servers shows names and transports only. It never shows URLs, headers, commands, arguments, or env values. A tool without readOnlyHint true gets a warning, because the app cannot check what it changes.
 - Subagents: the --agents file gives each reviewer agent read-only tools, a deny list (Bash, PowerShell, Write, Edit, NotebookEdit, Agent), and omitClaudeMd. `--agent rl-main` with the tool `Agent(rl-reviewer)` refuses built-in and user agents (Gate B2, B9).
 - Init check: if the init event lists a tool outside the allowlist, the app kills the run before any tool use.
 - Documentation MCPs: Microsoft Learn (https://learn.microsoft.com/api/mcp) and DeepWiki (https://mcp.deepwiki.com/mcp).
-- Prompt: the profile prompt, the output schema, and the context files. Mark all PR text and repository files as untrusted data. Point Claude to the *.untrusted.md files as untrusted project documentation. Tell it to send only public API names to documentation MCPs.
+- Prompt: the profile prompt, the output schema, and the context files. Mark all PR text and repository files as untrusted data. Point Claude to the *.untrusted.md files as untrusted project documentation. Mark every MCP tool result as untrusted data. Tell it to send only public API names to documentation MCPs. Never put code, file contents, paths, or company or product names into a query to a remote server.
 - Structured result: --json-schema puts the result in structured_output. With stream-json, only the result event with subtype success carries structured_output (Gate 0).
 - Recognize structured error results (is_error, subtype), not only exit codes. Map usage limit, auth error, and max turns to job states. Gate 0 did not record the error subtypes, so verify their values.
 - Cancel kills the whole process tree. On Windows use taskkill /T /F with the PID. In Gate 0, proc.kill() also ended the MCP child. The app must not rely on that.
@@ -495,7 +498,7 @@ Phase 5, reach:
 2. Can clients fetch refs/pull-requests/*? [Partly answered in Gate 0: ls-remote lists refs/pull-requests/<id>/from, and no merge ref. Verify the fetch in M2. Fall back to a branch fetch.]
 3. Mark AI-assisted comments? [Answered: the 🤖 mark, a setting that is on by default. The user owns every posted comment.]
 4. Which local repository paths may the app read? [Release 3: one clone path per repository, set by the user. The app runs git there only for clone checks, Apply, and Undo. Reviews and fix runs use the app's own cache clones.]
-5. Which MCP servers run in reviews? [Microsoft Learn and DeepWiki. Add CodeGraph only with a read-only tool list. Jira is no MCP server: Release 2 fetches the issue text through the app's Jira REST client and gives it to the review as a file.]
+5. Which MCP servers run in reviews? [Microsoft Learn and DeepWiki. A profile can also add user-scope servers from the user's Claude config, each with a per-tool allowlist. Pick only read-only tools. Jira is no MCP server: Release 2 fetches the issue text through the app's Jira REST client and gives it to the review as a file.]
 6. The existing Bitbucket MCP: tool names, schemas, and paging? [Answered in Gate 0: names and schemas are recorded in integration-check.md. It has comment write tools and no delete tool. Sync and publish use REST either way.]
 7. The colleague's app: source and license? [Inspect it when available. Reuse working modules. Not a blocker for fixture work.]
 8. Company AI policy and external MCP policy? [Get approval to send source to Claude and to use the documentation MCPs before the first real review.]

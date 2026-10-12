@@ -10,8 +10,10 @@ import {
   problems,
   profileId,
   sameProfiles,
+  setTools,
   slug,
   toDrafts,
+  toggleServer,
   toggleSkill,
   toProfiles,
 } from "../../src/web/settings/profiles";
@@ -25,6 +27,7 @@ const p = (id: string, name: string, o: Partial<ProfileInput> = {}): ProfileInpu
   docs: true,
   maxTurns: 40,
   skills: [],
+  mcp: [],
   ...o,
 });
 const SAVED = [p("general", "General"), p("security", "Security"), p("explain", "Explain", { explain: true, docs: false, maxTurns: 12 })];
@@ -161,6 +164,27 @@ describe("profile editor model", () => {
     expect(toggleSkill(["a", "b"], "a", false)).toEqual(["b"]);
   });
 
+  test("toggleServer and setTools keep the pick order; a tool edit marks the profile dirty", () => {
+    const one = toggleServer([], "a", true, ["x"]);
+    expect(toggleServer(one, "a", true)).toBe(one);
+    const two = toggleServer(one, "b", true);
+    expect(two).toEqual([
+      { server: "a", tools: ["x"] },
+      { server: "b", tools: [] },
+    ]);
+    expect(setTools(two, "b", ["y"])).toEqual([
+      { server: "a", tools: ["x"] },
+      { server: "b", tools: ["y"] },
+    ]);
+    expect(toggleServer(two, "a", false)).toEqual([{ server: "b", tools: [] }]);
+    const d = toDrafts(SAVED);
+    const dirty = (l: Draft[]) => !sameProfiles(toProfiles(l), SAVED);
+    const picked = change(d, { act: "edit", i: 0, patch: { mcp: one } });
+    expect(dirty(picked)).toBe(true);
+    expect(toProfiles(picked)[0]?.mcp).toEqual(one);
+    expect(dirty(change(picked, { act: "edit", i: 0, patch: { mcp: [] } }))).toBe(false);
+  });
+
   test("the limits match the shared request schema", () => {
     expect(LIMITS.profiles).toBe(MAX_PROFILES);
     expect(LIMITS.prompt).toBe(MAX_NOTE);
@@ -177,5 +201,11 @@ describe("profile editor model", () => {
     expect(ok({ maxTurns: LIMITS.maxTurns + 1 })).toBe(false);
     expect(ok({ skills: Array.from({ length: LIMITS.skills }, (_, i) => `s${i}`) })).toBe(true);
     expect(ok({ skills: Array.from({ length: LIMITS.skills + 1 }, (_, i) => `s${i}`) })).toBe(false);
+    const servers = (n: number) => Array.from({ length: n }, (_, i) => ({ server: `s${i}`, tools: [] }));
+    expect(ok({ mcp: servers(LIMITS.mcp) })).toBe(true);
+    expect(ok({ mcp: servers(LIMITS.mcp + 1) })).toBe(false);
+    const tools = (n: number) => [{ server: "s", tools: Array.from({ length: n }, (_, i) => `t${i}`) }];
+    expect(ok({ mcp: tools(LIMITS.mcpTools) })).toBe(true);
+    expect(ok({ mcp: tools(LIMITS.mcpTools + 1) })).toBe(false);
   });
 });

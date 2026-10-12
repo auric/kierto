@@ -58,6 +58,19 @@ writeFileSync(
   join(claudeConfig, "plugins", "installed_plugins.json"),
   JSON.stringify({ version: 2, plugins: { "e2e-plugin@e2e-market": [{ scope: "user", installPath: pluginDir, version: "1.2.0" }] } }),
 );
+// One user-scope MCP server: the local fake stdio server. Its env value must never reach the page.
+writeFileSync(
+  join(claudeConfig, ".claude.json"),
+  JSON.stringify({
+    mcpServers: {
+      "fake-docs": {
+        command: process.execPath,
+        args: [join(import.meta.dir, "../support/fake-mcp.ts")],
+        env: { RL_E2E: "E2E-MCP-SECRET" },
+      },
+    },
+  }),
+);
 process.env.CLAUDE_CONFIG_DIR = claudeConfig;
 
 // ---------- Review data (plan v3 WP11) ----------
@@ -560,6 +573,23 @@ r[key("POST", "/__control/run-skills")] = () => {
   const dir = join(cwd, "skills");
   const files = existsSync(dir) ? readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()) : [];
   return ok({ files: files.map((e) => relative(dir, join(e.parentPath, e.name)).replaceAll("\\", "/")).sort() });
+};
+// The server names in mcp.json and the --allowedTools and --disallowedTools values of the newest fake CLI run. null: no run.
+r[key("POST", "/__control/run-mcp")] = () => {
+  const record = join(claudeDir, "calls.jsonl");
+  const argv = existsSync(record)
+    ? readFileSync(record, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => (JSON.parse(l) as { argv?: string[] }).argv ?? [])
+        .filter((a) => a.includes("-p"))
+        .at(-1)
+    : undefined;
+  if (!argv) return ok({ run: null });
+  const flag = (name: string) => (argv.includes(name) ? (argv[argv.indexOf(name) + 1] ?? null) : null);
+  const file = flag("--mcp-config");
+  const servers = file && existsSync(file) ? Object.keys(JSON.parse(readFileSync(file, "utf8")).mcpServers) : null;
+  return ok({ run: { servers, allowed: flag("--allowedTools"), denied: flag("--disallowedTools") } });
 };
 // Lets the running cycle end, changes the scenario, then runs one full cycle.
 r[key("POST", "/__control/state")] = async (req) => {

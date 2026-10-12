@@ -149,3 +149,11 @@ export async function runSkills(): Promise<string[] | null> {
   if (!res.ok) throw new Error(`control run-skills: ${res.status}`);
   return ((await res.json()) as { files: string[] | null }).files;
 }
+
+export type RunMcp = { servers: string[] | null; allowed: string | null; denied: string | null };
+// The MCP setup of the newest fake CLI run, or null before the first run. As runAttachments, start a hang run first.
+export async function runMcp(): Promise<RunMcp | null> {
+  const res = await fetch(`${FAKE_URL}/__control/run-mcp`, { method: "POST", headers: auth });
+  if (!res.ok) throw new Error(`control run-mcp: ${res.status}`);
+  return ((await res.json()) as { run: RunMcp | null }).run;
+}

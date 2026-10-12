@@ -64,6 +64,7 @@ import {
   replyAgent,
   reviewerAgent,
   SHIPPED_PROFILES,
+  withMcp,
   withSkills,
 } from "./catalog";
 import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude";
@@ -74,6 +75,7 @@ import { git, gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
 import { buildAskPrompt, buildFixPrompt, buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
 import { claudeConfigDir, copySkills } from "./skills";
+import { claudeJsonPath, userServers } from "./user-mcp";
 import {
   type CheckedEarlier,
   type EarlierItem,
@@ -113,7 +115,7 @@ export type ReviewJobsOptions = {
   gitRemote?: (ref: PrRef) => Promise<GitRemote>;
   // Absent: tools/list over the network. The tests pass a stub.
   listTools?: ListTools;
-  // The Claude Code config folder for profile skills. Absent: CLAUDE_CONFIG_DIR or ~/.claude, read at each run.
+  // The Claude Code config folder for profile skills and MCP servers. Absent: CLAUDE_CONFIG_DIR or the default, read at each run.
   claudeConfigDir?: string;
   now?: () => number;
 };
@@ -1038,9 +1040,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (j.cancelled) return cancelled();
 
     const profile = j.profile;
-    const docs = await docServers(profile);
+    const [docs, user] = await Promise.all([
+      docServers(profile),
+      userServers(profile.mcp, claudeJsonPath(opts.claudeConfigDir ?? process.env.CLAUDE_CONFIG_DIR)),
+    ]);
     if (j.cancelled) return cancelled();
-    const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...docs.servers };
+    const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...docs.servers, ...user.servers };
+    for (const g of user.gaps) log(`Review run ${j.id}: ${g}.`);
+    const used = Object.entries(user.servers).map(([server, s]) => ({ server, tools: s.tools, remote: s.user.type !== "stdio" }));
+    if (used.length) log(`Review run ${j.id} MCP servers: ${used.map((u) => `${u.server} (${u.tools.length} tools)`).join(", ")}.`);
     const skills = copySkills(profile.skills, join(ws.work, "skills"), opts.claudeConfigDir ?? claudeConfigDir());
     for (const g of skills.gaps) log(`Review run ${j.id}: ${g}.`);
     if (skills.copied.length)
@@ -1053,7 +1061,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
           .join(", ")}.`,
       );
     const folders = skills.copied.map((s) => s.folder);
-    const gaps = [...docs.unavailable, ...skills.gaps];
+    const gaps = [...docs.unavailable, ...user.gaps, ...skills.gaps];
     const input = {
       mergeBase: ws.mergeBase,
       head: ws.sourceHead,
@@ -1065,6 +1073,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       attachments: attachments.length > 0,
       history: history !== null,
       skills: folders,
+      mcp: used,
     };
     const reply = j.kind === "reply" ? j.threads : null;
     const fix = j.kind === "fix" ? j.threads : null;
@@ -1087,10 +1096,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         cwd: ws.work,
         appDir: ws.app,
         ...spec,
-        main: withSkills(spec.main, folders),
+        main: withMcp(withSkills(spec.main, folders), used),
         maxTurns: reply || fix ? Math.max(profile.maxTurns, MIN_EDIT_TURNS) : profile.maxTurns,
         // Only a review gets subagents. With agents {}, the CLI gets no Agent tool.
-        agents: j.kind === "review" && !profile.explain ? { [REVIEWER]: withSkills(reviewerAgent(profile), folders) } : {},
+        agents: j.kind === "review" && !profile.explain ? { [REVIEWER]: withMcp(withSkills(reviewerAgent(profile), folders), used) } : {},
         mcpServers,
       },
       (events) => {

@@ -5,7 +5,7 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "re
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
-import type { ProfileInput, SettingsDto, SkillDto } from "../../shared/dto";
+import type { McpPick, McpServerDto, McpToolDto, ProfileInput, SettingsDto, SkillDto } from "../../shared/dto";
 import { api } from "../api";
 import { useMeta } from "../meta";
 import { read, useSaveSettings } from "../shell/data";
@@ -24,7 +24,9 @@ import {
   profileId,
   profileLabel,
   sameProfiles,
+  setTools,
   toDrafts,
+  toggleServer,
   toggleSkill,
   toProfiles,
 } from "./profiles";
@@ -47,6 +49,9 @@ window.addEventListener("beforeunload", (e) => {
 
 // The skills of the runner setup, by ID. undefined: the list is loading or failed.
 type SkillList = Map<string, SkillDto> | undefined;
+// The MCP servers of the runner setup, by name. undefined: the list is loading or failed.
+type ServerList = Map<string, McpServerDto> | undefined;
+type Lists = { skills: SkillList; skillsFailed: boolean; servers: ServerList; serversFailed: boolean };
 
 export function ReviewProfiles({ settings }: { settings: SettingsDto }) {
   const qc = useQueryClient();
@@ -55,6 +60,12 @@ export function ReviewProfiles({ settings }: { settings: SettingsDto }) {
     queryFn: async () => read<SkillDto[]>(await api.api.skills.$get()),
     select: (l) => new Map(l.map((s) => [s.id, s])),
   });
+  const servers = useQuery({
+    queryKey: ["mcp-servers"],
+    queryFn: async () => read<McpServerDto[]>(await api.api["mcp-servers"].$get()),
+    select: (l) => new Map(l.map((s) => [s.name, s])),
+  });
+  const lists: Lists = { skills: skills.data, skillsFailed: skills.isError, servers: servers.data, serversFailed: servers.isError };
   const save = useSaveSettings();
   const runner = useMeta().data?.runner.short ?? "";
   const [drafts, setDrafts] = useState(() => kept ?? toDrafts(settings.profiles));
@@ -121,7 +132,7 @@ export function ReviewProfiles({ settings }: { settings: SettingsDto }) {
       <fieldset disabled={save.isPending} className="min-w-0">
         <ol aria-label="Review profiles" className="m-0 list-none border-t p-0">
           {drafts.map((d, i) => (
-            <ProfileRow key={d.key} d={d} i={i} count={drafts.length} skills={skills.data} failed={skills.isError} onChange={apply} />
+            <ProfileRow key={d.key} d={d} i={i} count={drafts.length} lists={lists} onChange={apply} />
           ))}
         </ol>
       </fieldset>
@@ -214,7 +225,7 @@ function Toggle(props: { id: string; label: ReactNode; help: string; checked: bo
   );
 }
 
-function ProfileRow(props: { d: Draft; i: number; count: number; skills: SkillList; failed: boolean; onChange: (c: Change) => void }) {
+function ProfileRow(props: { d: Draft; i: number; count: number; lists: Lists; onChange: (c: Change) => void }) {
   const { d, i, count, onChange } = props;
   const found = problems(d);
   const label = profileLabel(d, i);
@@ -330,7 +341,8 @@ function ProfileRow(props: { d: Draft; i: number; count: number; skills: SkillLi
           onChange={(docs) => edit({ docs })}
         />
       </div>
-      <SkillPicker d={d} i={i} skills={props.skills} failed={props.failed} onChange={(skills) => edit({ skills })} />
+      <SkillPicker d={d} i={i} skills={props.lists.skills} failed={props.lists.skillsFailed} onChange={(skills) => edit({ skills })} />
+      <McpPicker d={d} i={i} servers={props.lists.servers} failed={props.lists.serversFailed} onChange={(mcp) => edit({ mcp })} />
       {errors.length > 0 && (
         <div className="col-span-full grid gap-1">
           {errors.map((f) => (
@@ -410,5 +422,153 @@ function SkillPicker(props: { d: Draft; i: number; skills: SkillList; failed: bo
         </ul>
       </fieldset>
     </details>
+  );
+}
+
+const warn = (text: ReactNode) => (
+  <span className="flex items-start gap-[5px] text-destructive">
+    <CircleAlert aria-hidden className="mt-px size-[15px] shrink-0" />
+    {text}
+  </span>
+);
+
+// MCP servers of the runner setup for one profile. A run allows only the ticked tools of each picked server.
+function McpPicker(props: { d: Draft; i: number; servers: ServerList; failed: boolean; onChange: (mcp: McpPick[]) => void }) {
+  const { d, i, servers } = props;
+  const runner = useMeta().data?.runner.name ?? "";
+  const picked = d.mcp;
+  const missing = servers ? picked.filter((m) => !servers.has(m.server)) : [];
+  const full = picked.length >= LIMITS.mcp;
+  const summary = picked.length ? picked.map((m) => `${m.server} (${m.tools.length})`).join(", ") : "none";
+  const row = (name: string, server: McpServerDto | undefined) => (
+    <McpServerRow
+      key={name}
+      name={name}
+      server={server}
+      pick={picked.find((m) => m.server === name)}
+      full={full}
+      runner={runner}
+      list={picked}
+      onChange={props.onChange}
+    />
+  );
+  return (
+    <details id={profileId(i, "mcp")} className="col-span-full min-w-0 text-sm" open={missing.length > 0 || undefined}>
+      <summary className="cursor-pointer text-ink-2">
+        MCP servers<span className="sr-only"> of profile {i + 1}</span>: <span className="text-foreground">{summary}</span>
+      </summary>
+      <fieldset className="mt-2 grid min-w-0 gap-2 pl-4">
+        <legend className="sr-only">MCP servers of profile {i + 1}</legend>
+        <p className="m-0 text-xs text-muted-foreground">
+          The run starts each picked server from your {runner} setup and allows only the ticked tools. Tool results are untrusted data.
+          {full && ` A profile takes at most ${LIMITS.mcp} servers.`}
+        </p>
+        {props.failed && <p className="m-0 text-xs text-destructive">Could not list the MCP servers.</p>}
+        {!servers && !props.failed && <p className="m-0 text-xs text-muted-foreground">Loading MCP servers…</p>}
+        {servers && servers.size === 0 && <p className="m-0 text-xs text-muted-foreground">{runner} has no user MCP servers.</p>}
+        <ul className="m-0 grid list-none gap-3 p-0">
+          {missing.map((m) => row(m.server, undefined))}
+          {[...(servers?.values() ?? [])].map((s) => row(s.name, s))}
+        </ul>
+      </fieldset>
+    </details>
+  );
+}
+
+// server: undefined when the runner setup lacks the picked server.
+function McpServerRow(props: {
+  name: string;
+  server: McpServerDto | undefined;
+  pick: McpPick | undefined;
+  full: boolean;
+  runner: string;
+  list: McpPick[];
+  onChange: (mcp: McpPick[]) => void;
+}) {
+  const { name, server, pick, list, onChange } = props;
+  // A new pick gets the read-only tools when the tool list arrives.
+  const fresh = useRef(false);
+  const tools = useQuery({
+    queryKey: ["mcp-tools", name],
+    enabled: !!pick && !!server,
+    // Each call can start a process. The list stays until the page reloads.
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+    queryFn: async () => read<McpToolDto[]>(await api.api["mcp-servers"][":name"].tools.$get({ param: { name } })),
+  });
+  useEffect(() => {
+    if (!fresh.current || !pick || !tools.data) return;
+    fresh.current = false;
+    const readOnly = tools.data.filter((t) => t.readOnlyHint === true).map((t) => t.name);
+    onChange(setTools(list, name, readOnly.slice(0, LIMITS.mcpTools)));
+  }, [pick, tools.data, list, name, onChange]);
+  const known = new Set(tools.data?.map((t) => t.name));
+  const gone = tools.data && pick ? pick.tools.filter((t) => !known.has(t)) : [];
+  const fullTools = !!pick && pick.tools.length >= LIMITS.mcpTools;
+  const tool = (t: string, help: ReactNode) => (
+    <li key={t}>
+      <label className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
+        <input
+          type="checkbox"
+          className="mt-0.5 size-4 shrink-0 accent-primary"
+          checked={!!pick?.tools.includes(t)}
+          disabled={fullTools && !pick?.tools.includes(t)}
+          onChange={(e) => pick && onChange(setTools(list, name, toggleSkill(pick.tools, t, e.target.checked)))}
+        />
+        <span className="grid min-w-0 gap-px">
+          <span className="font-mono text-xs">{t}</span>
+          <span className="grid gap-px text-xs break-words text-muted-foreground">{help}</span>
+        </span>
+      </label>
+    </li>
+  );
+  return (
+    <li className="grid min-w-0 gap-1.5">
+      <label className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
+        <input
+          type="checkbox"
+          className="mt-0.5 size-4 shrink-0 accent-primary"
+          checked={!!pick}
+          disabled={props.full && !pick}
+          onChange={(e) => {
+            fresh.current = e.target.checked;
+            onChange(toggleServer(list, name, e.target.checked));
+          }}
+        />
+        <span className="grid min-w-0 gap-px">
+          <span>{name}</span>
+          <span className="text-xs break-words text-muted-foreground">
+            {!server
+              ? warn(`Not found in ${props.runner}. Runs go on without it.`)
+              : server.transport === "stdio"
+                ? "Local command"
+                : `Remote server (${server.transport})`}
+          </span>
+        </span>
+      </label>
+      {pick && server && (
+        <fieldset className="grid min-w-0 gap-2 pl-6">
+          <legend className="sr-only">Tools of {name}</legend>
+          {tools.isPending && <p className="m-0 text-xs text-muted-foreground">Loading tools…</p>}
+          {tools.error && <p className="m-0 text-xs text-destructive">{tools.error.message}</p>}
+          {tools.data && tools.data.length === 0 && <p className="m-0 text-xs text-muted-foreground">The server has no tools.</p>}
+          {tools.data && pick.tools.length === 0 && (
+            <p className="m-0 text-xs text-muted-foreground">No tool is ticked. Runs skip this server.</p>
+          )}
+          <ul className="m-0 grid list-none gap-2 p-0">
+            {gone.map((t) => tool(t, warn("Not found in the server. Runs go on without it.")))}
+            {tools.data?.map((t) =>
+              tool(
+                t.name,
+                <>
+                  {t.readOnlyHint !== true && warn("May change data. Review Loop cannot check this.")}
+                  {t.description && <span>{t.description}</span>}
+                </>,
+              ),
+            )}
+          </ul>
+        </fieldset>
+      )}
+    </li>
   );
 }

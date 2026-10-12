@@ -52,8 +52,28 @@ export const skillId = z.string().regex(/^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[
 // GET /api/skills. version: the plugin version.
 export type SkillDto = { id: string; name: string; description: string; source: "user" | "plugin"; version?: string };
 
+export const MAX_PROFILE_MCP = 10;
+export const MAX_MCP_TOOLS = 100;
+// A server or tool name goes into CLI flags as mcp__<server>__<tool>. src/server/review/claude.ts NAME has the same characters.
+export const mcpName = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+// One server of the user's Claude config and the tools that a run may call.
+export const mcpPick = z.object({
+  server: mcpName,
+  tools: z
+    .array(mcpName)
+    .max(MAX_MCP_TOOLS)
+    .transform((l) => [...new Set(l)]),
+});
+export type McpPick = z.infer<typeof mcpPick>;
+
+// GET /api/mcp-servers. It never holds the URL, headers, command, args, or env of a server.
+export type McpServerDto = { name: string; transport: "stdio" | "http" | "sse"; source: "user" };
+// GET /api/mcp-servers/:name/tools. readOnlyHint: null when the server does not say.
+export type McpToolDto = { name: string; description: string; readOnlyHint: boolean | null };
+
 // prompt: the profile part of both agent prompts. docs: the run gets the documentation servers.
 // skills: the run gets a copy of each skill in ./skills. Absent in profiles saved before skills existed.
+// mcp: servers of the user's Claude config with the chosen tools. Absent in profiles saved before this field existed.
 export const profileInput = z.object({
   id: profileId,
   name: z.string().trim().min(1).max(60),
@@ -67,6 +87,11 @@ export const profileInput = z.object({
     .max(MAX_PROFILE_SKILLS)
     .default([])
     .transform((l) => [...new Set(l)]),
+  mcp: z
+    .array(mcpPick)
+    .max(MAX_PROFILE_MCP)
+    .default([])
+    .refine((l) => new Set(l.map((m) => m.server)).size === l.length, "Each MCP server can occur only once."),
 });
 export type ProfileInput = z.infer<typeof profileInput>;
 

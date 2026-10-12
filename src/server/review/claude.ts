@@ -17,11 +17,19 @@ const STDERR_TAIL = 16_384;
 const EXEC_TIMEOUT_MS = 30_000;
 const DRAIN_TIMEOUT_MS = 5_000;
 const RUN_TIMEOUT_MS = 60 * 60_000;
+// CreateProcess limits the Windows command line to 32,767 characters.
+const MAX_ARGV = 32_000;
 
 export type AgentSpec = { description: string; prompt: string };
 // tools: the tool names the server offers, without the mcp__<server>__ prefix. A remote server gets no headers or credentials.
 export type StdioServerSpec = { command: string; args: string[]; tools: string[] };
-export type McpServerSpec = StdioServerSpec | { type: "http"; url: string; tools: string[] };
+// A server entry of the user's Claude config, as the CLI reads it. It can hold secrets: never log it or store it.
+export type UserMcpEntry =
+  | { type: "stdio"; command: string; args: string[]; env: Record<string, string> }
+  | { type: "http" | "sse"; url: string; headers: Record<string, string> };
+// tools: the chosen tools. deny: the other tools of the server.
+export type UserServerSpec = { user: UserMcpEntry; tools: string[]; deny: string[] };
+export type McpServerSpec = StdioServerSpec | { type: "http"; url: string; tools: string[] } | UserServerSpec;
 export type RunSpec = {
   // The work folder. The runner uses its long path.
   cwd: string;
@@ -99,7 +107,7 @@ async function readText(stream: ReadableStream<Uint8Array>, each: (text: string)
   each(dec.decode());
 }
 
-async function killTree(pid: number) {
+export async function killTree(pid: number) {
   // Gate 0 g: taskkill /T ends claude.exe and its MCP children.
   if (process.platform === "win32")
     await Bun.spawn(["taskkill", "/T", "/F", "/PID", String(pid)], { stdout: "ignore", stderr: "ignore", timeout: EXEC_TIMEOUT_MS }).exited;
@@ -124,7 +132,7 @@ function removeCwdFolders(cwd: string, projectsDir: string) {
 function prepare(spec: RunSpec) {
   const reviewers = Object.keys(spec.agents);
   const servers = Object.entries(spec.mcpServers);
-  for (const n of [...reviewers, ...servers.flatMap(([s, c]) => [s, ...c.tools])])
+  for (const n of [...reviewers, ...servers.flatMap(([s, c]) => [s, ...c.tools, ...("user" in c ? c.deny : [])])])
     if (!NAME.test(n)) throw new Error(`Invalid agent, server, or tool name: ${n}`);
   if (reviewers.includes(MAIN_AGENT)) throw new Error(`${MAIN_AGENT} cannot be a review agent.`);
   for (const [s, c] of servers)
@@ -133,6 +141,7 @@ function prepare(spec: RunSpec) {
   // Gate B9: agent tool lists need full MCP tool names. --allowedTools needs mcp__<server>; a wildcard does not work.
   const mcpTools = servers.flatMap(([s, c]) => c.tools.map((t) => `mcp__${s}__${t}`));
   const readTools = [...READ_TOOLS, ...mcpTools];
+  const denied = servers.flatMap(([s, c]) => ("user" in c ? c.deny.map((t) => `mcp__${s}__${t}`) : []));
   const agentTool = reviewers.length ? [`Agent(${reviewers.join(", ")})`] : [];
   mkdirSync(spec.appDir, { recursive: true });
   const mcpFile = join(spec.appDir, "mcp.json");
@@ -141,9 +150,14 @@ function prepare(spec: RunSpec) {
     // code.claude.com/docs/en/mcp: a remote entry needs "type": "http"; without it the CLI reads the entry as stdio.
     JSON.stringify({
       mcpServers: Object.fromEntries(
-        servers.map(([s, c]) => [s, "url" in c ? { type: "http", url: c.url } : { command: c.command, args: c.args }]),
+        servers.map(([s, c]) => [
+          s,
+          "user" in c ? c.user : "url" in c ? { type: "http", url: c.url } : { command: c.command, args: c.args },
+        ]),
       ),
     }),
+    // A user entry can hold secrets. Windows ignores the mode; the run folder is in the user's data folder.
+    { mode: 0o600 },
   );
   const agentsFile = join(spec.appDir, "agents.json");
   // Gate B9: without StructuredOutput in the rl-main tools, no result carries structured_output.
@@ -176,7 +190,9 @@ function prepare(spec: RunSpec) {
     "--tools",
     [...READ_TOOLS, ...(reviewers.length ? ["Agent"] : [])].join(","),
     "--allowedTools",
-    [...READ_TOOLS, ...servers.map(([s]) => `mcp__${s}`)].join(","),
+    [...READ_TOOLS, ...servers.flatMap(([s, c]) => ("user" in c ? c.tools.map((t) => `mcp__${s}__${t}`) : [`mcp__${s}`]))].join(","),
+    // A deny rule wins over every allow rule. The other tools of a user server stay off.
+    ...(denied.length ? ["--disallowedTools", denied.join(",")] : []),
     "--agents",
     agentsFile,
     "--agent",
@@ -187,7 +203,11 @@ function prepare(spec: RunSpec) {
     String(spec.maxTurns),
     "--no-session-persistence",
   ];
-  const allowed = new Set([...readTools, "StructuredOutput", ...(reviewers.length ? ["Agent", "Task"] : [])]);
+  // JSON quoting is close to the Windows argument quoting.
+  if (JSON.stringify(args).length > MAX_ARGV)
+    throw new Error("The MCP tool lists are too long for the command line. Pick fewer MCP servers.");
+  // Init can list a denied tool. The deny rule keeps it off, so the init check accepts it.
+  const allowed = new Set([...readTools, ...denied, "StructuredOutput", ...(reviewers.length ? ["Agent", "Task"] : [])]);
   return { args, allowed };
 }
 

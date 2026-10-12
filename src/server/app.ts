@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { csrf } from "hono/csrf";
 import { secureHeaders } from "hono/secure-headers";
+import { validator } from "hono/validator";
+import { type ApiError, mcpName } from "../shared/dto";
 import { createContextRoutes } from "./context/routes";
 import { allowedOrigins, type GuardOptions, guard } from "./guard";
 import { createInboxRoutes } from "./inbox/routes";
@@ -13,6 +15,7 @@ import { createFixRoutes } from "./review/fix-routes";
 import { createReviewJobs, type ReviewJobs } from "./review/jobs";
 import { createReviewRoutes } from "./review/routes";
 import { discoverSkills, skillDto } from "./review/skills";
+import { discoverMcpServers, listUserTools, McpListError, readUserServers } from "./review/user-mcp";
 import { createSettings, type Settings } from "./settings";
 import { createSyncEngine, type SyncEngine } from "./sync/engine";
 
@@ -70,6 +73,26 @@ export function createApp(opts: AppOptions) {
     .route("/api/meta", createMeta(review, settings))
     // The skills of the Claude Code config folder, read from disk on each call.
     .get("/api/skills", (c) => c.json(discoverSkills().map(skillDto)))
+    // The MCP servers of the user's Claude config: names and transports only.
+    .get("/api/mcp-servers", (c) => c.json(discoverMcpServers()))
+    .get(
+      "/api/mcp-servers/:name/tools",
+      validator("param", (v: Record<string, string>, c) => {
+        const r = mcpName.safeParse(v.name);
+        return r.success ? { name: r.data } : c.json<ApiError>({ error: "Invalid MCP server name." }, 400);
+      }),
+      async (c) => {
+        const { name } = c.req.valid("param");
+        const entry = readUserServers().get(name);
+        if (!entry) return c.json<ApiError>({ error: `MCP server ${name} is not in the Claude config.` }, 404);
+        try {
+          return c.json(await listUserTools(entry), 200);
+        } catch (e) {
+          const why = e instanceof McpListError ? e.message : "error";
+          return c.json<ApiError>({ error: `Could not list the tools of ${name}: ${why}.` }, 502);
+        }
+      },
+    )
     .post("/api/sync", (c) => {
       void sync.syncNow();
       return c.json(sync.status(), 202);
