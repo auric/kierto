@@ -211,8 +211,6 @@ const isolated = (root: string) => {
   writeFileSync(empty, "");
   return gitEnv(empty);
 };
-const show = async (s: Scenario, ws: Workspace, rev: string, path: string) =>
-  git(["--git-dir", ws.cache, "show", `${rev}:${path}`], { env: isolated(s.root) });
 const worktrees = async (s: Scenario, cache: string) =>
   (await git(["--git-dir", cache, "worktree", "list", "--porcelain"], { env: isolated(s.root) }))
     .split("\n")
@@ -296,7 +294,6 @@ describe("workspace", () => {
       const changed = APP.replace("line 3\n", "line three\n");
       const s = await scenario("pin", { "src/app.ts": changed });
       const ws = await prepare(s);
-      const patch = readFileSync(join(ws.context, "changes.patch"), "utf8");
       const later = await s.commit(s.source, { "src/app.ts": "pushed later\n" }, "later");
       await s.ref("refs/heads/feature", later);
       await s.ref("refs/pull-requests/2/from", later);
@@ -304,7 +301,6 @@ describe("workspace", () => {
 
       expect(await head(ws.repo)).toBe(s.source);
       expect(readFileSync(join(ws.repo, "src/app.ts"), "utf8")).toBe(changed);
-      expect(readFileSync(join(ws.context, "changes.patch"), "utf8")).toBe(patch);
       // A run with the old pins fails, and the earlier run keeps its tree.
       await expect(prepare(s, "2")).rejects.toThrow(/source head moved/i);
       expect(existsSync(join(s.dataDir, "runs", "2"))).toBe(false);
@@ -455,7 +451,7 @@ describe("workspace", () => {
   );
 
   test(
-    "line numbers in the patch match the file lines",
+    "context holds pr.md and no patch or file list, and ./repo holds the head files",
     async () => {
       const app = APP.replace("line 3\n", "line three\nline 3b\n").replace("line 30\n", "").replace("line 38\n", "line 38\nline 38b\n");
       const moved = `${Array.from({ length: 12 }, (_, i) => `moved ${i + 1}`).join("\n")}\n`;
@@ -471,55 +467,18 @@ describe("workspace", () => {
         { "src/old-name.ts": moved },
       );
       const ws = await prepare(s);
-      const text = readFileSync(join(ws.context, "changes.patch"), "utf8");
-      let paths: { old: string | null; new: string | null } = { old: null, new: null };
-      let inHunk = false;
-      const seen = { old: 0, new: 0, add: 0, del: 0, ctx: 0 };
-      const cache = new Map<string, string[]>();
-      const lines = async (rev: string, path: string) => {
-        const k = `${rev}:${path}`;
-        if (!cache.has(k)) cache.set(k, (await show(s, ws, rev, path)).split("\n"));
-        return cache.get(k) as string[];
-      };
-      for (const l of text.split("\n")) {
-        if (l.startsWith("diff --git ")) {
-          inHunk = false;
-          paths = { old: null, new: null };
-        } else if (!inHunk && l.startsWith("--- ")) paths.old = l === "--- /dev/null" ? null : l.slice(6);
-        else if (!inHunk && l.startsWith("+++ ")) paths.new = l === "+++ /dev/null" ? null : l.slice(6);
-        else if (l.startsWith("@@ ")) inHunk = true;
-        else if (inHunk && !l.startsWith("\\") && l !== "") {
-          const m = /^([ \d]{6}) ([ \d]{6}) ([ +-])(.*)$/.exec(l);
-          if (!m) throw new Error(`bad hunk line: ${l}`);
-          const [, o, n, kind, body] = m as unknown as [string, string, string, string, string];
-          seen[kind === "+" ? "add" : kind === "-" ? "del" : "ctx"]++;
-          if (o.trim()) {
-            expect((await lines(ws.mergeBase, paths.old as string))[Number(o) - 1]).toBe(body);
-            seen.old++;
-          }
-          if (n.trim()) {
-            expect((await lines(ws.sourceHead, paths.new as string))[Number(n) - 1]).toBe(body);
-            seen.new++;
-          }
-          expect(kind === "+" ? !o.trim() && !!n.trim() : kind === "-" ? !!o.trim() && !n.trim() : !!o.trim() && !!n.trim()).toBe(true);
-        }
-      }
-      expect(seen.add).toBeGreaterThan(3);
-      expect(seen.del).toBeGreaterThan(2);
-      expect(seen.ctx).toBeGreaterThan(10);
+      // The model reads the change through the git MCP tools. A patch file can exceed the 256 KB Read limit.
+      expect(tree(ws.context)).toEqual(["pr.md"]);
+      expect(readFileSync(join(ws.repo, "src/app.ts"), "utf8")).toBe(app);
+      expect(readFileSync(join(ws.repo, "src/added.ts"), "utf8")).toBe("a\nb\n");
+      expect(existsSync(join(ws.repo, "src/old-name.ts"))).toBe(false);
+      expect(existsSync(join(ws.repo, "README.md"))).toBe(false);
 
       expect(parseDiff(ws.diff).map((f) => [f.oldPath, f.path])).toEqual([
         ["README.md", null],
         ["src/old-name.ts", "lib/new-name.ts"],
         [null, "src/added.ts"],
         ["src/app.ts", "src/app.ts"],
-      ]);
-      expect(readFileSync(join(ws.context, "files.txt"), "utf8").split("\n").slice(1)).toEqual([
-        "D\tREADME.md",
-        "R\tsrc/old-name.ts\tlib/new-name.ts",
-        "A\tsrc/added.ts",
-        "M\tsrc/app.ts",
-        "",
       ]);
       const pr = readFileSync(join(ws.context, "pr.md"), "utf8");
       expect(pr.split("\n")[0]).toContain("UNTRUSTED");
@@ -570,7 +529,7 @@ describe("workspace", () => {
     async () => {
       const s = await scenario("clean", { "src/new.ts": "new\n" });
       const a = await prepare(s, "1");
-      expect(tree(a.run)).toEqual(expect.arrayContaining(["app", "work", "work/context", "work/repo", "work/context/changes.patch"]));
+      expect(tree(a.run)).toEqual(expect.arrayContaining(["app", "work", "work/context", "work/repo", "work/context/pr.md"]));
       await a.remove();
       expect(existsSync(a.run)).toBe(false);
       expect(await worktrees(s, a.cache)).toHaveLength(1);

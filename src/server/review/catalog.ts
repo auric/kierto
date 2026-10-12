@@ -174,8 +174,12 @@ const TRUST = [
 // Plan r3 Feature C.
 const TASK_RULE = "Use ./context/task.md, when present, to judge whether a comment matches the task goal.";
 
+// The CLI Read tool refuses a file over 256 KB.
+export const LARGE_FILE_RULE = "Read fails on a file over 256 KB. For a large file, use Grep, or Read with offset and limit.";
+
 const RESULT_RULES = [
   "Give each path from the repository root, for example src/app.ts, not repo/src/app.ts.",
+  'For side "new", give the line numbers of the file in ./repo. For side "old", a removed line, give its line number at the merge base. The hunk headers of git_diff from the merge base give it.',
   "Copy anchorText verbatim from the lines line to lineEnd on that side.",
   'Base each finding on code that you read. Set evidenceStatus to "unverified" when you did not check it.',
 ];
@@ -183,7 +187,10 @@ const RESULT_RULES = [
 export function mainAgent(p: Profile): AgentSpec {
   const delegate = p.explain
     ? []
-    : [`Give parts of a large change to the ${REVIEWER} agent. Merge its findings and set agent to "${REVIEWER}" on each of them.`];
+    : [
+        `Give parts of a large change to the ${REVIEWER} agent. Give each call a list of paths and the git_diff range to review. In a re-review, also give the merge base.`,
+        `Merge its findings and set agent to "${REVIEWER}" on each of them.`,
+      ];
   return {
     description: "Read-only review of one pull request.",
     prompt: [
@@ -292,7 +299,9 @@ export function reviewerAgent(p: Profile): AgentSpec {
   return {
     description: "Read-only reviewer for one part of a change.",
     prompt: [
-      "You review one part of a change, read-only.",
+      "You review one part of a change, read-only. The request names the paths and the git_diff range to review.",
+      "./repo holds the source branch at the head commit. Call the rl-git tool git_diff with a path to see the changes of one file.",
+      LARGE_FILE_RULE,
       p.prompt,
       ...TRUST,
       ...RESULT_RULES,

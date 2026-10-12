@@ -33,7 +33,7 @@ const reviewButton = (page: Page) => page.locator("#review-btn");
 const runLine = (page: Page) => page.locator("#runline");
 // The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
 const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
-const runLog = (page: Page) => page.getByRole("dialog", { name: "Claude Code run log" });
+const runLog = (page: Page) => page.getByRole("dialog", { name: "Review run log" });
 const field = (page: Page, label: string, n: number) => page.getByLabel(`${label} of profile ${n}`, { exact: true });
 const names = (page: Page) =>
   page

@@ -28,9 +28,9 @@ This test checks the Release 2 features against a real Bitbucket Server, a real 
 2. Accept one finding. Leave one finding new. Discard one, if the run has three. Expect the "Accepted" mark on the first and one muted line with Restore for the discarded one.
 3. Push one commit to the source branch. Let it fix the code of the new finding and leave the accepted finding untouched. Expect no change in the app before the next check.
 4. Click "Check now". Expect the run line to show the review as stale on the source side. Expect the button "Review changes since <hash>".
-5. Press c. While the run runs, open the Files fold and click "Get the code from Bitbucket". Expect the git file list, not an error. Wait for the end of the run. Expect the run line "Reviewed changes <a>→<b> · N new, M carried, K fixed or outdated". Expect `<a>` to be the old head and `<b>` the new head.
+5. Press c. While the run runs, open the Files fold and click "Get the code from Bitbucket". Expect the git file list, not an error. Wait for the end of the run. Expect the Review row to show "N new, M carried, K fixed or outdated" and the range `<a>→<b>`. Expect `<a>` to be the old head and `<b>` the new head.
 6. Open the Review tab. Expect the accepted finding as a carried row with "Still open after the new commits." and its accepted state. Expect the fixed finding as a closed row "Fixed in the new commits: …". Expect no row for the discarded finding.
-7. Press 3. Expect a Read of `context/changes.patch` and `context/findings.md`. Expect `changes.patch` to hold only the new commit's files.
+7. Press 3. Expect a `git_diff` call with `stat_only` and a Read of `context/findings.md`. Expect no `context/changes.patch` and no `context/files.txt`.
 8. Press p. Expect the confirm to show each accepted item once, on the new heads. Cancel. Do not post.
 
 ## B. Ask the PR

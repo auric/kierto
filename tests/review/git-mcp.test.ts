@@ -5,7 +5,7 @@ import { join, relative, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { git, gitEnv } from "../../src/server/review/git";
-import { GIT_MCP_TOOLS, gitMcpServer, MAX_OUTPUT } from "../../src/server/review/git-mcp";
+import { GIT_MCP_TOOLS, gitMcpServer, PAGE_BYTES, pages } from "../../src/server/review/git-mcp";
 
 const MAIN = resolve(import.meta.dir, "../../src/server/main.ts");
 const SLOW = 60_000;
@@ -14,6 +14,9 @@ let root = "";
 let cache = "";
 let client: Client;
 const c = { c1: "", c2: "", c3: "", c4: "", c5: "" };
+
+// A 20,000-line added file. Its diff spans many pages.
+const HUGE = Array.from({ length: 20_000 }, (_, i) => `line ${i + 1} of the huge change\n`).join("");
 
 // A bare repository like the WP6 cache. Commits go through a temp index.
 // c1 -> c2 (target); c1 -> c3 -> c4 (head); c1 -> c5 (side, unrelated to both pins). The merge base is c1.
@@ -47,7 +50,7 @@ async function fixture() {
   c.c1 = await commit(null, { "a.txt": "one\ntwo\nthree\n", "big.txt": big }, "first commit");
   c.c2 = await commit(c.c1, { "a.txt": "one\ntwo\nthree\nfour\n" }, "target change");
   c.c3 = await commit(c.c1, { "src/b.txt": "bee\n" }, "add bee");
-  c.c4 = await commit(c.c3, { "a.txt": "one\nTWO\nthree\n" }, "shout two");
+  c.c4 = await commit(c.c3, { "a.txt": "one\nTWO\nthree\n", "huge.txt": HUGE }, "shout two");
   c.c5 = await commit(c.c1, { "side.txt": "side\n" }, "side work");
   await g(["update-ref", "refs/rl/1/source", c.c4]);
   await g(["update-ref", "refs/rl/1/target", c.c2]);
@@ -149,7 +152,9 @@ describe("git MCP server", () => {
   test("git_diff shows the PR changes", async () => {
     const out = await ok("git_diff", {});
     expect(out).toContain("+TWO");
-    expect(out).toContain("src/b.txt");
+    expect(await ok("git_diff", { stat_only: true })).toBe(
+      "1\t1\ta.txt\n20000\t0\thuge.txt\n1\t0\tsrc/b.txt\n create mode 100644 huge.txt\n create mode 100644 src/b.txt\n",
+    );
     expect(await ok("git_diff", { from: "BASE", to: "TARGET", stat_only: true })).toContain("a.txt");
   });
 
@@ -170,10 +175,46 @@ describe("git MCP server", () => {
     expect(await ok("git_show", { rev: c.c2 })).toContain("target change");
   });
 
-  test("caps the output with a marker", async () => {
-    const out = await ok("git_show", { rev: "BASE", path: "big.txt" });
-    expect(out).toContain("[truncated");
-    expect(Buffer.byteLength(out)).toBeLessThan(MAX_OUTPUT + 200);
+  test("git_diff pages a 20,000-line change without a gap", async () => {
+    const marker = /\n\[page (\d+) of (\d+)\.( Call again with page=(\d+)\.)?\]$/;
+    const parts: string[] = [];
+    let total = 0;
+    for (let n = 1; ; n++) {
+      const out = await ok("git_diff", { path: "huge.txt", page: n });
+      expect(Buffer.byteLength(out)).toBeLessThan(PAGE_BYTES + 100);
+      const m = marker.exec(out);
+      expect(m?.[1]).toBe(String(n));
+      total = Number(m?.[2]);
+      parts.push(out.slice(0, m?.index));
+      if (n === total) {
+        expect(m?.[3]).toBeUndefined();
+        break;
+      }
+      expect(m?.[4]).toBe(String(n + 1));
+    }
+    expect(total).toBeGreaterThan(5);
+    const full = parts.join("");
+    expect(full).toStartWith("diff --git a/huge.txt b/huge.txt\n");
+    expect(full).toContain("@@ -0,0 +1,20000 @@\n");
+    expect(full).toEndWith(
+      HUGE.split("\n")
+        .filter(Boolean)
+        .map((l) => `+${l}\n`)
+        .join(""),
+    );
+    expect(await refused("git_diff", { path: "huge.txt", page: total + 1 })).toContain(`The output has ${total} pages.`);
+    // A short output has no marker.
+    expect(await ok("git_show", { rev: "HEAD", path: "src/b.txt", page: 1 })).toBe("bee\n");
+  });
+
+  test("pages splits a long line, keeps surrogate pairs, and loses nothing", () => {
+    const text = `${"\u{1F600}é".repeat(50_000)}\nshort\n${"x".repeat(PAGE_BYTES)}`;
+    const parts = pages(text);
+    expect(parts.join("")).toBe(text);
+    for (const p of parts) {
+      expect(Buffer.byteLength(p)).toBeLessThanOrEqual(PAGE_BYTES);
+      expect(Buffer.from(p).toString()).toBe(p);
+    }
   });
 
   test("leaves refs, objects, and config byte-equal", () => {

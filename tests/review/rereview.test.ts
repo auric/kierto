@@ -115,7 +115,7 @@ const prAt = (sourceHead: string, targetHead: string): PullRequest => ({
 });
 
 let wsRuns = 0;
-// One workspace at the given heads: its range, the files.txt rows, the patch, and the files of the validator diff.
+// One workspace at the given heads: its range, the changed files and the patch of BASE..HEAD as git_diff reads them, and the files of the validator diff.
 async function workspace(root: string, r: Remote, source: string, target: string, since?: string) {
   await r.point(source, target);
   const ws = await prepareWorkspace({
@@ -126,12 +126,15 @@ async function workspace(root: string, r: Remote, source: string, target: string
     remote: r.remote,
     ...(since !== undefined && { since }),
   });
+  const range = (args: string[]) =>
+    git([`--git-dir=${ws.cache}`, "diff", "-M", ...args, ws.rangeBase, ws.sourceHead], { env: gitEnv("/dev/null") });
   try {
+    expect(existsSync(join(ws.context, "changes.patch")) || existsSync(join(ws.context, "files.txt"))).toBe(false);
     return {
       rangeBase: ws.rangeBase,
       mergeBase: ws.mergeBase,
-      files: readFileSync(join(ws.context, "files.txt"), "utf8").split("\n").slice(1).filter(Boolean),
-      patch: readFileSync(join(ws.context, "changes.patch"), "utf8"),
+      files: (await range(["--name-status"])).split("\n").filter(Boolean),
+      patch: await range([]),
       validator: parseDiff(ws.diff).map((f) => f.path ?? f.oldPath),
     };
   } finally {
@@ -141,7 +144,7 @@ async function workspace(root: string, r: Remote, source: string, target: string
 
 describe("range base", () => {
   test(
-    "fast-forward: changes.patch holds only the new commit, the validator diff the full change",
+    "fast-forward: BASE..HEAD holds only the new commit, the validator diff the full change",
     async () => {
       const root = temp();
       const r = await remoteRepo(join(root, "remote"));

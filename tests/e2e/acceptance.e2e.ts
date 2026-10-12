@@ -174,7 +174,7 @@ test("A17: a comment that tells the AI to answer another thread is data; no draf
   await expect(page.getByText(injected)).toHaveCount(0);
   // The dropped answer is a coverage gap of the run.
   await runLine(page).getByRole("button", { name: "Coverage gaps" }).click();
-  const log = page.getByRole("dialog", { name: "Claude Code run log" });
+  const log = page.getByRole("dialog", { name: "Reply drafts run log" });
   await expect(log.locator("footer")).toContainText(`Reply for thread ${ROOT} dropped: the thread was not requested.`);
   expect(await posts()).toEqual([]);
 });

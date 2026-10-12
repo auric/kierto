@@ -30,9 +30,9 @@ This test checks the compiled binary, the check interval, the profile editor, an
 
 1. In Settings, find the Explain profile. Change its name, for example to "Explain v2". Add one sentence to its prompt. Click "Save profiles". Expect "Saved. New reviews use these profiles."
 2. Close Settings. Open the test pull request. Press Shift+R. Select "Explain v2". Press Ctrl+Enter.
-3. Wait for the end of the run. Expect "Claude explained <hash>" in the run line. Expect questions and a summary, and no findings.
+3. Wait for the end of the run. Expect the Review row of the run list to show "Explained the change" and the question count. Expect questions and a summary, and no findings.
 4. Press 3. Expect "Explain v2 profile" in the run log. Press Esc.
-5. In Settings, clear "Explain only" of that profile and rename it again. Save. Expect the run line still to say "Claude explained". Expect the run log still to name "Explain v2".
+5. In Settings, clear "Explain only" of that profile and rename it again. Save. Expect the Review row still to show "Explained the change". Expect the run log still to name "Explain v2".
 
 ## C. The 🤖 setting
 

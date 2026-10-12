@@ -18,6 +18,7 @@ import {
   clockDur,
   countText,
   durLong,
+  KIND_LABEL,
   type LogNode,
   limitText,
   logTree,
@@ -154,7 +155,7 @@ export function RunLog(props: {
     >
       <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 border-b px-4 pt-3 pr-3 pb-2.5">
         <h2 id="run-log-title" className="m-0 text-[15px] font-bold">
-          {meta.runner.name} run log
+          {run ? `${KIND_LABEL[run.kind]} run log` : "Run log"}
         </h2>
         <Button
           ref={close}

@@ -27,7 +27,7 @@ This test checks reviews, triage, posts, replies, and reply drafts against the r
 1. Press Shift+R. Expect the review brief with the focus in "Your note".
 2. Type a short note, for example "Check the error handling first." Keep the profile General. Press Ctrl+Enter.
 3. Expect "Reviewing…" in the run line, with a count of tool calls that goes up. Press 3. Expect the run log. Each subagent has its own fold. Press Esc.
-4. Wait for the end of the run. Expect "Claude reviewed <hash>" with the number of findings and questions. If the run line shows "Coverage gaps", click it and record the gaps.
+4. Wait for the end of the run. Expect the Review row of the run list to show the number of findings and questions. If the row shows "Coverage gaps", click it and record the gaps.
 5. Accept one finding. Expect "Accepted" on it and the focus on the next draft. Discard one finding. Expect "Discarded:" and a Restore button. Edit one finding, change one word, and press Ctrl+Enter. Expect "edited by you" and "Accepted".
 6. Press p. Expect a confirm with the destination and the exact text of each comment. Expect no discarded text in it.
 7. Click Post. Expect "Posted." on each row, with an "Open in Bitbucket" link.
@@ -64,7 +64,7 @@ This test checks reviews, triage, posts, replies, and reply drafts against the r
 
 1. You need a thread where it is your turn: another user wrote the newest message. If you have none, use "Draft reply" in an open thread. Then skip to step 3.
 2. Click "Draft replies · General" in the header. Expect "Claude is drafting a reply…" in each requested thread and "Drafting replies…" in the run line.
-3. Expect "Claude drafted replies on <hash>" at the end. This confirms U20: the real CLI accepts the reply schema. If the run line shows "Reply drafts failed.", click "Show raw output". Click Copy and keep the text locally for the record.
+3. Expect the Reply drafts row to show the number of reply drafts at the end. This confirms U20: the real CLI accepts the reply schema. If the Reply drafts row shows "Reply drafts failed.", click "Show raw output". Click Copy and keep the text locally for the record.
 4. Expect a dashed card "Reply draft to <name>" in each thread, or "No reply needed: <reason>". Expect no card in a thread that you did not request.
 5. Accept one draft. Expect "Accepted" and a solid border. Press p. Expect one reply, "Reply to <name> in <place>", and the text with 🤖.
 6. Click Post. Expect "Posted.". In Bitbucket, expect exactly one new reply, under the message that the draft answered.

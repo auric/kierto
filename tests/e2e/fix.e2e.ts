@@ -123,7 +123,7 @@ test("Fix all valid: the edits show, one is unticked, Apply commits it in the cl
   const replies = runRow(page, "reply");
   await expect(replies).toContainText("2 reply drafts");
   await replies.getByRole("button", { name: "Log of the reply drafts run" }).click();
-  const log = page.getByRole("dialog", { name: "Claude Code run log" });
+  const log = page.getByRole("dialog", { name: "Reply drafts run log" });
   await expect(log.locator("footer")).toContainText("Result: 2 reply drafts.");
   await page.keyboard.press("Escape");
   await expect(log).toBeHidden();

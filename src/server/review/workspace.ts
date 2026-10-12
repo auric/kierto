@@ -17,7 +17,6 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { RUN_TEXT_BYTES } from "../../shared/dto";
 import { type Comment, commentLines, type ExcerptLine, type PrRef, type PullRequest } from "../../shared/types";
 import { log } from "../log";
-import { parseDiff } from "./diffmap";
 import { git, gitEnv } from "./git";
 
 const HEAD = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
@@ -25,7 +24,6 @@ const HEAD = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const NAME = /^[A-Za-z0-9~_][A-Za-z0-9._~-]*$/;
 // git-check-ref-format(1) forbids these characters. ":" or "*" would change the refspec.
 const REF = /^refs\/[^\p{Cc}\s:*?[\\^~]+$/u;
-const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 // Highest attribute precedence (gitattributes(5)). Checkout writes each blob unchanged, and no tree attribute hides a diff.
 const ATTRIBUTES = "* -text -ident -filter -working-tree-encoding !diff\n";
 // Lowercase keys: `git config --list` prints them so.
@@ -36,7 +34,7 @@ const CONFIG: [string, string][] = [
 ];
 const REMOVE = new Set([".claude", ".mcp.json"]);
 const RENAME = new Set(["claude.md", "claude.local.md", "agents.md"]);
-// Names of the extra context files. pr.md, changes.patch, and files.txt belong to the workspace.
+// Names of the extra context files. pr.md belongs to the workspace.
 const FILE_NAME = /^[a-z-]+\.md$/;
 // Plan r3: context/attachments/<attachment ID>.<ext>. Only .txt is text.
 const ATTACHMENT_NAME = /^[0-9]{1,18}\.(png|jpg|gif|webp|txt)$/;
@@ -111,7 +109,7 @@ export type Workspace = {
   sourceHead: string;
   targetHead: string;
   mergeBase: string;
-  // The base of the reviewed range: changes.patch, files.txt, and BASE of the git MCP server.
+  // The base of the reviewed range: BASE of the git MCP server.
   rangeBase: string;
   via: "pull-request-ref" | "branch";
   // `git diff -M -U3 <mergeBase> <sourceHead>` for the validator.
@@ -188,64 +186,6 @@ export function sanitize(repo: string, links: string[]) {
   check(repo);
   if (left.length) throw new WorkspaceError(`Sanitize left unsafe paths: ${left.join(", ")}`);
   return { removed, renamed };
-}
-
-// Each hunk line gets its old and its new line number. A blank number: the line is not on that side.
-function numberPatch(diff: string): string {
-  const out = [
-    "# Each hunk line starts with its old line number and its new line number. A blank number means the line is not on that side.",
-  ];
-  const num = (v: number | null) => (v === null ? "" : String(v)).padStart(6);
-  let o = 0;
-  let n = 0;
-  let ro = 0;
-  let rn = 0;
-  for (const l of diff.split("\n")) {
-    const c = l[0];
-    if ((ro > 0 || rn > 0) && c !== "\\") {
-      // git apply reads an empty hunk line as an empty context line.
-      if ((c === " " || l === "") && ro > 0 && rn > 0) {
-        out.push(`${num(o++)} ${num(n++)}  ${l.slice(1)}`);
-        ro--;
-        rn--;
-        continue;
-      }
-      if (c === "-" && ro > 0) {
-        out.push(`${num(o++)} ${num(null)} -${l.slice(1)}`);
-        ro--;
-        continue;
-      }
-      if (c === "+" && rn > 0) {
-        out.push(`${num(null)} ${num(n++)} +${l.slice(1)}`);
-        rn--;
-        continue;
-      }
-      ro = 0;
-      rn = 0;
-    }
-    const h = HUNK.exec(l);
-    if (h) {
-      ro = h[2] === undefined ? 1 : Number(h[2]);
-      rn = h[4] === undefined ? 1 : Number(h[4]);
-      // git: a side with count 0 names the line before the hunk.
-      o = Number(h[1]) + (ro === 0 ? 1 : 0);
-      n = Number(h[3]) + (rn === 0 ? 1 : 0);
-    }
-    out.push(l);
-  }
-  return out.join("\n");
-}
-
-function fileList(diff: string): string {
-  const out = ["# One changed file per line: A added, D deleted, M modified, R renamed (old path, then new path)."];
-  for (const f of parseDiff(diff)) {
-    const bin = f.binary ? "\t(binary)" : "";
-    if (f.oldPath === null) out.push(`A\t${f.path}${bin}`);
-    else if (f.path === null) out.push(`D\t${f.oldPath}${bin}`);
-    else if (f.oldPath !== f.path) out.push(`R\t${f.oldPath}\t${f.path}${bin}`);
-    else out.push(`M\t${f.path}${bin}`);
-  }
-  return `${out.join("\n")}\n`;
 }
 
 // The marker ">" names the commented line. The number is the line on the side of its kind (ExcerptLine).
@@ -500,9 +440,6 @@ export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace
 
     const rangeBase = input.since === undefined ? mergeBase : ((await rangeBaseOf(g, input.since, mergeBase)) ?? mergeBase);
     const diff = await g(["diff", ...diffArgs, mergeBase, pr.sourceHead]);
-    const changes = rangeBase === mergeBase ? diff : await g(["diff", ...diffArgs, rangeBase, pr.sourceHead]);
-    writeFileSync(join(context, "changes.patch"), numberPatch(changes));
-    writeFileSync(join(context, "files.txt"), fileList(changes));
     writeFileSync(join(context, "pr.md"), prText(pr, input.comments));
     for (const f of files) writeFileSync(join(context, f.name), UNTRUSTED + f.text);
     if (attachments.length) await copyAttachments(join(dataDir, "attachments"), join(context, "attachments"), attachments);

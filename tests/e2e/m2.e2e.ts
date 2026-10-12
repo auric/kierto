@@ -31,7 +31,7 @@ const row = (page: Page) => page.locator("[data-row]", { hasText: TITLE }).first
 const runLine = (page: Page) => page.locator("#runline");
 // The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
 const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
-const runLog = (page: Page) => page.getByRole("dialog", { name: "Claude Code run log" });
+const runLog = (page: Page) => page.getByRole("dialog", { name: "Review run log" });
 
 async function connect(page: Page) {
   await page.goto("/");

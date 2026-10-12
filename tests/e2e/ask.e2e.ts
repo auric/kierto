@@ -40,7 +40,7 @@ const runLine = (page: Page) => page.locator("#runline");
 const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 const box = (page: Page) => page.getByLabel("Your question");
 const answers = (page: Page) => page.locator("[data-ask]");
-const runLog = (page: Page) => page.getByRole("dialog", { name: "Claude Code run log" });
+const runLog = (page: Page) => page.getByRole("dialog", { name: "Ask run log" });
 
 async function connect(page: Page) {
   await page.goto("/");
@@ -81,12 +81,12 @@ test("q opens Ask, Ctrl+Enter asks, the answer is safe Markdown, and Log opens t
   // An answer is no draft and no question for the author.
   await expect(page.locator("[data-draft]")).toHaveCount(0);
 
-  await a.getByRole("button", { name: "View log" }).click();
+  await a.getByRole("button", { name: "Log", exact: true }).click();
   await expect(runLog(page)).toBeVisible();
   await expect(runLog(page).locator("footer")).toContainText("Answered.");
   await page.keyboard.press("Escape");
   await expect(runLog(page)).toHaveCount(0);
-  await expect(a.getByRole("button", { name: "View log" })).toBeFocused();
+  await expect(a.getByRole("button", { name: "Log", exact: true })).toBeFocused();
 });
 
 test("a 409 keeps the typed question, also after a reload, and a running answer can be cancelled", async ({ page }) => {

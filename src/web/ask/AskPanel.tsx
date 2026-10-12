@@ -206,7 +206,7 @@ function Answer(props: {
   const log = (
     <button type="button" className={linkish} aria-describedby={about} onClick={() => props.onLog(id)}>
       <ScrollText aria-hidden className={icon} />
-      View log
+      Log
     </button>
   );
   let status: ReactNode;

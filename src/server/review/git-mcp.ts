@@ -12,7 +12,6 @@ import type { Workspace } from "./workspace";
 export const GIT_MCP_TOOLS = ["git_log", "git_blame", "git_show", "git_diff"];
 export const MAX_COMMITS = 200;
 export const MAX_BLAME_LINES = 400;
-export const MAX_OUTPUT = 256 * 1024;
 const FULL = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 // Pathspec magic stays off (--literal-pathspecs). "-" would read as an option.
 const CONTROL = /\p{Cc}/u;
@@ -59,17 +58,54 @@ const path = z
   )
   .describe("A file path relative to the repository root, with '/' separators.");
 
-// Keeps at most MAX_OUTPUT bytes and adds a marker.
-export function capOutput(out: string) {
+// The CLI caps an MCP tool result at MAX_MCP_OUTPUT_TOKENS (default 25,000 tokens). One page stays well below it.
+export const PAGE_BYTES = 60 * 1024;
+
+const page = z.number().int().min(1).default(1).describe("The output page, from 1. A long output ends with the next page number.");
+
+// Splits out at line ends into parts of at most PAGE_BYTES bytes. A longer line is split, never inside a surrogate pair.
+export function pages(out: string): string[] {
+  const parts: string[] = [];
+  let cur = "";
+  let bytes = 0;
+  const push = (s: string) => {
+    const b = Buffer.byteLength(s);
+    if (bytes + b > PAGE_BYTES && cur) {
+      parts.push(cur);
+      cur = "";
+      bytes = 0;
+    }
+    cur += s;
+    bytes += b;
+  };
+  for (const line of out.split(/(?<=\n)/)) {
+    // A UTF-16 unit takes at most 3 UTF-8 bytes. A surrogate pair takes 4.
+    for (let i = 0; i < line.length; ) {
+      let end = Math.min(line.length, i + Math.floor(PAGE_BYTES / 3));
+      const last = line.charCodeAt(end - 1);
+      if (end < line.length && last >= 0xd800 && last <= 0xdbff) end--;
+      push(line.slice(i, end));
+      i = end;
+    }
+  }
+  if (cur) parts.push(cur);
+  return parts;
+}
+
+// Page n of out, with a marker when out has more than one page.
+export function pageOf(out: string, n: number) {
   if (!out) return "(no output)";
-  const b = Buffer.from(out);
-  if (b.length <= MAX_OUTPUT) return out;
-  return `${b.subarray(0, MAX_OUTPUT).toString()}\n[truncated: the output exceeds ${MAX_OUTPUT} bytes. Use a narrower path, range, or count.]`;
+  const all = pages(out);
+  const body = all[n - 1];
+  if (body === undefined) throw new Error(`Page ${n} does not exist. The output has ${all.length} page${all.length === 1 ? "" : "s"}.`);
+  if (all.length === 1) return body;
+  const next = n < all.length ? ` Call again with page=${n + 1}.` : "";
+  return `${body}\n[page ${n} of ${all.length}.${next}]`;
 }
 
 export function createGitMcp(pins: Pins) {
   const env = gitEnv("/dev/null");
-  // ponytail: git() buffers the full stdout before the cap. Stream and kill at MAX_OUTPUT if memory becomes a problem.
+  // ponytail: git() buffers the full stdout, and each page runs git again. Cache the output per call if large diffs get slow.
   const run = (args: string[]) => git([...GLOBAL, `--git-dir=${pins.gitDir}`, ...args], { env, timeoutMs: 60_000 });
   const aliases: Record<string, string> = { HEAD: pins.head, BASE: pins.base, TARGET: pins.target };
 
@@ -97,7 +133,7 @@ export function createGitMcp(pins: Pins) {
     throw new Error(`Commit ${r} is not in the history of HEAD or TARGET.`);
   };
 
-  const text = (out: string) => ({ content: [{ type: "text" as const, text: capOutput(out) }] });
+  const text = (out: string, n: number) => ({ content: [{ type: "text" as const, text: pageOf(out, n) }] });
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   const server = new McpServer({ name: "review-loop-git", version: "1.0.0" });
 
@@ -112,6 +148,7 @@ export function createGitMcp(pins: Pins) {
           since: rev.optional().describe("Leave out this commit and its history."),
           path: path.optional(),
           max_count: z.number().int().min(1).max(MAX_COMMITS).default(50),
+          page,
         })
         .strict(),
       annotations,
@@ -132,6 +169,7 @@ export function createGitMcp(pins: Pins) {
           "--",
           ...(a.path ? [a.path] : []),
         ]),
+        a.page,
       );
     },
   );
@@ -147,6 +185,7 @@ export function createGitMcp(pins: Pins) {
           rev: rev.default("HEAD"),
           start_line: z.number().int().min(1).default(1),
           max_lines: z.number().int().min(1).max(MAX_BLAME_LINES).default(MAX_BLAME_LINES),
+          page,
         })
         .strict(),
       annotations,
@@ -167,6 +206,7 @@ export function createGitMcp(pins: Pins) {
           await resolve(a.rev),
           a.path,
         ]),
+        a.page,
       ),
   );
 
@@ -175,15 +215,15 @@ export function createGitMcp(pins: Pins) {
     {
       title: "Git show",
       description:
-        "Without path: show a commit with its message, a file summary, and its patch. With path: show the file content at that commit.",
-      inputSchema: z.object({ rev, path: path.optional() }).strict(),
+        "Without path: show a commit with its message, a file summary, and its patch. With path: show the file content at that commit. Read the files in ./repo for the head commit.",
+      inputSchema: z.object({ rev, path: path.optional(), page }).strict(),
       annotations,
     },
     async (a) => {
       const hash = await resolve(a.rev);
       const opts = a.path ? [] : ["--format=fuller", "--stat", "--patch"];
       const object = a.path ? `${hash}:${a.path}` : hash;
-      return text(await run(["show", "--no-color", ...NO_DIFF_HELPERS, ...opts, "--end-of-options", object, "--"]));
+      return text(await run(["show", "--no-color", ...NO_DIFF_HELPERS, ...opts, "--end-of-options", object, "--"]), a.page);
     },
   );
 
@@ -192,9 +232,15 @@ export function createGitMcp(pins: Pins) {
     {
       title: "Git diff",
       description:
-        "Show the diff between two commits. The default is BASE to HEAD, the PR changes. Set path to limit the diff to one path. Set stat_only for a file summary.",
+        'Show the diff between two commits. The default is BASE to HEAD, the PR changes. Set path to limit the diff to one path. Set stat_only to list the changed files: one line per file with added lines, removed lines, and path, then the create, delete, and rename lines. The diff lines have no line numbers. Count them from the hunk header "@@ -old,count +new,count @@", or read the file in ./repo.',
       inputSchema: z
-        .object({ from: rev.default("BASE"), to: rev.default("HEAD"), path: path.optional(), stat_only: z.boolean().default(false) })
+        .object({
+          from: rev.default("BASE"),
+          to: rev.default("HEAD"),
+          path: path.optional(),
+          stat_only: z.boolean().default(false),
+          page,
+        })
         .strict(),
       annotations,
     },
@@ -205,13 +251,14 @@ export function createGitMcp(pins: Pins) {
           "--no-color",
           ...NO_DIFF_HELPERS,
           "-M",
-          a.stat_only ? "--stat" : "-U3",
+          ...(a.stat_only ? ["--numstat", "--summary"] : ["-U3"]),
           "--end-of-options",
           await resolve(a.from),
           await resolve(a.to),
           "--",
           ...(a.path ? [a.path] : []),
         ]),
+        a.page,
       ),
   );
 
