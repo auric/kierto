@@ -186,6 +186,7 @@ describe("settings API", () => {
     explain: false,
     docs: false,
     maxTurns: 20,
+    skills: [],
   };
 
   test("saved profiles and checkSeconds persist offline, with no secret in config.json", async () => {

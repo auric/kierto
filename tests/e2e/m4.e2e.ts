@@ -1,7 +1,7 @@
 // M4 browser acceptance (BRIEF US9): the check interval and the review profiles in the settings.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runSkills } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -187,4 +187,30 @@ test("reset brings back the four shipped profiles", async ({ page, request }) =>
   await closeSettings(page);
   await expect(reviewButton(page)).toHaveText(/Review · General/);
   expect(await briefNames(page)).toEqual(SHIPPED);
+});
+
+// serve.ts gives the app a synthetic Claude Code config folder with the user skill test-check and the plugin skill e2e-plugin:style.
+test("a skill picked in a profile is saved and copied into the run folder", async ({ page, request }) => {
+  await connect(page);
+  await openSettings(page);
+  const picker = page.locator("#profile-0-skills");
+  await picker.locator("summary").click();
+  const skills = page.getByRole("group", { name: "Skills of profile 1" });
+  await expect(skills.getByText("Finds changed code without a test.")).toBeVisible();
+  await expect(skills.getByText("Plugin 1.2.0 · Checks the naming style.")).toBeVisible();
+  await skills.getByRole("checkbox", { name: /^test-check test-check/ }).check();
+  await skills.getByRole("checkbox", { name: /^style e2e-plugin:style/ }).check();
+  await expect(picker.locator("summary")).toContainText("test-check, style");
+  await saveProfiles(page);
+  const saved = (await settingsApi(request)).profiles[0] as { skills?: string[] };
+  expect(saved.skills).toEqual(["test-check", "e2e-plugin:style"]);
+  await closeSettings(page);
+
+  await control("claude", { stream: "tree", hang: true });
+  await page.keyboard.press("Shift+R");
+  await page.getByLabel("Your note").press("Control+Enter");
+  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect.poll(runSkills, { timeout: RUN_MS }).toEqual(["e2e-plugin+style/SKILL.md", "test-check/SKILL.md", "test-check/notes.md"]);
+  await runLine(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(runLine(page)).toContainText("You cancelled the review", { timeout: RUN_MS });
 });

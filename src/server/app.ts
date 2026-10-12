@@ -12,6 +12,7 @@ import { createDiffRoutes } from "./review/diff-routes";
 import { createFixRoutes } from "./review/fix-routes";
 import { createReviewJobs, type ReviewJobs } from "./review/jobs";
 import { createReviewRoutes } from "./review/routes";
+import { discoverSkills, skillDto } from "./review/skills";
 import { createSettings, type Settings } from "./settings";
 import { createSyncEngine, type SyncEngine } from "./sync/engine";
 
@@ -67,6 +68,8 @@ export function createApp(opts: AppOptions) {
     .get("/api/live", (c) => opts.live.handler(c))
     .route("/api/settings", settings.routes)
     .route("/api/meta", createMeta(review, settings))
+    // The skills of the Claude Code config folder, read from disk on each call.
+    .get("/api/skills", (c) => c.json(discoverSkills().map(skillDto)))
     .post("/api/sync", (c) => {
       void sync.syncNow();
       return c.json(sync.status(), 202);

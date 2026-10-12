@@ -142,3 +142,10 @@ export async function runAttachments(): Promise<string[] | null> {
   if (!res.ok) throw new Error(`control run-attachments: ${res.status}`);
   return ((await res.json()) as { files: string[] | null }).files;
 }
+
+// The file paths under skills/ of the newest fake CLI run, or null before the first run. As runAttachments, start a hang run first.
+export async function runSkills(): Promise<string[] | null> {
+  const res = await fetch(`${FAKE_URL}/__control/run-skills`, { method: "POST", headers: auth });
+  if (!res.ok) throw new Error(`control run-skills: ${res.status}`);
+  return ((await res.json()) as { files: string[] | null }).files;
+}

@@ -45,7 +45,15 @@ export const CHECK_CHOICES = [30, 60, 120, 300, 600, 900] as const;
 
 const profileId = z.string().regex(/^[a-z0-9-]{1,40}$/);
 
+export const MAX_PROFILE_SKILLS = 20;
+// A Claude Code skill: "<skill>" in the user skills folder, or "<plugin>:<skill>". Each part is a folder name.
+export const skillId = z.string().regex(/^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
+
+// GET /api/skills. version: the plugin version.
+export type SkillDto = { id: string; name: string; description: string; source: "user" | "plugin"; version?: string };
+
 // prompt: the profile part of both agent prompts. docs: the run gets the documentation servers.
+// skills: the run gets a copy of each skill in ./skills. Absent in profiles saved before skills existed.
 export const profileInput = z.object({
   id: profileId,
   name: z.string().trim().min(1).max(60),
@@ -54,6 +62,11 @@ export const profileInput = z.object({
   explain: z.boolean(),
   docs: z.boolean(),
   maxTurns: z.number().int().min(2).max(200),
+  skills: z
+    .array(skillId)
+    .max(MAX_PROFILE_SKILLS)
+    .default([])
+    .transform((l) => [...new Set(l)]),
 });
 export type ProfileInput = z.infer<typeof profileInput>;
 

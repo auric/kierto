@@ -12,6 +12,7 @@ import {
   sameProfiles,
   slug,
   toDrafts,
+  toggleSkill,
   toProfiles,
 } from "../../src/web/settings/profiles";
 
@@ -23,6 +24,7 @@ const p = (id: string, name: string, o: Partial<ProfileInput> = {}): ProfileInpu
   explain: false,
   docs: true,
   maxTurns: 40,
+  skills: [],
   ...o,
 });
 const SAVED = [p("general", "General"), p("security", "Security"), p("explain", "Explain", { explain: true, docs: false, maxTurns: 12 })];
@@ -147,6 +149,16 @@ describe("profile editor model", () => {
     expect(dirty(change(moved, { act: "move", i: 1, d: -1 }))).toBe(false);
     expect(dirty(change(d, { act: "remove", i: 1 }))).toBe(true);
     expect(dirty(change(d, { act: "add" }))).toBe(true);
+    const picked = change(d, { act: "edit", i: 0, patch: { skills: toggleSkill([], "p:x", true) } });
+    expect(dirty(picked)).toBe(true);
+    expect(toProfiles(picked)[0]?.skills).toEqual(["p:x"]);
+    expect(dirty(change(picked, { act: "edit", i: 0, patch: { skills: toggleSkill(["p:x"], "p:x", false) } }))).toBe(false);
+  });
+
+  test("toggleSkill adds at the end once and removes every copy", () => {
+    expect(toggleSkill(["a"], "b", true)).toEqual(["a", "b"]);
+    expect(toggleSkill(["a", "b"], "a", true)).toEqual(["a", "b"]);
+    expect(toggleSkill(["a", "b"], "a", false)).toEqual(["b"]);
   });
 
   test("the limits match the shared request schema", () => {
@@ -163,5 +175,7 @@ describe("profile editor model", () => {
     expect(ok({ maxTurns: LIMITS.minTurns - 1 })).toBe(false);
     expect(ok({ maxTurns: LIMITS.maxTurns })).toBe(true);
     expect(ok({ maxTurns: LIMITS.maxTurns + 1 })).toBe(false);
+    expect(ok({ skills: Array.from({ length: LIMITS.skills }, (_, i) => `s${i}`) })).toBe(true);
+    expect(ok({ skills: Array.from({ length: LIMITS.skills + 1 }, (_, i) => `s${i}`) })).toBe(false);
   });
 });

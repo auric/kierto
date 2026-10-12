@@ -1,13 +1,14 @@
 // Review profiles settings (M4, BRIEF US9): name, note, prompt, Explain, Docs, and turn cap, in the order of the review brief.
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, CircleAlert, Plus, RotateCcw, X } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
-import type { ProfileInput, SettingsDto } from "../../shared/dto";
+import type { ProfileInput, SettingsDto, SkillDto } from "../../shared/dto";
+import { api } from "../api";
 import { useMeta } from "../meta";
-import { useSaveSettings } from "../shell/data";
+import { read, useSaveSettings } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import {
   ADD_ID,
@@ -24,6 +25,7 @@ import {
   profileLabel,
   sameProfiles,
   toDrafts,
+  toggleSkill,
   toProfiles,
 } from "./profiles";
 
@@ -43,8 +45,16 @@ window.addEventListener("beforeunload", (e) => {
   if (kept) e.preventDefault();
 });
 
+// The skills of the runner setup, by ID. undefined: the list is loading or failed.
+type SkillList = Map<string, SkillDto> | undefined;
+
 export function ReviewProfiles({ settings }: { settings: SettingsDto }) {
   const qc = useQueryClient();
+  const skills = useQuery({
+    queryKey: ["skills"],
+    queryFn: async () => read<SkillDto[]>(await api.api.skills.$get()),
+    select: (l) => new Map(l.map((s) => [s.id, s])),
+  });
   const save = useSaveSettings();
   const runner = useMeta().data?.runner.short ?? "";
   const [drafts, setDrafts] = useState(() => kept ?? toDrafts(settings.profiles));
@@ -111,7 +121,7 @@ export function ReviewProfiles({ settings }: { settings: SettingsDto }) {
       <fieldset disabled={save.isPending} className="min-w-0">
         <ol aria-label="Review profiles" className="m-0 list-none border-t p-0">
           {drafts.map((d, i) => (
-            <ProfileRow key={d.key} d={d} i={i} count={drafts.length} onChange={apply} />
+            <ProfileRow key={d.key} d={d} i={i} count={drafts.length} skills={skills.data} failed={skills.isError} onChange={apply} />
           ))}
         </ol>
       </fieldset>
@@ -204,7 +214,8 @@ function Toggle(props: { id: string; label: ReactNode; help: string; checked: bo
   );
 }
 
-function ProfileRow({ d, i, count, onChange }: { d: Draft; i: number; count: number; onChange: (c: Change) => void }) {
+function ProfileRow(props: { d: Draft; i: number; count: number; skills: SkillList; failed: boolean; onChange: (c: Change) => void }) {
+  const { d, i, count, onChange } = props;
   const found = problems(d);
   const label = profileLabel(d, i);
   const of = <span className="sr-only"> of profile {i + 1}</span>;
@@ -319,6 +330,7 @@ function ProfileRow({ d, i, count, onChange }: { d: Draft; i: number; count: num
           onChange={(docs) => edit({ docs })}
         />
       </div>
+      <SkillPicker d={d} i={i} skills={props.skills} failed={props.failed} onChange={(skills) => edit({ skills })} />
       {errors.length > 0 && (
         <div className="col-span-full grid gap-1">
           {errors.map((f) => (
@@ -330,5 +342,73 @@ function ProfileRow({ d, i, count, onChange }: { d: Draft; i: number; count: num
         </div>
       )}
     </li>
+  );
+}
+
+// Runner skills for one profile. The run copies each picked skill into ./skills. A picked skill that the setup lacks shows a warning.
+function SkillPicker(props: { d: Draft; i: number; skills: SkillList; failed: boolean; onChange: (skills: string[]) => void }) {
+  const { d, i, skills } = props;
+  const runner = useMeta().data?.runner.name ?? "";
+  const picked = d.skills;
+  const missing = skills ? picked.filter((id) => !skills.has(id)) : [];
+  const full = picked.length >= LIMITS.skills;
+  const summary = picked.length ? picked.map((id) => skills?.get(id)?.name ?? id).join(", ") : "none";
+  const box = (id: string, name: ReactNode, help: ReactNode) => (
+    <li key={id}>
+      <label className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
+        <input
+          type="checkbox"
+          className="mt-0.5 size-4 shrink-0 accent-primary"
+          checked={picked.includes(id)}
+          disabled={full && !picked.includes(id)}
+          onChange={(e) => props.onChange(toggleSkill(picked, id, e.target.checked))}
+        />
+        <span className="grid min-w-0 gap-px">
+          <span>{name}</span>
+          <span className="text-xs break-words text-muted-foreground">{help}</span>
+        </span>
+      </label>
+    </li>
+  );
+  return (
+    <details id={profileId(i, "skills")} className="col-span-full min-w-0 text-sm" open={missing.length > 0 || undefined}>
+      <summary className="cursor-pointer text-ink-2">
+        Skills<span className="sr-only"> of profile {i + 1}</span>: <span className="text-foreground">{summary}</span>
+      </summary>
+      <fieldset className="mt-2 grid min-w-0 gap-2 pl-4">
+        <legend className="sr-only">Skills of profile {i + 1}</legend>
+        <p className="m-0 text-xs text-muted-foreground">
+          The run copies each picked skill from your {runner} setup and tells the model to read it. Skill scripts do not run.
+          {full && ` A profile takes at most ${LIMITS.skills} skills.`}
+        </p>
+        {props.failed && <p className="m-0 text-xs text-destructive">Could not list the skills.</p>}
+        {!skills && !props.failed && <p className="m-0 text-xs text-muted-foreground">Loading skills…</p>}
+        {skills && skills.size === 0 && <p className="m-0 text-xs text-muted-foreground">{runner} has no skills.</p>}
+        <ul className="m-0 grid list-none gap-2 p-0">
+          {missing.map((id) =>
+            box(
+              id,
+              <span className="font-mono text-xs">{id}</span>,
+              <span className="flex items-start gap-[5px] text-destructive">
+                <CircleAlert aria-hidden className="mt-px size-[15px] shrink-0" />
+                Not found in {runner}. Runs go on without it.
+              </span>,
+            ),
+          )}
+          {[...(skills?.values() ?? [])].map((s) =>
+            box(
+              s.id,
+              <>
+                {s.name} <span className="font-mono text-xs text-muted-foreground">{s.id}</span>
+              </>,
+              <>
+                {s.source === "plugin" ? `Plugin${s.version ? ` ${s.version}` : ""}` : "User skill"}
+                {s.description && ` · ${s.description}`}
+              </>,
+            ),
+          )}
+        </ul>
+      </fieldset>
+    </details>
   );
 }

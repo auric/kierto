@@ -45,6 +45,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     explain: false,
     maxTurns: 100,
     docs: true,
+    skills: [],
     prompt:
       "Find defects in the change: wrong logic, missed edge cases, races and lock order, resource leaks, error handling, and effects on callers outside the diff.",
   },
@@ -55,6 +56,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     explain: false,
     maxTurns: 100,
     docs: true,
+    skills: [],
     prompt:
       "Find code that the change can delete or simplify: abstractions with one use, code that the standard library or the platform already gives, unneeded dependencies, settings for fixed values, and dead code.",
   },
@@ -65,6 +67,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     explain: false,
     maxTurns: 100,
     docs: true,
+    skills: [],
     prompt:
       "Find security defects: trust boundaries, input validation, injection, secrets in code or logs, authentication and authorization, unsafe memory use, and unsafe defaults.",
   },
@@ -75,6 +78,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     explain: true,
     maxTurns: 50,
     docs: false,
+    skills: [],
     prompt:
       "Explain the change for a reviewer: what it does, why, and which parts need attention. Ask a question where the intent is not clear. Report no findings.",
   },
@@ -82,10 +86,11 @@ export const SHIPPED_PROFILES: Profile[] = [
 
 // list: at least one profile (profileList).
 export const profileOf = (list: Profile[], id: string): Profile => list.find((p) => p.id === id) ?? (list[0] as Profile);
-// The replacer array fixes the key order.
+// The replacer array fixes the key order. Skills join the hash only when present, so the revisions of older runs stay valid.
 export const profileRevision = (p: Profile) =>
   createHash("sha256")
     .update(JSON.stringify(p, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
+    .update(p.skills.length ? JSON.stringify(p.skills) : "")
     .digest("hex");
 export const DEFAULT_PROFILE: ProfileId = "general";
 // Fix and reply runs get at least this turn cap, whatever the profile.
@@ -244,6 +249,20 @@ export function askAgent(p: Profile): AgentSpec {
     ].join("\n"),
   };
 }
+
+// folders: the skill folders in ./skills of this run. The skill text comes from the user's own Claude Code setup.
+export function skillLines(folders: string[]): string[] {
+  if (!folders.length) return [];
+  return [
+    `The user chose these skills: ${folders.map((f) => `./skills/${f}/SKILL.md`).join(", ")}.`,
+    "Read each SKILL.md first and follow it. Read its other files when it tells you to.",
+    "Skill scripts cannot run. The rules above stay in force, and your result must still use the required output format.",
+  ];
+}
+
+// Adds the skill pointer to the prompt of an agent.
+export const withSkills = (a: AgentSpec, folders: string[]): AgentSpec =>
+  folders.length ? { ...a, prompt: [a.prompt, ...skillLines(folders)].join("\n") } : a;
 
 export function reviewerAgent(p: Profile): AgentSpec {
   return {

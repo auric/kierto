@@ -2,7 +2,7 @@
 // The app gets a temp data folder and memory secrets. It never sees the real data folder or the credential store.
 import "../support/no-real-claude";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
@@ -39,6 +39,26 @@ const claudeDir = mkdtempSync(join(tmpdir(), "review-loop-e2e-claude-"));
 const runner = fakeRunner(claudeDir);
 const runnerCommand = runner.command;
 console.log(`Fake claude CLI: ${runnerCommand.join(" ")}`);
+
+// A synthetic Claude Code config folder: one user skill and one skill of an enabled plugin. Skill discovery reads only this folder.
+const claudeConfig = join(claudeDir, "config");
+const skillFile = (dir: string, name: string, description: string) => {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "SKILL.md"),
+    `---\nname: ${name}\ndescription: ${description}\n---\n\nCheck each changed function for a missing test.\n`,
+  );
+};
+skillFile(join(claudeConfig, "skills", "test-check"), "test-check", "Finds changed code without a test.");
+writeFileSync(join(claudeConfig, "skills", "test-check", "notes.md"), "Extra notes.\n");
+const pluginDir = join(claudeConfig, "plugins", "cache", "e2e-market", "e2e-plugin", "1.2.0");
+skillFile(join(pluginDir, "skills", "style"), "style", "Checks the naming style.");
+writeFileSync(join(claudeConfig, "settings.json"), JSON.stringify({ enabledPlugins: { "e2e-plugin@e2e-market": true } }));
+writeFileSync(
+  join(claudeConfig, "plugins", "installed_plugins.json"),
+  JSON.stringify({ version: 2, plugins: { "e2e-plugin@e2e-market": [{ scope: "user", installPath: pluginDir, version: "1.2.0" }] } }),
+);
+process.env.CLAUDE_CONFIG_DIR = claudeConfig;
 
 // ---------- Review data (plan v3 WP11) ----------
 // Every e2e PR has its source head at refs/pull-requests/<id>/from and its target head at main.
@@ -514,8 +534,8 @@ r[key("POST", "/__control/open-folder")] = async (req) => {
   if (opens !== undefined) folders.opens = opens;
   return ok({ paths: folders.paths });
 };
-// The names in context/attachments/ of the newest fake CLI run. null: no run. The run folder exists only while the run runs.
-r[key("POST", "/__control/run-attachments")] = () => {
+// The cwd of the newest fake CLI run, or undefined before the first run.
+function runCwd() {
   const record = join(claudeDir, "calls.jsonl");
   const runs = existsSync(record)
     ? readFileSync(record, "utf8")
@@ -524,10 +544,22 @@ r[key("POST", "/__control/run-attachments")] = () => {
         .map((l) => JSON.parse(l) as { argv?: string[]; cwd?: string })
         .filter((c) => c.argv?.includes("-p"))
     : [];
-  const cwd = runs.at(-1)?.cwd;
+  return runs.at(-1)?.cwd;
+}
+// The names in context/attachments/ of the newest fake CLI run. null: no run. The run folder exists only while the run runs.
+r[key("POST", "/__control/run-attachments")] = () => {
+  const cwd = runCwd();
   if (!cwd) return ok({ files: null });
   const dir = join(cwd, "context", "attachments");
   return ok({ files: existsSync(dir) ? readdirSync(dir).sort() : [] });
+};
+// The file paths under skills/ of the newest fake CLI run, with "/" separators. null: no run.
+r[key("POST", "/__control/run-skills")] = () => {
+  const cwd = runCwd();
+  if (!cwd) return ok({ files: null });
+  const dir = join(cwd, "skills");
+  const files = existsSync(dir) ? readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()) : [];
+  return ok({ files: files.map((e) => relative(dir, join(e.parentPath, e.name)).replaceAll("\\", "/")).sort() });
 };
 // Lets the running cycle end, changes the scenario, then runs one full cycle.
 r[key("POST", "/__control/state")] = async (req) => {

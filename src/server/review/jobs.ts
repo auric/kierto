@@ -64,6 +64,7 @@ import {
   replyAgent,
   reviewerAgent,
   SHIPPED_PROFILES,
+  withSkills,
 } from "./catalog";
 import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude";
 import { type FixCommitRow, toFixCommitDto } from "./clone";
@@ -72,6 +73,7 @@ import { type FixFile, type ValidEdit, validateFix } from "./fix";
 import { git, gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
 import { buildAskPrompt, buildFixPrompt, buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
+import { claudeConfigDir, copySkills } from "./skills";
 import {
   type CheckedEarlier,
   type EarlierItem,
@@ -111,6 +113,8 @@ export type ReviewJobsOptions = {
   gitRemote?: (ref: PrRef) => Promise<GitRemote>;
   // Absent: tools/list over the network. The tests pass a stub.
   listTools?: ListTools;
+  // The Claude Code config folder for profile skills. Absent: CLAUDE_CONFIG_DIR or ~/.claude, read at each run.
+  claudeConfigDir?: string;
   now?: () => number;
 };
 
@@ -470,7 +474,7 @@ function schemaFailure(issues: { path: PropertyKey[]; message: string }[], what:
   return { status: "failed", kind: "schema", text: `The result does not match the ${what} schema. ${text}`, raw, outcome: o };
 }
 
-// The servers left out of the spec, then the servers of the spec that did not connect.
+// The servers and skills left out of the spec, then the servers of the spec that did not connect.
 function unavailable(o: RunOutcome, servers: string[], gaps: string[]): string[] {
   const down = servers.flatMap((name) => {
     const status = o.init?.mcp_servers?.find((s) => s.name === name)?.status ?? "absent";
@@ -484,7 +488,7 @@ function ended(raw: string, o: RunOutcome, result: NonNullable<Ending["result"]>
   return { status: c.skipped.length || c.unavailable.length ? "incomplete" : "completed", kind: null, text: null, raw, outcome: o, result };
 }
 
-// Turns a runner outcome into the run end. servers: the MCP servers of the spec. gaps: the servers left out of the spec.
+// Turns a runner outcome into the run end. servers: the MCP servers of the spec. gaps: the servers and skills left out of the spec.
 // rereview: the earlier findings of a re-review at their current lines.
 async function judge(
   o: RunOutcome,
@@ -1037,6 +1041,19 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const docs = await docServers(profile);
     if (j.cancelled) return cancelled();
     const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...docs.servers };
+    const skills = copySkills(profile.skills, join(ws.work, "skills"), opts.claudeConfigDir ?? claudeConfigDir());
+    for (const g of skills.gaps) log(`Review run ${j.id}: ${g}.`);
+    if (skills.copied.length)
+      log(
+        `Review run ${j.id} skills: ${skills.copied
+          .map(
+            (s) =>
+              `${s.id}${s.version ? `@${s.version}` : ""} (${s.files} files, ${s.bytes} bytes${s.skipped ? `, ${s.skipped} skipped` : ""})`,
+          )
+          .join(", ")}.`,
+      );
+    const folders = skills.copied.map((s) => s.folder);
+    const gaps = [...docs.unavailable, ...skills.gaps];
     const input = {
       mergeBase: ws.mergeBase,
       head: ws.sourceHead,
@@ -1047,6 +1064,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       taskFile: files.length > 0,
       attachments: attachments.length > 0,
       history: history !== null,
+      skills: folders,
     };
     const reply = j.kind === "reply" ? j.threads : null;
     const fix = j.kind === "fix" ? j.threads : null;
@@ -1069,9 +1087,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         cwd: ws.work,
         appDir: ws.app,
         ...spec,
+        main: withSkills(spec.main, folders),
         maxTurns: reply || fix ? Math.max(profile.maxTurns, MIN_EDIT_TURNS) : profile.maxTurns,
         // Only a review gets subagents. With agents {}, the CLI gets no Agent tool.
-        agents: j.kind === "review" && !profile.explain ? { [REVIEWER]: reviewerAgent(profile) } : {},
+        agents: j.kind === "review" && !profile.explain ? { [REVIEWER]: withSkills(reviewerAgent(profile), folders) } : {},
         mcpServers,
       },
       (events) => {
@@ -1082,11 +1101,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // The runner ignores a cancel that comes after the process ended.
     if (j.cancelled) return cancelled(o);
     const servers = Object.keys(mcpServers);
-    if (reply) return judgeReplies(o, reply, servers, docs.unavailable);
-    if (fix) return judgeFix(o, ws, fix, servers, docs.unavailable);
-    if (question !== null) return judgeAsk(o, servers, docs.unavailable);
+    if (reply) return judgeReplies(o, reply, servers, gaps);
+    if (fix) return judgeFix(o, ws, fix, servers, gaps);
+    if (question !== null) return judgeAsk(o, servers, gaps);
     const rereview = carry && { carry, items: current(j.db, earlier).map(earlierItem) };
-    return judge(o, ws, profile, servers, docs.unavailable, rereview);
+    return judge(o, ws, profile, servers, gaps, rereview);
   }
 
   // The git remote of a PR: the test remote, else the forge provider.

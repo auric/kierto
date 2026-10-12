@@ -1,14 +1,23 @@
 // Pure model of the review profile editor (M4). No DOM access, so bun test runs it.
-import { MAX_NOTE, MAX_PROFILES, type ProfileInput } from "../../shared/dto";
+import { MAX_NOTE, MAX_PROFILE_SKILLS, MAX_PROFILES, type ProfileInput } from "../../shared/dto";
 
 // The inline limits of profileInput in src/shared/dto.ts. tests/ui/profiles.test.ts pins them.
-export const LIMITS = { profiles: MAX_PROFILES, id: 40, name: 60, note: 200, prompt: MAX_NOTE, minTurns: 2, maxTurns: 200 } as const;
+export const LIMITS = {
+  profiles: MAX_PROFILES,
+  id: 40,
+  name: 60,
+  note: 200,
+  prompt: MAX_NOTE,
+  minTurns: 2,
+  maxTurns: 200,
+  skills: MAX_PROFILE_SKILLS,
+} as const;
 
 // A new profile starts as a review profile with 100 turns and the documentation servers.
 const NEW_TURNS = "100";
 
 // key: a stable React key, so a moved profile keeps its DOM nodes. id: the saved ID, or null for a new profile.
-// maxTurns: the text of the field.
+// maxTurns: the text of the field. skills: skill IDs in the order the user picked them.
 export type Draft = {
   key: number;
   id: string | null;
@@ -18,6 +27,7 @@ export type Draft = {
   explain: boolean;
   docs: boolean;
   maxTurns: string;
+  skills: string[];
 };
 
 let lastKey = 0;
@@ -61,6 +71,7 @@ export function toProfiles(list: Draft[]): ProfileInput[] {
       explain: d.explain,
       docs: d.docs,
       maxTurns: turns ? Number(turns) : Number.NaN,
+      skills: d.skills,
     };
   });
 }
@@ -71,7 +82,7 @@ export const sameProfiles = (a: ProfileInput[], b: ProfileInput[]) =>
   a.length === b.length &&
   a.every((p, i) => {
     const o = b[i];
-    return !!o && FIELDS.every((f) => p[f] === o[f]);
+    return !!o && FIELDS.every((f) => p[f] === o[f]) && p.skills.join() === o.skills.join();
   });
 
 export type Field = "name" | "note" | "prompt" | "maxTurns";
@@ -96,7 +107,7 @@ export function problems(d: Draft): Problems {
 export const allValid = (list: Draft[]) =>
   list.length >= 1 && list.length <= LIMITS.profiles && list.every((d) => Object.keys(problems(d)).length === 0);
 
-export type Edit = Partial<Pick<Draft, "name" | "note" | "prompt" | "explain" | "docs" | "maxTurns">>;
+export type Edit = Partial<Pick<Draft, "name" | "note" | "prompt" | "explain" | "docs" | "maxTurns" | "skills">>;
 
 export type Change =
   | { act: "add" }
@@ -109,7 +120,10 @@ export function change(list: Draft[], c: Change): Draft[] {
     case "add":
       return list.length >= LIMITS.profiles
         ? list
-        : [...list, { key: ++lastKey, id: null, name: "", note: "", prompt: "", explain: false, docs: true, maxTurns: NEW_TURNS }];
+        : [
+            ...list,
+            { key: ++lastKey, id: null, name: "", note: "", prompt: "", explain: false, docs: true, maxTurns: NEW_TURNS, skills: [] },
+          ];
     case "remove":
       // The server needs at least one profile.
       return list.length <= 1 ? list : list.filter((_, i) => i !== c.i);
@@ -127,7 +141,7 @@ export function change(list: Draft[], c: Change): Draft[] {
 }
 
 // DOM ids of the editor controls.
-export type Part = "name" | "note" | "prompt" | "turns" | "explain" | "docs" | "up" | "down" | "remove" | `${Field}-error`;
+export type Part = "name" | "note" | "prompt" | "turns" | "explain" | "docs" | "skills" | "up" | "down" | "remove" | `${Field}-error`;
 export const profileId = (i: number, part: Part) => `profile-${i}-${part}`;
 export const ADD_ID = "profile-add";
 
@@ -149,6 +163,10 @@ export function focusAfter(c: Change, n: number): string | null {
       return null;
   }
 }
+
+// Adds or removes one skill ID. A new skill goes to the end.
+export const toggleSkill = (list: string[], id: string, on: boolean) =>
+  on ? (list.includes(id) ? list : [...list, id]) : list.filter((x) => x !== id);
 
 // Words for a profile in labels. A new profile can have no name yet.
 export const profileLabel = (d: Draft, i: number) => d.name.trim() || `profile ${i + 1}`;

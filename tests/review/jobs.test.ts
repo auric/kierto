@@ -202,7 +202,7 @@ const DOC_TOOLS: Record<string, string[]> = {
 };
 const stubTools: ListTools = async (url) => DOC_TOOLS[url] ?? [];
 
-async function setup(o: { forgeRemote?: boolean; listTools?: ListTools } = {}) {
+async function setup(o: { forgeRemote?: boolean; listTools?: ListTools; claudeConfigDir?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), "rl-wp10-"));
   dirs.push(root);
   const repo = await remoteRepo(join(root, "remote"));
@@ -274,6 +274,7 @@ async function setup(o: { forgeRemote?: boolean; listTools?: ListTools } = {}) {
     runnerCommand: [process.execPath, FAKE, scenarioFile],
     gitRemote: o.forgeRemote ? undefined : async () => remoteOf(repo.remote),
     listTools: o.listTools ?? stubTools,
+    claudeConfigDir: o.claudeConfigDir,
   });
   const app = createApp({ port: PORT, token: SESSION, live, settings, sync, review });
   cleanup.unshift(async () => {
@@ -814,6 +815,39 @@ describe("editable profiles (M4)", () => {
     h.json(`/api/settings`, { method: "PUT", body: { baseUrl: h.fake.url, profiles } });
 
   test(
+    "a run copies the profile skills into ./skills and points both agents at them; a missing skill shows in coverage",
+    async () => {
+      const config = mkdtempSync(join(tmpdir(), "rl-skills-config-"));
+      dirs.push(config);
+      mkdirSync(join(config, "skills", "my-skill", "ref"), { recursive: true });
+      writeFileSync(join(config, "skills", "my-skill", "SKILL.md"), "---\nname: my-skill\ndescription: Mine.\n---\nSKILL-CANARY\n");
+      writeFileSync(join(config, "skills", "my-skill", "ref", "a.md"), "A\n");
+      const h = await setup({ claudeConfigDir: config });
+      expect((await putProfiles(h, [{ ...general, skills: ["my-skill", "gone"] }])).status).toBe(200);
+      h.scenario({ fixture: subagentRun(), hang: true });
+      await h.brief(NOTE, "general");
+      const a = await h.start();
+      expect(await waitFor(() => h.runCall() !== undefined)).toBe(true);
+      const c = h.runCall() as Call;
+      expect(readFileSync(join(c.cwd, "skills", "my-skill", "SKILL.md"), "utf8")).toContain("SKILL-CANARY");
+      expect(readFileSync(join(c.cwd, "skills", "my-skill", "ref", "a.md"), "utf8")).toBe("A\n");
+      expect(c.stdin).toContain("# Skills\n\nThe user chose these skills: ./skills/my-skill/SKILL.md.");
+      expect(c.stdin.indexOf("# Skills")).toBeLessThan(c.stdin.indexOf("# Your instructions"));
+      const agents = JSON.parse(readFileSync(flag(c.argv, "--agents") as string, "utf8"));
+      for (const name of ["rl-main", "rl-reviewer"]) expect(agents[name].prompt).toContain("./skills/my-skill/SKILL.md");
+      await h.call(`/api/runs/${a.body.id}/cancel`, { method: "POST" });
+      await h.finish(a.body.id);
+
+      h.scenario({ fixture: subagentRun() });
+      const b = await h.start();
+      expect(b.body.id).not.toBe(a.body.id);
+      const d = await h.finish(b.body.id);
+      expect(d.run.summary?.coverage.unavailable).toContain("Skill gone: not found");
+    },
+    SLOW,
+  );
+
+  test(
     "a run uses the edited profile and stores its name and revision; an edit during the run gives 409",
     async () => {
       const h = await setup();
@@ -862,7 +896,16 @@ describe("editable profiles (M4)", () => {
     async () => {
       const h = await setup();
       await h.brief(NOTE, "security");
-      const perf = { id: "perf", name: "Performance", note: "", prompt: "PERF-CANARY", explain: false, docs: false, maxTurns: 9 };
+      const perf = {
+        id: "perf",
+        name: "Performance",
+        note: "",
+        prompt: "PERF-CANARY",
+        explain: false,
+        docs: false,
+        maxTurns: 9,
+        skills: [],
+      };
       expect((await putProfiles(h, [perf, general])).status).toBe(200);
       expect((await h.json<BriefDto>(`/api/prs/${h.pr}/brief`)).body.profile).toBe("perf");
       expect((await h.brief(NOTE, "security")).status).toBe(400);
