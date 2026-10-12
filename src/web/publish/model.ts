@@ -1,7 +1,7 @@
 // Pure publish UI rules (plan v3 WP14a, docs/plans/replies.md step 4). No DOM access, so bun test runs them directly.
 import type { CommentDto, PlannedPost, PostDestination, PostDto } from "../../shared/dto";
-import { commentLine } from "../../shared/types";
-import { plural } from "../review/model";
+import { commentLines } from "../../shared/types";
+import { lineText, plural } from "../review/model";
 
 const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
@@ -35,8 +35,8 @@ export function parentOf(parentId: number, comments: CommentDto[]): Who | null {
 export function placeOf(root: Pick<CommentDto, "anchor" | "excerpt">): string {
   const a = root.anchor as { path?: unknown } | null;
   if (!a || typeof a.path !== "string") return "the general comment";
-  const line = commentLine(root);
-  return line === undefined ? a.path : `${a.path}:${line}`;
+  const lines = commentLines(root);
+  return lines === undefined ? a.path : `${a.path}:${lineText(lines)}`;
 }
 
 // replies.md step 4: "Reply to <name> in <place>".

@@ -143,6 +143,26 @@ const COMMENTS: Comment[] = [
     updatedAt: 3,
     excerpt: [{ n: 5, kind: "ctx", text: "const c = 3;", hit: true }],
   },
+  // Gate A U2: a range anchor. line, lineType, and fileType name the end line. multilineSpan holds the range.
+  {
+    id: 104,
+    version: 0,
+    parentId: null,
+    rootId: 104,
+    author: asmith,
+    text: "Range note.",
+    anchor: {
+      path: "src/app.ts",
+      line: 4,
+      lineType: "CONTEXT",
+      fileType: "FROM",
+      multilineMarker: { startLine: 3, startLineType: "ADDED" },
+      multilineSpan: { srcSpanStart: 3, srcSpanEnd: 4, dstSpanStart: 3, dstSpanEnd: 5 },
+    },
+    threadResolved: false,
+    createdAt: 4,
+    updatedAt: 4,
+  },
 ];
 
 const prOf = (source: string, target: string): PullRequest => ({
@@ -510,6 +530,7 @@ describe("workspace", () => {
         "It fixes the bug.",
         "src/app.ts line 3",
         "Comment 103 by Jane Doe (jdoe), on src/app.ts line 5",
+        "Comment 104 by Alex Smith (asmith), on src/app.ts lines 3-5",
       ])
         expect(pr).toContain(t);
       expect(pr.indexOf("Why does line 3 change?")).toBeLessThan(pr.indexOf("It fixes the bug."));

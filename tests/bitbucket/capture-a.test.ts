@@ -74,6 +74,29 @@ test("sanitizer maps anchor path and srcPath strings that no diff names", async 
   expect(a.orphaned).toBe(true);
 }, 30_000);
 
+test("sanitizer replaces and scans the hunk context of a diff", async () => {
+  tmp = mkdtempSync(join(tmpdir(), "rl-san-test-"));
+  const raw = join(tmp, "raw");
+  const out = join(tmp, "out");
+  mkdirSync(raw);
+  const context = "void qzxEnclosingFunction(int qzxArg)";
+  const hunk = { context, sourceLine: 1, segments: [{ type: "CONTEXT", lines: [{ source: 1, destination: 1, line: "qzx code line" }] }] };
+  writeFileSync(
+    join(raw, "u12-diff-0.json"),
+    JSON.stringify({ status: 200, auser: "qzxuser", body: { user, diffs: [{ hunks: [hunk] }] } }),
+  );
+  const r = await run([join(SCRIPTS, "sanitize-fixtures.ts"), "--raw", raw, "--out", out, "--prefix", "real-"]);
+  expect(r.out).toContain("hits=0 structure diffs=0");
+  const fixture = readFileSync(join(out, "real-u12-diff-0.json"), "utf8");
+  expect(fixture.toLowerCase()).not.toContain("qzx");
+  expect(JSON.parse(fixture).body.diffs[0].hunks[0].context).toMatch(/^sample context \d+$/);
+  // A leaked context in another fixture is a scan hit.
+  writeFileSync(join(out, "leak.json"), JSON.stringify({ context }));
+  const leak = await run([join(SCRIPTS, "sanitize-fixtures.ts"), "--raw", raw, "--out", out, "--prefix", "real-"]);
+  expect(leak.out).not.toContain("hits=0");
+  expect(leak.code).toBe(1);
+}, 30_000);
+
 test("capture sends only GET requests, writes sanitized fixtures, and prints no values", async () => {
   tmp = mkdtempSync(join(tmpdir(), "rl-capture-test-"));
   const methods: string[] = [];

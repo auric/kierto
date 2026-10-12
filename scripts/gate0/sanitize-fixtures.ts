@@ -47,8 +47,7 @@ const FILES: Record<string, string> = RAW_ARG
   "v3-p1-post-blocker.json": "comment-blocker-task-response.json",
   "v3-p1-resolve-blocker.json": "comment-blocker-resolved-response.json",
   "v3-p1-activities-after-write-p0.json": "activities-v3-after-write.json",
-  "v3-p2-activities-p0.json": "activities-rescoped-orphaned-range.json",
-  "v3-p2-commits-p0.json": "pull-request-commits-after-push.json",
+  // The v3-p2 steps get no fixture. capture-a.ts records the push and the range comment (U2, U12).
   };
 for (const src of Object.keys(FILES)) if (src.startsWith("v3-") && !existsSync(join(RAW, src))) delete FILES[src];
 
@@ -107,7 +106,8 @@ for (const r of raw) {
         const parts = v.split("/");
         parts.forEach((c, i) => add(c, "pc", (n) => (i === parts.length - 1 ? `sample${n}${c.match(/\.[^.]+$/)?.[0] ?? ""}` : `dir${n}`)));
       }
-      if (["title", "description", "text", "line"].includes(k) && v.length >= 6 && !v.includes("review-loop gate0 probe")) freeText.add(v.toLowerCase());
+      // context: the hunk header that git adds, a source line of the enclosing function.
+      if (["title", "description", "text", "line", "context"].includes(k) && v.length >= 6 && !v.includes("review-loop gate0 probe")) freeText.add(v.toLowerCase());
     }
     if (!v || typeof v !== "object" || Array.isArray(v)) return;
     // A commit: 40-hex id, short displayId, message.
@@ -186,7 +186,8 @@ for (const h of trackerHosts) {
 
 // ---------- sanitize ----------
 const tokens = [...strMap.keys()].filter((t) => t.length >= 3 && strMap.get(t)!.toLowerCase() !== t).sort((a, b) => b.length - a.length);
-const tokenRe = new RegExp(tokens.map(word).join("|"), "gi");
+// An empty pattern matches between all characters. Already fake input can leave no token.
+const tokenRe = tokens.length ? new RegExp(tokens.map(word).join("|"), "gi") : /(?!)/g;
 const keepCase = (src: string, dst: string) => (src === src.toUpperCase() && src !== src.toLowerCase() ? dst.toUpperCase() : dst);
 const mapId = (n: number) => idMap.get(n) ?? n;
 // Numbers in messages: "Comment 1,234,567 does not exist." uses group separators.
@@ -200,6 +201,7 @@ function fixStr(s: string, k: string): string {
   if (k === "title") return "Sample pull request";
   if (k === "description") return "Sample description.";
   if (k === "line") return `sample line ${++textN}`;
+  if (k === "context") return `sample context ${++textN}`;
   if (k === "message" && commitMessages.has(s)) return `Sample commit ${++textN}.`;
   if (k === "text") {
     const m = s.match(/^(\[review-loop gate0 probe, safe to ignore\]) (.*)$/);

@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { RUN_TEXT_BYTES } from "../../shared/dto";
-import { type Comment, commentLine, type ExcerptLine, type PrRef, type PullRequest } from "../../shared/types";
+import { type Comment, commentLines, type ExcerptLine, type PrRef, type PullRequest } from "../../shared/types";
 import { log } from "../log";
 import { parseDiff } from "./diffmap";
 import { git, gitEnv } from "./git";
@@ -278,8 +278,9 @@ function prText(pr: PullRequest, comments: Comment[]): string {
   }
   const visit = (c: Comment) => {
     const a = (c.anchor ?? {}) as { path?: unknown };
-    const line = commentLine(c);
-    const at = typeof a.path === "string" ? `, on ${a.path}${line === undefined ? "" : ` line ${line}`}` : "";
+    const l = commentLines(c);
+    const lines = !l ? "" : l.lineEnd > l.line ? ` lines ${l.line}-${l.lineEnd}` : ` line ${l.line}`;
+    const at = typeof a.path === "string" ? `, on ${a.path}${lines}` : "";
     const head = c.parentId === null ? `Comment ${c.id}` : `Reply ${c.id} to ${c.parentId}`;
     // Gate v3 U14: a task is a BLOCKER comment. RESOLVED marks it done.
     const task = c.severity === "BLOCKER" ? (c.state === "RESOLVED" ? " (task, resolved)" : " (task, open)") : "";

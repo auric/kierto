@@ -114,11 +114,13 @@ This part records the range comment (U2) and the orphaned comment after a push (
 3. Step b: push one commit to the source branch that changes the line of an existing inline comment. Do not delete that comment.
 4. Run `bun scripts/gate0/capture-a.ts --pr <TEST_PR_URL> --step b`. If you did both steps before the first run, use `--step both` once.
 5. Expect `hits=0 structure diffs=0` in the sanitizer line. Raw responses go to `.gate0/a-capture/raw/` (gitignored). Sanitized copies go to `fixtures/bitbucket/real-u2-*.json` and `real-u12-*.json`.
-6. Open each `real-u2-*` and `real-u12-*` file. Search for names, e-mail addresses, the host, project and repository keys, file paths, code, and comment text. If you find one, delete the file and report the field name only. Do not commit it.
+6. Open each `real-u2-*` and `real-u12-*` file. Search for names, e-mail addresses, the host, project and repository keys, file paths, code, hunk headers (`context`), and comment text. If you find one, delete the file and report the field name only. Do not commit it.
 7. Send back the full console output of each run. It holds key names, enum values, line numbers, flags, and counts only.
 8. Delete your range comment by hand. Revert the step b commit if the test branch needs it.
 
 `bun scripts/gate0/capture-a.ts --dry-run` runs the sanitizer and the summary on existing fixtures. It sends no request.
+
+The capture of 2026-10-12 recorded U2 and U12. Tests use `activities-u2-range.json`, `activities-u12-orphaned-range.json`, and `pull-request-commits-u12.json`. A new capture writes `real-*` files again. Rename only the files that tests need, and delete the others.
 
 ## H. Record
 

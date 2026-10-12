@@ -1,12 +1,13 @@
 // Pure diff viewer rules (plan r2 UI-DIFF). No DOM access, so bun test runs them directly.
 import type { CommentDto, DiffFileDto, DiffRowDto, ReviewItemDto } from "../../shared/dto";
 import type { Side } from "../../shared/review";
+import { anchorSpan } from "../../shared/types";
 import { shortHash } from "../review/model";
 
 // The place of a thread or a draft. line null: a comment on the whole file.
 export type Spot = { path: string; side: Side; line: number | null; lineEnd: number };
 
-// A thread's line comes from its excerpt hit, else from its anchor.
+// A thread's line comes from its range span (anchorSpan), else from its excerpt hit, else from its anchor.
 // The excerpt numbers a ctx line on the fileType side (provider.ts excerptOf).
 // Gate v3 U4: a CONTEXT anchor numbers its line on the old side, whatever fileType says. A REMOVED line exists only there.
 export function threadSpot(c: Pick<CommentDto, "anchor" | "excerpt">): (Spot & { orphaned: boolean }) | null {
@@ -14,6 +15,8 @@ export function threadSpot(c: Pick<CommentDto, "anchor" | "excerpt">): (Spot & {
   if (!a || typeof a.path !== "string") return null;
   const from = a.fileType === "FROM";
   const orphaned = a.orphaned === true;
+  const span = anchorSpan(a);
+  if (span) return { path: a.path, side: "new", ...span, orphaned };
   const hit = c.excerpt?.find((l) => l.hit);
   if (hit) {
     const side = hit.kind === "del" || (hit.kind === "ctx" && from) ? "old" : "new";

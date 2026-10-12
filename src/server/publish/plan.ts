@@ -3,6 +3,7 @@ import type { PlannedPost, ReviewItemDto } from "../../shared/dto";
 import { fileUrl } from "../../shared/links";
 import { isMe } from "../../shared/me";
 import type { AnchoredFinding, Question, ReplyPayload } from "../../shared/review";
+import { anchorSpan } from "../../shared/types";
 
 // repoUrl: the repository browse link of the PR (plan v3 WP4). Absent or null: file references stay plain text.
 export type PlanRun = { id: number; sourceHead: string; targetHead: string; mergeBase: string | null; repoUrl?: string | null };
@@ -32,8 +33,15 @@ function duplicate(
   for (const c of comments) {
     const a = c.anchor as Raw;
     if (!a || a.path !== at.path || typeof a.line !== "number") continue;
+    // Gate A U2: a range anchor covers each new-side line of its span.
     // Gate v3 U4: a CONTEXT anchor holds the old-side line, whatever fileType says. Any other FROM anchor is a removed line.
-    if (a.line !== (a.lineType === "CONTEXT" ? at.srcLine : a.fileType === "FROM" ? undefined : at.line)) continue;
+    const span = anchorSpan(a);
+    if (
+      span
+        ? at.line < span.line || at.line > span.lineEnd
+        : a.line !== (a.lineType === "CONTEXT" ? at.srcLine : a.fileType === "FROM" ? undefined : at.line)
+    )
+      continue;
     if (isMe({ slug: c.authorSlug, login: c.authorLogin }, me)) continue;
     return { commentId: c.id, author: c.authorName ?? c.authorSlug };
   }

@@ -2,7 +2,7 @@
 
 Source: Gate 0 probe (`scripts/gate0/bitbucket-probe.ts`) on a sandbox PR, Bitbucket Data Center 9.4.26. Each file is `{ "status": <HTTP status>, "body": <response body> }`.
 
-Sanitizing: user names, slugs, display names, emails, host, project key, repository slug, PR title, description, branch names, file paths, comment text, and diff line text are fictional. Commit hashes are fake 40-hex values. Numeric IDs (`id`, `repositoryId`, `commentIds`, IDs in URLs and error messages) are fake values with the same digit count. Each mapping is consistent across all files, so equal values stay equal. The ssh clone port is 7999. Field names, types, enum values, nesting, timestamps, and versions are unchanged.
+Sanitizing: user names, slugs, display names, emails, host, project key, repository slug, PR title, description, branch names, file paths, comment text, diff line text, and diff hunk headers (`context`) are fictional. Commit hashes are fake 40-hex values. Numeric IDs (`id`, `repositoryId`, `commentIds`, IDs in URLs and error messages) are fake values with the same digit count. Each mapping is consistent across all files, so equal values stay equal. The ssh clone port is 7999. Field names, types, enum values, nesting, timestamps, and versions are unchanged.
 
 Regenerate: run the probe (`bun scripts/gate0/bitbucket-probe.ts --pr <PR> --write`) to fill `.gate0/raw/`. Then run `bun scripts/gate0/sanitize-fixtures.ts`. It rewrites the JSON files here, compares their structure with the raw files, and scans `fixtures/bitbucket/` and `integration-check.md` for every real value from `.gate0/raw/`. It prints counts only and exits with code 1 on a hit or a structure difference. The raw step numbers below depend on the probe's request order.
 
@@ -41,10 +41,18 @@ The v3 probe (`bitbucket-probe.ts --v3`) writes these files. `sanitize-fixtures.
 | `comment-blocker-task-response.json` | v3-p1-post-blocker | Written |
 | `comment-blocker-resolved-response.json` | v3-p1-resolve-blocker | Written |
 | `activities-v3-after-write.json` | v3-p1-activities-after-write-p0 | Written |
-| `activities-rescoped-orphaned-range.json` | v3-p2-activities-p0 | Written. No push and no range comment occurred. The file holds no RESCOPED activity, no orphaned anchor, and no range comment. |
-| `pull-request-commits-after-push.json` | v3-p2-commits-p0 | Written. No push occurred. The file shows the same single commit. |
+
+The v3-p2 steps have no fixture. They recorded no push and no range comment. The Gate A capture below replaces them.
 
 ## Gate A capture fixtures (U2, U12)
+
+| File | Capture file | Content |
+|---|---|---|
+| `activities-u2-range.json` | real-u2-activities-p0 | After step a. A range comment from an ADDED line to a CONTEXT end line: `multilineMarker`, `multilineSpan`, `orphaned: false`. The activity diff holds the span only. |
+| `activities-u12-orphaned-range.json` | real-u12-activities-p0 | After step b, a push. The same comment at the same version with `orphaned: true`, and a new RESCOPED activity. |
+| `pull-request-commits-u12.json` | real-u12-commits-p0 | After step b. Two commits, the new head first. |
+
+The capture of 2026-10-12 also wrote the PR, the file comments, and the file diff of each step. No test uses them, so they are not kept. The sanitizer numbers the sample text per run. Do not compare text across the two steps.
 
 `scripts/gate0/capture-a.ts` writes `real-u2-*.json` (after manual step a) and `real-u12-*.json` (after manual step b). It reads the PR, all activity pages, the comments of each commented file (`comments?path=<path>&anchorState=ALL`, all pages), the diff of each commented file (`withComments=true`), and for U12 all commit pages. Raw files go to `.gate0/a-capture/raw/`. The script then runs `sanitize-fixtures.ts --raw .gate0/a-capture/raw --prefix real-`. This mode has its own value mapping, so fake IDs and hashes do not match the files above. See docs/smoke-r3.md, "Capture U2 and U12".
 

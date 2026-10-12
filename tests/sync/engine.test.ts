@@ -289,6 +289,24 @@ describe("metadata outside the version guard", () => {
     expect(h.events()).toEqual([]);
   });
 
+  // Gate A U2 to U12: the real captures before and after a push that orphans a range comment.
+  test("real U2 to U12: the range comment keeps its version and span, turns orphaned, and stays read", async () => {
+    const u2 = byUser(activities("activities-u2-range.json"), 1000001, OTHER);
+    const u12 = byUser(activities("activities-u12-orphaned-range.json"), 1000001, OTHER);
+    expect(findComment(u12, 1000001).version).toBe(findComment(u2, 1000001).version);
+    world.own = u2;
+    const h = await setup();
+    await h.cycle();
+    const span = { dstSpanStart: 3, dstSpanEnd: 12 };
+    expect(anchor(h.comment(1000001))).toMatchObject({ orphaned: false, multilineSpan: span });
+    world.own = u12;
+    await h.cycle();
+    expect(h.comment(1000001)).toMatchObject({ version: 0 });
+    expect(anchor(h.comment(1000001))).toMatchObject({ orphaned: true, multilineSpan: span, multilineMarker: { startLine: 3 } });
+    expect(h.unread()).toBe(0);
+    expect(h.events()).toEqual([]);
+  });
+
   test("same version with thread_resolved false to true updates it with no unread and no event", async () => {
     const base = byUser(inline(), 1000003, OTHER);
     world.own = base;

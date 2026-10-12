@@ -2,7 +2,7 @@
 // Usage: bun scripts/gate0/capture-a.ts --pr <PR URL> --step a|b|both [--raw <dir>] [--out <dir>]
 //        bun scripts/gate0/capture-a.ts --dry-run
 // Raw responses go to .gate0/a-capture/raw/ (gitignored). They hold real names, emails, paths, and the host.
-// The sanitizer writes fixtures/bitbucket/real-u2-*.json and real-u12-*.json.
+// The sanitizer writes fixtures/bitbucket/real-u2-*.json and real-u12-*.json. Rename the files that tests use (fixtures/bitbucket/README.md).
 // Console output holds only key names, enum values, numbers, booleans, and counts. Never names, hosts, paths, or text.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,9 +19,10 @@ const MAX_PATHS = 20;
 const DRY_FIXTURES = [
   "pull-request.json",
   "activities-v3-after-write.json",
-  "activities-rescoped-orphaned-range.json",
+  "activities-u2-range.json",
+  "activities-u12-orphaned-range.json",
   "comment-inline-context-response.json",
-  "pull-request-commits-after-push.json",
+  "pull-request-commits-u12.json",
 ];
 
 const argv = process.argv.slice(2);

@@ -39,6 +39,12 @@ const anchor = z.object({
   fromHash: z.string().optional(),
   toHash: z.string().optional(),
   orphaned: z.boolean().optional(),
+  // Gate A U2: a range comment adds these keys. line, lineType, and fileType then name the end line of the range.
+  multilineMarker: z.object({ startLine: z.number(), startLineType: z.string() }).optional().catch(undefined),
+  multilineSpan: z
+    .object({ srcSpanStart: z.number(), srcSpanEnd: z.number(), dstSpanStart: z.number(), dstSpanEnd: z.number() })
+    .optional()
+    .catch(undefined),
 });
 
 export type RawComment = {

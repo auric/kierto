@@ -33,16 +33,28 @@ export type PullRequest = {
 };
 
 // A line of the diff around an inline comment. n: the new line number of an added or context line, the old one of a removed line.
-// A context line of an old-side comment keeps its old number. hit: the commented line.
+// A context line of an old-side comment keeps its old number. hit: a commented line. A range comment marks each line of its range.
 export type ExcerptLine = { n: number; kind: "add" | "del" | "ctx"; text: string; hit: boolean };
 
-// The line of an inline root comment, numbered as its excerpt numbers it. undefined: no line, or a new-side CONTEXT anchor without an excerpt.
+// Gate A U2: the new-side lines of a range anchor (multilineSpan). Its line, lineType, and fileType name the end line.
+// undefined: no range, a REMOVED end line, or a span without new-side lines. The end line alone then places the comment.
+export function anchorSpan(anchor: unknown): { line: number; lineEnd: number } | undefined {
+  const a = anchor as { lineType?: unknown; multilineSpan?: { dstSpanStart?: unknown; dstSpanEnd?: unknown } } | null | undefined;
+  const s = a?.multilineSpan;
+  if (!s || a?.lineType === "REMOVED") return undefined;
+  const { dstSpanStart: from, dstSpanEnd: to } = s;
+  return typeof from === "number" && typeof to === "number" && from > 0 && to >= from ? { line: from, lineEnd: to } : undefined;
+}
+
+// The lines of an inline root comment, numbered as its excerpt numbers them. undefined: no line, or a new-side CONTEXT anchor without an excerpt.
 // Gate v3 U4: the forge line of a CONTEXT anchor is the old-side line, whatever fileType says.
-export function commentLine(c: { anchor?: unknown; excerpt?: ExcerptLine[] }): number | undefined {
+export function commentLines(c: { anchor?: unknown; excerpt?: ExcerptLine[] }): { line: number; lineEnd: number } | undefined {
+  const span = anchorSpan(c.anchor);
+  if (span) return span;
   const hit = c.excerpt?.find((l) => l.hit);
-  if (hit) return hit.n;
+  if (hit) return { line: hit.n, lineEnd: hit.n };
   const a = c.anchor as { line?: unknown; lineType?: unknown; fileType?: unknown } | null | undefined;
-  return typeof a?.line === "number" && (a.lineType !== "CONTEXT" || a.fileType === "FROM") ? a.line : undefined;
+  return typeof a?.line === "number" && (a.lineType !== "CONTEXT" || a.fileType === "FROM") ? { line: a.line, lineEnd: a.line } : undefined;
 }
 
 export type Comment = {

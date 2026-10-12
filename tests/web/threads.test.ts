@@ -236,8 +236,18 @@ describe("helpers", () => {
     expect(anchorOf(c(1, { anchor: { path: "src/a.ts", line: 4, orphaned: true } }))).toEqual({
       path: "src/a.ts",
       line: 4,
+      lineEnd: 4,
       orphaned: true,
     });
+    // Gate A U2: a range anchor gives the span on the new side, not its end line 10.
+    const range = {
+      path: "sample1.md",
+      line: 10,
+      lineType: "CONTEXT",
+      fileType: "FROM",
+      multilineSpan: { srcSpanStart: 3, srcSpanEnd: 10, dstSpanStart: 3, dstSpanEnd: 12 },
+    };
+    expect(anchorOf(c(3, { anchor: range }))).toMatchObject({ line: 3, lineEnd: 12 });
     expect(anchorOf(c(1))).toBeNull();
     // Gate v3 U4: the forge line of a CONTEXT anchor is old line 7. The excerpt marks new line 9, so the thread shows 9.
     const ctx = { path: "sample1.md", line: 7, lineType: "CONTEXT", fileType: "TO" };

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ForgeError } from "../../src/server/bitbucket/client";
 import { branchUrl, createBitbucketProvider, excerptOf } from "../../src/server/bitbucket/provider";
+import { commentLines } from "../../src/shared/types";
 import { FAKE_TOKEN, type FakeBitbucket, fixture, key, type Route, startFakeBitbucket } from "../support/fake-bitbucket";
 import {
   ACTIVITIES_PATH,
@@ -351,7 +352,7 @@ describe("errors", () => {
   });
 });
 
-// Plan v3 WP4 on the Gate v3 fixtures. Removed lines and orphaned anchors stay synthetic (Gate v3 NOT TRIED: REMOVED, U12).
+// Plan v3 WP4 on the Gate v3 fixtures. Removed lines stay synthetic (Gate v3 NOT TRIED: REMOVED). Gate A U2 and U12 use real captures.
 describe("forge data", () => {
   const v3 = () => activities("activities-v3-after-write.json");
   const serve = (values: unknown[]) => ({ [key("GET", ACTIVITIES_PATH)]: { status: 200, body: { isLastPage: true, start: 0, values } } });
@@ -440,6 +441,80 @@ describe("forge data", () => {
     expect(r.items.find((c) => c.id === 1000004)?.excerpt).toBeUndefined();
     expect(r.items.find((c) => c.id === 1000005)?.excerpt).toBeUndefined();
     expect(r.items.find((c) => c.id === 1000005)?.anchor).toMatchObject({ line: 7 });
+  });
+
+  // Gate A U2: a real two-segment range comment, ADDED dst 3 to the CONTEXT end row src 10 / dst 12.
+  test("U2: a range comment marks each row from the span start to the end row, numbered on the new side", async () => {
+    const r = await setup(serve(activities("activities-u2-range.json"))).listComments(PR_REF);
+    expect(r.complete).toBe(true);
+    const c = r.items.find((x) => x.id === 1000001);
+    expect(c?.anchor).toMatchObject({
+      line: 10,
+      lineType: "CONTEXT",
+      fileType: "FROM",
+      orphaned: false,
+      multilineMarker: { startLine: 3, startLineType: "ADDED" },
+      multilineSpan: { srcSpanStart: 3, srcSpanEnd: 10, dstSpanStart: 3, dstSpanEnd: 12 },
+    });
+    // The activity diff holds the span only, so no context row surrounds it.
+    expect(lines(c)).toEqual([">add3", ">add4", ">ctx5", ">ctx6", ">ctx7", ">ctx8", ">ctx9", ">ctx10", ">ctx11", ">ctx12"]);
+    expect(commentLines(c ?? {})).toEqual({ line: 3, lineEnd: 12 });
+  });
+
+  test("U2: a range excerpt keeps 3 rows of context and falls back to the end row without a span start", () => {
+    const anchor = findComment(activities("activities-u2-range.json"), 1000001).anchor as Parameters<typeof excerptOf>[1];
+    const ctx = (n: number): Line => ({ source: n - 2, destination: n, line: `l${n}` });
+    const diff = {
+      hunks: [
+        {
+          segments: [
+            { type: "CONTEXT", lines: [1, 2].map(ctx) },
+            ...diffOf(activities("activities-u2-range.json"), 10000002).hunks[0]!.segments,
+            { type: "CONTEXT", lines: [13, 14, 15, 16].map(ctx) },
+          ],
+        },
+      ],
+    };
+    expect(lines({ excerpt: excerptOf(diff, anchor, 1000001) })).toEqual([
+      "ctx1",
+      "ctx2",
+      ">add3",
+      ">add4",
+      ">ctx5",
+      ">ctx6",
+      ">ctx7",
+      ">ctx8",
+      ">ctx9",
+      ">ctx10",
+      ">ctx11",
+      ">ctx12",
+      "ctx13",
+      "ctx14",
+      "ctx15",
+    ]);
+    const late = { ...anchor, multilineSpan: { srcSpanStart: 3, srcSpanEnd: 10, dstSpanStart: 99, dstSpanEnd: 99 } };
+    expect(
+      excerptOf(diff, late, 1000001)
+        ?.filter((l) => l.hit)
+        .map((l) => l.n),
+    ).toEqual([12]);
+  });
+
+  test("U12: a real orphaned range keeps its excerpt; RESCOPED activities add no comment; the page is complete", async () => {
+    const r = await setup(serve(activities("activities-u12-orphaned-range.json"))).listComments(PR_REF);
+    expect(r.complete).toBe(true);
+    expect(r.items.map((c) => c.id)).toEqual([1000001]);
+    const c = r.items[0];
+    expect(c?.anchor).toMatchObject({ orphaned: true, multilineSpan: { dstSpanStart: 3, dstSpanEnd: 12 } });
+    expect(c?.excerpt?.filter((l) => l.hit)).toHaveLength(10);
+  });
+
+  test("U12: the real commits after the push list the new head first", async () => {
+    const page = fixture<{ values: { id: string }[] }>("pull-request-commits-u12.json");
+    const r = await setup({ [key("GET", `${PR_PATH}/commits`)]: page }).listCommits(PR_REF);
+    expect(r.complete).toBe(true);
+    expect(r.items.map((c) => c.hash)).toEqual(page.body.values.map((c) => c.id));
+    expect(r.items[0]?.parents).toEqual([r.items[1]?.hash ?? ""]);
   });
 
   test("an excerpt line stops at 500 chars", () => {

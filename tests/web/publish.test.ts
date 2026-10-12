@@ -77,6 +77,10 @@ describe("confirm text", () => {
     });
     expect(parentOf(300, [ctx])?.place).toBe("sample1.md:9");
     expect(parentOf(300, [{ ...ctx, excerpt: undefined }])?.place).toBe("sample1.md");
+    // Gate A U2: a range comment names its span.
+    const span = { srcSpanStart: 3, srcSpanEnd: 10, dstSpanStart: 3, dstSpanEnd: 12 };
+    const range = comment(400, { anchor: { path: "sample1.md", line: 10, lineType: "CONTEXT", fileType: "FROM", multilineSpan: span } });
+    expect(parentOf(400, [range])?.place).toBe("sample1.md:3–12");
   });
 
   test("an inline destination shows the file name and the line range", () => {

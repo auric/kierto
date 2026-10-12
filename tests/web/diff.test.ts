@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseDiff } from "../../src/server/review/diffmap";
 import type { CommentDto, ReviewItemDto } from "../../src/shared/dto";
+import { commentLines } from "../../src/shared/types";
 import {
   DRAFT_OUTSIDE,
   draftItem,
@@ -17,6 +18,7 @@ import {
   threadItem,
   threadSpot,
 } from "../../src/web/diff/model";
+import { activities, findComment } from "../support/scenarios";
 
 // Gate v3 U4 (activities-v3-after-write.json, comment 1000005): the CONTEXT anchor line 7 is the row source 7, destination 9.
 const DIFF = [
@@ -102,6 +104,40 @@ describe("thread lines", () => {
     const item = threadItem(root({ ...U4, lineType: "ADDED", line: 15 })) as Item;
     expect(place(rows, true, [item]).off[0]?.why).toBe("Line 15 is not in the diff.");
     expect(place(rows, false, [item]).off[0]?.why).toBe("Line 15 is not in the lines shown.");
+  });
+});
+
+describe("range threads (Gate A U2)", () => {
+  const U2 = findComment(activities("activities-u2-range.json"), 1000001).anchor as Record<string, unknown>;
+  const span = (dstSpanStart: number, dstSpanEnd: number) => ({ srcSpanStart: 4, srcSpanEnd: 7, dstSpanStart, dstSpanEnd });
+
+  test("a range spot is dstSpanStart to dstSpanEnd on the new side, before any excerpt hit", () => {
+    const hit = [{ n: 12, kind: "ctx" as const, text: "x", hit: true }];
+    expect(threadSpot({ anchor: U2, excerpt: hit })).toEqual({ path: "sample1.md", side: "new", line: 3, lineEnd: 12, orphaned: false });
+  });
+
+  // Rule: a REMOVED end line, or a span without new-side lines (0, absent, or reversed), places the end line alone.
+  test("a range without new-side lines falls back to the end line", () => {
+    const end = { side: "old", line: 10, lineEnd: 10 };
+    expect(threadSpot({ anchor: { ...U2, multilineSpan: span(0, 0) } })).toMatchObject(end);
+    expect(threadSpot({ anchor: { ...U2, multilineSpan: span(9, 8) } })).toMatchObject(end);
+    expect(threadSpot({ anchor: { ...U2, multilineSpan: { srcSpanStart: 3, srcSpanEnd: 10 } } })).toMatchObject(end);
+    expect(threadSpot({ anchor: { ...U2, lineType: "REMOVED", multilineSpan: span(6, 9) } })).toMatchObject(end);
+    expect(commentLines({ anchor: { ...U2, multilineSpan: span(0, 0) } })).toEqual({ line: 10, lineEnd: 10 });
+  });
+
+  test("the diff marks each line of the range and focuses its first line", () => {
+    const item = threadItem(root({ ...U2, multilineSpan: span(6, 9) })) as Item;
+    const p = place(rows, true, [item]);
+    expect([...p.marked].sort((a, b) => a - b)).toEqual([at("new", 6), at("new", 7), at("new", 8), at("new", 9)]);
+    expect([...p.at.keys()]).toEqual([at("new", 9)]);
+    const first = rows[at("new", 6)];
+    expect(first && targetOf(0, rows, p, item.card)).toBe(first ? rowId(0, first) : null);
+  });
+
+  test("an orphaned range stays off the diff", () => {
+    const u12 = findComment(activities("activities-u12-orphaned-range.json"), 1000001).anchor;
+    expect(place(rows, true, [threadItem(root(u12)) as Item]).off).toEqual([{ kind: "thread", id: 5, why: THREAD_OUTDATED }]);
   });
 });
 

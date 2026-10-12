@@ -23,11 +23,13 @@ import { cn } from "@/lib/utils";
 import type { ExcerptLine, PostDto } from "../../shared/dto";
 import { commentUrl } from "../../shared/links";
 import { type PostCtx, ReplyPosts } from "../publish/Outbox";
+import { lineText } from "../review/model";
 import type { Hints } from "../shell/Hint";
 import { HintTrigger } from "../shell/Hint";
 import { ago, initials } from "../shell/model";
 import { ReplyComposer, type ReplyTarget } from "./ReplyComposer";
 import {
+  type Anchor,
   agoLong,
   type FoldRow,
   firstName,
@@ -134,8 +136,11 @@ function TaskMark({ task }: { task: "open" | "done" }) {
   );
 }
 
+// The lines of a thread: "7", or "3–12" for a range comment.
+const linesOf = (a: Anchor) => (a.line === undefined ? undefined : lineText({ line: a.line, lineEnd: a.lineEnd ?? a.line }));
+
 const placeOf = (t: ThreadModel) =>
-  t.anchor ? `${t.anchor.path}${t.anchor.line === undefined ? "" : `:${t.anchor.line}`}` : "General comment";
+  t.anchor ? `${t.anchor.path}${t.anchor.line === undefined ? "" : `:${linesOf(t.anchor)}`}` : "General comment";
 
 // A collapsed thread is one line that sums it up. An open thread shows the same facts in its messages, so the line drops them.
 // posts: my replies on the way. target: the message that the reply box answers. draft: the AI reply draft card (WP18).
@@ -189,7 +194,7 @@ export const Thread = memo(function Thread({
             <HintTrigger hints={ctx.hints} label={a.path}>
               <span translate="no" className="min-w-0 shrink truncate font-mono text-foreground">
                 {base}
-                {a.line !== undefined && <span className="text-muted-foreground">:{a.line}</span>}
+                {a.line !== undefined && <span className="text-muted-foreground">:{linesOf(a)}</span>}
               </span>
             </HintTrigger>
           ) : (
@@ -315,7 +320,7 @@ function Body(props: { t: ThreadModel; spine: boolean; branches: ReadonlySet<num
     );
   }
   const { head, tail } = splitExcerpt(lines);
-  const at = a.line === undefined ? a.path : `${a.path} line ${a.line}`;
+  const at = a.line === undefined ? a.path : `${a.path} ${(a.lineEnd ?? a.line) > a.line ? "lines" : "line"} ${linesOf(a)}`;
   return (
     <>
       <figure

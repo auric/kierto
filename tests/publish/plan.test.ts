@@ -379,6 +379,25 @@ describe("post plan", () => {
     expect((await s.plan()).posts[0]?.duplicate).toEqual({ commentId: 25, author: "Alex Smith" });
   });
 
+  test("U2 duplicate: a range comment covers each new-side line of its span", async () => {
+    const s = await setup();
+    const f = s.finding({ line: 7, excerpt: CTX_EXCERPT });
+    await s.accept(f);
+    // The real U2 shape: line, lineType, and fileType name the end line.
+    const range = (dstSpanStart: number, dstSpanEnd: number) => ({
+      path: "src/app.ts",
+      line: 10,
+      lineType: "CONTEXT",
+      fileType: "FROM",
+      multilineMarker: { startLine: dstSpanStart, startLineType: "ADDED" },
+      multilineSpan: { srcSpanStart: 3, srcSpanEnd: 10, dstSpanStart, dstSpanEnd },
+    });
+    s.comment(30, "asmith", range(8, 12));
+    expect((await s.plan()).posts[0]?.duplicate).toBeNull();
+    s.comment(31, "asmith", range(3, 12));
+    expect((await s.plan()).posts[0]?.duplicate).toEqual({ commentId: 31, author: "Alex Smith" });
+  });
+
   test("an unknown pull request gives 404", async () => {
     const s = await setup();
     expect((await s.call("/api/prs/999/post-plan")).status).toBe(404);

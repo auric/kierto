@@ -1,6 +1,17 @@
 // ForgeProvider for Bitbucket Server. It returns forge-neutral types from src/shared/types.ts.
 import { z } from "zod";
-import type { Change, Comment, CommentStatus, Commit, ExcerptLine, ListResult, PrRef, PullRequest, Role } from "../../shared/types";
+import {
+  anchorSpan,
+  type Change,
+  type Comment,
+  type CommentStatus,
+  type Commit,
+  type ExcerptLine,
+  type ListResult,
+  type PrRef,
+  type PullRequest,
+  type Role,
+} from "../../shared/types";
 import { type ClientOptions, createClient, ForgeError } from "./client";
 import { activity, change, commit, postedComment, pullRequest, type RawComment, type RawDiff, type user } from "./schemas";
 
@@ -17,7 +28,7 @@ const cloneRepo = z.object({
 const remoteRef = z.object({ id: z.string(), repository: cloneRepo });
 const remoteRefs = z.object({ fromRef: remoteRef, toRef: remoteRef });
 
-// plan v3 WP4: the anchor line plus 3 lines on each side, each line cut at 500 chars.
+// plan v3 WP4: the anchor line (a range: its lines) plus 3 lines on each side, each line cut at 500 chars.
 const EXCERPT_SIDE = 3;
 const EXCERPT_TEXT = 500;
 const KIND: Record<string, ExcerptLine["kind"]> = { ADDED: "add", REMOVED: "del", CONTEXT: "ctx" };
@@ -25,20 +36,32 @@ const KIND: Record<string, ExcerptLine["kind"]> = { ADDED: "add", REMOVED: "del"
 // The excerpt of an inline comment from its activity diff. No match gives undefined.
 // The row that lists the comment ID in commentIds wins. Else the anchor line names the row. fileType FROM numbers it on the old side.
 // Gate v3 U4: a CONTEXT anchor numbers its row on the old side, whatever fileType says. The excerpt still numbers ctx lines on the fileType side.
+// Gate A U2: that row is the end of a range. commentIds mark only the end row. The excerpt numbers a range on the new side and marks each row from the span start to the end row.
 export function excerptOf(
   diff: RawDiff,
-  anchor: { line?: number; lineType?: string; fileType?: string },
+  anchor: { line?: number; lineType?: string; fileType?: string; multilineSpan?: unknown },
   id?: number,
 ): ExcerptLine[] | undefined {
   if (anchor.line === undefined) return undefined;
   const old = anchor.fileType === "FROM";
+  const span = anchorSpan(anchor);
   const want = anchor.lineType === undefined ? undefined : KIND[anchor.lineType];
-  const n = (kind: ExcerptLine["kind"], l: { source: number; destination: number }) =>
-    kind === "del" || (kind === "ctx" && old) ? l.source : l.destination;
+  const n = (kind: ExcerptLine["kind"], l: { source: number; destination: number }, oldSide: boolean) =>
+    kind === "del" || (kind === "ctx" && oldSide) ? l.source : l.destination;
   const hunks = diff.hunks.map((h) =>
     h.segments.flatMap((s) => {
       const kind = KIND[s.type];
-      return kind ? s.lines.map((l) => ({ kind, n: n(kind, l), source: l.source, text: l.line, ids: l.commentIds })) : [];
+      return kind
+        ? s.lines.map((l) => ({
+            kind,
+            n: n(kind, l, old),
+            out: n(kind, l, old && !span),
+            source: l.source,
+            dest: l.destination,
+            text: l.line,
+            ids: l.commentIds,
+          }))
+        : [];
     }),
   );
   type Row = (typeof hunks)[number][number];
@@ -49,9 +72,12 @@ export function excerptOf(
     for (const lines of hunks) {
       const at = lines.findIndex(match);
       if (at < 0) continue;
+      const start = span ? lines.findIndex((l, i) => i <= at && l.kind !== "del" && l.dest === span.line) : -1;
+      const from = start < 0 ? at : start;
+      const lo = Math.max(0, from - EXCERPT_SIDE);
       return lines
-        .slice(Math.max(0, at - EXCERPT_SIDE), at + EXCERPT_SIDE + 1)
-        .map((l) => ({ n: l.n, kind: l.kind, text: l.text.slice(0, EXCERPT_TEXT), hit: l === lines[at] }));
+        .slice(lo, at + EXCERPT_SIDE + 1)
+        .map((l, i) => ({ n: l.out, kind: l.kind, text: l.text.slice(0, EXCERPT_TEXT), hit: lo + i >= from && lo + i <= at }));
     }
   return undefined;
 }
