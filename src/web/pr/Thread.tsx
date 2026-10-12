@@ -11,10 +11,11 @@ import {
   Hourglass,
   MessageSquare,
   Reply,
-  Square,
   SquareCheckBig,
+  SquareDot,
 } from "lucide-react";
 import { lazy, memo, type ReactNode, Suspense, useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
@@ -123,15 +124,13 @@ export function NewMark({ text }: { text: string }) {
   );
 }
 
-function TaskMark({ hints, task }: { hints: Hints; task: "open" | "done" }) {
-  return task === "done" ? (
-    <IconHint hints={hints} label="Task done">
-      <SquareCheckBig aria-hidden className={icon} />
-    </IconHint>
-  ) : (
-    <IconHint hints={hints} label="Open task">
-      <Square aria-hidden className={icon} />
-    </IconHint>
+// queries.ts: a task is a BLOCKER comment, OPEN or RESOLVED on the forge. The words carry the state; the mark is no control.
+function TaskMark({ task }: { task: "open" | "done" }) {
+  return (
+    <Badge variant={task === "done" ? "quiet" : "soft"} data-task={task}>
+      {task === "done" ? <SquareCheckBig aria-hidden /> : <SquareDot aria-hidden />}
+      {task === "done" ? "Resolved task" : "Open task"}
+    </Badge>
   );
 }
 
@@ -203,7 +202,7 @@ export const Thread = memo(function Thread({
                   <History aria-hidden className={icon} />
                 </IconHint>
               )}
-              {t.task && <TaskMark hints={ctx.hints} task={t.task} />}
+              {t.task && <TaskMark task={t.task} />}
               <span className="rl-wide-pane min-w-0 flex-1 truncate text-ink-2">
                 {last ? `${last.who.me ? "You" : firstName(last.who)}: ${snippet(last.text, 160)}` : `Deleted on ${ctx.forge}`}
               </span>
@@ -471,7 +470,7 @@ const Message = memo(function Message({ m, quote, tid, ctx }: { m: Node; quote: 
         <HintTrigger hints={ctx.hints} label={fullTime(m.createdAt)}>
           <time dateTime={new Date(m.createdAt).toISOString()}>{ago(m.createdAt, ctx.now)}</time>
         </HintTrigger>
-        {m.task && <TaskMark hints={ctx.hints} task={m.task} />}
+        {m.task && <TaskMark task={m.task} />}
         {m.isNew && <NewMark text="new" />}
         {m.posted === "run" && <span>Posted from a {ctx.runner} review</span>}
         {!m.deleted && m.text !== null && (

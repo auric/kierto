@@ -40,9 +40,12 @@ export function Clones() {
   const list = q.data ?? [];
   return (
     <section aria-labelledby="h-clones" className="mt-6 grid max-w-[560px] gap-3 border-t pt-4">
-      <h2 id="h-clones" tabIndex={-1} className="m-0 text-[15px] font-bold outline-none">
-        Clones
-      </h2>
+      <div className="grid gap-0.5">
+        <h2 id="h-clones" tabIndex={-1} className="m-0 scroll-mt-4 text-[15px] font-bold outline-none">
+          Clones
+        </h2>
+        <p className="m-0 text-xs text-muted-foreground">Change saves from its dialog. Remove saves at once.</p>
+      </div>
       <p className="m-0 text-sm text-ink-2">
         Fix it commits in these folders only when you click Apply. Set a folder in the Apply dialog of your own pull request.
       </p>

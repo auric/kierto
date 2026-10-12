@@ -1,20 +1,33 @@
-import { ArrowLeft, X } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { ArrowLeft, type LucideIcon, Monitor, Moon, Sun, X } from "lucide-react";
+import { type FormEvent, type MouseEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { CHECK_CHOICES, type PrRow, type SettingsDto } from "../../shared/dto";
 import { useForge, useMeta } from "../meta";
 import { notifyPermission } from "../notify";
+import { trackerOf } from "../review/tasks";
 import { useSaveSettings } from "../shell/data";
 import { Hint } from "../shell/Hint";
+import { setTheme, type Theme, useTheme } from "../theme";
 import { Clones } from "./Clones";
 import { JiraSettings } from "./JiraSettings";
 import { ReviewProfiles } from "./ReviewProfiles";
 import { TaskRules } from "./TaskRules";
 
-const sectionTitle = "m-0 text-[15px] font-bold";
+// The section links focus these headings, so each heading takes focus from script only.
+const sectionTitle = "m-0 scroll-mt-4 text-[15px] font-bold outline-none";
+const saveNote = "m-0 text-xs text-muted-foreground";
+const AT_ONCE = "Changes save at once.";
+
+// A section link focuses its heading. A plain hash link would add a history entry and leave the focus where it was.
+function jump(e: MouseEvent<HTMLAnchorElement>, id: string) {
+  e.preventDefault();
+  const el = document.getElementById(id);
+  el?.scrollIntoView({ block: "start" });
+  el?.focus({ preventScroll: true });
+}
 
 const checkText = (s: number) => (s < 60 ? `Every ${s} seconds` : s === 60 ? "Every minute" : `Every ${s / 60} minutes`);
 
@@ -36,10 +49,27 @@ export function Settings({
 }) {
   const save = useSaveSettings();
   const forge = useForge();
+  const meta = useMeta().data;
+  const tracker = meta ? trackerOf(meta) : null;
   // The token lives only in this field until submit. It is never read back from the server.
   const [token, setToken] = useState("");
   const memory = settings.tokenStorage === "memory";
   const missing = settings.baseUrl !== null && !settings.tokenStored;
+  // The sections below Connection show only after the first connection.
+  const sections: [string, string][] =
+    settings.baseUrl === null
+      ? []
+      : [
+          ["h-connection", "Connection"],
+          ["checks-title", "Checks"],
+          ["notify-title", "Notifications"],
+          ["mark-title", "Posts"],
+          ["h-appearance", "Appearance"],
+          ["h-profiles", "Review profiles"],
+          ["h-taskids", "Task IDs"],
+          ...(tracker ? ([["h-tracker", tracker.name]] as [string, string][]) : []),
+          ["h-clones", "Clones"],
+        ];
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -83,12 +113,28 @@ export function Settings({
           )}
         </div>
         <h1 className="m-0 text-(length:--fs-title) leading-tight font-bold tracking-[-0.015em]">Settings</h1>
+        {sections.length > 0 && (
+          <nav aria-label="Settings sections">
+            <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-sm">
+              {sections.map(([id, label]) => (
+                <li key={id}>
+                  <a href={`#${id}`} className="rounded font-medium text-pen hover:underline" onClick={(e) => jump(e, id)}>
+                    {label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        )}
       </header>
       <div className="@container relative flex-1 overflow-auto px-6 pt-[18px] pb-16 max-[759px]:px-4">
         <section aria-labelledby="h-connection" className="grid max-w-[560px] gap-3">
-          <h2 id="h-connection" className={sectionTitle}>
-            Connection
-          </h2>
+          <div className="grid gap-0.5">
+            <h2 id="h-connection" tabIndex={-1} className={sectionTitle}>
+              Connection
+            </h2>
+            <p className={saveNote}>Press Save to keep the changes. Save checks the connection first.</p>
+          </div>
           <form className="grid gap-4" onSubmit={submit} key={settings.baseUrl ?? ""}>
             {settings.baseUrl === null && (
               <p className="m-0">Connect Review Loop to your {forge} server. It checks your pull requests every minute.</p>
@@ -167,6 +213,7 @@ export function Settings({
         {settings.baseUrl !== null && <Checks settings={settings} />}
         {settings.baseUrl !== null && <Notifications settings={settings} />}
         {settings.baseUrl !== null && <AiMark settings={settings} />}
+        {settings.baseUrl !== null && <Appearance />}
         {settings.baseUrl !== null && <ReviewProfiles settings={settings} />}
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
         {settings.baseUrl !== null && <JiraSettings settings={settings} />}
@@ -183,9 +230,12 @@ function Checks({ settings }: { settings: SettingsDto }) {
   const value = (save.isPending && save.variables?.checkSeconds) || settings.checkSeconds;
   return (
     <section aria-labelledby="checks-title" className="mt-6 grid max-w-[560px] gap-2 border-t pt-4">
-      <h2 id="checks-title" className={sectionTitle}>
-        Checks
-      </h2>
+      <div className="grid gap-0.5">
+        <h2 id="checks-title" tabIndex={-1} className={sectionTitle}>
+          Checks
+        </h2>
+        <p className={saveNote}>{AT_ONCE}</p>
+      </div>
       <Field>
         <FieldLabel htmlFor="check-every">Check for new activity</FieldLabel>
         <select
@@ -237,9 +287,12 @@ function Notifications({ settings }: { settings: SettingsDto }) {
   const note = PERMISSION_NOTE[permission];
   return (
     <section aria-labelledby="notify-title" className="mt-6 grid max-w-[560px] gap-2 border-t pt-4">
-      <h2 id="notify-title" className={sectionTitle}>
-        Notifications
-      </h2>
+      <div className="grid gap-0.5">
+        <h2 id="notify-title" tabIndex={-1} className={sectionTitle}>
+          Notifications
+        </h2>
+        <p className={saveNote}>{AT_ONCE}</p>
+      </div>
       <label className="flex cursor-pointer items-center gap-2.5">
         <input
           type="checkbox"
@@ -262,9 +315,12 @@ function AiMark({ settings }: { settings: SettingsDto }) {
   const runner = useMeta().data?.runner.short ?? "";
   return (
     <section aria-labelledby="mark-title" className="mt-6 grid max-w-[560px] gap-2 border-t pt-4">
-      <h2 id="mark-title" className={sectionTitle}>
-        Posts
-      </h2>
+      <div className="grid gap-0.5">
+        <h2 id="mark-title" tabIndex={-1} className={sectionTitle}>
+          Posts
+        </h2>
+        <p className={saveNote}>{AT_ONCE}</p>
+      </div>
       <Field orientation="horizontal">
         <Switch
           id="mark-ai"
@@ -281,6 +337,43 @@ function AiMark({ settings }: { settings: SettingsDto }) {
         </FieldContent>
       </Field>
       {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
+    </section>
+  );
+}
+
+const THEMES: [Theme, string, LucideIcon][] = [
+  ["system", "System", Monitor],
+  ["light", "Light", Sun],
+  ["dark", "Dark", Moon],
+];
+
+// theme.ts keeps the choice in this browser only. The theme button of the sidebar cycles the same value.
+function Appearance() {
+  const theme = useTheme();
+  return (
+    <section aria-labelledby="h-appearance" className="mt-6 grid max-w-[560px] gap-2 border-t pt-4">
+      <div className="grid gap-0.5">
+        <h2 id="h-appearance" tabIndex={-1} className={sectionTitle}>
+          Appearance
+        </h2>
+        <p className={saveNote}>Changes save at once, in this browser only.</p>
+      </div>
+      <FieldSet className="gap-1.5">
+        <FieldLegend variant="label">Theme</FieldLegend>
+        <div className="flex w-fit flex-wrap gap-0.5 rounded-lg border bg-pane-2 p-0.5">
+          {THEMES.map(([t, label, Icon]) => (
+            <label
+              key={t}
+              className="flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-sm text-ink-2 hover:text-foreground has-checked:bg-pane has-checked:font-semibold has-checked:text-foreground has-checked:shadow-[inset_0_0_0_1px_var(--border)] has-focus-visible:outline-2 has-focus-visible:outline-ring"
+            >
+              <input type="radio" name="theme" value={t} className="sr-only" checked={theme === t} onChange={() => setTheme(t)} />
+              <Icon aria-hidden className="size-[15px] shrink-0" />
+              {label}
+            </label>
+          ))}
+        </div>
+        <FieldDescription>System follows the color scheme of your computer.</FieldDescription>
+      </FieldSet>
     </section>
   );
 }

@@ -74,6 +74,9 @@ export function defaultMessage(prId: number, threads: number[], notes: FixDto["t
   return [head, "", ...body].join("\n");
 }
 
+// clone.ts fixRef without the commit row ID, which exists only after the commit. prId: the PR number on the forge.
+export const appRefPrefix = (prId: number) => `refs/rl/${prId}/fix-commit/`;
+
 // Cache mode: the fast-forward keeps the hash, so the "Fixed in" reply rule still holds.
 export const fetchCommands = (f: { cache: string; ref: string }) => [`git fetch "${f.cache}" ${f.ref}`, "git merge --ff-only FETCH_HEAD"];
 

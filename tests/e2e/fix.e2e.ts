@@ -117,6 +117,14 @@ test("Fix all valid: the edits show, one is unticked, Apply commits it in the cl
   await expect(all).toHaveAccessibleName("Fix all valid, 2 comments");
   await all.click();
   await expect(runline(page)).toContainText(/Claude proposed fixes on [0-9a-f]{7}/, { timeout: RUN_MS });
+  // The run line shows the fix run. The reply run keeps its result on its own line, and its Log opens its log.
+  const replies = page.locator("#runline-other [data-run-kind='reply']");
+  await expect(replies).toContainText("Reply drafts: 2 reply drafts");
+  await replies.getByRole("button", { name: "Log of the reply drafts" }).click();
+  const log = page.getByRole("dialog", { name: "Claude Code run log" });
+  await expect(log.locator("footer")).toContainText("Result: 2 reply drafts.");
+  await page.keyboard.press("Escape");
+  await expect(log).toBeHidden();
 
   // Each thread shows its note and its edit with the diff rows.
   const lock = fixCard(page, LOCK);
@@ -126,7 +134,7 @@ test("Fix all valid: the edits show, one is unticked, Apply commits it in the cl
   await expect(rows.locator(".rl-dr[data-k='add']")).toHaveCount(5);
   await expect(rows.locator(".rl-dr[data-k='del']")).toHaveCount(2);
   await expect(rows).toContainText("} finally {");
-  const readme = fixCard(page, LOOP).getByRole("checkbox", { name: /^Apply the edit to README\.md/ });
+  const readme = fixCard(page, LOOP).getByRole("checkbox", { name: /^Include in apply README\.md/ });
   await expect(fixCard(page, LOOP)).toContainText("+2 −0");
   await expect(readme).toBeChecked();
 

@@ -102,9 +102,12 @@ export function TaskRules({ settings, prs, selected }: { settings: SettingsDto; 
 
   return (
     <section aria-labelledby="h-taskids" className="mt-6 grid max-w-[86ch] gap-3 border-t pt-4">
-      <h2 id="h-taskids" className="m-0 text-[15px] font-bold">
-        Task IDs
-      </h2>
+      <div className="grid gap-0.5">
+        <h2 id="h-taskids" tabIndex={-1} className="m-0 scroll-mt-4 text-[15px] font-bold outline-none">
+          Task IDs
+        </h2>
+        <p className="m-0 text-xs text-muted-foreground">Press Save task rules to keep the changes.</p>
+      </div>
       <p className="m-0 max-w-[72ch] text-sm text-ink-2">
         Review Loop looks for task IDs in each pull request. The rules run from top to bottom. When two rules find the same ID, the first
         rule names its source. Keys limit the matches to your projects, so UTF-8 or SHA-256 do not count.

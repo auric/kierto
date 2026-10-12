@@ -1,11 +1,13 @@
 // Plan r3 UI-FIX: the pure Fix it rules. The selection per run, the default commit message, the judgement labels, the card state of
 // a thread, the "Fixed in" wait, and the runner prompt with the comment as an indented block.
 import { describe, expect, test } from "bun:test";
+import { fixRef } from "../../src/server/review/clone";
 import type { CommitDto, FixCommitDto, FixDto, FixEditDto, ReviewItemDto, RunDto } from "../../src/shared/dto";
 import type { ReplyPayload } from "../../src/shared/review";
 import { HANDOFF_RULE, handoffText, indentBlock } from "../../src/web/fix/handoff";
 import {
   applyText,
+  appRefPrefix,
   canFix,
   commitText,
   defaultMessage,
@@ -45,6 +47,7 @@ const run = (id: number, o: Partial<RunDto> = {}): RunDto => ({
   hasRaw: true,
   since: null,
   question: null,
+  findings: 0,
   ...o,
 });
 const edit = (id: number, thread: number): FixEditDto => ({ id, thread, path: `src/${id}.ts`, added: 1, removed: 1, rows: [] });
@@ -173,6 +176,11 @@ describe("commit state", () => {
       'git fetch "C:/data/cache/x.git" refs/rl/1004/fix-commit/3',
       "git merge --ff-only FETCH_HEAD",
     ]);
+  });
+
+  test("the Apply dialog names the ref prefix that the server commits under", () => {
+    expect(appRefPrefix(1004)).toBe("refs/rl/1004/fix-commit/");
+    expect(fixRef(1004, 3)).toBe(`${appRefPrefix(1004)}3`);
   });
 
   test("texts", () => {

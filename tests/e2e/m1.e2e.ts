@@ -343,6 +343,50 @@ test("task rules: a live preview, a syntax error, and the saved rule on the rows
   await expect(row(page, TITLE.a)).toContainText("sample-3");
 });
 
+test("settings: the section links focus each section, each section says how it saves, and Appearance sets the theme", async ({ page }) => {
+  await connect(page, false);
+  const settings = page.locator("nav[aria-label='Views']").getByRole("button", { name: "Settings" });
+  await settings.click();
+  await expect(settings).toHaveAttribute("aria-current", "page");
+  const links = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(links.getByRole("link").first()).toHaveText("Connection");
+  await expect(links.getByRole("link").last()).toHaveText("Clones");
+
+  await links.getByRole("link", { name: "Clones" }).click();
+  await expect(page.getByRole("heading", { name: "Clones" })).toBeFocused();
+  await expect(page.locator("section[aria-labelledby='h-clones']")).toContainText("Change saves from its dialog. Remove saves at once.");
+  await expect(page.locator("section[aria-labelledby='h-connection']")).toContainText("Press Save to keep the changes.");
+  await expect(page.locator("section[aria-labelledby='checks-title']")).toContainText("Changes save at once.");
+  await expect(page.locator("section[aria-labelledby='h-profiles']")).toContainText("Press Save profiles to keep the changes.");
+
+  await links.getByRole("link", { name: "Appearance" }).click();
+  await expect(page.getByRole("heading", { name: "Appearance" })).toBeFocused();
+  const html = page.locator("html");
+  await expect(page.getByRole("radio", { name: "System" })).toBeChecked();
+  await page.locator("label", { hasText: /^Dark$/ }).click();
+  await expect(page.getByRole("radio", { name: "Dark" })).toBeChecked();
+  await expect(html).toHaveClass(/\bdark\b/);
+  await page.getByRole("radio", { name: "Dark" }).press("ArrowRight");
+  await expect(page.getByRole("radio", { name: "System" })).toBeChecked();
+  await page.locator("label", { hasText: /^Light$/ }).click();
+  await expect(html).not.toHaveClass(/\bdark\b/);
+  // The theme button of the sidebar stays. It cycles the same value: light, then dark.
+  await page.getByRole("button", { name: /^Theme: light\./ }).click();
+  await expect(page.getByRole("radio", { name: "Dark" })).toBeChecked();
+  await expect(html).toHaveClass(/\bdark\b/);
+});
+
+test("Ready to post without accepted drafts: the detail pane says so and goes to Review runs", async ({ page }) => {
+  await connect(page, false);
+  await page.locator("#nav-post").click();
+  const detail = page.locator("section[aria-label='Details']");
+  await expect(detail).toContainText("Nothing is ready to post");
+  await expect(detail).not.toContainText("Select a pull request in the list.");
+  await detail.getByRole("button", { name: "Go to Review runs" }).click();
+  await expect(page.locator("#view-name")).toHaveText("Review runs");
+  await expect(page.locator("#nav-runs")).toHaveAttribute("aria-current", "page");
+});
+
 test.describe("denied notifications", () => {
   test.use({ permission: "denied" });
   test("a denied permission does not block the inbox", async ({ page }) => {

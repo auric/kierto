@@ -102,16 +102,14 @@ function Edit({ e, ticked, free, ctx }: { e: FixEditDto; ticked: boolean; free: 
   return (
     <section data-edit={e.id} className="rl-indent mt-2 overflow-hidden rounded-md bg-sunken">
       {free ? (
-        <label className="flex cursor-pointer items-center gap-2 border-b px-2.5 py-1.5 text-sm hover:bg-hover">
+        <label className="flex cursor-pointer flex-wrap items-center gap-x-2.5 gap-y-0.5 border-b px-2.5 py-1.5 text-sm hover:bg-hover">
           <input
             type="checkbox"
             className="m-0 shrink-0 accent-foreground"
             checked={ticked}
             onChange={(ev) => ctx.onTick(e.id, ev.target.checked)}
           />
-          <span className="sr-only">Apply the edit to </span>
-          {path}
-          {counts}
+          <span className="shrink-0 font-medium whitespace-nowrap">Include in apply</span> {path} {counts}
         </label>
       ) : (
         <p className="m-0 flex items-center gap-2 border-b px-2.5 py-1.5 text-sm">

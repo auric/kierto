@@ -237,6 +237,7 @@ export function useFix(
             <Wrench aria-hidden className="size-[15px] shrink-0" />
             {meta.runner.short} proposed {plural(f.edits.length, "edit")} on {shortHash(f.run.sourceHead)}.
           </span>
+          <span className="rl-wide-pane text-muted-foreground">Only the ticked edits apply.</span>
           <span className="flex-1" />
           {i === 0 && folder && <CloneFolder pr={pr.id} path={folder} icons />}
           <Button

@@ -3,7 +3,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap">
 <style>
-/* Layout: full-window app grid = sidebar | list pane | detail pane. Each pane scrolls itself. Rail at 760-1099px, one pane at a time below 760px. */
+/* Layout: full-window app grid = sidebar | list pane | detail pane. Each pane scrolls itself. Rail at 760-1279px, one pane at a time below 760px. */
 :root {
   --background: #eceff3;
   --card: #f8f9fb;
@@ -300,8 +300,8 @@ fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 10px; }
 .sheet dd { margin: 0; }
 .sheet .grp { grid-column: 1 / -1; margin: 6px 0 0; font-size: 12px; color: var(--muted-foreground); }
 
-/* Rail: 760-1099px */
-@media (min-width: 760px) and (max-width: 1099px) {
+/* Rail: 760-1279px */
+@media (min-width: 760px) and (max-width: 1279px) {
   #app { grid-template-columns: 60px minmax(300px, 340px) minmax(0, 1fr); }
   #side .lbl, #side .cnt, #side .caret, .sync-text, .side-foot .chip { display: none; }
   .brand { justify-content: center; padding: 16px 0 10px; }

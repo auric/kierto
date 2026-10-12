@@ -1,6 +1,6 @@
 // Run line (prototype/v3 runLine): one line under the title for the newest run of the PR, of any kind. The words name the kind (R14).
 // Failed, usage-limit, and cancelled runs are one line each. A re-review names its range (plan r2 UI-RR).
-// A running or ended run names its profile.
+// A running or ended run names its profile. Below it, one short line for the newest run of each other kind.
 import { Bot, Braces, CircleAlert, CircleStop, LoaderCircle, ScrollText } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -9,11 +9,11 @@ import { fullTime, useSettled } from "../pr/Thread";
 import { agoLong } from "../pr/threads";
 import { Hint } from "../shell/Hint";
 import { useNow } from "../shell/Sidebar";
-import { clockDur, limitText, plural, RUN_TEXT, type RunLineState, shortHash, tokenText } from "./model";
+import { clockDur, type Jump, KIND_LABEL, limitText, plural, RUN_TEXT, type RunLineState, SEVERITY, shortHash, tokenText } from "./model";
 
 const icon = "size-[15px] shrink-0";
-const linkish =
-  "inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-60";
+const jump = "inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium hover:underline";
+const linkish = `${jump} text-pen disabled:cursor-default disabled:opacity-60`;
 
 function Elapsed({ from }: { from: number }) {
   const now = useNow(true);
@@ -47,12 +47,71 @@ export function RunStatus({ state, full, children }: { state: string; full?: boo
   );
 }
 
+// The open drafts per severity. Each button goes to the first draft of its severity.
+export function SeverityJumps({ jumps, onJump }: { jumps: Jump[]; onJump: (draft: number) => void }) {
+  if (!jumps.length) return null;
+  return (
+    <span data-severity-jumps className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
+      {jumps.map((j) => (
+        <Hint key={j.severity} label={`Go to the first ${SEVERITY[j.severity]} draft`}>
+          <button
+            type="button"
+            data-severity={j.severity}
+            // Hue rule: the error hue marks only errors and Blocker findings. The word carries the severity.
+            className={cn(jump, j.severity === "blocker" ? "text-destructive" : "text-pen")}
+            onClick={() => onJump(j.first)}
+          >
+            {j.severity === "blocker" && <CircleAlert aria-hidden className={icon} />}
+            {j.n} {SEVERITY[j.severity]}
+          </button>
+        </Hint>
+      ))}
+    </span>
+  );
+}
+
+// result: runResult of the run. jumps: the severity buttons of a review run.
+export type OtherRun = { run: RunDto; result: string; jumps: ReactNode };
+
+export function OtherRuns({ list, now, onLog }: { list: OtherRun[]; now: number; onLog: (run: number) => void }) {
+  if (!list.length) return null;
+  return (
+    <ul id="runline-other" aria-label="Newest run of each other kind" className="m-0 grid list-none gap-1 p-0 text-sm text-ink-2">
+      {list.map(({ run, result, jumps }) => {
+        const at = run.finishedAt ?? run.startedAt;
+        const failed = run.status === "failed";
+        return (
+          <li key={run.id} data-run-kind={run.kind} className="rl-sum flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className={cn("inline-flex items-center gap-1.5", failed && "text-destructive")}>
+              {failed && <CircleAlert aria-hidden className={icon} />}
+              <span>
+                <b className={cn("font-semibold", !failed && "text-foreground")}>{KIND_LABEL[run.kind]}</b>
+                {result && `: ${result}`}
+              </span>
+            </span>
+            {jumps}
+            <Hint label={fullTime(at)}>
+              <time dateTime={new Date(at).toISOString()}>{agoLong(at, now)}</time>
+            </Hint>
+            <button type="button" className={linkish} onClick={() => onLog(run.id)}>
+              <ScrollText aria-hidden className={icon} />
+              Log<span className="sr-only"> of {RUN_TEXT[run.kind].cancelled}</span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function RunLine(props: {
   state: RunLineState;
   run: RunDto;
   meta: MetaDto;
   now: number;
   cancelling: boolean;
+  // The severity buttons of a review run.
+  jumps: ReactNode;
   onLog: () => void;
   onRaw: () => void;
   onCancel: () => void;
@@ -114,6 +173,7 @@ export function RunLine(props: {
           </Hint>
           {profile}
           {s.count && <span>{s.count}</span>}
+          {props.jumps}
           {s.changes?.full && (
             <span>
               The run reviewed the full change, not only the commits since <Hash h={s.changes.from} />

@@ -2,7 +2,7 @@
 // Every run kind reads the fetched task text. So the brief, the run buttons, and the Ask section show the chips.
 // All places share one query, so a fetch in one place shows in all.
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Download, LoaderCircle, RefreshCw, Settings2, X } from "lucide-react";
+import { CircleAlert, LoaderCircle, Settings2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -55,6 +55,9 @@ type TaskError = { key: string; message: string; setup: boolean };
 
 const chipBtn =
   "inline-grid w-6 cursor-pointer place-items-center border-l text-ink-2 last:rounded-r-[4px] hover:bg-hover hover:text-foreground aria-busy:cursor-progress";
+// WCAG 2.5.3: both names of the fetch button start with its visible word "Fetch".
+const fetchBtn =
+  "inline-flex cursor-pointer items-center gap-1 border-l px-2 text-xs font-medium text-pen last:rounded-r-[4px] hover:bg-hover hover:underline aria-busy:cursor-progress";
 
 // id: the prefix of the element IDs, one per place. focusTo: the element that takes the focus when Remove takes the chip away.
 // compact: a place outside the brief. It shows only the chips that can fetch or hold fetched text, with the fetch state
@@ -180,18 +183,13 @@ export function TaskChips(props: {
                   <button
                     id={`${id}-fetch-${t.key}`}
                     type="button"
-                    className={chipBtn}
+                    className={fetchBtn}
                     aria-label={t.fetched ? `Fetch ${t.key} again` : `Fetch ${t.key} from ${source}`}
                     aria-busy={wait || undefined}
                     onClick={() => void run(t.key, "fetch")}
                   >
-                    {wait ? (
-                      <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
-                    ) : t.fetched ? (
-                      <RefreshCw aria-hidden className={icon} />
-                    ) : (
-                      <Download aria-hidden className={icon} />
-                    )}
+                    {wait && <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />}
+                    Fetch
                   </button>
                 </Hint>
               )}

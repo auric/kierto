@@ -34,6 +34,7 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
   hasRaw: true,
   since: null,
   question: "Which callers of flush() are not updated?",
+  findings: 0,
   ...o,
 });
 const ask = (o: Partial<RunDto> = {}, answer: string | null = "flush() has two callers.\n\nBoth are updated."): AskDto => ({

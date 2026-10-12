@@ -1,6 +1,7 @@
 // List pane (prototype/v3 renderList): Needs you, Waiting on others, and a folded Done group. The Review runs view is one flat list.
-import { BellOff, ChevronRight, CircleAlert, Hourglass, Menu, Plus, Reply, Search, User, X } from "lucide-react";
+import { BellOff, ChevronRight, CircleAlert, Hourglass, LoaderCircle, Menu, Plus, Reply, Search, User, X } from "lucide-react";
 import { memo, type Ref, useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Kbd } from "@/components/ui/kbd";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -303,7 +304,10 @@ const Row = memo(function Row({
               </span>
             </HintTrigger>
           )}
-          <HintTrigger hints={hints} label={fullTime(time)}>
+          <HintTrigger
+            hints={hints}
+            label={run ? `Run ${run.status === "running" ? "started" : "ended"} ${fullTime(time)}` : fullTime(time)}
+          >
             <time dateTime={new Date(time).toISOString()} className="ml-auto shrink-0 whitespace-nowrap">
               {ago(time, now)}
             </time>
@@ -356,17 +360,21 @@ const Row = memo(function Row({
   );
 });
 
-// prototype/v3 whyRun: the profile and the outcome of the newest run. An error carries an icon and a word, not only the hue.
+// prototype/v3 whyRun: the state, the findings, the profile, and the outcome of the newest run.
+// The chip is a word. An error adds an icon and the error hue.
 function RunWhyLine({ run }: { run: RunDto }) {
   const w = runWhy(run);
   return (
-    <span className="flex min-w-0 items-baseline gap-2 text-sm text-ink-2">
-      {w.error && (
-        <span className="inline-flex shrink-0 items-center gap-[5px] self-center font-semibold whitespace-nowrap text-destructive">
-          <CircleAlert aria-hidden className="size-[15px]" />
-          {w.error}
-        </span>
-      )}
+    <span className="flex min-w-0 items-center gap-2 text-sm text-ink-2">
+      <Badge
+        variant={w.error ? "destructive" : "quiet"}
+        data-run-chip={run.status}
+        className="h-auto rounded-sm px-1.5 py-0 text-[11px] font-semibold"
+      >
+        {w.error ? <CircleAlert aria-hidden /> : run.status === "running" ? <LoaderCircle aria-hidden className="animate-spin" /> : null}
+        {w.chip}
+      </Badge>
+      <span className="shrink-0 font-medium whitespace-nowrap text-foreground">{w.count}</span>
       <span className="min-w-0 truncate">
         {w.lead && <b className="font-semibold text-foreground">{w.lead}</b>}
         {w.lead && w.text && " "}

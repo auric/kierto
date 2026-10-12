@@ -1,6 +1,7 @@
 // Overview, Files, and Commits of the detail pane (prototype/v3 overview, filesSec, commitsSec).
 import { ChevronRight, Copy, ExternalLink, File, FileDiff, FileMinus, FilePlus, FileSymlink, MessageSquare } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
+import { cn } from "@/lib/utils";
 import type { ChangedFile, CommitDto, PrDetail } from "../../shared/dto";
 import { isMe } from "../../shared/me";
 import type { Hints } from "../shell/Hint";
@@ -79,23 +80,31 @@ function DiffLink({ web, forge }: { web: string; forge: string }) {
   );
 }
 
-// Files and Commits start closed. The detail keeps them open across renders.
+// Files and Commits start closed. The detail keeps them open across renders. wide: the fold takes the full pane width, for code.
 export function Fold({
   id,
   head,
   open,
   onOpen,
+  wide,
   children,
 }: {
   id: string;
   head: ReactNode;
   open: boolean;
   onOpen: (open: boolean) => void;
+  wide?: boolean;
   children: ReactNode;
 }) {
   return (
-    <details id={`s-${id}`} open={open} onToggle={(e) => onOpen(e.currentTarget.open)} className="max-w-[86ch] scroll-mt-3 pt-6 open:pb-3">
-      <summary id={`s-${id}-sum`} className="mr-8 -ml-1.5 rounded hover:bg-hover">
+    <details
+      id={`s-${id}`}
+      open={open}
+      onToggle={(e) => onOpen(e.currentTarget.open)}
+      className={cn("scroll-mt-3 pt-6 open:pb-3", !wide && "max-w-[86ch]")}
+    >
+      {/* The cap keeps the chevron of a wide fold in the chevron column of the 86ch sections. */}
+      <summary id={`s-${id}-sum`} className="mr-8 -ml-1.5 max-w-[calc(86ch-1.625rem)] rounded hover:bg-hover">
         <h2 className={`${h2} items-center px-1.5 py-1`}>
           {head}
           <ChevronRight aria-hidden className="rl-chev ml-auto size-[15px] text-muted-foreground" />
@@ -124,7 +133,13 @@ export function FilesFold(props: {
   children: ReactNode;
 }) {
   return (
-    <Fold id="files" open={props.open} onOpen={props.onOpen} head={<FoldHead label="Files" n={props.n === null ? "" : `${props.n}`} />}>
+    <Fold
+      id="files"
+      wide
+      open={props.open}
+      onOpen={props.onOpen}
+      head={<FoldHead label="Files" n={props.n === null ? "" : `${props.n}`} />}
+    >
       {props.children}
       {props.web && <DiffLink web={props.web} forge={props.forge} />}
     </Fold>

@@ -184,7 +184,20 @@ export function Sidebar(props: {
           </div>
         )}
       </div>
-      <div className="grid gap-2 border-t px-3 pt-2.5 pb-3 text-xs text-ink-2">
+      <div className="grid gap-2 border-t px-3 pt-2 pb-3 text-xs text-ink-2">
+        <Hint label="Settings" disabled={!rail} side="right">
+          <button
+            type="button"
+            id="nav-settings"
+            className={cn(navItem, "-mx-1 w-auto text-base", props.settingsOpen && current)}
+            aria-current={props.settingsOpen ? "page" : undefined}
+            aria-label="Settings"
+            onClick={props.onSettings}
+          >
+            <Settings2 aria-hidden className="size-[15px] shrink-0" />
+            <span className="rl-lbl truncate">Settings</span>
+          </button>
+        </Hint>
         {props.status && <SyncLine status={props.status} rail={rail} />}
         <div className="rl-stack flex items-center gap-0.5">
           <Hint label={props.checking ? "Checking now" : "Check now"} disabled={!rail} side="right">
@@ -202,9 +215,6 @@ export function Sidebar(props: {
           <span className="rl-grow flex-1" />
           <ThemeButton rail={rail} />
           <DensityButton rail={rail} />
-          <IconButton label="Settings" pressed={props.settingsOpen} onClick={props.onSettings} side={rail ? "right" : "top"}>
-            <Settings2 aria-hidden className="size-[15px]" />
-          </IconButton>
         </div>
       </div>
     </nav>

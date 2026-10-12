@@ -14,7 +14,7 @@ import { shortHash } from "../review/model";
 import { CloneDialog, CloneFolder, dialogKeys } from "./CloneDialog";
 import { commitFix } from "./data";
 import { FetchCommands, type FixCtx } from "./FixCard";
-import { applyText, commitText, defaultMessage } from "./model";
+import { applyText, appRefPrefix, commitText, defaultMessage } from "./model";
 
 const icon = "size-[15px] shrink-0";
 
@@ -252,8 +252,32 @@ function ApplyBody(props: Parameters<typeof ApplyDialog>[0] & { target: ApplyTar
         </Alert>
       )}
 
+      <p id="apply-cache-help" className="m-0 text-xs text-muted-foreground">
+        Commit to an app branch puts the commit in the app's own copy of the repository. It goes
+        {fix && (
+          <>
+            {" "}
+            on top of{" "}
+            <code translate="no" className="font-mono">
+              {shortHash(fix.run.sourceHead)}
+            </code>
+            ,
+          </>
+        )}{" "}
+        under{" "}
+        <code translate="no" className="font-mono">
+          {appRefPrefix(props.prNumber)}
+        </code>
+        . Your clone does not change. Then the app shows two git commands that bring the commit into your clone.
+      </p>
       <DialogFooter>
-        <Button variant="outline" className="sm:mr-auto" disabled={!!pending} onClick={() => void commit("cache")}>
+        <Button
+          variant="outline"
+          className="sm:mr-auto"
+          aria-describedby="apply-cache-help"
+          disabled={!!pending}
+          onClick={() => void commit("cache")}
+        >
           Commit to an app branch
         </Button>
         <Button variant="ghost" onClick={props.onClose}>

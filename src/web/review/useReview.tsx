@@ -33,6 +33,7 @@ import {
   briefState,
   drafts,
   latestReview,
+  otherRuns,
   plural,
   questions,
   RUN_TEXT,
@@ -41,10 +42,12 @@ import {
   replyOf,
   rereviewState,
   runLine,
+  runResult,
+  severityJumps,
   triageText,
 } from "./model";
 import { DraftRepliesButton, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft";
-import { RunLine } from "./RunLine";
+import { OtherRuns, RunLine, SeverityJumps } from "./RunLine";
 import { BriefLine, type LogTarget, RunLog } from "./RunLog";
 import { TaskChips } from "./TaskChips";
 import type { TriageAction, TriageCtx } from "./Triage";
@@ -135,6 +138,10 @@ export function useReview(
   const latest = latestReview(prRuns);
   const run = useRun(latest?.id ?? null);
   const other = useRun(newest && newest.id !== latest?.id ? newest.id : null);
+  // The newest run of each kind that the run line does not show. Only a reply run needs its own items for its result.
+  const others = otherRuns(prRuns, newest);
+  const otherReply = others.find((r) => r.kind === "reply") ?? null;
+  const replyRun = useRun(otherReply?.id ?? null);
   const replies = useReplyDrafts(pr.id);
   const active = useRuns().data?.find((r) => r.status === "running") ?? null;
   const start = useStartReview(pr.id);
@@ -146,6 +153,12 @@ export function useReview(
   const [log, setLog] = useState<(LogTarget & { of: "line" | "review" | number }) | null>(null);
   const pinned = useRun(typeof log?.of === "number" ? log.of : null);
   const [sumOpen, setSumOpen] = useState(false);
+  // A review run that ends while the page shows it opens the summary.
+  const [watched, setWatched] = useState<{ id: number; running: boolean } | null>(null);
+  if (latest && (watched?.id !== latest.id || watched.running !== (latest.status === "running"))) {
+    setWatched({ id: latest.id, running: latest.status === "running" });
+    if (watched?.id === latest.id && watched.running) setSumOpen(true);
+  }
   const [openDrafts, setOpenDrafts] = useState<ReadonlyMap<number, boolean>>(new Map());
   const [triage, setTriage] = useState<TriageState>({ open: null, busy: new Set() });
   // The threads of the reply run that this page started. They show a pending card while it runs.
@@ -498,6 +511,14 @@ export function useReview(
   const head = latest?.sourceHead ?? null;
   const forDiff = useMemo(() => ({ drafts: ds, head, replies: byThread }), [ds, head, byThread]);
   const lineState = line ? runLine(line, meta.profiles, o.commits) : null;
+  // The severity buttons follow the result of the newest review run, on the run line or on its own line below.
+  const jumps = <SeverityJumps jumps={severityJumps(ds)} onJump={openDraft} />;
+  const itemsOf = (r: RunDto) => [run.data, replyRun.data].find((d) => d?.run.id === r.id)?.items;
+  const otherList = others.map((r) => ({
+    run: r,
+    result: runResult(r, itemsOf(r), fix.fixes?.find((f) => f.run.id === r.id)?.edits.length),
+    jumps: r.id === latest?.id ? jumps : null,
+  }));
   const logRun = typeof log?.of === "number" ? log.of : (log?.of === "review" ? latest : newest)?.id;
   const your = o.threads.filter((t) => t.turn === "your").length;
   return {
@@ -560,6 +581,7 @@ export function useReview(
           meta={meta}
           now={o.now}
           cancelling={cancel.isPending}
+          jumps={line.run.id === latest?.id ? jumps : null}
           onLog={() => openLog(null)}
           onRaw={() => openLog(null, true)}
           onCancel={() => cancel.mutate(line.run.id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
@@ -567,6 +589,7 @@ export function useReview(
           onGaps={() => (line.run.kind === "review" ? openSummary() : openLog(null))}
         />
         <BriefLine run={line.run} />
+        <OtherRuns list={otherList} now={o.now} onLog={(id) => openLog(null, false, id)} />
       </>
     ),
     summary: detail?.run.summary && (

@@ -60,9 +60,14 @@ function TrackerSettings({ tracker, settings }: { tracker: Tracker; settings: Se
 
   return (
     <section aria-labelledby="h-tracker" className="mt-6 grid max-w-[560px] gap-3 border-t pt-4">
-      <h2 id="h-tracker" className="m-0 text-[15px] font-bold">
-        {name}
-      </h2>
+      <div className="grid gap-0.5">
+        <h2 id="h-tracker" tabIndex={-1} className="m-0 scroll-mt-4 text-[15px] font-bold outline-none">
+          {name}
+        </h2>
+        <p className="m-0 text-xs text-muted-foreground">
+          Press Save {name} settings to keep the changes. The save checks the token with {name} first.
+        </p>
+      </div>
       <p className="m-0 text-sm text-ink-2">
         {baseUrl === null
           ? `Connect ${name} to fetch the task text into the review brief.`

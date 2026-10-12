@@ -53,7 +53,7 @@ test("an inline thread shows its excerpt and its link; the task, Files, and Comm
   await expect(page.locator("#t-1000004").getByRole("link")).toHaveCount(0);
 
   // U14: the resolved BLOCKER task.
-  await expect(page.locator("#t-1000008").getByRole("img", { name: "Task done" })).toBeVisible();
+  await expect(page.locator("#t-1000008 [data-task='done']")).toHaveText("Resolved task");
 
   await page.keyboard.press("g");
   await page.keyboard.press("f");

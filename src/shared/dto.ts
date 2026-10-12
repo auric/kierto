@@ -294,6 +294,8 @@ export type RunDto = {
   question: string | null;
   // Plan r3 Feature C: the fetched tasks at the start of the run. Absent for runs made before it was stored.
   tasks?: { key: string; fetchedAt: number }[];
+  // The finding items of the run that a re-review did not find fixed or outdated. 0 for other run kinds.
+  findings: number;
 };
 
 export type ItemStatus = "new" | "accepted" | "discarded" | "posted";

@@ -1,8 +1,9 @@
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Send, Terminal } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -389,11 +390,45 @@ function Shell({ stale }: { stale: boolean }) {
           ) : (
             <>
               <BackBar onBack={() => go({ mobile: "list", focus: "list" }, "focus-list")} />
-              <div className="mx-auto my-10 grid max-w-[52ch] gap-3 px-6 text-ink-2">
-                <p className="m-0">
-                  {all.length ? "Select a pull request in the list." : "Pull requests appear here after the first check."}
-                </p>
-              </div>
+              {aiView && view === "post" && !rows.length && !query.trim() ? (
+                <Empty className="my-10 flex-none">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <Send aria-hidden />
+                    </EmptyMedia>
+                    <EmptyTitle>Nothing is ready to post</EmptyTitle>
+                    <EmptyDescription>
+                      Accept drafts from {meta.data.runner.short} on a pull request. Accepted drafts wait here until you post them to{" "}
+                      {forge}.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                  <EmptyContent>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setView("runs");
+                        go({ mobile: "list", focus: "list" }, "focus-list");
+                      }}
+                    >
+                      <Terminal aria-hidden data-icon="inline-start" />
+                      Go to Review runs
+                    </Button>
+                  </EmptyContent>
+                </Empty>
+              ) : (
+                <div className="mx-auto my-10 grid max-w-[52ch] gap-3 px-6 text-ink-2">
+                  <p className="m-0">
+                    {!all.length
+                      ? "Pull requests appear here after the first check."
+                      : rows.length
+                        ? "Select a pull request in the list."
+                        : query.trim()
+                          ? "No pull request matches the filter."
+                          : "This list has no pull requests."}
+                  </p>
+                </div>
+              )}
             </>
           )}
         </section>

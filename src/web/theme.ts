@@ -49,12 +49,13 @@ export function initTheme() {
 // prototype/v3: system, then light, then dark.
 export const NEXT_THEME: Record<Theme, Theme> = { system: "light", light: "dark", dark: "system" };
 
-export function cycleTheme() {
-  const next = NEXT_THEME[theme()];
+export function setTheme(next: Theme) {
   memory = { ...memory, theme: next };
   write(THEME, next === "system" ? null : next);
   apply();
 }
+
+export const cycleTheme = () => setTheme(NEXT_THEME[theme()]);
 
 export function toggleDensity() {
   const next = !compact();

@@ -237,6 +237,57 @@ export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancel
 // R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, and the brief.
 export const latestReview = (runs: RunDto[] | undefined) => runs?.find((r) => r.kind === "review") ?? null;
 
+// ---------- The newest run of the other kinds ----------
+
+export const KIND_LABEL: Record<RunKind, string> = { review: "Review", reply: "Reply drafts", fix: "Fixes", ask: "Ask" };
+
+// The newest run of each kind that the run line does not show, newest first. runs: newest first.
+export function otherRuns(runs: RunDto[] | undefined, line: RunDto | null): RunDto[] {
+  const seen = new Set<RunKind>(line ? [line.kind] : []);
+  const out: RunDto[] = [];
+  for (const r of runs ?? []) {
+    if (seen.has(r.kind)) continue;
+    seen.add(r.kind);
+    out.push(r);
+  }
+  return out;
+}
+
+// The outcome of a run in a few words. items: the items of the run. edits: the edit count of a fix run.
+// Either one is undefined while it loads. Then only the state shows.
+export function runResult(r: RunDto, items: ReviewItemDto[] | undefined, edits: number | undefined): string {
+  switch (r.status) {
+    case "running":
+      return RUN_TEXT[r.kind].running;
+    case "cancelled":
+      return "Cancelled";
+    case "failed":
+      return r.errorKind === "usage_limit" ? "Usage limit reached" : "Failed";
+    default:
+      if (r.kind === "ask") return "Answered";
+      if (r.kind === "fix") return edits === undefined ? "" : edits ? plural(edits, "edit") : "No edits";
+      if (r.kind === "review" && (r.explain ?? r.profile === "explain")) return "Explained the change";
+      if (!items) return "";
+      return r.since ? rereviewCount(items) : countText(items, r.status === "incomplete", r.kind);
+  }
+}
+
+export type Severity = AnchoredFinding["severity"];
+export type Jump = { severity: Severity; n: number; first: number };
+
+// The open drafts of each severity, in severity order, with the first draft of each. ds: drafts(items), in screen order.
+export function severityJumps(ds: ReviewItemDto[]): Jump[] {
+  const by = new Map<Severity, Jump>();
+  for (const it of ds) {
+    if (it.status === "discarded") continue;
+    const severity = (it.payload as AnchoredFinding).severity;
+    const hit = by.get(severity);
+    if (hit) hit.n++;
+    else by.set(severity, { severity, n: 1, first: it.id });
+  }
+  return (Object.keys(SEVERITY) as Severity[]).flatMap((s) => by.get(s) ?? []);
+}
+
 // Plan r2 UI-RR, jobs.ts rereview(): the server takes a re-review of the newest review run only when that run ended with a result,
 // was no Explain run, and the source head moved since. The stored brief must not use the Explain profile.
 // since: the short head of that run. why: the reason for the key c when no re-review is possible.
@@ -432,26 +483,43 @@ export function runRows(prs: PrRow[], latest: ReadonlyMap<number, RunDto>, q: st
   return prs.filter((p) => latest.has(p.id) && matches(p, q)).sort((a, b) => key(b) - key(a));
 }
 
-export type RunWhy = { error: string | null; lead: string | null; text: string | null };
+// chip: the run state in a word. error: the chip marks an error. count: the findings of a review run, else the run kind.
+export type RunWhy = { chip: string; error: boolean; count: string; lead: string | null; text: string | null };
 
-// prototype/v3 whyRun. The list has no item counts, so a finished run shows its summary line.
-// The run names the profile as it was at the start of the run.
+// prototype/v3 whyRun. A finished run shows its summary line. The run names the profile as it was at the start of the run.
 export function runWhy(r: RunDto): RunWhy {
   const profile = r.profileName;
+  const explain = r.kind === "review" && (r.explain ?? r.profile === "explain");
+  // Plan v3 section 7: an incomplete run says "No findings in what it read", never "No issues".
+  const none = r.status === "incomplete" ? "No findings in what it read" : "No findings";
+  const count =
+    r.kind !== "review" || explain || (r.status !== "completed" && r.status !== "incomplete")
+      ? KIND_LABEL[r.kind]
+      : r.findings
+        ? plural(r.findings, "finding")
+        : none;
   switch (r.status) {
     case "running":
-      return { error: null, lead: null, text: `${profile}: ${RUN_TEXT[r.kind].now} now.` };
+      return { chip: "Running", error: false, count, lead: null, text: `${profile}: ${RUN_TEXT[r.kind].now} now.` };
     case "cancelled":
-      return { error: null, lead: null, text: `${profile}: you cancelled it.` };
+      return { chip: "Cancelled", error: false, count, lead: null, text: `${profile}: you cancelled it.` };
     case "failed":
       return {
-        error: r.errorKind === "usage_limit" ? "Usage limit" : "Failed",
+        chip: r.errorKind === "usage_limit" ? "Usage limit" : "Failed",
+        error: true,
+        count,
         lead: null,
         text: `${profile}: ${r.errorText ?? ""}`.trim(),
       };
     default: {
       const line = r.summary?.summary.trim() || "done.";
-      return { error: null, lead: `${profile}:`, text: r.status === "incomplete" ? `${line} Coverage has gaps.` : line };
+      return {
+        chip: "Done",
+        error: false,
+        count,
+        lead: `${profile}:`,
+        text: r.status === "incomplete" ? `${line} Coverage has gaps.` : line,
+      };
     }
   }
 }

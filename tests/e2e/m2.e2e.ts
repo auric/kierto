@@ -69,12 +69,17 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
 
   await expect(runLine(page)).toContainText(/Claude reviewed [0-9a-f]{7}/, { timeout: RUN_MS });
   await expect(runLine(page)).toContainText("3 findings, 1 question");
+  // One button per severity of the open drafts. Each one goes to the first draft of its severity.
+  await expect(runLine(page).locator("[data-severity]")).toHaveText(["1 Blocker", "1 Minor", "1 Nit"]);
+  await runLine(page).getByRole("button", { name: "1 Nit" }).click();
+  await expect(page.getByRole("article", { name: /^Draft from Claude\. Nit\. README\.md:1\./ })).toBeFocused();
   await expect(page.getByText(`Your note: ${NOTE}`)).toBeVisible();
   // Exact, moved, and outside drafts. The finding on a file that the snapshot does not have is dropped.
   await expect(page.locator("[data-draft]")).toHaveCount(3);
   await expect(page.getByText("Moved from line 6: the quoted code is on line 5.")).toBeVisible();
   await expect(page.getByText("Outside the diff. Posts as a general comment with a link to README.md:1.")).toBeVisible();
-  await page.locator("#ai-sum-head").click();
+  // A review that ends while the page shows it opens the summary.
+  await expect(page.locator("#ai-sum")).toHaveAttribute("open", "");
   await expect(page.getByText("1 finding dropped: its code reference did not match the snapshot.")).toBeVisible();
   await expect(page.getByText("Must flush() stay atomic for readers?")).toBeVisible();
 
@@ -106,6 +111,12 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   expect((await runs(request))[0]).toMatchObject({ profile: "security", note: NOTE });
   await expect(runLine(page)).toContainText(/Claude reviewed/, { timeout: RUN_MS });
   await expect(page.locator("#nav-runs")).toHaveAccessibleName("Review runs: 1");
+
+  // The Review runs row names the state, the findings, and the time of the newest run.
+  await page.locator("#nav-runs").click();
+  await expect(row(page).locator("[data-run-chip]")).toHaveText("Done");
+  await expect(row(page)).toContainText("3 findings");
+  await expect(row(page).locator("time")).toHaveText(/^(now|\d+m)$/);
 });
 
 test("Esc closes the brief; cancel stops a running review, and nothing from it stays", async ({ page, request }) => {
@@ -141,7 +152,7 @@ test("a usage limit is one line with the CLI message, and the inbox keeps workin
   });
   await expect(runLine(page).getByRole("button", { name: "Show raw output" })).toHaveCount(0);
   await page.locator("#nav-runs").click();
-  await expect(row(page)).toContainText("Usage limit");
+  await expect(row(page).locator("[data-run-chip]")).toHaveText("Usage limit");
   await page
     .locator("nav[aria-label='Views']")
     .getByRole("button", { name: /^Reviewing/ })

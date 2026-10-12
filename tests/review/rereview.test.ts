@@ -519,7 +519,14 @@ describe("re-review runs", () => {
       h.db.query("UPDATE review_item SET status = 'posted' WHERE id = $id").run({ id: at(35).id ?? 0 });
       const d = await h.finish(started.body.id);
 
-      expect(d.run).toMatchObject({ kind: "review", status: "incomplete", sourceHead: h.s2, since: { head: h.s1, incremental: true } });
+      // findings: the new one and the two open carried ones. Fixed and outdated copies do not count.
+      expect(d.run).toMatchObject({
+        kind: "review",
+        status: "incomplete",
+        sourceHead: h.s2,
+        since: { head: h.s1, incremental: true },
+        findings: 3,
+      });
       const coverage = d.run.summary?.coverage;
       expect(coverage?.skipped).toEqual([
         "Verdict for finding 99999 dropped: the ID is not an earlier finding.",

@@ -17,6 +17,7 @@ import {
   latestReview,
   limitText,
   logTree,
+  otherRuns,
   RUN_TEXT,
   repliesButton,
   replyCard,
@@ -24,8 +25,10 @@ import {
   rereviewCount,
   rereviewState,
   runLine,
+  runResult,
   runRows,
   runWhy,
+  severityJumps,
   tokenTotal,
   triageText,
 } from "../../src/web/review/model";
@@ -79,6 +82,7 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
   hasRaw: true,
   since: null,
   question: null,
+  findings: 0,
   ...o,
 });
 
@@ -329,23 +333,45 @@ describe("Review runs view", () => {
     expect(runRows([pr(2, "Two"), pr(3, "Three")], latest, "thr").map((p) => p.id)).toEqual([3]);
   });
 
-  test("the why-line names the profile and the outcome", () => {
-    expect(runWhy(run({ status: "running" }))).toEqual({ error: null, lead: null, text: "General: reviewing now." });
+  test("the why-line names the state, the findings, the profile, and the outcome", () => {
+    expect(runWhy(run({ status: "running" }))).toEqual({
+      chip: "Running",
+      error: false,
+      count: "Review",
+      lead: null,
+      text: "General: reviewing now.",
+    });
     const summary = {
       summary: "Deadlock risk.",
       risks: [],
       coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
       dropped: [],
     };
-    expect(runWhy(run({ summary }))).toEqual({ error: null, lead: "General:", text: "Deadlock risk." });
-    expect(runWhy(run({ status: "incomplete", summary })).text).toBe("Deadlock risk. Coverage has gaps.");
+    expect(runWhy(run({ summary, findings: 3 }))).toEqual({
+      chip: "Done",
+      error: false,
+      count: "3 findings",
+      lead: "General:",
+      text: "Deadlock risk.",
+    });
+    expect(runWhy(run({ summary, findings: 1 })).count).toBe("1 finding");
+    expect(runWhy(run({ summary })).count).toBe("No findings");
+    const gaps = runWhy(run({ status: "incomplete", summary }));
+    expect([gaps.chip, gaps.count, gaps.text]).toEqual(["Done", "No findings in what it read", "Deadlock risk. Coverage has gaps."]);
     expect(runWhy(run({ status: "failed", errorKind: "usage_limit", errorText: "Resets at 6pm." }))).toEqual({
-      error: "Usage limit",
+      chip: "Usage limit",
+      error: true,
+      count: "Review",
       lead: null,
       text: "General: Resets at 6pm.",
     });
-    expect(runWhy(run({ status: "failed", errorKind: "schema", errorText: "Bad." })).error).toBe("Failed");
-    expect(runWhy(run({ status: "cancelled" })).text).toBe("General: you cancelled it.");
+    expect(runWhy(run({ status: "failed", errorKind: "schema", errorText: "Bad." })).chip).toBe("Failed");
+    const cancelled = runWhy(run({ status: "cancelled" }));
+    expect([cancelled.chip, cancelled.error, cancelled.text]).toEqual(["Cancelled", false, "General: you cancelled it."]);
+    // Other kinds and Explain runs have no findings, so the row names the kind.
+    expect(runWhy(run({ kind: "reply", summary })).count).toBe("Reply drafts");
+    expect(runWhy(run({ kind: "fix", summary })).count).toBe("Fixes");
+    expect(runWhy(run({ profile: "explain", summary })).count).toBe("Review");
   });
 
   test("the why-line keeps the profile name of the run start after a rename", () => {
@@ -533,5 +559,70 @@ describe("re-review", () => {
     expect(carriedNote(copy(1, "open"))).toBe("Still open after the new commits.");
     expect(carriedNote(copy(1, "fixed"))).toBe("Fixed in the new commits. You restored it.");
     expect(carriedNote(finding(1))).toBeNull();
+  });
+});
+
+describe("the newest run of the other kinds", () => {
+  const replyItem = (id: number, action: ReplyPayload["action"]): ReviewItemDto => {
+    const payload: ReplyPayload = { thread: id, action, body: "Ok.", reason: "", evidenceStatus: "code", replyTo: id };
+    return {
+      id,
+      run: 4,
+      kind: "reply",
+      body: action === "none" ? "" : "Ok.",
+      payload,
+      anchor: null,
+      status: "new",
+      revision: 0,
+      edited: false,
+    };
+  };
+
+  test("one run per kind that the run line does not show, newest first", () => {
+    const runs = [
+      run({ id: 5, kind: "fix" }),
+      run({ id: 4, kind: "reply" }),
+      run({ id: 3 }),
+      run({ id: 2, kind: "reply" }),
+      run({ id: 1, kind: "ask" }),
+    ];
+    expect(otherRuns(runs, runs[0] ?? null).map((r) => r.id)).toEqual([4, 3, 1]);
+    expect(otherRuns(runs, run({ id: 3 })).map((r) => r.id)).toEqual([5, 4, 1]);
+    expect(otherRuns(undefined, null)).toEqual([]);
+  });
+
+  test("the result names the outcome of each kind, and only the state while the items load", () => {
+    const items = [replyItem(1, "reply"), replyItem(2, "reply"), replyItem(3, "none")];
+    expect(runResult(run({ kind: "reply" }), items, undefined)).toBe("2 reply drafts, 1 thread needs no reply");
+    expect(runResult(run({ kind: "reply" }), undefined, undefined)).toBe("");
+    expect(runResult(run(), [finding(1), finding(2), question(3)], undefined)).toBe("2 findings, 1 question");
+    expect(runResult(run({ status: "incomplete" }), [], undefined)).toBe("No findings in what it read");
+    expect(runResult(run({ profile: "explain" }), [], undefined)).toBe("Explained the change");
+    expect(runResult(run({ kind: "fix" }), [], 2)).toBe("2 edits");
+    expect(runResult(run({ kind: "fix" }), [], 0)).toBe("No edits");
+    expect(runResult(run({ kind: "fix" }), [], undefined)).toBe("");
+    expect(runResult(run({ kind: "ask" }), [], undefined)).toBe("Answered");
+    expect(runResult(run({ status: "cancelled" }), [], undefined)).toBe("Cancelled");
+    expect(runResult(run({ status: "failed", errorKind: "usage_limit" }), [], undefined)).toBe("Usage limit reached");
+    expect(runResult(run({ status: "failed", errorKind: "schema" }), [], undefined)).toBe("Failed");
+    expect(runResult(run({ kind: "reply", status: "running" }), undefined, undefined)).toBe("Drafting replies…");
+    const since = { head: "d".repeat(40), incremental: true };
+    expect(runResult(run({ since }), [finding(1)], undefined)).toBe("1 new, 0 carried, 0 fixed or outdated");
+  });
+
+  test("severity jumps: open drafts per severity in severity order, each with its first draft", () => {
+    const ds = [
+      finding(1, {}, { severity: "minor" }),
+      finding(2, { status: "discarded" }, { severity: "blocker" }),
+      finding(3, {}, { severity: "major" }),
+      finding(4, { status: "accepted" }, { severity: "minor" }),
+      finding(5, {}, { severity: "blocker" }),
+    ];
+    expect(severityJumps(ds)).toEqual([
+      { severity: "blocker", n: 1, first: 5 },
+      { severity: "major", n: 1, first: 3 },
+      { severity: "minor", n: 2, first: 1 },
+    ]);
+    expect(severityJumps([finding(1, { status: "discarded" })])).toEqual([]);
   });
 });

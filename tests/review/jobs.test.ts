@@ -334,6 +334,7 @@ describe("run pipeline", () => {
         model: "claude-haiku-5-5",
         stale: null,
         hasRaw: true,
+        findings: 2,
       });
       expect(d.run.usage?.turns).toBeGreaterThan(0);
       expect(d.run.summary?.summary).toBe("Line 3 changes.");

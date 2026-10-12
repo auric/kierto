@@ -97,9 +97,12 @@ export function ReviewProfiles({ settings }: { settings: SettingsDto }) {
 
   return (
     <section aria-labelledby="h-profiles" className="mt-6 grid max-w-[86ch] gap-3 border-t pt-4">
-      <h2 id="h-profiles" className="m-0 text-[15px] font-bold">
-        Review profiles
-      </h2>
+      <div className="grid gap-0.5">
+        <h2 id="h-profiles" tabIndex={-1} className="m-0 scroll-mt-4 text-[15px] font-bold outline-none">
+          Review profiles
+        </h2>
+        <p className="m-0 text-xs text-muted-foreground">Press Save profiles to keep the changes.</p>
+      </div>
       <p className="m-0 max-w-[72ch] text-sm text-ink-2">
         Each profile tells {runner} what to check. The review brief lists the profiles in this order. A run keeps the profile name it
         started with.

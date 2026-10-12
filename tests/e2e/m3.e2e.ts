@@ -88,7 +88,8 @@ test("A8: two of the drafts are accepted, and exactly those two texts post after
   await expect(drafts(page).nth(2)).toBeFocused();
   await page.keyboard.press("d");
   await expect(drafts(page).nth(2)).toContainText("Discarded: The README does not name the flush order.");
-  await page.locator("#ai-sum-head").click();
+  // A review that ends while the page shows it opens the summary.
+  await expect(page.locator("#ai-sum")).toHaveAttribute("open", "");
   await page.locator("#ai-sum").getByRole("button", { name: "Discard" }).click();
   await expect(page.locator("#ai-sum")).toContainText("Discarded: Must flush() stay atomic for readers?");
   await expect(page.getByText("Ready to post: 2 inline comments")).toBeVisible();
