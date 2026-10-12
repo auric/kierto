@@ -281,7 +281,9 @@ function prText(pr: PullRequest, comments: Comment[]): string {
     const line = commentLine(c);
     const at = typeof a.path === "string" ? `, on ${a.path}${line === undefined ? "" : ` line ${line}`}` : "";
     const head = c.parentId === null ? `Comment ${c.id}` : `Reply ${c.id} to ${c.parentId}`;
-    out.push(`### ${head} by ${who(c.author)}${at}${c.threadResolved ? " (resolved)" : ""}`, "");
+    // Gate v3 U14: a task is a BLOCKER comment. RESOLVED marks it done.
+    const task = c.severity === "BLOCKER" ? (c.state === "RESOLVED" ? " (task, resolved)" : " (task, open)") : "";
+    out.push(`### ${head} by ${who(c.author)}${at}${task}${c.threadResolved ? " (resolved)" : ""}`, "");
     // replies.md step 5: the stored excerpt of an inline root. An indented block, so no line of it can end the block.
     if (c.parentId === null && c.excerpt?.length) out.push("Code at the comment:", "", ...c.excerpt.map(excerptLine), "");
     out.push(c.text, "");

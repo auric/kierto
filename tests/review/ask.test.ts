@@ -8,6 +8,7 @@ import { createApp } from "../../src/server/app";
 import { writeConfig } from "../../src/server/config";
 import { createLive } from "../../src/server/live";
 import { createReviewJobs } from "../../src/server/review/jobs";
+import { UNTRUSTED } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import type { ApiError, AskDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
@@ -32,7 +33,7 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 3 });
 });
 
-type Call = { argv: string[]; stdin: string; childPid?: number };
+type Call = { argv: string[]; cwd: string; stdin: string; childPid?: number };
 type Start = RunDto & RunConflict & ApiError;
 const flag = (argv: string[], name: string) => argv[argv.indexOf(name) + 1] as string;
 
@@ -136,6 +137,7 @@ describe("ask runs", () => {
       expect(flag(c.argv, "--json-schema")).toBe(JSON.stringify(askJsonSchema()));
       expect(flag(c.argv, "--max-turns")).toBe("100");
       for (const canary of CANARIES) expect(c.stdin).not.toContain(canary);
+      expect(c.stdin).not.toContain("history.md");
       const section = c.stdin.slice(c.stdin.indexOf("# Your instructions"), c.stdin.indexOf("# Metadata"));
       expect(section.trim()).toBe(`# Your instructions\n\n${question}`);
 
@@ -174,6 +176,74 @@ describe("ask runs", () => {
       expect(d.run).toMatchObject({ kind: "ask", status: "cancelled", hasRaw: true });
       expect(d.items).toEqual([]);
       expect((await h.json<AskDto[]>(`/api/prs/${h.pr}/asks`)).body).toMatchObject([{ answer: null }]);
+    },
+    SLOW,
+  );
+
+  test(
+    "ask, reply, and fix runs get history.md with the earlier review and answers; pr.md marks tasks",
+    async () => {
+      const h = await setup();
+      const answered = await h.finish((await h.ask("FIRST-QUESTION?")).body.id);
+      const { id: rev } = h.db
+        .query(
+          `INSERT INTO review_run (pr, kind, profile, profile_name, note, idem_key, source_head, target_head, merge_base, status, started_at, summary_json)
+          VALUES ($pr, 'review', 'general', 'General', '', 'k', 'old-head', 'b', 'm', 'completed', 1, $summary) RETURNING id`,
+        )
+        .get({ pr: h.pr, summary: JSON.stringify({ summary: "REVIEW-SUMMARY", risks: [], coverage: {}, dropped: [] }) }) as { id: number };
+      const payload = {
+        path: "src/a.ts",
+        side: "new",
+        line: 2,
+        lineEnd: null,
+        anchorText: "x",
+        severity: "major",
+        category: "Bug",
+        body: "B",
+      };
+      h.db
+        .query("INSERT INTO review_item (run, kind, payload_json, body, status) VALUES ($run, 'finding', $p, 'FINDING-BODY', 'accepted')")
+        .run({ run: rev, p: JSON.stringify(payload) });
+      h.db.query("UPDATE comment SET severity = 'BLOCKER', task_state = 'OPEN' WHERE comment_id = 101").run();
+      h.db
+        .query(
+          `INSERT INTO comment (pr, comment_id, version, parent_id, root_id, author_slug, author_name, text, thread_resolved, created_at, updated_at, severity, task_state)
+          VALUES ($pr, 102, 0, 101, 101, 'asmith', 'Alex Smith', 'Done task', 0, 2, 2, 'BLOCKER', 'RESOLVED')`,
+        )
+        .run({ pr: h.pr });
+      h.db.query("UPDATE pull_request SET my_role = 'AUTHOR' WHERE id = $pr").run({ pr: h.pr });
+
+      const starts: [string, () => Promise<{ body: Start }>][] = [
+        ["ask", () => h.ask("SECOND?")],
+        ["reply", () => h.json<Start>(`/api/prs/${h.pr}/reply-run`, { body: { threads: [101] } })],
+        ["fix", () => h.json<Start>(`/api/prs/${h.pr}/fix-run`, { body: { threads: [101] } })],
+      ];
+      for (const [kind, start] of starts) {
+        h.scenario({ hang: true });
+        const hung = () => h.calls().filter((c) => c.childPid).length;
+        const before = hung();
+        const r = await start();
+        expect(r.body).toMatchObject({ kind, status: "running" });
+        expect(await waitFor(() => hung() > before)).toBe(true);
+        const c = h.runCalls().at(-1) as Call;
+        expect(c.stdin).toContain("- ./context/history.md holds the earlier review and the earlier answers");
+        const history = readFileSync(join(c.cwd, "context", "history.md"), "utf8");
+        expect(history.startsWith(UNTRUSTED)).toBe(true);
+        expect(history).toContain(`- Run: ${rev}
+`);
+        expect(history).toContain("(the current head is ");
+        expect(history).toContain("    REVIEW-SUMMARY");
+        expect(history).toContain("- State: accepted");
+        expect(history).toContain("    FINDING-BODY");
+        expect(history).toContain(`## Ask run ${answered.run.id}`);
+        expect(history).toContain("    FIRST-QUESTION?");
+        expect(history).toContain("    Echo: FIRST-QUESTION?");
+        const prMd = readFileSync(join(c.cwd, "context", "pr.md"), "utf8");
+        expect(prMd).toContain("### Comment 101 by Alex Smith (asmith) (task, open)");
+        expect(prMd).toContain("### Reply 102 to 101 by Alex Smith (asmith) (task, resolved)");
+        expect((await h.json(`/api/runs/${r.body.id}/cancel`, { method: "POST" })).status).toBe(202);
+        expect((await h.finish(r.body.id)).run.status).toBe("cancelled");
+      }
     },
     SLOW,
   );

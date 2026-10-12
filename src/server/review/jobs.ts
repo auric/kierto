@@ -38,6 +38,7 @@ import {
   rereviewResult,
   reviewJsonSchema,
   reviewResult,
+  severities,
 } from "../../shared/review";
 import type { RunErrorKind, RunEvent, RunStatus } from "../../shared/run-log";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
@@ -235,7 +236,7 @@ const SQL = {
   pr: `SELECT id, project, repo, pr_id, title, description, author_slug, author_name, my_role, state, pr_version, source_head, target_head, source_branch,
       target_branch, web_url, updated_date FROM pull_request WHERE id = $id`,
   comments: `SELECT comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json, thread_resolved, created_at,
-      updated_at, excerpt_json FROM comment WHERE pr = $pr AND tombstoned_at IS NULL`,
+      updated_at, excerpt_json, severity, task_state FROM comment WHERE pr = $pr AND tombstoned_at IS NULL`,
   tasks: "SELECT key, source, url FROM pr_task WHERE pr = $pr ORDER BY ord",
   brief: "SELECT note, profile, updated_at FROM pr_brief WHERE pr = $pr",
   saveBrief: `INSERT INTO pr_brief (pr, note, profile, updated_at) VALUES ($pr, $note, $profile, $now)
@@ -285,6 +286,9 @@ const SQL = {
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr`,
   raw: "SELECT raw_output FROM review_run WHERE id = $id",
   asks: "WHERE r.pr = $pr AND r.kind = 'ask' ORDER BY r.id DESC LIMIT 20",
+  historyAsks:
+    "WHERE r.pr = $pr AND r.kind = 'ask' AND r.status IN ('completed', 'incomplete') AND r.answer IS NOT NULL ORDER BY r.id DESC",
+  historyItems: "SELECT * FROM review_item WHERE run = $run AND kind = 'finding' ORDER BY id",
 };
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -350,6 +354,8 @@ function commentsOf(db: Database, pr: number): Comment[] {
     created_at: number;
     updated_at: number;
     excerpt_json: string | null;
+    severity: string | null;
+    task_state: string | null;
   };
   return (db.query(SQL.comments).all({ pr }) as Row[]).map((c) => {
     let anchor: unknown;
@@ -370,6 +376,8 @@ function commentsOf(db: Database, pr: number): Comment[] {
       createdAt: c.created_at,
       updatedAt: c.updated_at,
       ...(excerpt && { excerpt }),
+      ...(c.severity !== null && { severity: c.severity }),
+      ...(c.task_state !== null && { state: c.task_state }),
     };
   });
 }
@@ -553,6 +561,88 @@ function findingsFile(rows: ItemRow[], carry: Carry): ContextFile {
     ];
   });
   return { name: "findings.md", text: out.join("\n") };
+}
+
+// Byte caps of the context/history.md sections. The cut drops the blocks after the first block that does not fit.
+export const HISTORY_FINDING_BYTES = 60 * 1024;
+export const HISTORY_ASK_BYTES = 40 * 1024;
+
+function capped(blocks: string[][], max: number, left: (n: number) => string): string[] {
+  const out: string[] = [];
+  let used = 0;
+  for (const [i, b] of blocks.entries()) {
+    const size = Buffer.byteLength(b.join("\n"));
+    if (used + size > max) return [...out, left(blocks.length - i), ""];
+    used += size;
+    out.push(...b);
+  }
+  return out;
+}
+
+// context/history.md of an ask, reply, or fix run: the newest finished review with its findings, and the earlier answers.
+// head: the current source head. null when no earlier result exists.
+export function historyFile(db: Database, pr: number, head: string): ContextFile | null {
+  const run = db.query(`${SQL.run} ${SQL.baseRun}`).get({ pr }) as RunRow | null;
+  const asks = db.query(`${SQL.run} ${SQL.historyAsks}`).all({ pr }) as RunRow[];
+  if (!run && !asks.length) return null;
+  const out: string[] = [];
+  if (run) {
+    const summary = run.summary_json ? (JSON.parse(run.summary_json) as RunSummary).summary : "";
+    const rank = (r: ItemRow) => severities.indexOf(earlierItem(r).finding.severity);
+    const rows = (db.query(SQL.historyItems).all({ run: run.id }) as ItemRow[]).sort((a, b) => rank(a) - rank(b) || a.id - b.id);
+    const findings = rows.map((r) => {
+      const { finding: f } = earlierItem(r);
+      const end = f.lineEnd !== null && f.lineEnd !== f.line ? `-${f.lineEnd}` : "";
+      const at = f.side === "new" ? run.source_head : (run.merge_base ?? "the merge base of that run");
+      return [
+        `### Finding ${r.id}`,
+        "",
+        `- Path: ${oneLine(f.path)}`,
+        `- Side: ${f.side}`,
+        `- Lines: ${f.line}${end} at ${at}`,
+        `- Severity: ${f.severity}`,
+        `- Category: ${oneLine(f.category)}`,
+        `- State: ${r.status}`,
+        "",
+        "Text:",
+        "",
+        indent(r.body),
+        "",
+      ];
+    });
+    out.push(
+      "## Latest review",
+      "",
+      `- Run: ${run.id}`,
+      `- Profile: ${oneLine(run.profile_name ?? run.profile)}`,
+      `- Status: ${run.status}`,
+      `- Reviewed head: ${run.source_head}${run.source_head === head ? "" : ` (the current head is ${head})`}`,
+      "",
+      "Summary:",
+      "",
+      indent(summary || "(none)"),
+      "",
+      ...(findings.length ? capped(findings, HISTORY_FINDING_BYTES, (n) => `${n} more findings left out.`) : ["No findings.", ""]),
+    );
+  }
+  if (asks.length) {
+    const blocks = asks.map((r) => [
+      `## Ask run ${r.id}`,
+      "",
+      `- Head: ${r.source_head}`,
+      "",
+      "Question:",
+      "",
+      indent(r.question ?? ""),
+      "",
+      "Answer:",
+      "",
+      indent(r.answer ?? ""),
+      "",
+    ]);
+    out.push(...capped(blocks, HISTORY_ASK_BYTES, (n) => `${n} earlier ask runs left out.`));
+  }
+  return { name: "history.md", text: out.join("\n") };
 }
 
 // Plan r2 S-RR: the copies of the carried items, inside the run-end transaction. Each source becomes discarded.
@@ -918,6 +1008,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const { files, attachments } = taskContext(j.db, j.pr, dataDir);
     const carry = j.carry;
     const earlier = carry?.items.filter((r) => r.kind === "finding") ?? [];
+    const history = j.kind === "review" ? null : historyFile(j.db, j.pr, pr.source_head);
+    const extra = [...(carry && earlier.length ? [findingsFile(current(j.db, earlier), carry)] : []), ...(history ? [history] : [])];
     try {
       ws = await prepareWorkspace({
         dataDir,
@@ -925,7 +1017,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         pr: toPullRequest(pr),
         comments: commentsOf(j.db, j.pr),
         remote: await remote({ project: pr.project, repo: pr.repo, id: pr.pr_id }),
-        files: carry && earlier.length ? [...files, findingsFile(current(j.db, earlier), carry)] : files,
+        files: [...files, ...extra],
         attachments,
         ...(carry && { since: carry.since }),
       });
@@ -950,6 +1042,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       tasks: j.db.query(SQL.tasks).all({ pr: j.pr }) as PrTask[],
       taskFile: files.length > 0,
       attachments: attachments.length > 0,
+      history: history !== null,
     };
     const reply = j.kind === "reply" ? j.threads : null;
     const fix = j.kind === "fix" ? j.threads : null;
