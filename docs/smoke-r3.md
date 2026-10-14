@@ -1,6 +1,6 @@
 # Release 3 manual smoke test: Fix it, Jira Markdown, and Jira attachments
 
-This test checks the Release 3 features against a real Bitbucket Server, a real Jira server, your own git clone, and the real `claude` CLI. The user runs it. The automated suites use fixtures, the fake CLI, the fake Bitbucket, the fake Jira, and temp clones only. The results fill the "Release 3 (not run)" rows in integration-check.md: U21 to U29, B11, and B12.
+This test checks the Release 3 features against a real Bitbucket Server, a real Jira server, your own git clone, and the real `claude` CLI. The user runs it. The automated suites use fixtures, the fake CLI, the fake Bitbucket, the fake Jira, and temp clones only. The results fill the "Release 3 (not run)" rows in integration-check.md: U21 to U29, B11, B12, and B15. Part I checks the prompt features that came after Release 3.
 
 ## Rules
 
@@ -11,7 +11,8 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 - Use a new, empty data folder. Never use the data folder of your daily instance.
 - The app never pushes. Each push in this test is your own `git push`.
 - Do not copy tokens, host names, code, comment text, issue text, or file names into files, issues, or chat. Record payload shapes (key names and types), counts, and tag names only.
-- Expect about nine runs on your Claude subscription quota: three in the gate, two in part A, one in part B, one interactive session in part D, one in part E, and one in part F.
+- Expect about twelve runs on your Claude subscription quota: five in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, and one in part I.
+- Part I sends your project instructions to Claude. Turn on the global CLAUDE.md only when it holds nothing that the approval does not cover.
 - In this document, `<BITBUCKET_URL>` is the base URL of the Bitbucket server, `<JIRA_URL>` is the base URL of the Jira server, `<TEST_PR_URL>` is the URL of the test pull request, `<KEY>` is a Jira issue key that the test pull request names, and `<CLONE>` is the absolute path of your test clone.
 
 ## Preparation
@@ -27,11 +28,12 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 9. Open the URL. Enter `<BITBUCKET_URL>` and your access token. Click Save. Click "Check now". If the test pull request is not in the list, paste `<TEST_PR_URL>` into the filter and click "Follow this pull request".
 10. Open Settings. Enter `<JIRA_URL>` and a Jira personal access token. Click "Save Jira settings". Expect "Saved. Jira accepted the token."
 
-## Gate B11 and B12
+## Gate B11, B12, and B15
 
 1. Run `bun scripts/gate/claude-checks.ts --only B11,B12`. Expect PASS for B11 and B12 in the output and in `.gate0/v3-local/results*.json`. B11 checks U21 with a null judgement and a 2 KB `new` string. B12 checks U23 with a PNG under `--restricted`. The color answer of B12 is INFO only.
 2. Run `bun scripts/gate/sanitize-claude.ts`. Expect exit code 0 and counts only.
 3. Record each result. A B12 FAIL means that runs list images in task.md only. Record it and go on.
+4. Run `bun scripts/gate/claude-checks.ts --only B15`. B15 checks whether the CLI loads `work/CLAUDE.md` by itself. Expect FAIL. Since e217a62, runs do not rely on it: the prompt holds the project instructions (part I). The FAIL records the CLI behaviour. A PASS means that the CLI now loads the file, so the main agent gets the text twice. Record a PASS and report it.
 
 ## A. Fix one comment and commit it in your clone
 
@@ -122,6 +124,19 @@ This part records the range comment (U2) and the orphaned comment after a push (
 
 The capture of 2026-10-12 recorded U2 and U12. Tests use `activities-u2-range.json`, `activities-u12-orphaned-range.json`, and `pull-request-commits-u12.json`. A new capture writes `real-*` files again. Rename only the files that tests need, and delete the others.
 
+## I. Review prompts, skills, and project instructions
+
+Use a test pull request that changes C++, C, or Python files for step 4. If it has none, record step 4 as not run.
+
+1. Press r on the test pull request. Expect the brief, not a run. Expect the run setup of the default profile, with "Language checks" for General. Open the Review menu and pick Security. Expect the brief with Security. Press Esc. Open Settings > Review profiles. Expect General as the default, unchanged.
+2. In Settings > Review profiles > General, open the skills dialog. Tick one skill and mark it "Always use". Expect the chip "<skill> · Always". Save.
+3. In Settings > Project instructions, open the test repository. Put "In the summary, give the word KIWI-SMOKE." into "Extra text (optional)". Expect the preview line "A run gets <size> from <n> sources". Open "Show the text". Expect the trust line first and the heading "## From Review Loop settings". Turn on "Use your global CLAUDE.md" only under the rule above. Expect the global file as the first source. A file that does not load shows as "Not loaded: <file>".
+4. Press r and click "Start review". Wait for the end of the run. Expect the server terminal to show "Review run <id> language checks:" with the languages of the change. Expect the run row and the run log to list the skill with "(always)" and the instruction sources with sizes.
+5. Press 3. Expect a Read of `skills/<folder>/SKILL.md` among the first tool calls of rl-main. If coverage says "Skill <id> (always use): the model did not read SKILL.md.", record it.
+6. Expect the word KIWI-SMOKE in the summary. Expect no finding with severity nit, because the note asks for none. Count the findings per severity and record the counts. Expect no finding for style, naming, or formatting.
+7. Disable the plugin of the marked skill, or rename its folder in your Claude config. Press r. Expect the brief to show "Skill <id> is marked Always use, but it is not found." with the fix hint, and Start to be disabled. Expect the skills dialog to show "Not found in <runner>. Runs do not start while it is marked Always use." Restore the skill. Expect Start to be enabled again.
+8. Remove the Always use mark and the extra text. Turn off the global switch.
+
 ## H. Record
 
 - The build commit from the startup line.
@@ -129,4 +144,4 @@ The capture of 2026-10-12 recorded U2 and U12. Tests use `activities-u2-range.js
 - The result of each step: pass or fail, with a short reason for a fail.
 - The judgement chip of each thread T1 to T7.
 - For each fix run: the proposed edits and the skipped edits. This gives the rate of dropped edits.
-- B11 and B12, the tag names from E5, and the shapes from F1. Update the "Release 3 (not run)" rows in integration-check.md.
+- B11, B12, and B15, the tag names from E5, and the shapes from F1. From part I: the languages of step 4, the severity counts of step 6, and any coverage line from step 5. Update the "Release 3 (not run)" rows in integration-check.md.

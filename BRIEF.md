@@ -368,6 +368,11 @@ Review runner:
 - For each run, store the session ID. Never resume a session from another PR.
 - Each run writes a transcript to ~/.claude/projects/<encoded cwd>/. The transcript holds the reviewed code. --no-session-persistence still writes the per-cwd folders (Gate B4), so the app deletes them after each run. No run resumes a session. Ask is one-shot.
 - Profiles: four shipped profiles (General, Over-engineering, Security, Explain). The user can edit, add, remove, and reset them in Settings. Each profile has a name, a note, the prompt, Explain, Docs, and a turn cap. Explain asks only for the summary and questions, with a lower turn cap. The shipped caps are 100 turns for General, Over-engineering, and Security, and 50 turns for Explain. A new profile starts with 100 turns. Review, re-review, and Ask runs use the profile cap. Fix and reply-draft runs use at least 100 turns. An update gives the new shipped caps to each shipped profile that the user did not edit.
+- Brief: the Review button, r, the Review menu profiles, and "Review changes since" open the brief. It shows the run setup of the chosen profile. A review starts only from its Start button. A menu profile applies to this review only. Ask, reply drafts, and Fix start without the brief.
+- Severity rubric: every agent of a review run (not Explain) gets one rubric for blocker, major, minor, and nit. A nit comes only when the profile task, a chosen skill, or the note asks for it. No finding for compiler, linter, or formatter output, style, or naming. An empty findings list is valid.
+- Language checks: a profile switch (on for General and Security). Review and re-review runs get a checklist for each language in the changed text files: C++ (.h and the C++ suffixes), C (.c), and Python (.py, .pyi, .pyw). Each item has a category and a usual severity, never nit. Ask, reply, fix, and Explain runs get no list.
+- Profile skills: a profile picks skills from the user's Claude config. Each run copies them into ./skills. The model reads SKILL.md with Read, because the Skill tool stays off. Above 5 skills, the run gets an index and reads only the skills that apply. A skill marked Always use is read first and applies to the whole run. A guard line keeps the task, the rules, and the output format. A missing marked skill blocks the start, and the brief disables Start with the reason. Coverage lists a marked SKILL.md that the model did not read.
+- Profile upgrades: an update gives new shipped prompts and switches to each shipped profile that the user did not edit. An edited profile stays as it is.
 - Each run stores the profile name, revision, and explain flag at its start. A later profile edit does not change an old run.
 - Run kinds: review, reply, ask (Release 2), and fix (Release 3). A re-review is kind review with since_head set. Ask and fix run without the Agent tool and share the one run slot. Ask writes no items.
 - Tasks: every run kind gets context/task.md with all fetched tasks of the PR. The PR has one task set and no per-run picker. Each run stores its task keys and fetch times at its start. Its run line shows them.
@@ -479,11 +484,11 @@ Phase 3, author mode (my own PRs):
 - Draft a PR description from the commits and the Jira issue.
 
 Phase 4, better reviews:
-- "Use skill X" in a profile. The Skill tool stays off under --restricted, so a profile cannot load a skill today.
+- Done: "Use skill X" in a profile. Runs copy the skills and the model reads them with Read (section 7, Profile skills).
 - Acceptance-criteria coverage: map the Jira issue's requested behavior to code, tests, and gaps.
 - Cross-repository producer and consumer checks: schema, deployment order, compatibility. Use a local context config (doc paths, entry points, related repositories, contract owners, test commands). Record related revisions. A missing repository becomes a question, not a claim.
 - Learn from discards: store rejected findings per repository and send them as "do not flag" guidance.
-- A per-repository review rules file that each review reads first.
+- Done: a per-repository review rules file. Project instructions go into the prompt of each run (section 7).
 - A review queue that pre-reviews new PRs with a daily cap. Read the usage terms first.
 - A risk score per PR to sort the inbox.
 - Build status and approval count in the inbox.
