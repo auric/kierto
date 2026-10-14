@@ -23,7 +23,7 @@ import {
 } from "../../shared/dto";
 import { api } from "../api";
 import { dialogKeys } from "../fix/CloneDialog";
-import { useMeta } from "../meta";
+import { useMeta, useSkills } from "../meta";
 import { read } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { SaveStatus, TYPING_MS, useSaver } from "./autosave";
@@ -46,6 +46,7 @@ import {
   sameProfiles,
   selectAll,
   setTools,
+  skillsPatch,
   tickAction,
   toDrafts,
   toggleServer,
@@ -94,11 +95,7 @@ async function putSettings(input: Parameters<typeof api.api.settings.$put>[0]["j
 // target: the profile that "Edit profile…" opened. n changes on each request, so the same profile can be asked again.
 export function ReviewProfiles({ settings, target }: { settings: SettingsDto; target?: { id: string; n: number } | null }) {
   const qc = useQueryClient();
-  const skills = useQuery({
-    queryKey: ["skills"],
-    queryFn: async () => read<SkillDto[]>(await api.api.skills.$get()),
-    select: (l) => new Map(l.map((s) => [s.id, s])),
-  });
+  const skills = useSkills();
   const servers = useQuery({
     queryKey: ["mcp-servers"],
     queryFn: async () => read<McpServerDto[]>(await api.api["mcp-servers"].$get()),
@@ -766,6 +763,7 @@ function SkillsField(props: RowProps) {
       text: (
         <>
           {skills?.get(id)?.name ?? id}
+          {d.alwaysSkills.includes(id) && " · Always"}
           {missing && <span className="sr-only">, not found</span>}
         </>
       ),
@@ -793,6 +791,7 @@ function SkillsField(props: RowProps) {
         {d.skills.length > INDEX_AFTER && (
           <p className="m-0 text-xs text-muted-foreground">
             With more than {INDEX_AFTER} skills, the run lists them in skills/INDEX.md, and the model reads only the skills that apply.
+            {d.alwaysSkills.length > 0 && " Skills marked Always are read first."}
           </p>
         )}
       </div>
@@ -801,9 +800,11 @@ function SkillsField(props: RowProps) {
         onClose={() => setOpen(false)}
         title={profileLabel(d, i)}
         picked={d.skills}
+        always={d.alwaysSkills}
         skills={skills}
         failed={lists.skillsFailed}
-        onChange={(next) => onChange({ act: "edit", i, patch: { skills: next } })}
+        onChange={(next) => onChange({ act: "edit", i, patch: skillsPatch(d, next) })}
+        onAlways={(next) => onChange({ act: "edit", i, patch: { alwaysSkills: next } })}
       />
     </div>
   );
@@ -817,8 +818,10 @@ function SkillsDialog(props: {
   skills: SkillList;
   failed: boolean;
   onChange: (skills: string[]) => void;
+  always: string[];
+  onAlways: (always: string[]) => void;
 }) {
-  const { picked, skills } = props;
+  const { picked, skills, always } = props;
   const runner = useMeta().data?.runner.name ?? "";
   const [q, setQ] = useState("");
   const close = () => {
@@ -830,9 +833,10 @@ function SkillsDialog(props: {
   const shown = query ? all.filter((s) => `${s.name} ${s.id} ${s.description}`.toLowerCase().includes(query)) : all;
   const missing = skills ? picked.filter((id) => !skills.has(id)) : [];
   const full = picked.length >= LIMITS.skills;
+  // The Always use box sits outside the row label, so the labels do not nest.
   const box = (id: string, name: ReactNode, help: ReactNode) => (
-    <li key={id}>
-      <label className="flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-sm text-foreground hover:bg-hover">
+    <li key={id} className="flex items-start gap-2 rounded-md hover:bg-hover">
+      <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 px-1.5 py-1 text-sm text-foreground">
         <input
           type="checkbox"
           className="mt-0.5 size-4 shrink-0 accent-primary"
@@ -845,6 +849,18 @@ function SkillsDialog(props: {
           <span className="text-xs break-words text-muted-foreground">{help}</span>
         </span>
       </label>
+      {picked.includes(id) && (
+        <label className="flex shrink-0 cursor-pointer items-center gap-1.5 px-1.5 py-1 text-xs text-ink-2">
+          <input
+            type="checkbox"
+            className="size-3.5 accent-primary"
+            checked={always.includes(id)}
+            aria-label={`Always use ${id}`}
+            onChange={(e) => props.onAlways(toggleSkill(always, id, e.target.checked))}
+          />
+          Always use
+        </label>
+      )}
     </li>
   );
   return (
@@ -897,7 +913,15 @@ function SkillsDialog(props: {
           {skills && skills.size > 0 && !shown.length && <p className="m-0 text-sm text-muted-foreground">No skill matches the search.</p>}
           <ul aria-label="Skills" className="m-0 grid list-none gap-0.5 p-0">
             {missing.map((id) =>
-              box(id, <span className="font-mono text-xs">{id}</span>, warn(`Not found in ${runner}. Runs go on without it.`)),
+              box(
+                id,
+                <span className="font-mono text-xs">{id}</span>,
+                warn(
+                  always.includes(id)
+                    ? `Not found in ${runner}. Runs do not start while it is marked Always use.`
+                    : `Not found in ${runner}. Runs go on without it.`,
+                ),
+              ),
             )}
             {shown.map((s) =>
               box(

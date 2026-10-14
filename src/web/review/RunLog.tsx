@@ -26,6 +26,7 @@ import {
   seconds,
   setupText,
   shortHash,
+  skillsText,
   tokenText,
   tokenTotal,
   toolCalls,
@@ -219,6 +220,11 @@ export function RunLog(props: {
         {detail && instructionsText(detail.run)?.short && (
           <span data-run-instructions className="text-muted-foreground" title={instructionsText(detail.run)?.long}>
             Project instructions: {instructionsText(detail.run)?.short}
+          </span>
+        )}
+        {detail && skillsText(detail.run) && (
+          <span data-run-skills className="text-muted-foreground">
+            Skills: {skillsText(detail.run)}
           </span>
         )}
         {detail && instructionsText(detail.run)?.notLoaded && (

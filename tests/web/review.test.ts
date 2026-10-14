@@ -53,7 +53,7 @@ const agent = (id: string, seq: number, name: string, o: Partial<RunEvent> = {})
   ev(id, seq, { tool: "Agent", agent: name, target: `Check ${name}`, ...o });
 const shape = (nodes: ReturnType<typeof logTree>): unknown[] => nodes.map((n) => (n.kids.length ? [n.e.id, shape(n.kids)] : n.e.id));
 
-const setup = { model: null, effort: null, reviewerMode: "auto", skillCount: 0, mcpCount: 0 } as const;
+const setup = { model: null, effort: null, reviewerMode: "auto", skillCount: 0, alwaysSkills: [] as string[], mcpCount: 0 } as const;
 const PROFILES: ProfileDto[] = [
   { id: "general", name: "General", note: "", explain: false, maxTurns: 40, ...setup },
   { id: "security", name: "Security", note: "", explain: false, maxTurns: 40, ...setup },

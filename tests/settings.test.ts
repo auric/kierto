@@ -209,6 +209,7 @@ describe("settings API", () => {
     languageChecks: false,
     maxTurns: 20,
     skills: [],
+    alwaysSkills: [],
     mcp: [],
     model: null,
     effort: null,

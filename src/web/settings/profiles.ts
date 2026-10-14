@@ -56,6 +56,7 @@ export type Draft = {
   languageChecks: boolean;
   maxTurns: string;
   skills: string[];
+  alwaysSkills: string[];
   mcp: McpPick[];
   model: string;
   effort: Effort | "";
@@ -110,6 +111,7 @@ export function toProfiles(list: Draft[]): ProfileInput[] {
       languageChecks: d.languageChecks,
       maxTurns: turns ? Number(turns) : Number.NaN,
       skills: d.skills,
+      alwaysSkills: d.alwaysSkills.filter((id) => d.skills.includes(id)),
       mcp: d.mcp,
       model: d.model.trim() || null,
       effort: d.effort || null,
@@ -129,6 +131,7 @@ const KEYS = [
   "languageChecks",
   "maxTurns",
   "skills",
+  "alwaysSkills",
   "mcp",
   "server",
   "tools",
@@ -179,6 +182,7 @@ const newProfile = (id: string): ProfileInput => ({
   languageChecks: true,
   maxTurns: NEW_TURNS,
   skills: [],
+  alwaysSkills: [],
   mcp: [],
   model: null,
   effort: null,
@@ -207,7 +211,19 @@ export function toPayload(list: Draft[], saved: ProfileInput[]): ProfileInput[] 
 export type Edit = Partial<
   Pick<
     Draft,
-    "name" | "note" | "prompt" | "explain" | "docs" | "languageChecks" | "maxTurns" | "skills" | "mcp" | "model" | "effort" | "reviewer"
+    | "name"
+    | "note"
+    | "prompt"
+    | "explain"
+    | "docs"
+    | "languageChecks"
+    | "maxTurns"
+    | "skills"
+    | "alwaysSkills"
+    | "mcp"
+    | "model"
+    | "effort"
+    | "reviewer"
   >
 >;
 
@@ -293,6 +309,12 @@ export function focusAfter(c: Change, n: number): string | null {
 // Adds or removes one skill ID. A new skill goes to the end.
 export const toggleSkill = (list: string[], id: string, on: boolean) =>
   on ? (list.includes(id) ? list : [...list, id]) : list.filter((x) => x !== id);
+
+// The patch for a new skill list. A skill that leaves the list loses its Always use mark.
+export const skillsPatch = (d: Pick<Draft, "alwaysSkills">, skills: string[]) => ({
+  skills,
+  alwaysSkills: d.alwaysSkills.filter((id) => skills.includes(id)),
+});
 
 // Adds every ID that is not in the list yet, in the given order, up to the skill limit.
 export const addSkills = (list: string[], ids: string[]) =>

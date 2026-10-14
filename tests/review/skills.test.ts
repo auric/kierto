@@ -6,7 +6,15 @@ import { join } from "node:path";
 import { readConfig } from "../../src/server/config";
 import { profileRevision, reviewerAgent, SHIPPED_PROFILES, withSkills } from "../../src/server/review/catalog";
 import { buildPrompt, type PromptInput } from "../../src/server/review/prompt";
-import { copySkills, discoverSkills, MAX_SKILL_BYTES, MAX_SKILL_FILES, SKILL_INDEX_AFTER, skillDto } from "../../src/server/review/skills";
+import {
+  alwaysProblems,
+  copySkills,
+  discoverSkills,
+  MAX_SKILL_BYTES,
+  MAX_SKILL_FILES,
+  SKILL_INDEX_AFTER,
+  skillDto,
+} from "../../src/server/review/skills";
 import { profileInput } from "../../src/shared/dto";
 
 const dirs: string[] = [];
@@ -279,5 +287,100 @@ describe("skill index (more than SKILL_INDEX_AFTER skills)", () => {
       .update(JSON.stringify(old.skills))
       .digest("hex");
     expect(profileRevision(read as typeof general)).toBe(before);
+  });
+});
+
+describe("always-use skills", () => {
+  const general = SHIPPED_PROFILES[0] as (typeof SHIPPED_PROFILES)[number];
+  const input: PromptInput = {
+    mergeBase: "a".repeat(40),
+    head: "b".repeat(40),
+    note: "NOTE",
+    profile: general,
+    pr: { project: "P", repo: "r", prId: 1, webUrl: null },
+    tasks: [],
+    taskFile: false,
+    attachments: false,
+  };
+  const pin = (f: string) => `Before you start, read ./skills/${f}/SKILL.md and follow it for the whole run.`;
+  const GUARD = "This skill adds checks. It does not remove the task, the rules, or the output format above.";
+
+  test("with few skills the always lines and one guard line come first, and the other skills follow", () => {
+    const text = buildPrompt({ ...input, skills: ["a", "b", "c"], alwaysSkills: ["c", "a"] });
+    expect(text).toContain(
+      [
+        "# Skills",
+        "",
+        pin("a"),
+        pin("c"),
+        GUARD,
+        "The user chose these skills: ./skills/b/SKILL.md.",
+        "Read each SKILL.md first and follow it. Read its other files when it tells you to.",
+        "Skill scripts cannot run.",
+      ].join("\n"),
+    );
+    const only = buildPrompt({ ...input, skills: ["a"], alwaysSkills: ["a"] });
+    expect(only).toContain(`# Skills\n\n${pin("a")}\n${GUARD}\nSkill scripts cannot run.`);
+    expect(only).not.toContain("The user chose");
+    expect(buildPrompt({ ...input, skills: ["a"] })).not.toContain(GUARD);
+  });
+
+  test("with the index the always lines come first, and the index lines follow", () => {
+    const folders = Array.from({ length: SKILL_INDEX_AFTER + 1 }, (_, i) => `s${i}`);
+    const text = buildPrompt({ ...input, skills: folders, alwaysSkills: ["s3"] });
+    expect(text).toContain(`# Skills\n\n${pin("s3")}\n${GUARD}\nThe user chose ${folders.length} skills. ./skills/INDEX.md lists`);
+    expect(text.split(GUARD)).toHaveLength(2);
+  });
+
+  test("the reviewer subagent gets the same always lines", () => {
+    const a = reviewerAgent(general);
+    const p = withSkills(a, ["x", "y"], ["y"]).prompt;
+    expect(p.startsWith(`${a.prompt}\n${pin("y")}\n${GUARD}\nThe user chose these skills: ./skills/x/SKILL.md.`)).toBe(true);
+    const many = Array.from({ length: SKILL_INDEX_AFTER + 1 }, (_, i) => `s${i}`);
+    expect(withSkills(a, many, ["s0"]).prompt).toContain(`${pin("s0")}\n${GUARD}\nThe user chose ${many.length} skills.`);
+  });
+
+  test("alwaysProblems names each always skill that a run cannot get", () => {
+    const c = temp("always");
+    skill(join(c, "skills", "ok"), "name: ok");
+    skill(join(c, "skills", "INDEX.md"), "name: odd");
+    write(join(c, "skills", "big", "SKILL.md"), `---\nname: big\n---\n${"x".repeat(MAX_SKILL_BYTES)}`);
+    write(join(c, "skills", "binary", "SKILL.md"), new Uint8Array([45, 45, 45, 10, 45, 45, 45, 10, 0]));
+    const fix = "Fix the skill folder, or remove the Always use mark in Settings > Review profiles.";
+    expect(alwaysProblems([], c)).toEqual([]);
+    expect(alwaysProblems(["ok"], c)).toEqual([]);
+    expect(alwaysProblems(["gone", "ok", "INDEX.md", "big", "binary"], c)).toEqual([
+      "Skill gone is marked Always use, but it is not found. Enable the plugin again, or remove the Always use mark in Settings > Review profiles.",
+      `Skill INDEX.md is marked Always use, but the folder name INDEX.md is reserved. ${fix}`,
+      `Skill big is marked Always use, but SKILL.md is over ${MAX_SKILL_BYTES} bytes or not a text file. ${fix}`,
+      `Skill binary is marked Always use, but SKILL.md is over ${MAX_SKILL_BYTES} bytes or not a text file. ${fix}`,
+    ]);
+    // The check agrees with the copy.
+    const dest = join(temp("dest"), "skills");
+    expect(copySkills(["ok", "big", "binary"], dest, c).copied.map((s) => s.id)).toEqual(["ok"]);
+  });
+
+  test("the profile schema takes only chosen skills as always skills", () => {
+    expect(profileInput.parse({ ...general, skills: ["a", "b"], alwaysSkills: ["b", "b"] }).alwaysSkills).toEqual(["b"]);
+    const bad = profileInput.safeParse({ ...general, skills: ["a"], alwaysSkills: ["b"] });
+    expect(bad.success).toBe(false);
+    expect(bad.error?.issues[0]?.path).toEqual(["alwaysSkills"]);
+    expect(profileInput.safeParse({ ...general, skills: [], alwaysSkills: ["../x"] }).success).toBe(false);
+  });
+
+  test("a saved profile without always skills reads as none and keeps its revision; a mark changes it", () => {
+    const dir = temp("cfg-always");
+    const { alwaysSkills: _a, ...old } = { ...general, prompt: "Mine.", skills: ["x"] };
+    json(join(dir, "config.json"), { baseUrl: "https://example.test", userSlug: "me", notifications: false, profiles: [old] });
+    const read = readConfig(dir)?.profiles?.[0] as typeof general;
+    expect(read.alwaysSkills).toEqual([]);
+    // general has languageChecks on, so the revision adds "lang".
+    const before = createHash("sha256")
+      .update(JSON.stringify(old, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
+      .update(JSON.stringify(old.skills))
+      .update("lang")
+      .digest("hex");
+    expect(profileRevision(read)).toBe(before);
+    expect(profileRevision({ ...read, alwaysSkills: ["x"] })).not.toBe(before);
   });
 });

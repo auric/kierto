@@ -887,6 +887,65 @@ describe("editable profiles (M4)", () => {
   );
 
   test(
+    "a missing always-use skill refuses the start and stores no run; the run marks always skills and checks that rl-main read them",
+    async () => {
+      const config = mkdtempSync(join(tmpdir(), "rl-always-config-"));
+      dirs.push(config);
+      for (const s of ["read-me", "skip-me"]) {
+        mkdirSync(join(config, "skills", s), { recursive: true });
+        writeFileSync(join(config, "skills", s, "SKILL.md"), `---\nname: ${s}\n---\nBody.\n`);
+      }
+      const h = await setup({ claudeConfigDir: config });
+      const runs = () => (h.db.query("SELECT COUNT(*) AS n FROM review_run").get() as { n: number }).n;
+      expect((await putProfiles(h, [{ ...general, skills: ["read-me", "gone"], alwaysSkills: ["gone"] }])).status).toBe(200);
+      await h.brief(NOTE, "general");
+      const refused = await h.start();
+      expect(refused.status).toBe(409);
+      expect((refused.body as unknown as { error: string }).error).toBe(
+        "Skill gone is marked Always use, but it is not found. Enable the plugin again, or remove the Always use mark in Settings > Review profiles.",
+      );
+      expect(runs()).toBe(0);
+      expect(h.runCall()).toBeUndefined();
+
+      // rl-main reads note-main.txt in the fixture. The rewrite makes it a read of read-me/SKILL.md.
+      const fixture = subagentRun();
+      writeFileSync(
+        fixture,
+        readFileSync(fixture, "utf8").replace('"file_path":"note-main.txt"', '"file_path":"./skills/read-me/SKILL.md"'),
+      );
+      const profile = { ...general, skills: ["read-me", "skip-me", "gone"], alwaysSkills: ["skip-me", "read-me"] };
+      expect((await putProfiles(h, [profile])).status).toBe(200);
+      h.scenario({ fixture: subagentRun(), hang: true });
+      const a = await h.start();
+      expect(a.status).toBe(202);
+      expect(await waitFor(() => h.runCall() !== undefined)).toBe(true);
+      const c = h.runCall() as Call;
+      const pinned = [
+        "Before you start, read ./skills/read-me/SKILL.md and follow it for the whole run.",
+        "Before you start, read ./skills/skip-me/SKILL.md and follow it for the whole run.",
+        "This skill adds checks. It does not remove the task, the rules, or the output format above.",
+      ].join("\n");
+      expect(c.stdin).toContain(`# Skills\n\n${pinned}\n`);
+      const agents = JSON.parse(readFileSync(flag(c.argv, "--agents") as string, "utf8"));
+      for (const name of ["rl-main", "rl-reviewer"]) expect(agents[name].prompt).toContain(pinned);
+      await h.call(`/api/runs/${a.body.id}/cancel`, { method: "POST" });
+      await h.finish(a.body.id);
+
+      h.scenario({ fixture });
+      const d = await h.finish((await h.start()).body.id);
+      expect(d.run.skills).toEqual([
+        { id: "read-me", always: true },
+        { id: "skip-me", always: true },
+      ]);
+      // A chosen skill without the mark stays a gap, and the run goes on.
+      expect(d.run.summary?.coverage.unavailable).toContain("Skill gone: not found");
+      expect(d.run.summary?.coverage.notChecked).toContain("Skill skip-me (always use): the model did not read SKILL.md.");
+      expect(d.run.summary?.coverage.notChecked.join("\n")).not.toContain("Skill read-me");
+    },
+    SLOW,
+  );
+
+  test(
     "user MCP servers: the routes hide entry values; a run gets only the chosen tools; mcp.json goes with the run folder; gaps show",
     async () => {
       const config = mkdtempSync(join(tmpdir(), "rl-mcp-config-"));
@@ -1256,6 +1315,7 @@ describe("editable profiles (M4)", () => {
         languageChecks: false,
         maxTurns: 9,
         skills: [],
+        alwaysSkills: [],
         mcp: [],
         model: null,
         effort: null,
@@ -1277,6 +1337,7 @@ describe("editable profiles (M4)", () => {
           effort: null,
           reviewerMode: "auto",
           skillCount: 0,
+          alwaysSkills: [],
           mcpCount: 0,
         },
         {
@@ -1289,6 +1350,7 @@ describe("editable profiles (M4)", () => {
           effort: general.effort,
           reviewerMode: general.reviewer.mode,
           skillCount: general.skills.length,
+          alwaysSkills: general.alwaysSkills,
           mcpCount: general.mcp.length,
         },
       ]);

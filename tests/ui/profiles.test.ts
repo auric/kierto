@@ -16,6 +16,7 @@ import {
   sameProfiles,
   selectAll,
   setTools,
+  skillsPatch,
   slug,
   tickAction,
   toDrafts,
@@ -37,6 +38,7 @@ const p = (id: string, name: string, o: Partial<ProfileInput> = {}): ProfileInpu
   languageChecks: false,
   maxTurns: 40,
   skills: [],
+  alwaysSkills: [],
   mcp: [],
   model: null,
   effort: null,
@@ -204,6 +206,23 @@ describe("profile editor model", () => {
     expect(dirty(picked)).toBe(true);
     expect(toProfiles(picked)[0]?.skills).toEqual(["p:x"]);
     expect(dirty(change(picked, { act: "edit", i: 0, patch: { skills: toggleSkill(["p:x"], "p:x", false) } }))).toBe(false);
+  });
+
+  test("an Always use mark saves, and a skill that leaves the list (toggle or Clear) loses its mark", () => {
+    const d = toDrafts(SAVED);
+    const dirty = (list: Draft[]) => !sameProfiles(toProfiles(list), SAVED);
+    const picked = change(d, { act: "edit", i: 0, patch: skillsPatch(d[0] as Draft, ["a", "b"]) });
+    const marked = change(picked, { act: "edit", i: 0, patch: { alwaysSkills: toggleSkill([], "b", true) } });
+    expect(dirty(marked)).toBe(true);
+    expect(toProfiles(marked)[0]).toMatchObject({ skills: ["a", "b"], alwaysSkills: ["b"] });
+    expect(profileInput.safeParse(toProfiles(marked)[0]).success).toBe(true);
+    const untoggled = change(marked, { act: "edit", i: 0, patch: skillsPatch(marked[0] as Draft, toggleSkill(["a", "b"], "b", false)) });
+    expect(toProfiles(untoggled)[0]).toMatchObject({ skills: ["a"], alwaysSkills: [] });
+    const cleared = change(marked, { act: "edit", i: 0, patch: skillsPatch(marked[0] as Draft, []) });
+    expect(dirty(cleared)).toBe(false);
+    // A stale mark never reaches the server.
+    const stale = change(marked, { act: "edit", i: 0, patch: { skills: ["a"] } });
+    expect(toProfiles(stale)[0]?.alwaysSkills).toEqual([]);
   });
 
   test("toggleSkill adds at the end once and removes every copy", () => {

@@ -4,21 +4,22 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type {
-  AskDto,
-  BriefDto,
-  BriefInput,
-  DiffRowDto,
-  FixDto,
-  PrTask,
-  ReviewItemDto,
-  RunConflict,
-  RunDetail,
-  RunDto,
-  RunKind,
-  RunnerCheckDto,
-  RunSummary,
-  RunUsage,
+import {
+  type AskDto,
+  alwaysSkillError,
+  type BriefDto,
+  type BriefInput,
+  type DiffRowDto,
+  type FixDto,
+  type PrTask,
+  type ReviewItemDto,
+  type RunConflict,
+  type RunDetail,
+  type RunDto,
+  type RunKind,
+  type RunnerCheckDto,
+  type RunSummary,
+  type RunUsage,
 } from "../../shared/dto";
 import {
   type AnchoredFinding,
@@ -81,7 +82,7 @@ import { gitMcpServer } from "./git-mcp";
 import { projectInstructions } from "./instructions";
 import { languagesOf, withLanguages } from "./languages";
 import { buildAskPrompt, buildFixPrompt, buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
-import { claudeConfigDir, copySkills } from "./skills";
+import { alwaysProblems, claudeConfigDir, copySkills } from "./skills";
 import { claudeJsonPath, userServers } from "./user-mcp";
 import {
   type CheckedEarlier,
@@ -187,6 +188,8 @@ type RunRow = {
   tasks_json: string | null;
   // null for runs made before project instructions.
   instructions_json: string | null;
+  // null for runs made before the run skills were stored.
+  skills_json: string | null;
   findings: number;
 };
 
@@ -273,12 +276,13 @@ const SQL = {
   fetched: "SELECT key, fetched_at AS fetchedAt FROM task_context WHERE pr = $pr ORDER BY key",
   run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.effort, r.effort_default, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
-      p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer, r.fix_json, r.tasks_json, r.instructions_json,
+      p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer, r.fix_json, r.tasks_json, r.instructions_json, r.skills_json,
       (SELECT COUNT(*) FROM review_item i WHERE i.run = r.id AND i.kind = 'finding'
         AND COALESCE(json_extract(i.payload_json, '$.carried.verdict'), 'open') = 'open') AS findings
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
   workspace: "UPDATE review_run SET merge_base = $base, range_base = $range, fetch_via = $via WHERE id = $id",
   instructions: "UPDATE review_run SET instructions_json = $json WHERE id = $id",
+  skills: "UPDATE review_run SET skills_json = $json WHERE id = $id",
   end: `UPDATE review_run SET status = $status, error_kind = $kind, error_text = $text, session_id = $session, cli_version = $cli, model = COALESCE($model, model),
       effort_default = CASE WHEN $init_effort THEN $effort_default ELSE effort_default END, usage_json = $usage, summary_json = $summary, answer = $answer, fix_json = $fix, raw_output = $raw, finished_at = $now
     WHERE id = $id AND status = 'running'`,
@@ -501,6 +505,16 @@ function unavailable(o: RunOutcome, servers: string[], gaps: string[]): string[]
     return status === "connected" ? [] : [`MCP server ${name}: ${status}`];
   });
   return [...gaps, ...down];
+}
+
+// rl-main calls have no parent. stream.ts gives Read targets with "/" and relative to the run folder when the path is inside it.
+function unreadAlways(o: RunOutcome, always: { id: string; folder: string }[]): string[] {
+  const read = new Set(
+    o.events.filter((e) => e.tool === "Read" && e.parent === null && e.status === "ok").map((e) => e.target.replace(/^(\.\/)+/, "")),
+  );
+  return always
+    .filter((s) => !read.has(`skills/${s.folder}/SKILL.md`))
+    .map((s) => `Skill ${s.id} (always use): the model did not read SKILL.md.`);
 }
 
 function ended(raw: string, o: RunOutcome, result: NonNullable<Ending["result"]>): Ending {
@@ -874,6 +888,7 @@ function toRunDto(r: RunRow, resolve = effortsNow()): RunDto {
     question: r.question,
     ...(r.tasks_json !== null && { tasks: JSON.parse(r.tasks_json) as NonNullable<RunDto["tasks"]> }),
     ...(r.instructions_json !== null && { instructions: JSON.parse(r.instructions_json) as NonNullable<RunDto["instructions"]> }),
+    ...(r.skills_json !== null && { skills: JSON.parse(r.skills_json) as NonNullable<RunDto["skills"]> }),
     findings: r.findings,
   };
 }
@@ -1147,16 +1162,26 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (unmarked) log(`Review run ${j.id}: ${unmarked}`);
     const skills = copySkills(profile.skills, join(ws.work, "skills"), opts.claudeConfigDir ?? claudeConfigDir());
     for (const g of skills.gaps) log(`Review run ${j.id}: ${g}.`);
+    const isAlways = (id: string) => profile.alwaysSkills.includes(id);
     if (skills.copied.length)
       log(
         `Review run ${j.id} skills: ${skills.copied
           .map(
             (s) =>
-              `${s.id}${s.version ? `@${s.version}` : ""} (${s.files} files, ${s.bytes} bytes${s.skipped ? `, ${s.skipped} skipped` : ""})`,
+              `${s.id}${s.version ? `@${s.version}` : ""}${isAlways(s.id) ? " (always)" : ""} (${s.files} files, ${s.bytes} bytes${s.skipped ? `, ${s.skipped} skipped` : ""})`,
           )
           .join(", ")}.`,
       );
+    j.db.query(SQL.skills).run({ id: j.id, json: JSON.stringify(skills.copied.map((s) => ({ id: s.id, always: isAlways(s.id) }))) });
+    // launch checked the always-use skills. The disk can change before the copy.
+    const lost = profile.alwaysSkills.filter((id) => !skills.copied.some((s) => s.id === id));
+    if (lost.length)
+      return failure(
+        "process",
+        alwaysProblems(lost, opts.claudeConfigDir ?? claudeConfigDir()).join(" ") || alwaysSkillError(lost[0] as string, "the copy failed"),
+      );
     const folders = skills.copied.map((s) => s.folder);
+    const always = skills.copied.filter((s) => isAlways(s.id)).map((s) => s.folder);
     // Review and re-review runs only. Explain gives no findings.
     const langs = j.kind === "review" && profile.languageChecks && !profile.explain ? languagesOf(parseDiff(ws.diff)) : [];
     if (langs.length) log(`Review run ${j.id} language checks: ${langs.join(", ")}.`);
@@ -1172,6 +1197,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       attachments: attachments.length > 0,
       history: history !== null,
       skills: folders,
+      alwaysSkills: always,
       mcp: used,
     };
     const reply = j.kind === "reply" ? j.threads : null;
@@ -1195,7 +1221,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         cwd: ws.work,
         appDir: ws.app,
         ...spec,
-        main: withInstructions(withMcp(withSkills(withLanguages(spec.main, langs), folders), used), instructions.text !== ""),
+        main: withInstructions(withMcp(withSkills(withLanguages(spec.main, langs), folders, always), used), instructions.text !== ""),
         maxTurns: reply || fix ? Math.max(profile.maxTurns, MIN_EDIT_TURNS) : profile.maxTurns,
         model: profile.model,
         effort: profile.effort,
@@ -1204,7 +1230,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
           j.kind === "review" && usesReviewer(profile)
             ? {
                 [REVIEWER]: withInstructions(
-                  withMcp(withSkills(withLanguages(reviewerAgent(profile), langs), folders), used),
+                  withMcp(withSkills(withLanguages(reviewerAgent(profile), langs), folders, always), used),
                   instructions.text !== "",
                 ),
               }
@@ -1219,7 +1245,12 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // The runner ignores a cancel that comes after the process ended.
     if (j.cancelled) return cancelled(o);
     const servers = Object.keys(mcpServers);
+    const unread = unreadAlways(
+      o,
+      skills.copied.filter((s) => isAlways(s.id)),
+    );
     const noted = (e: Ending): Ending => {
+      e.result?.summary.coverage.notChecked.push(...unread);
       if (!unmarked) return e;
       e.result?.summary.coverage.notChecked.push(unmarked);
       return { ...e, raw: `${unmarked}\n\n${e.raw}` };
@@ -1295,6 +1326,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (job.key === key && job.db === db && running) return { status: 200, run: toRunDto(running) };
       return { status: 409, conflict: { error: "Another review is running.", running: { run: job.id, pr: job.pr } } };
     }
+    // A missing always-use skill refuses the start, so no failed run is stored.
+    const missing = alwaysProblems(profile.alwaysSkills, opts.claudeConfigDir ?? claudeConfigDir());
+    if (missing.length) return { status: 409, error: missing.join(" ") };
     const { threads = null, carry = null, question = null } = o;
     const { id: runId } = db.query(SQL.insert).get({
       pr: pr.id,

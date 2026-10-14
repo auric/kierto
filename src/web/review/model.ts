@@ -306,6 +306,10 @@ export function instructionsText(
   };
 }
 
+// The skills that a run got. null: no skill, or a run made before the skills were stored.
+export const skillsText = (run: Pick<RunDto, "skills">) =>
+  run.skills?.length ? run.skills.map((s) => `${s.id}${s.always ? " (always)" : ""}`).join(", ") : null;
+
 // The model and the effort of a run. A run without an init event and without --model names the default model of the settings.
 // effortNow: the run stored no default effort, so the text names the effort of the current settings.
 // defaults null: the settings file is absent or unreadable, so the text stays plain.

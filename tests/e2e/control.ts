@@ -152,6 +152,12 @@ export async function runSkills(): Promise<string[] | null> {
   return ((await res.json()) as { files: string[] | null }).files;
 }
 
+// Removes or restores the user skill test-check of the synthetic Claude config. Reset restores it.
+export async function testCheckSkill(present: boolean): Promise<void> {
+  const res = await fetch(`${FAKE_URL}/__control/skill`, { method: "POST", headers: auth, body: JSON.stringify({ present }) });
+  if (!res.ok) throw new Error(`control skill: ${res.status}`);
+}
+
 // The prompt of each agent of the newest fake CLI run, by agent name. null before the first run and after the run ends.
 // Start a hang run first, as for runAttachments.
 export async function runAgents(): Promise<Record<string, string> | null> {

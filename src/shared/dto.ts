@@ -51,6 +51,10 @@ export const skillId = z.string().regex(/^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,63}:)?[
 
 // GET /api/skills. version: the plugin version.
 export type SkillDto = { id: string; name: string; description: string; source: "user" | "plugin"; version?: string };
+const NOT_FOUND = "it is not found";
+// The start error for an always-use skill that a run cannot get. The brief shows the same text.
+export const alwaysSkillError = (id: string, reason = NOT_FOUND) =>
+  `Skill ${id} is marked Always use, but ${reason}. ${reason === NOT_FOUND ? "Enable the plugin again" : "Fix the skill folder"}, or remove the Always use mark in Settings > Review profiles.`;
 
 export const MAX_PROFILE_MCP = 10;
 export const MAX_MCP_TOOLS = 100;
@@ -102,30 +106,41 @@ export const DEFAULT_REVIEWER: ReviewerSetup = { model: null, effort: null, mode
 // skills: the run gets a copy of each skill in ./skills. Absent in profiles saved before skills existed.
 // mcp: servers of the user's Claude config with the chosen tools. Absent in profiles saved before this field existed.
 // model, effort: --model and --effort of every run of the profile. reviewer: the rl-reviewer agent of review runs. Absent in older profiles.
+// alwaysSkills: chosen skills that every run reads first. A run does not start without them. Absent in older profiles.
 // languageChecks: review runs get the checklists for the languages of the change. Absent in older profiles.
-export const profileInput = z.object({
-  id: profileId,
-  name: z.string().trim().min(1).max(60),
-  note: z.string().trim().max(200),
-  prompt: z.string().trim().min(1).max(MAX_NOTE),
-  explain: z.boolean(),
-  docs: z.boolean(),
-  languageChecks: z.boolean().default(false),
-  maxTurns: z.number().int().min(2).max(200),
-  skills: z
-    .array(skillId)
-    .max(MAX_PROFILE_SKILLS)
-    .default([])
-    .transform((l) => [...new Set(l)]),
-  mcp: z
-    .array(mcpPick)
-    .max(MAX_PROFILE_MCP)
-    .default([])
-    .refine((l) => new Set(l.map((m) => m.server)).size === l.length, "Each MCP server can occur only once."),
-  model: modelName.nullable().default(null),
-  effort: z.enum(EFFORTS).nullable().default(null),
-  reviewer: reviewerSetup.default(() => ({ ...DEFAULT_REVIEWER })),
-});
+export const profileInput = z
+  .object({
+    id: profileId,
+    name: z.string().trim().min(1).max(60),
+    note: z.string().trim().max(200),
+    prompt: z.string().trim().min(1).max(MAX_NOTE),
+    explain: z.boolean(),
+    docs: z.boolean(),
+    languageChecks: z.boolean().default(false),
+    maxTurns: z.number().int().min(2).max(200),
+    skills: z
+      .array(skillId)
+      .max(MAX_PROFILE_SKILLS)
+      .default([])
+      .transform((l) => [...new Set(l)]),
+    alwaysSkills: z
+      .array(skillId)
+      .max(MAX_PROFILE_SKILLS)
+      .default([])
+      .transform((l) => [...new Set(l)]),
+    mcp: z
+      .array(mcpPick)
+      .max(MAX_PROFILE_MCP)
+      .default([])
+      .refine((l) => new Set(l.map((m) => m.server)).size === l.length, "Each MCP server can occur only once."),
+    model: modelName.nullable().default(null),
+    effort: z.enum(EFFORTS).nullable().default(null),
+    reviewer: reviewerSetup.default(() => ({ ...DEFAULT_REVIEWER })),
+  })
+  .refine((p) => p.alwaysSkills.every((id) => p.skills.includes(id)), {
+    message: "Each always-use skill must be a chosen skill.",
+    path: ["alwaysSkills"],
+  });
 export type ProfileInput = z.infer<typeof profileInput>;
 
 export const profileList = z
@@ -339,6 +354,8 @@ export type ProfileDto = {
   effort: Effort | null;
   reviewerMode: ReviewerMode;
   skillCount: number;
+  // The skill IDs that every run of the profile needs.
+  alwaysSkills: string[];
   mcpCount: number;
 };
 
@@ -391,6 +408,8 @@ export type RunDto = {
   tasks?: { key: string; fetchedAt: number }[];
   // The project instruction files that the run got. Absent for runs made before it was stored.
   instructions?: { files: InstructionFileDto[]; bytes: number; notLoaded?: string[] };
+  // The skills that the run got. always: the profile marks the skill Always use. Absent for runs made before it was stored.
+  skills?: { id: string; always: boolean }[];
   // The finding items of the run that a re-review did not find fixed or outdated. 0 for other run kinds.
   findings: number;
   // A running run before the CLI starts: indexing builds the codegraph index of the snapshot.

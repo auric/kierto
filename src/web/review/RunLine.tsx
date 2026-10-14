@@ -11,6 +11,7 @@ import {
   GitCommitHorizontal,
   LoaderCircle,
   ScrollText,
+  Sparkles,
   Ticket,
   User,
 } from "lucide-react";
@@ -33,6 +34,7 @@ import {
   SEVERITY,
   setupText,
   shortHash,
+  skillsText,
 } from "./model";
 
 const icon = "size-[15px] shrink-0";
@@ -243,6 +245,7 @@ function Inputs({ run, stale, meta }: { run: RunDto; stale: string | null; meta:
   const ids = tasks.map((t) => t.key).join(", ");
   const range = run.since?.incremental ? shortHash(run.since.head) : null;
   const instructions = instructionsText(run);
+  const skills = skillsText(run);
   const item = "inline-flex items-center gap-1.5";
   return (
     <p className="col-span-2 col-start-2 m-0 flex min-w-0 flex-wrap items-center gap-x-3.5 gap-y-0.5 text-(length:--fs-s) text-muted-foreground @max-[560px]/detail:col-start-1">
@@ -291,6 +294,13 @@ function Inputs({ run, stale, meta }: { run: RunDto; stale: string | null; meta:
           <FileText aria-hidden className={icon} />
           <span className="sr-only">Project instructions: </span>
           {instructions.short}
+        </span>
+      )}
+      {skills && (
+        <span className={item} data-run-skills>
+          <Sparkles aria-hidden className={icon} />
+          <span className="sr-only">Skills: </span>
+          {skills}
         </span>
       )}
       {instructions?.notLoaded && (

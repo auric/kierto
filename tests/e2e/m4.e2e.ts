@@ -2,7 +2,7 @@
 // and the settings section links.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runAgents, runMcp, runSkills } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runAgents, runMcp, runSkills, testCheckSkill } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -77,6 +77,7 @@ type SavedProfile = {
   name: string;
   note: string;
   skills?: string[];
+  alwaysSkills?: string[];
   mcp?: unknown;
   model?: string | null;
   effort?: string | null;
@@ -297,6 +298,64 @@ test("skills picked in the dialog save at once and are copied into the run folde
   await expect.poll(runSkills, { timeout: RUN_MS }).toEqual(["e2e-plugin+style/SKILL.md", "test-check/SKILL.md", "test-check/notes.md"]);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
   await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
+});
+
+test("an Always use skill shows on its chip, goes first, and blocks the review while it is missing", async ({ page, request }) => {
+  const ALWAYS_ERROR =
+    "Skill test-check is marked Always use, but it is not found. Enable the plugin again, or remove the Always use mark in Settings > Review profiles.";
+  await connect(page);
+  await openSettings(page);
+  await page.getByRole("button", { name: "Choose… skills of profile 1" }).click();
+  const dialog = page.getByRole("dialog", { name: "Skills of General" });
+  // Only a ticked row has the mark. It is its own box, outside the row label.
+  await expect(dialog.getByRole("checkbox", { name: "Always use test-check" })).toHaveCount(0);
+  await dialog.getByRole("checkbox", { name: /^test-check test-check/ }).check();
+  await dialog.getByRole("checkbox", { name: /^style e2e-plugin:style/ }).check();
+  await dialog.getByRole("checkbox", { name: "Always use test-check" }).check();
+  await expect(dialog.getByRole("checkbox", { name: /^test-check test-check/ })).toBeChecked();
+  await expect(dialog.locator("label label")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Done" }).click();
+  const chips = page.getByRole("list", { name: "Skills of profile 1" });
+  await expect(chips.getByRole("listitem")).toHaveText(["test-check · Always", "style"]);
+  await saved(page);
+  await expect
+    .poll(async () => (await settingsApi(request)).profiles[0])
+    .toMatchObject({ skills: ["test-check", "e2e-plugin:style"], alwaysSkills: ["test-check"] });
+  await closeSettings(page);
+
+  // The run row and the run log mark the skill.
+  await control("claude", { stream: "tree", hang: true });
+  await page.keyboard.press("Shift+R");
+  await page.getByLabel("Your note").press("Control+Enter");
+  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect
+    .poll(async () => (await runAgents())?.["rl-main"] ?? "", { timeout: RUN_MS })
+    .toContain(
+      "Before you start, read ./skills/test-check/SKILL.md and follow it for the whole run.\nThis skill adds checks. It does not remove the task, the rules, or the output format above.\nThe user chose these skills: ./skills/e2e-plugin+style/SKILL.md.",
+    );
+  await expect(runRow(page).locator("[data-run-skills]")).toHaveText("Skills: test-check (always), e2e-plugin:style");
+  await runLine(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
+  const before = (await runs(request)).length;
+
+  // The skill goes away after the brief read the skills list. The server refuses the start and stores no run.
+  await page.keyboard.press("Shift+R");
+  const brief = page.locator("#brief");
+  await expect(brief.getByRole("button", { name: "Start review" })).toBeEnabled();
+  await testCheckSkill(false);
+  await brief.getByRole("button", { name: "Start review" }).click();
+  await expect(page.locator("[data-slot='toast']", { hasText: "The review did not start" })).toContainText(ALWAYS_ERROR);
+  expect((await runs(request)).length).toBe(before);
+  await page.keyboard.press("Escape");
+  await expect(brief).toHaveCount(0);
+
+  // A new brief reads the skills list again. It names the skill, and Start stays disabled.
+  await page.keyboard.press("Shift+R");
+  await expect(brief.locator("#brief-foot")).toHaveText(ALWAYS_ERROR);
+  await expect(brief.getByRole("button", { name: "Start review" })).toHaveAttribute("aria-disabled", "true");
+  await page.keyboard.press("Escape");
+  await openSettings(page);
+  await expect(chips.getByRole("listitem")).toHaveText(["test-check · Always, not found", "style"]);
 });
 
 // serve.ts gives the app a Claude config with the user MCP server fake-docs and the plugin server e2e-plugin:docs. Both run tests/support/fake-mcp.ts.

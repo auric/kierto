@@ -25,6 +25,7 @@ export const createMeta = (review: ReviewJobs, settings: Settings) =>
         effort: p.effort,
         reviewerMode: p.reviewer.mode,
         skillCount: p.skills.length,
+        alwaysSkills: p.alwaysSkills,
         mcpCount: p.mcp.length,
       })),
       context: [{ ...JIRA, configured: settings.config()?.jira !== undefined }],

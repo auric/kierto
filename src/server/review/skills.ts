@@ -2,7 +2,7 @@
 import { lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { SkillDto } from "../../shared/dto";
+import { alwaysSkillError, type SkillDto } from "../../shared/dto";
 
 export type Skill = SkillDto & { dir: string };
 
@@ -162,6 +162,33 @@ function indexText(skills: Skill[]): string {
   ].join("\n");
 }
 
+const reserved = (id: string) => skillFolder(id).toLowerCase() === SKILL_INDEX.toLowerCase();
+const RESERVED = `the folder name ${SKILL_INDEX} is reserved`;
+const BAD_MD = `SKILL.md is over ${MAX_SKILL_BYTES} bytes or not a text file`;
+
+// copyOne copies SKILL.md first, so it copies SKILL.md exactly when this check passes.
+function mdCopies(s: Skill): boolean {
+  const file = join(s.dir, "SKILL.md");
+  try {
+    const st = lstatSync(file);
+    return st.isFile() && st.size <= MAX_SKILL_BYTES && !readFileSync(file).includes(0);
+  } catch {
+    return false;
+  }
+}
+
+// The start errors of the always-use skills that a run cannot get. Empty: copySkills gets each one.
+export function alwaysProblems(ids: string[], config = claudeConfigDir()): string[] {
+  if (!ids.length) return [];
+  const found = new Map(discoverSkills(config).map((s) => [s.id, s]));
+  return ids.flatMap((id) => {
+    const s = found.get(id);
+    if (!s) return [alwaysSkillError(id)];
+    if (reserved(id)) return [alwaysSkillError(id, RESERVED)];
+    return mdCopies(s) ? [] : [alwaysSkillError(id, BAD_MD)];
+  });
+}
+
 // dest: <work>/skills. gaps: one line for each listed skill that the run does not get.
 // Above SKILL_INDEX_AFTER copied skills, dest also gets SKILL_INDEX.
 export function copySkills(ids: string[], dest: string, config = claudeConfigDir()): { copied: CopiedSkill[]; gaps: string[] } {
@@ -176,8 +203,8 @@ export function copySkills(ids: string[], dest: string, config = claudeConfigDir
       gaps.push(`Skill ${id}: not found`);
       continue;
     }
-    if (skillFolder(id).toLowerCase() === SKILL_INDEX.toLowerCase()) {
-      gaps.push(`Skill ${id}: the folder name ${SKILL_INDEX} is reserved`);
+    if (reserved(id)) {
+      gaps.push(`Skill ${id}: ${RESERVED}`);
       continue;
     }
     const to = join(dest, skillFolder(id));
@@ -188,7 +215,7 @@ export function copySkills(ids: string[], dest: string, config = claudeConfigDir
         listed.push(s);
       } else {
         rmSync(to, { recursive: true, force: true });
-        gaps.push(`Skill ${id}: SKILL.md is over ${MAX_SKILL_BYTES} bytes or not a text file`);
+        gaps.push(`Skill ${id}: ${BAD_MD}`);
       }
     } catch (e) {
       gaps.push(`Skill ${id}: copy failed (${(e as Error).message})`);

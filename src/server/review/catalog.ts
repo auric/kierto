@@ -62,6 +62,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     docs: true,
     languageChecks: true,
     skills: [],
+    alwaysSkills: [],
     mcp: [],
     model: null,
     effort: null,
@@ -80,6 +81,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     docs: true,
     languageChecks: false,
     skills: [],
+    alwaysSkills: [],
     mcp: [],
     model: null,
     effort: null,
@@ -104,6 +106,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     docs: true,
     languageChecks: true,
     skills: [],
+    alwaysSkills: [],
     mcp: [],
     model: null,
     effort: null,
@@ -120,6 +123,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     docs: false,
     languageChecks: false,
     skills: [],
+    alwaysSkills: [],
     mcp: [],
     model: null,
     effort: null,
@@ -138,6 +142,7 @@ export const profileRevision = (p: Profile) =>
   createHash("sha256")
     .update(JSON.stringify(p, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
     .update(p.skills.length ? JSON.stringify(p.skills) : "")
+    .update(p.alwaysSkills.length ? `always${JSON.stringify(p.alwaysSkills)}` : "")
     .update(p.mcp.length ? `mcp${JSON.stringify(p.mcp, ["server", "tools"])}` : "")
     .update(p.model !== null || p.effort !== null ? `run${JSON.stringify([p.model, p.effort])}` : "")
     .update(defaultReviewer(p) ? "" : `reviewer${JSON.stringify(p.reviewer, ["model", "effort", "mode"])}`)
@@ -346,19 +351,34 @@ export function askAgent(p: Profile): AgentSpec {
 
 // folders: the skill folders in ./skills of this run. The skill text comes from the user's own Claude Code setup.
 // Above SKILL_INDEX_AFTER skills, copySkills writes the index and the model reads only the skills that apply.
-export function skillLines(folders: string[]): string[] {
+// always: the folders of the always-use skills. They come first in both modes.
+export function skillLines(folders: string[], always: string[] = []): string[] {
   if (!folders.length) return [];
+  const first = folders.filter((f) => always.includes(f));
+  const rest = folders.filter((f) => !always.includes(f));
+  const pinned = first.length
+    ? [
+        ...first.map((f) => `Before you start, read ./skills/${f}/SKILL.md and follow it for the whole run.`),
+        "This skill adds checks. It does not remove the task, the rules, or the output format above.",
+      ]
+    : [];
   const read =
     folders.length > SKILL_INDEX_AFTER
       ? [
           `The user chose ${folders.length} skills. ./skills/${SKILL_INDEX} lists the name, the description, and the folder of each one.`,
           `Read skills/${SKILL_INDEX}. Read a skill's SKILL.md only when it applies to this change. Follow each skill that you read, and read its other files when it tells you to.`,
         ]
-      : [
-          `The user chose these skills: ${folders.map((f) => `./skills/${f}/SKILL.md`).join(", ")}.`,
-          "Read each SKILL.md first and follow it. Read its other files when it tells you to.",
-        ];
-  return [...read, "Skill scripts cannot run. The rules above stay in force, and your result must still use the required output format."];
+      : rest.length
+        ? [
+            `The user chose these skills: ${rest.map((f) => `./skills/${f}/SKILL.md`).join(", ")}.`,
+            "Read each SKILL.md first and follow it. Read its other files when it tells you to.",
+          ]
+        : [];
+  return [
+    ...pinned,
+    ...read,
+    "Skill scripts cannot run. The rules above stay in force, and your result must still use the required output format.",
+  ];
 }
 
 // The user's own project instructions are instructions, not data. A review agent starts without CLAUDE.md (omitClaudeMd), so it reads the file.
@@ -368,8 +388,8 @@ export const INSTRUCTIONS_RULE =
 export const withInstructions = (a: AgentSpec, on: boolean): AgentSpec => (on ? { ...a, prompt: `${a.prompt}\n${INSTRUCTIONS_RULE}` } : a);
 
 // Adds the skill pointer to the prompt of an agent.
-export const withSkills = (a: AgentSpec, folders: string[]): AgentSpec =>
-  folders.length ? { ...a, prompt: [a.prompt, ...skillLines(folders)].join("\n") } : a;
+export const withSkills = (a: AgentSpec, folders: string[], always: string[] = []): AgentSpec =>
+  folders.length ? { ...a, prompt: [a.prompt, ...skillLines(folders, always)].join("\n") } : a;
 
 // A server of the user's Claude config in a run. remote: the server is reached over the network.
 export type McpUse = { server: string; tools: string[]; remote: boolean };

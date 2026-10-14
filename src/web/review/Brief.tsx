@@ -42,6 +42,7 @@ import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import {
   type AttachmentDto,
+  alwaysSkillError,
   type BriefDto,
   type BriefInput,
   MAX_NOTE,
@@ -52,6 +53,7 @@ import {
 } from "../../shared/dto";
 import { api } from "../api";
 import { dialogKeys } from "../fix/CloneDialog";
+import { useSkills } from "../meta";
 import { read } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { putBrief } from "./data";
@@ -648,10 +650,14 @@ export function BriefComposer(props: {
   };
   const once = mode.kind === "review" && mode.once !== profile ? mode.once : null;
   const chosen = profileOf(meta.profiles, once ?? profile);
+  // The server check is the real guard. This shows a skill that GET /api/skills already misses.
+  const skillList = useSkills(!!chosen?.alwaysSkills.length).data;
+  const lost = skillList && chosen?.alwaysSkills.find((id) => !skillList.has(id));
+  const blocked = props.blocked ?? (lost ? alwaysSkillError(lost) : null);
   const start = async () => {
     if (props.starting) return;
-    if (props.blocked) {
-      toast.add({ title: props.blocked });
+    if (blocked) {
+      toast.add({ title: blocked });
       return;
     }
     if (await flush()) props.onStart(once ?? undefined);
@@ -771,7 +777,7 @@ export function BriefComposer(props: {
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <Button
           size="sm"
-          disabled={props.starting || !!props.blocked}
+          disabled={props.starting || !!blocked}
           focusableWhenDisabled
           className="aria-disabled:cursor-default aria-disabled:opacity-50"
           aria-describedby="brief-foot"
@@ -794,7 +800,7 @@ export function BriefComposer(props: {
           Cancel
         </Button>
         <span id="brief-foot" className="ml-1.5 text-xs text-muted-foreground">
-          {props.blocked ?? "Ctrl+Enter starts the review. Esc closes the brief."}
+          {blocked ?? "Ctrl+Enter starts the review. Esc closes the brief."}
         </span>
       </div>
     </section>

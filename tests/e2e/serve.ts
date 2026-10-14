@@ -2,7 +2,7 @@
 // The app gets a temp data folder and memory secrets. It never sees the real data folder or the credential store.
 import "../support/no-real-claude";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
@@ -51,6 +51,12 @@ const skillFile = (dir: string, name: string, description: string) => {
 };
 skillFile(join(claudeConfig, "skills", "test-check"), "test-check", "Finds changed code without a test.");
 writeFileSync(join(claudeConfig, "skills", "test-check", "notes.md"), "Extra notes.\n");
+// A folder name with a leading "." is not a skill ID, so discovery skips the hidden skill.
+const testCheck = { on: join(claudeConfig, "skills", "test-check"), off: join(claudeConfig, "skills", ".test-check-off") };
+const showTestCheck = (on: boolean) => {
+  const [from, to] = on ? [testCheck.off, testCheck.on] : [testCheck.on, testCheck.off];
+  if (existsSync(from)) renameSync(from, to);
+};
 const pluginDir = join(claudeConfig, "plugins", "cache", "e2e-market", "e2e-plugin", "1.2.0");
 skillFile(join(pluginDir, "skills", "style"), "style", "Checks the naming style.");
 // One MCP server of the plugin: the local fake stdio server again.
@@ -543,7 +549,13 @@ r[key("POST", "/__control/reset")] = async () => {
   Object.assign(folders, { opens: false, paths: [] });
   Object.assign(postA, { fail: null, hide: false });
   setClaude({ stream: "tree" });
+  showTestCheck(true);
   app = boot();
+  return NO_CONTENT;
+};
+// Removes or restores the user skill test-check, as a disabled plugin or a removed folder would.
+r[key("POST", "/__control/skill")] = async (req) => {
+  showTestCheck(((await req.json()) as { present: boolean }).present);
   return NO_CONTENT;
 };
 // The stream and the mode of the next fake CLI run.
