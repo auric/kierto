@@ -473,6 +473,12 @@ describe("re-review runs", () => {
       expect(done.run.since).toEqual({ head: h.s1, incremental: true });
       const sources = (await h.json<RunDetail>(`/api/runs/${base.run.id}`)).body.items;
       expect(sources.map((i) => [i.status, i.revision])).toEqual(sources.map(() => ["new", 0]));
+
+      // A cancelled re-review does not move the base.
+      h.runner.write({ fixture: h.stream(BASE_RESULT) });
+      const b = await h.post<RunDto>(`/api/prs/${h.pr}/rereview`);
+      expect([b.status, b.body.since?.head]).toEqual([202, h.s1]);
+      expect((await h.finish(b.body.id)).run.status).not.toBe("cancelled");
     },
     SLOW,
   );

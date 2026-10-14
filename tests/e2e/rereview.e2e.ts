@@ -72,6 +72,17 @@ test("a push after a review: c reviews the new commits, carries the open draft, 
   await control("state", { push: true });
   await expect(runLine(page)).toContainText("New commits since");
   await expect(rereviewButton(page)).toHaveAccessibleName(`Review changes since ${head}`);
+
+  // A cancelled re-review keeps the drafts and the offer of the review before it.
+  await control("claude", { stream: "tree", hang: true });
+  await rereviewButton(page).click();
+  await expect(runLine(page)).toContainText(`Reviewing changes since ${head}…`);
+  await runLine(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
+  await expect(rereviewButton(page)).toHaveAccessibleName(`Review changes since ${head}`);
+  await expect(drafts(page)).toHaveCount(3);
+
+  await control("claude", { stream: "tree" });
   await rereviewButton(page).click();
   await expect(runLine(page)).toContainText(`Reviewing changes since ${head}…`);
   // The arrow is hidden from screen readers. They read "to" instead.

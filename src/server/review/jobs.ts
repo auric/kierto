@@ -1473,13 +1473,16 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     },
 
     // pr: the runs of one PR. null: the runs of all PRs. Newest first.
-    // R14: the list of one PR also keeps its newest review run when newer reply runs fill the limit.
+    // R14: the list of one PR also keeps its newest review run, and its newest review run with a result, when newer runs fill the limit.
+    // The UI shows the drafts of the newest review run with a result after a cancelled or failed one.
     runs(db: Database, pr: number | null, limit: number): RunDto[] {
       const sql =
         pr === null
           ? `${SQL.run} ORDER BY r.id DESC LIMIT $limit`
           : `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE pr = $pr ORDER BY id DESC LIMIT $limit)
-              OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review') ORDER BY r.id DESC`;
+              OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review')
+              OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review' AND status IN ('completed', 'incomplete'))
+              ORDER BY r.id DESC`;
       return (db.query(sql).all(pr === null ? { limit } : { pr, limit }) as RunRow[]).map((r) => withPhase(db, toRunDto(r)));
     },
 

@@ -217,8 +217,12 @@ export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancel
   },
 };
 
-// R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, and the brief.
-export const latestReview = (runs: RunDto[] | undefined) => runs?.find((r) => r.kind === "review") ?? null;
+// R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, the brief,
+// and the re-review offer. A cancelled or failed run has no result and keeps the run before it, as jobs.ts baseRun does.
+export const latestReview = (runs: RunDto[] | undefined) =>
+  runs?.find((r) => r.kind === "review" && r.status !== "cancelled" && r.status !== "failed") ??
+  runs?.find((r) => r.kind === "review") ??
+  null;
 
 // ---------- One row per run kind ----------
 

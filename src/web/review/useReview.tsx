@@ -145,6 +145,8 @@ export function useReview(
   const replyRun = useRun(newestOf("reply"));
   const fixRun = useRun(newestOf("fix"));
   const askRun = useRun(newestOf("ask"));
+  // The review row can show a cancelled or failed run that is newer than latest.
+  const reviewRun = useRun(newestOf("review"));
   const replies = useReplyDrafts(pr.id);
   const active = useRuns().data?.find((r) => r.status === "running") ?? null;
   const start = useStartReview(pr.id);
@@ -512,7 +514,7 @@ export function useReview(
 
   const head = latest?.sourceHead ?? null;
   const forDiff = useMemo(() => ({ drafts: ds, head, replies: byThread }), [ds, head, byThread]);
-  const details = [run.data, replyRun.data, fixRun.data, askRun.data, pinned.data];
+  const details = [run.data, reviewRun.data, replyRun.data, fixRun.data, askRun.data, pinned.data];
   const rows = kinds.map((r) => {
     const d = details.find((x) => x?.run.id === r.id);
     const shown = d ? { ...d.run, stale: r.stale } : r;
@@ -520,8 +522,8 @@ export function useReview(
       run: shown,
       state: runLine(shown, d, meta.profiles, fix.fixes?.find((f) => f.run.id === r.id)?.edits.length),
       stale: staleText(shown, o.commits),
-      // The severity buttons follow the result of the newest review run.
-      jumps: r.id === latest?.id ? <SeverityJumps jumps={severityJumps(ds)} onJump={openDraft} /> : null,
+      // The severity buttons follow the drafts of latestReview, also when the review row shows a newer cancelled or failed run.
+      jumps: r.kind === "review" ? <SeverityJumps jumps={severityJumps(ds)} onJump={openDraft} /> : null,
     };
   });
   const logRun = typeof log?.of === "number" ? log.of : (log?.of === "review" ? latest : newest)?.id;

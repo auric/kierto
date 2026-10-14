@@ -412,6 +412,24 @@ describe("reply drafts", () => {
     expect(latestReview(undefined)).toBeNull();
   });
 
+  test("a cancelled or failed review run keeps the drafts and the re-review base of the review before it", () => {
+    const summary = { summary: "S.", risks: [], coverage: { read: [], skipped: [], unavailable: [], notChecked: [] }, dropped: [] };
+    const stale = { source: true, target: false };
+    const brief: BriefDto = { note: "", profile: "general", updatedAt: 5 };
+    const done = run({ id: 7, summary, stale });
+    // The base was itself a re-review.
+    const chained = run({ id: 7, summary, stale, since: { head: "c".repeat(40), incremental: true } });
+    for (const status of ["cancelled", "failed"] as const)
+      for (const base of [done, chained]) {
+        const runs = [run({ id: 9, status, summary: null, stale: { source: false, target: false } }), run({ id: 8, kind: "reply" }), base];
+        expect(latestReview(runs)?.id).toBe(7);
+        expect(rereviewState(latestReview(runs), brief, PROFILES)).toEqual({ since: "a3f9e21" });
+      }
+    // No review run with a result: the newest review run still shows.
+    expect(latestReview([run({ id: 9, status: "cancelled" }), run({ id: 4, status: "failed" })])?.id).toBe(9);
+    expect(latestReview([run({ id: 9, status: "running" }), done])?.id).toBe(9);
+  });
+
   test("the reply row counts the drafts and the threads that need no reply", () => {
     const items = [
       reply(1, 101, 105),

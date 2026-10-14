@@ -790,6 +790,26 @@ describe("brief and meta", () => {
     expect(list.map((r) => r.id)).toEqual([...replies.slice(0, 20), review]);
   });
 
+  test("R14: the runs of a PR keep the newest review run with a result after a cancelled and a failed review run", async () => {
+    const h = await setup();
+    const add = (kind: string, k: string, status = "completed") =>
+      (
+        h.db
+          .query(
+            `INSERT INTO review_run (pr, profile, note, idem_key, source_head, target_head, status, started_at, kind)
+            VALUES ($pr, 'general', '', $k, 'a', 'b', $status, 1, $kind) RETURNING id`,
+          )
+          .get({ pr: h.pr, k, kind, status }) as { id: number }
+      ).id;
+    add("review", "old");
+    const review = add("review", "done", "incomplete");
+    add("review", "failed", "failed");
+    const cancelled = add("review", "cancelled", "cancelled");
+    const replies = Array.from({ length: 21 }, (_, i) => add("reply", `r${i}`)).reverse();
+    const list = (await h.json<RunDto[]>(`/api/prs/${h.pr}/runs`)).body;
+    expect(list.map((r) => r.id)).toEqual([...replies.slice(0, 20), cancelled, review]);
+  });
+
   test("meta gives the runner, tool labels, the four profiles, and no context source", async () => {
     const h = await setup();
     const meta = (await h.json<MetaDto>("/api/meta")).body;
