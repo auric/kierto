@@ -14,6 +14,7 @@ import { Hint } from "../shell/Hint";
 import { setTheme, type Theme, useTheme } from "../theme";
 import { Clones } from "./Clones";
 import { JiraSettings } from "./JiraSettings";
+import { ProjectInstructions } from "./ProjectInstructions";
 import { ReviewProfiles } from "./ReviewProfiles";
 import { TaskRules } from "./TaskRules";
 
@@ -152,6 +153,7 @@ export function Settings({
           ["h-taskids", "Task IDs"],
           ...(tracker ? ([["h-tracker", tracker.name]] as [string, string][]) : []),
           ["h-clones", "Clones"],
+          ["h-instructions", "Project instructions"],
         ];
   const spy = useSectionSpy(sections.map(([id]) => id));
 
@@ -322,6 +324,7 @@ export function Settings({
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
         {settings.baseUrl !== null && <JiraSettings settings={settings} />}
         {settings.baseUrl !== null && <Clones />}
+        {settings.baseUrl !== null && <ProjectInstructions />}
         <div ref={spy.end} aria-hidden className="h-px" />
       </div>
     </>

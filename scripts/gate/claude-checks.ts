@@ -1,5 +1,6 @@
 // Gate B: local Claude Code checks B1 to B9 (docs/plans/v3.md section 5), B11 and B12 (docs/plans/r3.md WP-G3),
-// B13 (the model and effort fields of an --agents definition, and the --effort flag), B14 (the default effort of a run without --effort).
+// B13 (the model and effort fields of an --agents definition, and the --effort flag), B14 (the default effort of a run without --effort),
+// B15 (work/CLAUDE.md loads under the runner flag set).
 // Usage: bun scripts/gate/claude-checks.ts [--only B1,B3] [--dry-run]
 // --dry-run builds every fixture and prints the planned argv. It starts no `claude -p` process and needs no `claude` on PATH.
 // Raw output goes to .gate0/v3-local/raw/ (gitignored). Raw files hold local paths and account data.
@@ -29,15 +30,15 @@ const STUB = join(import.meta.dir, "stub-mcp-server.ts");
 const BUN = process.execPath;
 const MAX_CALLS = 14;
 const MAX_TURNS = 4;
-// B9, B11, B12, B13, and B14 have their own call caps. They do not count against MAX_CALLS.
-const OWN_MAX_CALLS: Record<string, number> = { b9: 2, b11: 2, b12: 1, b13: 2, b14: 2 };
+// B9, B11, B12, B13, B14, and B15 have their own call caps. They do not count against MAX_CALLS.
+const OWN_MAX_CALLS: Record<string, number> = { b9: 2, b11: 2, b12: 1, b13: 2, b14: 2, b15: 2 };
 const B9_MAX_TURNS = 8;
 const MAX_COST_USD = 0.6;
 const RUN_TIMEOUT_MS = 180_000;
 // Every temp folder name holds TAG. Claude Code keeps the name in its encoded per-cwd folders.
 const TAG = "rl-gb-";
 const FACT = "STUBFACT-5150";
-const CHECKS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B11", "B12", "B13", "B14"] as const;
+const CHECKS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B11", "B12", "B13", "B14", "B15"] as const;
 type CheckId = (typeof CHECKS)[number];
 
 // ---------- arguments ----------
@@ -1520,6 +1521,75 @@ async function b14() {
   }
 }
 
+// ---------- B15: work/CLAUDE.md under the runner flag set ----------
+// The app writes the project instructions to work/CLAUDE.md (src/server/review/instructions.ts) and puts each import token into a code span.
+// Run 1: the main thread must know the canary with no tool call. Run 2 (INFO): rl-reviewer has omitClaudeMd, so it should not know it.
+// Both runs: the text of the code-span import target must not reach the model.
+const B15_WORD = "B15-CANARY-7731";
+const B15_LEAK = "B15-IMPORT-LEAK";
+async function b15() {
+  const { work, app, drop } = runnerFolder("b15");
+  try {
+    writeFileSync(join(work, "repo", "b15.txt"), `${B15_LEAK}\n`);
+    writeFileSync(
+      join(work, "CLAUDE.md"),
+      `# Project instructions\n\n## From Review Loop settings\n\nThe project word is ${B15_WORD}. See \`@repo/b15.txt\`.\n`,
+    );
+    const args = [
+      "--restricted",
+      "--strict-mcp-config",
+      "--tools",
+      "Read,Grep,Glob,Agent",
+      "--allowedTools",
+      "Read,Grep,Glob",
+      "--agents",
+      agentsFile(app, {
+        "rl-main": {
+          description: "Gate B15 main thread.",
+          prompt: "You do the user task exactly. You change no files.",
+          tools: ["Agent(rl-reviewer)", "Read", "Grep", "Glob"],
+        },
+        "rl-reviewer": reviewer(),
+      }),
+      "--agent",
+      "rl-main",
+      "--no-session-persistence",
+    ];
+    const ask = "Do not call any tool. Reply with the project word from your project instructions, or NONE if you have no project word.";
+    const main = await runClaude("b15-main", args, ask, work, { env: runnerEnv(), maxTurns: 2 });
+    const sub = await runClaude(
+      "b15-reviewer",
+      args,
+      `Call the Agent tool once with subagent_type "rl-reviewer" and this task: "${ask}" Then reply with the agent's answer only.`,
+      work,
+      { env: runnerEnv() },
+    );
+    if (DRY) return dry("B15");
+    const mainTools = toolUses(main).map((t) => t.name);
+    const call = toolUses(sub).find((t) => t.parent === null && isAgentTool(t.name));
+    const subText = sub.events
+      .filter((e) => e.type === "assistant" && e.parent_tool_use_id)
+      .flatMap((e) => blocks(e))
+      .map((b) => b.text ?? "")
+      .join("\n");
+    const leaked = [main, sub].some((r) => r.events.some((e) => JSON.stringify(e).includes(B15_LEAK)));
+    const pass = main.exit === 0 && main.text.includes(B15_WORD) && mainTools.length === 0 && !leaked;
+    push(
+      "B15",
+      pass ? "PASS" : "FAIL",
+      `main: exit=${main.exit} word=${main.text.includes(B15_WORD)} tools=${mainTools.join(",") || "none"}; import text leaked=${leaked}; reviewer (INFO): agent call=${call?.name ?? "none"} ran=${call ? ranUnder(sub, call.id) : false} word=${subText.includes(B15_WORD)} reviewer tools=${
+        toolUses(sub)
+          .filter((t) => t.parent !== null)
+          .map((t) => t.name)
+          .join(",") || "none"
+      }`,
+      { mainText: short(main.text, 200), subText: short(subText, 200) },
+    );
+  } finally {
+    drop();
+  }
+}
+
 // ---------- main ----------
 const RUNNERS: Record<CheckId, () => Promise<unknown>> = {
   B1: b1,
@@ -1535,6 +1605,7 @@ const RUNNERS: Record<CheckId, () => Promise<unknown>> = {
   B12: b12,
   B13: b13,
   B14: b14,
+  B15: b15,
 };
 {
   for (const id of selected) await check(id, RUNNERS[id]);

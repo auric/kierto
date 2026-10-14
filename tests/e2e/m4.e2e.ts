@@ -545,7 +545,7 @@ test("the settings section links mark the section in view: at once on a click, o
   // Scroll: the end of the pane marks the last section, also when its heading cannot reach the top. The top marks the first.
   await pane.hover({ position: { x: 8, y: 8 } });
   await page.mouse.wheel(0, 50_000);
-  await expect(current).toHaveText("Clones");
+  await expect(current).toHaveText("Project instructions");
   await page.mouse.wheel(0, -50_000);
   await expect(current).toHaveText("Connection");
   // A heading at the top of the pane marks its section, also when the section is short.
@@ -559,7 +559,7 @@ test("the settings section links mark the section in view: at once on a click, o
   await page.setViewportSize({ width: 400, height: 800 });
   await pane.hover({ position: { x: 8, y: 8 } });
   await page.mouse.wheel(0, 50_000);
-  await expect(current).toHaveText("Clones");
+  await expect(current).toHaveText("Project instructions");
   await expect(current).toBeInViewport({ ratio: 1 });
   await page.mouse.wheel(0, -50_000);
   await expect(current).toHaveText("Connection");

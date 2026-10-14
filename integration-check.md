@@ -285,3 +285,19 @@ Run: `bun scripts/gate/claude-checks.ts --only B14`.
 | U37. Managed settings and the organization defaults do not change the default model or effort | UNVERIFIED | The app does not read managed sources. B14 compares the resolver with the CLI. |
 | U38. The init event names the effort level | NO | The fixtures carry `per_turn_effort_active` only. The run end resolves the effort for the init model instead. |
 | B14. `/effort status` in `-p`, without `--model` and with `--model haiku`, prints the level that the resolver gives | NOT RUN | Two calls, own cap 2. `/effort status` should make no model call. PASS when the first level in the output equals the resolver value for both runs. |
+
+## Project instructions (not run)
+
+Status: NOT RUN, 2026-10-14. The rows come from code.claude.com/docs/en/memory, code.claude.com/docs/en/sub-agents, and `claude --help` (2.1.296). No real CLI run checked them. `src/server/review/instructions.ts` implements them.
+
+Run: `bun scripts/gate/claude-checks.ts --only B15`.
+
+| Fact | Result | Evidence |
+|---|---|---|
+| U39. Claude Code loads CLAUDE.md and CLAUDE.local.md from the cwd and every folder above it | DOCUMENTED | memory "How CLAUDE.md files load". The run writes `work/CLAUDE.md` in the cwd. |
+| U40. `--restricted` still loads the cwd CLAUDE.md | UNVERIFIED | The `--restricted` help names settings files only, not CLAUDE.md. In B8 the model reported no user CLAUDE.md under `--restricted` (model report only). Fallback: the agent prompts tell the model to read ./CLAUDE.md when its context does not hold it. B15 checks it. |
+| U41. A subagent with `omitClaudeMd` starts without CLAUDE.md | DOCUMENTED | sub-agents "What loads at startup". The app keeps `omitClaudeMd` on rl-reviewer. Its prompt tells it to read ./CLAUDE.md. B15 run 2 records it (INFO). |
+| U42. A CLAUDE.md in a subfolder of the cwd loads on demand when Claude reads a file there; AGENTS.md also loads | DOCUMENTED | memory "Troubleshooting" and "When Claude Code reads AGENTS.md". The snapshot renames every CLAUDE.md, CLAUDE.local.md, and AGENTS.md of the PR head to *.untrusted.md at any depth and removes `.claude/`. |
+| U43. `@path` imports resolve relative to the importing file, nest at most four hops, and skip code spans and fenced code blocks | DOCUMENTED | memory "Import additional files". The app resolves imports itself with the same rules, inside the clone or the target tree only. It puts every import token of work/CLAUDE.md into a code span, so the CLI imports nothing. |
+| U44. The CLI reads an "@" token after a space or a line start as an import, and not an "@" inside a word | UNVERIFIED | The docs show examples only. The app resolves only tokens that look like a path (user decision): a "/" or a backslash, a "~/" start, or a file extension. It puts every "@" token that does not follow a letter or digit into a code span. B15 checks that a code-span token imports nothing. |
+| B15. `work/CLAUDE.md` with a canary under the runner flag set: the main thread knows the canary with no tool call; a code-span `@repo/b15.txt` imports nothing; rl-reviewer with `omitClaudeMd` (INFO) | NOT RUN | Two Haiku calls, own cap 2. Dry run: 2 planned calls. |

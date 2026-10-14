@@ -56,7 +56,7 @@ export async function reviewRemote(root: string, prs: Record<number, "source" | 
     return g(["commit-tree", await g(["write-tree"]), ...(parent ? ["-p", parent] : []), "-m", msg]);
   }
   const base = await commit(null, { "src/cache/flush.ts": FLUSH_BASE, "README.md": "# Sample\n" }, "base");
-  const target = await commit(base, { "docs/main.md": "main\n" }, "main moves");
+  const target = await commit(base, { "docs/main.md": "main\n", "CLAUDE.md": "Name each lock after the data it guards.\n" }, "main moves");
   const source = await commit(base, { "src/cache/flush.ts": FLUSH_HEAD }, "Lock each entry");
   const next = await commit(source, { "docs/flush.md": "Flush order.\n" }, "Document the flush");
   await g(["update-ref", "refs/heads/main", target]);

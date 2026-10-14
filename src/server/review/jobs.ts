@@ -2,6 +2,7 @@
 // one run from the stored brief to stored drafts or edits. One run at a time.
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AskDto,
@@ -65,6 +66,7 @@ import {
   reviewerAgent,
   SHIPPED_PROFILES,
   usesReviewer,
+  withInstructions,
   withMcp,
   withSkills,
 } from "./catalog";
@@ -76,6 +78,7 @@ import { type DiffFile, parseDiff } from "./diffmap";
 import { type FixFile, type ValidEdit, validateFix } from "./fix";
 import { git, gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
+import { projectInstructions } from "./instructions";
 import { buildAskPrompt, buildFixPrompt, buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
 import { claudeConfigDir, copySkills } from "./skills";
 import { claudeJsonPath, userServers } from "./user-mcp";
@@ -181,6 +184,8 @@ type RunRow = {
   fix_json: string | null;
   // null for runs made before Release 3.
   tasks_json: string | null;
+  // null for runs made before project instructions.
+  instructions_json: string | null;
   findings: number;
 };
 
@@ -267,11 +272,12 @@ const SQL = {
   fetched: "SELECT key, fetched_at AS fetchedAt FROM task_context WHERE pr = $pr ORDER BY key",
   run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.effort, r.effort_default, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
-      p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer, r.fix_json, r.tasks_json,
+      p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer, r.fix_json, r.tasks_json, r.instructions_json,
       (SELECT COUNT(*) FROM review_item i WHERE i.run = r.id AND i.kind = 'finding'
         AND COALESCE(json_extract(i.payload_json, '$.carried.verdict'), 'open') = 'open') AS findings
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
   workspace: "UPDATE review_run SET merge_base = $base, range_base = $range, fetch_via = $via WHERE id = $id",
+  instructions: "UPDATE review_run SET instructions_json = $json WHERE id = $id",
   end: `UPDATE review_run SET status = $status, error_kind = $kind, error_text = $text, session_id = $session, cli_version = $cli, model = COALESCE($model, model),
       effort_default = CASE WHEN $init_effort THEN $effort_default ELSE effort_default END, usage_json = $usage, summary_json = $summary, answer = $answer, fix_json = $fix, raw_output = $raw, finished_at = $now
     WHERE id = $id AND status = 'running'`,
@@ -866,6 +872,7 @@ function toRunDto(r: RunRow, resolve = effortsNow()): RunDto {
     since: r.since_head === null ? null : { head: r.since_head, incremental: r.range_base !== null && r.range_base !== r.merge_base },
     question: r.question,
     ...(r.tasks_json !== null && { tasks: JSON.parse(r.tasks_json) as NonNullable<RunDto["tasks"]> }),
+    ...(r.instructions_json !== null && { instructions: JSON.parse(r.instructions_json) as NonNullable<RunDto["instructions"]> }),
     findings: r.findings,
   };
 }
@@ -1076,6 +1083,25 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     notify(j.id);
     if (j.cancelled) return cancelled();
 
+    // The run reads every source again. The text stays in the run folder. SQLite and the log get the paths and sizes only.
+    const instructions = await projectInstructions(
+      j.db,
+      { project: pr.project, repo: pr.repo },
+      { cache: ws.cache, env: gitEnv("/dev/null"), commit: ws.targetHead },
+    );
+    if (instructions.text) writeFileSync(join(ws.work, "CLAUDE.md"), instructions.text);
+    j.db
+      .query(SQL.instructions)
+      .run({ id: j.id, json: JSON.stringify({ files: instructions.files, bytes: instructions.bytes, notLoaded: instructions.notLoaded }) });
+    for (const g of instructions.notLoaded) log(`Review run ${j.id}: project instructions not loaded: ${g}.`);
+    if (instructions.files.length)
+      log(
+        `Review run ${j.id} project instructions: ${instructions.files
+          .map((f) => `${f.source === "settings" ? "settings text" : `${f.path} from ${f.source}`} (${f.bytes} bytes)`)
+          .join(", ")}.`,
+      );
+    if (j.cancelled) return cancelled();
+
     const profile = j.profile;
     const [docs, user] = await Promise.all([
       docServers(profile),
@@ -1165,13 +1191,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         cwd: ws.work,
         appDir: ws.app,
         ...spec,
-        main: withMcp(withSkills(spec.main, folders), used),
+        main: withInstructions(withMcp(withSkills(spec.main, folders), used), instructions.text !== ""),
         maxTurns: reply || fix ? Math.max(profile.maxTurns, MIN_EDIT_TURNS) : profile.maxTurns,
         model: profile.model,
         effort: profile.effort,
         // Only a review gets subagents. With agents {}, the CLI gets no Agent tool.
         agents:
-          j.kind === "review" && usesReviewer(profile) ? { [REVIEWER]: withMcp(withSkills(reviewerAgent(profile), folders), used) } : {},
+          j.kind === "review" && usesReviewer(profile)
+            ? { [REVIEWER]: withInstructions(withMcp(withSkills(reviewerAgent(profile), folders), used), instructions.text !== "") }
+            : {},
         mcpServers,
       },
       (events) => {

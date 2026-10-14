@@ -3,6 +3,7 @@ import type {
   BriefDto,
   CommitDto,
   ExcerptLine,
+  InstructionFileDto,
   ItemActionInput,
   ProfileDto,
   PrRow,
@@ -25,6 +26,7 @@ import {
 } from "../../shared/review";
 import type { RunEvent } from "../../shared/run-log";
 import { matches } from "../shell/model";
+import { sizeText } from "./tasks";
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
@@ -286,6 +288,23 @@ export function rereviewState(
 // Plan v3 section 7, Usage limit: one line with the CLI message. No automatic retry.
 export const limitText = (runner: string, text: string | null) =>
   `${text?.trim() ? `${runner}: ${text.trim()}` : `${runner} usage limit reached.`} Review Loop does not retry by itself.`;
+
+// The project instruction files of a run: a short line and one line per file. null: the run got none, or it ran before they were stored.
+// notLoaded: the files and imports that the run left out. They are warnings, not coverage gaps.
+export function instructionsText(
+  run: Pick<RunDto, "instructions">,
+): { short: string | null; long: string; notLoaded: string | null } | null {
+  const files = run.instructions?.files ?? [];
+  const missed = run.instructions?.notLoaded ?? [];
+  if (!files.length && !missed.length) return null;
+  const label = (f: InstructionFileDto) => (f.source === "settings" ? "your text" : f.path);
+  const from = { target: "from the target branch", clone: "from your clone", settings: "from Review Loop settings" } as const;
+  return {
+    short: files.length ? `${[...new Set(files.map(label))].join(", ")} (${sizeText(run.instructions?.bytes ?? 0)})` : null,
+    long: files.map((f) => `${f.source === "settings" ? "Text" : f.path} ${from[f.source]}, ${sizeText(f.bytes)}`).join("\n"),
+    notLoaded: missed.length ? `Not loaded: ${missed.join("; ")}` : null,
+  };
+}
 
 // The model and the effort of a run. A run without an init event and without --model names the default model of the settings.
 // effortNow: the run stored no default effort, so the text names the effort of the current settings.

@@ -1,0 +1,202 @@
+// Project instructions: source detection, @path imports, caps, and the combined text. Temp folders and a temp bare repository only.
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { git, gitEnv } from "../../src/server/review/git";
+import { buildInstructions, cloneReader, codeRanges, FILE_CAP, scan, TOTAL_CAP, treeReader } from "../../src/server/review/instructions";
+
+const root = mkdtempSync(join(tmpdir(), "rl-instr-"));
+afterAll(() => rmSync(root, { recursive: true, force: true }));
+let n = 0;
+
+function clone(files: Record<string, string | Uint8Array>) {
+  const dir = join(root, `clone-${n++}`);
+  for (const [p, v] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, p)), { recursive: true });
+    writeFileSync(join(dir, p), v);
+  }
+  return dir;
+}
+
+const local = (dir: string, files: string[], extra = "") =>
+  buildInstructions({ target: null, clone: cloneReader(dir), local: files, extra });
+
+describe("scan", () => {
+  test("finds imports outside code and puts every import token into a code span", () => {
+    const text = [
+      "See @README and @docs/a.md.",
+      "Mail me at a@example.test.",
+      "Skip `@inline` here.",
+      "```",
+      "@fenced",
+      "```",
+      "@Design\\ Docs/x.md",
+    ].join("\n");
+    const s = scan(text);
+    expect(s.imports).toEqual(["docs/a.md.", "Design Docs/x.md"]);
+    expect(s.text).toContain("See `@README` and `@docs/a.md.`\n");
+    expect(s.text).toContain("a@example.test");
+    expect(s.text).toContain("Skip `@inline` here.");
+    expect(s.text).toContain("```\n@fenced\n```");
+    expect(s.text).toContain("`@Design\\ Docs/x.md`");
+    // Nothing outside code is left that Claude Code reads as an import.
+    expect(scan(s.text).imports).toEqual([]);
+  });
+
+  test("an unclosed fence runs to the end; an unmatched backtick is literal; a span stops at a blank line", () => {
+    expect(scan("```\n@a").imports).toEqual([]);
+    expect(scan("a ` @b.md").imports).toEqual(["b.md"]);
+    expect(scan("x ` y\n\n@c.md ` z").imports).toEqual(["c.md"]);
+  });
+
+  test("only a token that looks like a path is an import; other tokens stay text in a code span", () => {
+    const s = scan("Ask @someone and @team. See @README, @v2, @docs/x, @a\\b, @./c, @../d, @~/e, and @notes.md");
+    expect(s.imports).toEqual(["docs/x,", "a\\b,", "./c,", "../d,", "~/e,", "notes.md"]);
+    expect(s.text).toContain("Ask `@someone` and `@team.` See `@README,` `@v2,`");
+    expect(codeRanges("a `b` c")).toEqual([[2, 5]]);
+  });
+});
+
+describe("clone files", () => {
+  test("detects the ticked files, resolves imports relative to the importing file, and adds headers in order", async () => {
+    const dir = clone({
+      "CLAUDE.md": "Root rules. Read @docs/a.md\n",
+      "docs/a.md": "A rules. See @b.md\n",
+      "docs/b.md": "B rules.\n",
+      "CLAUDE.local.md": "Local rules.\n",
+      ".claude/CLAUDE.md": "Not ticked.\n",
+    });
+    const b = await local(dir, ["CLAUDE.md", "CLAUDE.local.md"], "Extra text.");
+    expect(b.notLoaded).toEqual([]);
+    expect(b.files.map((f) => [f.source, f.path])).toEqual([
+      ["clone", "CLAUDE.md"],
+      ["clone", "docs/a.md"],
+      ["clone", "docs/b.md"],
+      ["clone", "CLAUDE.local.md"],
+      ["settings", ""],
+    ]);
+    const heads = [
+      "## From your clone: CLAUDE.md",
+      "## From your clone: docs/a.md (imported by CLAUDE.md)",
+      "## From your clone: docs/b.md (imported by docs/a.md)",
+      "## From your clone: CLAUDE.local.md",
+      "## From Review Loop settings",
+    ];
+    const at = heads.map((h) => b.text.indexOf(h));
+    expect(at.every((i, k) => i > (at[k - 1] ?? -1))).toBe(true);
+    expect(b.text).toContain("Read `@docs/a.md`");
+    expect(b.text).not.toContain("Not ticked.");
+    expect(b.bytes).toBe(b.files.reduce((s, f) => s + f.bytes, 0));
+  });
+
+  test("a missing, escaping, binary, oversized, or cyclic import is a gap and stays out", async () => {
+    const dir = clone({
+      "CLAUDE.md": "@nope.md @../outside.md @~/home.md @bin.dat @big.md @c1.md\n",
+      "bin.dat": new Uint8Array([0x61, 0, 0x62]),
+      "big.md": "x".repeat(FILE_CAP + 1),
+      "c1.md": "@c2.md\n",
+      "c2.md": "@c1.md\n",
+    });
+    writeFileSync(join(dirname(dir), "outside.md"), "OUTSIDE-CANARY");
+    const b = await local(dir, ["CLAUDE.md"]);
+    expect(b.files.map((f) => f.path)).toEqual(["CLAUDE.md", "c1.md", "c2.md"]);
+    expect(b.text).not.toContain("OUTSIDE-CANARY");
+    const g = b.notLoaded.join("\n");
+    expect(g).toContain("@nope.md, imported by CLAUDE.md from your clone (the file does not exist)");
+    expect(g).toContain("@../outside.md, imported by CLAUDE.md from your clone (the path is outside the clone)");
+    expect(g).toContain("@~/home.md");
+    expect(g).toContain("@bin.dat, imported by CLAUDE.md from your clone (the file is not UTF-8 text)");
+    expect(g).toContain("@big.md, imported by CLAUDE.md from your clone (the file is over 64 KB)");
+    expect(g).toContain("@c1.md, imported by c2.md from your clone (an import cycle)");
+  });
+
+  test("imports nest at most four hops", async () => {
+    const dir = clone({
+      "CLAUDE.md": "@l1.md",
+      "l1.md": "@l2.md",
+      "l2.md": "@l3.md",
+      "l3.md": "@l4.md",
+      "l4.md": "@l5.md",
+      "l5.md": "five",
+    });
+    const b = await local(dir, ["CLAUDE.md"]);
+    expect(b.files.map((f) => f.path)).toEqual(["CLAUDE.md", "l1.md", "l2.md", "l3.md", "l4.md"]);
+    expect(b.notLoaded).toEqual(["@l5.md, imported by l4.md from your clone (more than 4 import levels)"]);
+  });
+
+  test("the total stops at 256 KB", async () => {
+    const big = "y".repeat(FILE_CAP - 10);
+    const files: Record<string, string> = { "CLAUDE.md": "@p1.md @p2.md @p3.md @p4.md @p5.md" };
+    for (let i = 1; i <= 5; i++) files[`p${i}.md`] = big;
+    const b = await local(clone(files), ["CLAUDE.md"]);
+    expect(b.bytes).toBeLessThanOrEqual(TOTAL_CAP);
+    expect(b.files.map((f) => f.path)).toEqual(["CLAUDE.md", "p1.md", "p2.md", "p3.md", "p4.md"]);
+    expect(b.notLoaded).toEqual(["@p5.md, imported by CLAUDE.md from your clone (the instructions are over 256 KB)"]);
+  });
+
+  test("a link out of the clone does not load", async () => {
+    const dir = clone({ "CLAUDE.md": "@link.md" });
+    writeFileSync(join(root, "secret.md"), "SECRET-CANARY");
+    try {
+      symlinkSync(join(root, "secret.md"), join(dir, "link.md"), "file");
+    } catch {
+      // Windows without the link privilege. The path check covers the rest.
+      return;
+    }
+    const b = await local(dir, ["CLAUDE.md"]);
+    expect(b.text).not.toContain("SECRET-CANARY");
+    expect(b.notLoaded.join("\n")).toContain("a link points outside the clone");
+  });
+
+  test("a ticked file that is gone, and ticked files without a clone, are not loaded", async () => {
+    const b = await local(clone({ "CLAUDE.md": "x" }), ["CLAUDE.local.md"]);
+    expect(b.notLoaded).toEqual(["CLAUDE.local.md from your clone (the file does not exist)"]);
+    expect(b.text).toBe("");
+    const none = await buildInstructions({ target: null, clone: null, local: ["CLAUDE.md"], extra: "" });
+    expect(none.notLoaded).toEqual(["CLAUDE.md (no clone folder is set)"]);
+  });
+});
+
+describe("target branch", () => {
+  test("reads CLAUDE.md and its imports from the commit; a tree link and a missing import are not loaded", async () => {
+    const dir = join(root, "tree");
+    mkdirSync(dir);
+    const empty = join(dir, "empty.gitconfig");
+    writeFileSync(empty, "");
+    const bare = join(dir, "repo.git");
+    const env = {
+      ...gitEnv(empty),
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.invalid",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.invalid",
+      GIT_INDEX_FILE: join(dir, "index"),
+    };
+    const g = async (args: string[], stdin?: string) => (await git(["--git-dir", bare, ...args], { env, stdin })).trim();
+    await git(["init", "-q", "--bare", "--template=", bare], { env });
+    const blob = (text: string) => g(["hash-object", "-w", "--stdin"], text);
+    const entries = [
+      `100644 ${await blob("Target rules. @docs/rules.md @link.md @gone.md\n")}\tCLAUDE.md`,
+      `100644 ${await blob("Rules file.\n")}\tdocs/rules.md`,
+      `120000 ${await blob("docs/rules.md")}\tlink.md`,
+    ];
+    await g(["update-index", "--add", "--index-info"], `${entries.join("\n")}\n`);
+    const commit = await g(["commit-tree", await g(["write-tree"]), "-m", "target"]);
+    const b = await buildInstructions({ target: treeReader(bare, env, commit), clone: null, local: [], extra: "" });
+    expect(b.files.map((f) => [f.source, f.path])).toEqual([
+      ["target", "CLAUDE.md"],
+      ["target", "docs/rules.md"],
+    ]);
+    expect(b.text).toContain("## From the target branch: CLAUDE.md");
+    expect(b.text).toContain("Rules file.");
+    expect(b.notLoaded).toEqual([
+      "@link.md, imported by CLAUDE.md from the target branch (the path is a link)",
+      "@gone.md, imported by CLAUDE.md from the target branch (the file does not exist)",
+    ]);
+    // A missing root file on the target branch is no gap.
+    const bad = await buildInstructions({ target: treeReader(bare, env, "0".repeat(40)), clone: null, local: [], extra: "" });
+    expect(bad.files).toEqual([]);
+    expect(bad.notLoaded[0]).toContain("the app cannot read the target branch commit");
+  });
+});

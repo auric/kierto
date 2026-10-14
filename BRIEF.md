@@ -343,7 +343,8 @@ Read state:
 Review runner:
 - Snapshot: fetch refs/pull-requests/{id}/from into one bare cache clone per repository. If the server blocks these refs, fetch the source branch by name. Gate 0: git ls-remote lists refs/pull-requests/{id}/from, and it equals the source head. No merge ref is listed. Verify the fetch of /from in M2. Pin the source, target, and merge-base commits. On Windows, set core.longpaths=true.
 - Check out the pinned source head with `git worktree add --detach` into `<dataDir>/runs/<id>/work/repo`. Info attributes turn off filters, text conversion, and ident, so checkout writes each blob unchanged.
-- Remove links (tree entries with mode 120000 and any link or junction on disk), .claude/ and .codegraph/ folders, and .mcp.json files. Rename every CLAUDE.md, CLAUDE.local.md, and AGENTS.md to <name>.untrusted.md. No submodules. No repository scripts run.
+- Remove links (tree entries with mode 120000 and any link or junction on disk), .claude/ and .codegraph/ folders, and .mcp.json files. Rename every CLAUDE.md, CLAUDE.local.md, and AGENTS.md to <name>.untrusted.md at any depth, so no PR head file loads as instructions. No submodules. No repository scripts run.
+- Project instructions (per repository, Settings): CLAUDE.md and .claude/CLAUDE.md from the target head (default on), ticked CLAUDE.md, CLAUDE.local.md, or .claude/CLAUDE.md from the user's clone root, and extra text. Each run reads them again and writes `work/CLAUDE.md` with one header per source. `@path` imports resolve inside the clone or the target tree, at most 4 hops, 64 KB per file, and 256 KB in total. Only a token that looks like a path is an import. A file or an import that does not load shows as "Not loaded" in the run inputs and the Settings preview. It is not a coverage gap. The agent prompts say that these are the user's instructions and never change the safety rules. review_run.instructions_json stores the paths and sizes, never the text.
 - The app writes context files into `work/context`: the numbered diff, the changed-file list, and the PR text with the existing comments. The review reads history only through the read-only git MCP of the app.
 - Spawn the native claude binary (claude.exe on Windows) with the shell off. cwd = the run folder. Send the prompt on stdin, because Windows limits the command-line length.
 - Refuse a claude.cmd wrapper, because cmd.exe parses the arguments again. The runner check says "claude.cmd is not the native claude.exe." and no run starts.
@@ -425,6 +426,7 @@ Data model (SQLite):
 - task_context(pr, key, source: jira, json, fetched_at). Release 2. One row per PR and issue key.
 - task_attachment(pr, key, att_id, filename, mime, size, file, sha256, image, text, include, downloaded_at). Release 3. A task_context delete removes its rows.
 - repo_clone(project, repo, path, updated_at). Release 3. One clone path per repository.
+- repo_instructions(project, repo, target, local_json, extra, updated_at). The project instruction sources of one repository.
 - fix_edit(id, run, ord, thread, path, old, new, start, rows_json). Release 3. The checked edits of a fix run.
 - fix_commit(id, pr, run, idem_key, edits_json, mode: clone|cache, clone_path, branch, before_head, commit_hash, short_hash, state: committed|staged|undone, message, created_at, updated_at). Release 3. idem_key is unique while the state is not undone.
 - run_event(run, id, seq, parent, tool, target, status, note, agent, started_at, ended_at)

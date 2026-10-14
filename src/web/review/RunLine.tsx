@@ -1,7 +1,19 @@
 // Run list (R14, prototype/v3 runLine): one row for the newest run of each kind, newest first. Each row has the same parts:
 // the kind, the state or the result, the time, and Log in its own column. Below them, the inputs of the run.
 // Failed, usage-limit, and cancelled runs are one row each. A re-review names its range (plan r2 UI-RR).
-import { Bot, Braces, CircleAlert, CircleStop, Cpu, GitCommitHorizontal, LoaderCircle, ScrollText, Ticket, User } from "lucide-react";
+import {
+  Bot,
+  Braces,
+  CircleAlert,
+  CircleStop,
+  Cpu,
+  FileText,
+  GitCommitHorizontal,
+  LoaderCircle,
+  ScrollText,
+  Ticket,
+  User,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { MetaDto, RunDto } from "../../shared/dto";
@@ -9,7 +21,19 @@ import { fullTime, useSettled } from "../pr/Thread";
 import { agoLong } from "../pr/threads";
 import { Hint } from "../shell/Hint";
 import { useNow } from "../shell/Sidebar";
-import { clockDur, type Jump, KIND_LABEL, limitText, plural, RUN_TEXT, type RunLineState, SEVERITY, setupText, shortHash } from "./model";
+import {
+  clockDur,
+  instructionsText,
+  type Jump,
+  KIND_LABEL,
+  limitText,
+  plural,
+  RUN_TEXT,
+  type RunLineState,
+  SEVERITY,
+  setupText,
+  shortHash,
+} from "./model";
 
 const icon = "size-[15px] shrink-0";
 const jump = "inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium hover:underline";
@@ -218,6 +242,7 @@ function Inputs({ run, stale, meta }: { run: RunDto; stale: string | null; meta:
   const tasks = run.tasks ?? [];
   const ids = tasks.map((t) => t.key).join(", ");
   const range = run.since?.incremental ? shortHash(run.since.head) : null;
+  const instructions = instructionsText(run);
   const item = "inline-flex items-center gap-1.5";
   return (
     <p className="col-span-2 col-start-2 m-0 flex min-w-0 flex-wrap items-center gap-x-3.5 gap-y-0.5 text-(length:--fs-s) text-muted-foreground @max-[560px]/detail:col-start-1">
@@ -259,6 +284,19 @@ function Inputs({ run, stale, meta }: { run: RunDto; stale: string | null; meta:
           <code translate="no" className="font-mono">
             {ids}
           </code>
+        </span>
+      )}
+      {instructions?.short && (
+        <span className={item} title={`Project instructions of this run:\n${instructions.long}`} data-run-instructions>
+          <FileText aria-hidden className={icon} />
+          <span className="sr-only">Project instructions: </span>
+          {instructions.short}
+        </span>
+      )}
+      {instructions?.notLoaded && (
+        <span className={cn(item, "text-destructive")} data-run-not-loaded>
+          <CircleAlert aria-hidden className={icon} />
+          {instructions.notLoaded}
         </span>
       )}
       {run.note.trim() && (

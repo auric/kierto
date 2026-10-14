@@ -1,10 +1,12 @@
 // Fix it API (plan r3 S-APPLY): the clone routes, commit, and undo. Git in the user's clone runs no network command.
 import type { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { validator } from "hono/validator";
 import {
   type ApiError,
+  CLONE_INSTRUCTION_FILES,
   type CloneDto,
   type CloneProblem,
   type CloneRowDto,
@@ -13,6 +15,10 @@ import {
   type FixCommitInput,
   type FixConflict,
   fixCommitInput,
+  type InstructionPreviewDto,
+  type InstructionRepoDto,
+  type InstructionsInput,
+  instructionsInput,
 } from "../../shared/dto";
 import type { ReplyPayload } from "../../shared/review";
 import { newestLive, type TurnMsg } from "../../shared/turn";
@@ -42,17 +48,28 @@ import {
   treeEntries,
 } from "./clone";
 import { GitError, git } from "./git";
+import { instructionSettings, projectInstructions, saveInstructionSettings } from "./instructions";
 import type { ReviewJobs } from "./jobs";
 import { cachePath, gitSetup, locked, longPath } from "./workspace";
 
-type PrRow = { id: number; project: string; repo: string; pr_id: number; source_branch: string | null; source_head: string | null };
+type PrRow = {
+  id: number;
+  project: string;
+  repo: string;
+  pr_id: number;
+  source_branch: string | null;
+  source_head: string | null;
+  target_head: string | null;
+};
 // source: the source head S of the run.
 type RunRow = { run: number; kind: string; source: string; pr: number; project: string; repo: string; pr_id: number };
 type EditRow = PatchEdit & { thread: number };
 type CommitRow = FixCommitRow & { project: string; repo: string };
 
 const SQL = {
-  pr: "SELECT id, project, repo, pr_id, source_branch, source_head FROM pull_request WHERE id = $id",
+  pr: "SELECT id, project, repo, pr_id, source_branch, source_head, target_head FROM pull_request WHERE id = $id",
+  repos: `SELECT p.project, p.repo, MAX(p.id) AS pr, c.path AS clone FROM pull_request p
+    LEFT JOIN repo_clone c ON c.project = p.project AND c.repo = p.repo GROUP BY p.project, p.repo ORDER BY p.project, p.repo`,
   clone: "SELECT path FROM repo_clone WHERE project = $project AND repo = $repo",
   saveClone: `INSERT INTO repo_clone (project, repo, path, updated_at) VALUES ($project, $repo, $path, $now)
     ON CONFLICT (project, repo) DO UPDATE SET path = excluded.path, updated_at = excluded.updated_at`,
@@ -369,6 +386,63 @@ export function createFixRoutes(opts: {
       if (!existsSync(path)) return c.json<ApiError>({ error: CLONE_TEXT.missing }, 409);
       if (!(await opener(path))) return c.json({ error: "No file manager opened the folder. Copy the path.", path }, 501);
       return c.body(null, 204);
+    })
+    .get("/instructions", (c) => {
+      const db = review.open();
+      if (!db) return c.json(unconfigured, 409);
+      const rows = db.query(SQL.repos).all() as Omit<InstructionRepoDto, "settings">[];
+      c.header("Cache-Control", "no-store");
+      return c.json(
+        rows.map((r): InstructionRepoDto => ({ ...r, settings: instructionSettings(db, r) })),
+        200,
+      );
+    })
+    .put(
+      "/prs/:id/instructions",
+      prParam,
+      validator("json", (v, c) => {
+        const r = instructionsInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid project instructions." }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const pr = prRow(db, c.req.valid("param").id);
+        if (!pr) return c.json(notFound("Pull request"), 404);
+        saveInstructionSettings(db, pr, c.req.valid("json"));
+        return c.json<InstructionsInput>(instructionSettings(db, pr), 200);
+      },
+    )
+    .get("/prs/:id/instructions/preview", prParam, async (c) => {
+      // Reads the sources as a run does, with no network. The target branch comes from the cache, at the synced target head.
+      const db = review.open();
+      if (!db) return c.json(unconfigured, 409);
+      const pr = prRow(db, c.req.valid("param").id);
+      if (!pr) return c.json(notFound("Pull request"), 404);
+      const cache = cacheOf(pr);
+      const cached = pr.target_head !== null && existsSync(cache);
+      const b = await projectInstructions(db, pr, cached ? { cache, env: env(), commit: pr.target_head as string } : null);
+      const isFile = (p: string) => {
+        try {
+          return statSync(p).isFile();
+        } catch {
+          return false;
+        }
+      };
+      const found = b.clone ? CLONE_INSTRUCTION_FILES.filter((f) => isFile(join(b.clone as string, f))) : [];
+      c.header("Cache-Control", "no-store");
+      return c.json<InstructionPreviewDto>(
+        {
+          readAt: Date.now(),
+          found,
+          target: !b.settings.target ? "off" : cached ? "read" : "no-cache",
+          files: b.files,
+          bytes: b.bytes,
+          text: b.text,
+          notLoaded: b.notLoaded,
+        },
+        200,
+      );
     })
     .get("/clones", (c) => {
       const db = review.open();

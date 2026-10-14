@@ -387,6 +387,8 @@ export type RunDto = {
   question: string | null;
   // Plan r3 Feature C: the fetched tasks at the start of the run. Absent for runs made before it was stored.
   tasks?: { key: string; fetchedAt: number }[];
+  // The project instruction files that the run got. Absent for runs made before it was stored.
+  instructions?: { files: InstructionFileDto[]; bytes: number; notLoaded?: string[] };
   // The finding items of the run that a re-review did not find fixed or outdated. 0 for other run kinds.
   findings: number;
   // A running run before the CLI starts: indexing builds the codegraph index of the snapshot.
@@ -655,6 +657,30 @@ export type CloneRowDto = { project: string; repo: string; path: string; pr: num
 export type FixConflict = ApiError & { problems: CloneDto["problems"] };
 export const cloneInput = z.object({ path: z.string().trim().min(1).max(4096) });
 export type CloneInput = z.infer<typeof cloneInput>;
+
+// Project instructions per repository. The app reads these clone files only at the clone root.
+export const CLONE_INSTRUCTION_FILES = ["CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md"] as const;
+export const EXTRA_INSTRUCTIONS_MAX = 20_000;
+export const instructionsInput = z.object({
+  target: z.boolean(),
+  local: z.array(z.enum(CLONE_INSTRUCTION_FILES)).max(CLONE_INSTRUCTION_FILES.length),
+  extra: z.string().max(EXTRA_INSTRUCTIONS_MAX),
+});
+export type InstructionsInput = z.infer<typeof instructionsInput>;
+// GET /api/instructions: one row per repository of a stored PR. pr: the newest PR of the repository. clone: null when not set.
+export type InstructionRepoDto = { project: string; repo: string; pr: number; clone: string | null; settings: InstructionsInput };
+// path: from the repository or clone root. Empty for the settings text.
+export type InstructionFileDto = { source: "target" | "clone" | "settings"; path: string; bytes: number };
+// GET /api/prs/:id/instructions/preview. found: the clone files that exist now. target "no-cache": no run fetched the target branch yet.
+export type InstructionPreviewDto = {
+  readAt: number;
+  found: string[];
+  target: "read" | "no-cache" | "off";
+  files: InstructionFileDto[];
+  bytes: number;
+  text: string;
+  notLoaded: string[];
+};
 
 // GET /api/runs/:id. events: the run log in seq order.
 export type RunDetail = { run: RunDto; events: RunEvent[]; items: ReviewItemDto[] };

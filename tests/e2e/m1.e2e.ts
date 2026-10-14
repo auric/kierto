@@ -355,11 +355,12 @@ test("settings: the section links focus each section, each section says how it s
   await expect(settings).toHaveAttribute("aria-current", "page");
   const links = page.getByRole("navigation", { name: "Settings sections" });
   await expect(links.getByRole("link").first()).toHaveText("Connection");
-  await expect(links.getByRole("link").last()).toHaveText("Clones");
+  await expect(links.getByRole("link").last()).toHaveText("Project instructions");
 
   await links.getByRole("link", { name: "Clones" }).click();
   await expect(page.getByRole("heading", { name: "Clones" })).toBeFocused();
   await expect(page.locator("section[aria-labelledby='h-clones']")).toContainText("Change saves from its dialog. Remove saves at once.");
+  await expect(page.locator("section[aria-labelledby='h-instructions']")).toContainText("Changes save as you make them.");
   await expect(page.locator("section[aria-labelledby='h-connection']")).toContainText(
     "Press Save to keep the changes. Save tests the connection to the server first, so it does not save by itself.",
   );

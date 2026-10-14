@@ -136,7 +136,7 @@ function hookConfig(text: string): string | null {
   return JSON.stringify(HOOK_KEYS.map((k) => (Object.hasOwn(o, k) ? o[k] : null)));
 }
 
-async function blobBytes(cache: string, env: Record<string, string>, sha: string): Promise<Uint8Array> {
+export async function blobBytes(cache: string, env: Record<string, string>, sha: string): Promise<Uint8Array> {
   const p = Bun.spawn(["git", `--git-dir=${cache}`, "cat-file", "blob", sha], {
     env,
     stdin: "ignore",

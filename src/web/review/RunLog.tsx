@@ -18,6 +18,7 @@ import {
   clockDur,
   countText,
   durLong,
+  instructionsText,
   KIND_LABEL,
   type LogNode,
   limitText,
@@ -213,6 +214,16 @@ export function RunLog(props: {
           <span data-run-setup className="text-muted-foreground">
             <span className="sr-only">Model and effort: </span>
             {setupText(detail.run, meta.runner.defaults)}
+          </span>
+        )}
+        {detail && instructionsText(detail.run)?.short && (
+          <span data-run-instructions className="text-muted-foreground" title={instructionsText(detail.run)?.long}>
+            Project instructions: {instructionsText(detail.run)?.short}
+          </span>
+        )}
+        {detail && instructionsText(detail.run)?.notLoaded && (
+          <span data-run-not-loaded className="text-destructive">
+            {instructionsText(detail.run)?.notLoaded}
           </span>
         )}
       </footer>
