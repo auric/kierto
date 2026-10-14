@@ -281,8 +281,15 @@ export const limitText = (runner: string, text: string | null) =>
 
 // The model and the effort of a run. A run without an init event and without --model shows "default model".
 // A run from before the effort column had no --effort flag, so it shows "default effort" too.
-export const setupText = (run: Pick<RunDto, "model" | "effort">) =>
-  `${run.model ?? "default model"}, ${run.effort && run.effort !== "default" ? run.effort : "default"} effort`;
+// effortDefault: the effort that the user settings gave a run without --effort.
+export const setupText = (run: Pick<RunDto, "model" | "effort" | "effortDefault">) =>
+  `${run.model ?? "default model"}, ${
+    run.effort && run.effort !== "default"
+      ? `${run.effort} effort`
+      : run.effortDefault
+        ? `${run.effortDefault} effort (your default)`
+        : "default effort"
+  }`;
 
 // ---------- Brief ----------
 

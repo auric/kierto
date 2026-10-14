@@ -33,6 +33,7 @@ import {
   type Change,
   change,
   type Draft,
+  defaultChoice,
   type Edit,
   EFFORT_CHOICES,
   type Field,
@@ -525,6 +526,7 @@ function RunSetup(props: RowProps & { found: ReturnType<typeof problems> }) {
   const head = profileId(i, "setup");
   const noAgents = d.explain ? "Explain only runs use no reviewer agents." : null;
   const mode = MODES.find(([m]) => m === d.reviewer.mode);
+  const defaults = meta?.defaults;
   return (
     <fieldset aria-labelledby={head} className="col-span-full grid min-w-0 gap-2 rounded-lg bg-pane-2 px-3 pt-2.5 pb-3">
       <div className="grid gap-px">
@@ -544,6 +546,7 @@ function RunSetup(props: RowProps & { found: ReturnType<typeof problems> }) {
           textId={profileId(i, "model-id")}
           label={`Model ID of profile ${i + 1}`}
           value={d.model}
+          fallback={defaultChoice(defaults?.model)}
           error={found.model ? profileId(i, "model-error") : undefined}
           onPick={(model) => edit({ model })}
           onText={(model) => type({ model })}
@@ -554,7 +557,12 @@ function RunSetup(props: RowProps & { found: ReturnType<typeof problems> }) {
         <label htmlFor={profileId(i, "effort")} className={setupLabel}>
           Effort{of}
         </label>
-        <EffortPick id={profileId(i, "effort")} value={d.effort} onPick={(effort) => edit({ effort })} />
+        <EffortPick
+          id={profileId(i, "effort")}
+          value={d.effort}
+          fallback={defaultChoice(defaults?.effort[d.model.trim()])}
+          onPick={(effort) => edit({ effort })}
+        />
       </div>
       <div className={setupRow}>
         <span id={profileId(i, "reviewer")} className={setupLabel}>
@@ -627,6 +635,8 @@ function ModelPick(props: {
   textId: string;
   label: string;
   value: string;
+  // The text of the "no flag" choice. Agent pickers keep the plain text: an agent inherits the model and effort of the main run.
+  fallback?: string;
   disabled?: boolean;
   error?: string;
   onPick: (model: string) => void;
@@ -655,7 +665,7 @@ function ModelPick(props: {
           if (v !== "other") props.onPick(v);
         }}
       >
-        <option value="">Use my default</option>
+        <option value="">{props.fallback ?? "Use my default"}</option>
         {aliases.map((m) => (
           <option key={m} value={m}>
             {aliasName(m)}
@@ -685,7 +695,13 @@ function ModelPick(props: {
   );
 }
 
-function EffortPick(props: { id: string; value: Effort | ""; disabled?: boolean; onPick: (effort: Effort | "") => void }) {
+function EffortPick(props: {
+  id: string;
+  value: Effort | "";
+  fallback?: string;
+  disabled?: boolean;
+  onPick: (effort: Effort | "") => void;
+}) {
   return (
     <select
       id={props.id}
@@ -694,7 +710,7 @@ function EffortPick(props: { id: string; value: Effort | ""; disabled?: boolean;
       disabled={props.disabled}
       onChange={(e) => props.onPick(e.target.value as Effort | "")}
     >
-      <option value="">Use my default</option>
+      <option value="">{props.fallback ?? "Use my default"}</option>
       {EFFORT_CHOICES.map((e) => (
         <option key={e} value={e}>
           {EFFORT_NAME[e]}

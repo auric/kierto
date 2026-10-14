@@ -1,5 +1,5 @@
 // Gate B: local Claude Code checks B1 to B9 (docs/plans/v3.md section 5), B11 and B12 (docs/plans/r3.md WP-G3),
-// B13 (the model and effort fields of an --agents definition, and the --effort flag).
+// B13 (the model and effort fields of an --agents definition, and the --effort flag), B14 (the default effort of a run without --effort).
 // Usage: bun scripts/gate/claude-checks.ts [--only B1,B3] [--dry-run]
 // --dry-run builds every fixture and prints the planned argv. It starts no `claude -p` process and needs no `claude` on PATH.
 // Raw output goes to .gate0/v3-local/raw/ (gitignored). Raw files hold local paths and account data.
@@ -18,6 +18,8 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
+import { runnerDefaults } from "../../src/server/review/defaults";
+import { EFFORTS } from "../../src/shared/dto";
 import { fixJsonSchema, fixResult, replyJsonSchema, replyResult } from "../../src/shared/review";
 
 const ROOT = resolve(import.meta.dir, "../..");
@@ -27,15 +29,15 @@ const STUB = join(import.meta.dir, "stub-mcp-server.ts");
 const BUN = process.execPath;
 const MAX_CALLS = 14;
 const MAX_TURNS = 4;
-// B9, B11, B12, and B13 have their own call caps. They do not count against MAX_CALLS.
-const OWN_MAX_CALLS: Record<string, number> = { b9: 2, b11: 2, b12: 1, b13: 2 };
+// B9, B11, B12, B13, and B14 have their own call caps. They do not count against MAX_CALLS.
+const OWN_MAX_CALLS: Record<string, number> = { b9: 2, b11: 2, b12: 1, b13: 2, b14: 2 };
 const B9_MAX_TURNS = 8;
 const MAX_COST_USD = 0.6;
 const RUN_TIMEOUT_MS = 180_000;
 // Every temp folder name holds TAG. Claude Code keeps the name in its encoded per-cwd folders.
 const TAG = "rl-gb-";
 const FACT = "STUBFACT-5150";
-const CHECKS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B11", "B12", "B13"] as const;
+const CHECKS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B11", "B12", "B13", "B14"] as const;
 type CheckId = (typeof CHECKS)[number];
 
 // ---------- arguments ----------
@@ -270,7 +272,8 @@ async function runClaude(
   args: string[],
   prompt: string,
   cwd: string,
-  opts: { env?: Record<string, string>; maxTurns?: number; keepProjects?: boolean } = {},
+  // model null: no --model flag.
+  opts: { env?: Record<string, string>; maxTurns?: number; keepProjects?: boolean; model?: string | null } = {},
 ): Promise<Run> {
   if (args.includes("--bare")) throw new Error("--bare is forbidden");
   const env = opts.env ?? childEnv;
@@ -282,8 +285,7 @@ async function runClaude(
   const cmd = [
     CLAUDE ?? "claude",
     "-p",
-    "--model",
-    "haiku",
+    ...(opts.model === null ? [] : ["--model", opts.model ?? "haiku"]),
     "--max-turns",
     String(turns),
     "--output-format",
@@ -1482,6 +1484,42 @@ async function b13() {
   }
 }
 
+// ---------- B14: the default effort of a run without --effort ----------
+// The app labels its "Use my default" choices from the user settings file (src/server/review/defaults.ts).
+// `/effort status` prints the session level and works in -p (code.claude.com/docs/en/commands).
+// Run 1: no --model and no --effort. Run 2: --model haiku. Each run must print the level that the resolver gives.
+async function b14() {
+  const { work, drop } = runnerFolder("b14");
+  try {
+    const d = runnerDefaults(configDir, childEnv);
+    const cases = [
+      { name: "b14-default", model: null, want: d?.effort[""] },
+      { name: "b14-haiku", model: "haiku", want: d?.effort.haiku },
+    ];
+    const seen: string[] = [];
+    let pass = true;
+    for (const c of cases) {
+      const r = await runClaude(c.name, ["--strict-mcp-config", "--no-session-persistence"], "/effort status", work, {
+        model: c.model,
+        maxTurns: 1,
+      });
+      const text = [r.text, ...r.results.map((e) => String((e as { result?: unknown }).result ?? ""))].join("\n");
+      // The level that the output names first.
+      const got = EFFORTS.map((l) => ({ l, i: text.search(new RegExp(`\\b${l}\\b`, "i")) }))
+        .filter((x) => x.i >= 0)
+        .sort((a, b) => a.i - b.i)[0]?.l;
+      pass &&= !!c.want && got === c.want.value;
+      seen.push(
+        `${c.name}: exit=${r.exit} init.model=${String(r.init ? (r.init as { model?: unknown }).model : "none")} want=${c.want ? `${c.want.value}${c.want.sure ? "" : " (not sure)"}` : "unknown"} got=${got ?? "none"} text=${JSON.stringify(short(text, 160))}`,
+      );
+    }
+    if (DRY) return dry("B14", `resolver: model=${JSON.stringify(d?.model ?? null)} effort=${JSON.stringify(d?.effort ?? null)}`);
+    push("B14", pass ? "PASS" : "FAIL", `resolver model=${JSON.stringify(d?.model ?? null)}; ${seen.join("; ")}`, { defaults: d });
+  } finally {
+    drop();
+  }
+}
+
 // ---------- main ----------
 const RUNNERS: Record<CheckId, () => Promise<unknown>> = {
   B1: b1,
@@ -1496,6 +1534,7 @@ const RUNNERS: Record<CheckId, () => Promise<unknown>> = {
   B11: b11,
   B12: b12,
   B13: b13,
+  B14: b14,
 };
 {
   for (const id of selected) await check(id, RUNNERS[id]);

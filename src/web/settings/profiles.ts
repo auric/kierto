@@ -10,6 +10,7 @@ import {
   type McpToolSafety,
   type ProfileInput,
   type ReviewerMode,
+  type SettingValue,
 } from "../../shared/dto";
 
 // The inline limits of profileInput in src/shared/dto.ts. tests/ui/profiles.test.ts pins them.
@@ -31,6 +32,10 @@ export const LIMITS = {
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]-]{0,199}$/;
 // The EFFORTS of src/shared/dto.ts.
 export const EFFORT_CHOICES: Effort[] = ["low", "medium", "high", "xhigh", "max"];
+
+// The text of the "no flag" choice. v: the value from the runner settings, if the server knows it.
+export const defaultChoice = (v: SettingValue | null | undefined) =>
+  v ? `Use my default (${v.value}${v.sure ? "" : ", from your settings"})` : "Use my default";
 
 // A new profile saves at once, so it starts valid: a review profile with 100 turns and the documentation servers.
 const NEW_NAME = "New profile";

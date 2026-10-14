@@ -6,6 +6,7 @@ import {
   allValid,
   change,
   type Draft,
+  defaultChoice,
   focusAfter,
   LIMITS,
   modelChoice,
@@ -339,5 +340,14 @@ describe("pickers", () => {
     expect(unmarkedListQuestion(["a", "b"], "s")).toBe(
       "These 2 tools on s have no read-only mark: a, b. Review Loop cannot check what they do. Allow them in runs of this profile?",
     );
+  });
+});
+
+describe("the no flag choice", () => {
+  test("names the value from the runner settings, and its source when the precedence is not documented", () => {
+    expect(defaultChoice(null)).toBe("Use my default");
+    expect(defaultChoice(undefined)).toBe("Use my default");
+    expect(defaultChoice({ value: "xhigh", sure: true })).toBe("Use my default (xhigh)");
+    expect(defaultChoice({ value: "low", sure: false })).toBe("Use my default (low, from your settings)");
   });
 });

@@ -71,6 +71,7 @@ import {
 import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude";
 import { type FixCommitRow, toFixCommitDto } from "./clone";
 import { codegraphEntry, codegraphIndex, indexCodegraph } from "./codegraph";
+import { runEffort } from "./defaults";
 import { type DiffFile, parseDiff } from "./diffmap";
 import { type FixFile, type ValidEdit, validateFix } from "./fix";
 import { git, gitEnv } from "./git";
@@ -164,6 +165,7 @@ type RunRow = {
   cli_version: string | null;
   model: string | null;
   effort: string | null;
+  effort_default: string | null;
   usage_json: string | null;
   summary_json: string | null;
   has_raw: number;
@@ -257,21 +259,21 @@ const SQL = {
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
   // model: the --model value until the init event gives the model that ran.
   insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, status, started_at,
-      since_head, question, tasks_json, model, effort)
+      since_head, question, tasks_json, model, effort, effort_default)
     VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since, $question, $tasks,
-      $model, $effort)
+      $model, $effort, $effort_default)
     RETURNING id`,
   // Plan r3 Feature C: the fetched tasks at the start of a run, in the order of task.md.
   fetched: "SELECT key, fetched_at AS fetchedAt FROM task_context WHERE pr = $pr ORDER BY key",
   run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
-      r.session_id, r.cli_version, r.model, r.effort, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
+      r.session_id, r.cli_version, r.model, r.effort, r.effort_default, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
       p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer, r.fix_json, r.tasks_json,
       (SELECT COUNT(*) FROM review_item i WHERE i.run = r.id AND i.kind = 'finding'
         AND COALESCE(json_extract(i.payload_json, '$.carried.verdict'), 'open') = 'open') AS findings
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
   workspace: "UPDATE review_run SET merge_base = $base, range_base = $range, fetch_via = $via WHERE id = $id",
   end: `UPDATE review_run SET status = $status, error_kind = $kind, error_text = $text, session_id = $session, cli_version = $cli, model = COALESCE($model, model),
-      usage_json = $usage, summary_json = $summary, answer = $answer, fix_json = $fix, raw_output = $raw, finished_at = $now
+      effort_default = CASE WHEN $init_effort THEN $effort_default ELSE effort_default END, usage_json = $usage, summary_json = $summary, answer = $answer, fix_json = $fix, raw_output = $raw, finished_at = $now
     WHERE id = $id AND status = 'running'`,
   fixEdit: `INSERT INTO fix_edit (run, ord, thread, path, old, new, start, rows_json) VALUES ($run, $ord, $thread, $path, $old, $new, $start, $rows)`,
   fixEdits: "SELECT id, thread, path, rows_json FROM fix_edit WHERE run = $run ORDER BY ord",
@@ -839,6 +841,7 @@ function toRunDto(r: RunRow): RunDto {
     cliVersion: r.cli_version,
     model: r.model,
     effort: r.effort,
+    effortDefault: r.effort === "default" ? r.effort_default : null,
     usage: r.usage_json ? (JSON.parse(r.usage_json) as RunUsage) : null,
     summary: r.summary_json ? (JSON.parse(r.summary_json) as RunSummary) : null,
     startedAt: r.started_at,
@@ -967,6 +970,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         session: o?.init?.session_id ?? r?.session_id ?? null,
         cli: o?.init?.claude_code_version ?? null,
         model: o?.init?.model ?? null,
+        // The init event names the model that ran. Its default effort replaces the one from the run start.
+        init_effort: !j.profile.effort && !!o?.init?.model,
+        effort_default: !j.profile.effort && o?.init?.model ? runEffort(o.init.model) : null,
         usage: usage ? JSON.stringify(usage) : null,
         summary: e.result ? JSON.stringify(e.result.summary) : null,
         answer: e.result?.answer ?? null,
@@ -1255,6 +1261,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       tasks: JSON.stringify(db.query(SQL.fetched).all({ pr: pr.id })),
       model: profile.model,
       effort: profile.effort ?? "default",
+      effort_default: profile.effort ? null : runEffort(profile.model),
     }) as { id: number };
     const j: Job = { id: runId, pr: pr.id, kind, key, db, profile, threads, carry, question, cancelled: false, done: Promise.resolve() };
     job = j;

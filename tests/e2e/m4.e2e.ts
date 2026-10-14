@@ -369,12 +369,18 @@ test("the run setup saves model, effort, and reviewer agents; the run row and th
 }) => {
   await connect(page);
   // Before any change, a run shows the defaults: the init event names the model, and no --effort went out.
+  // The fixture settings file sets no model and no effort, so the run gets the default effort of the init model.
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
-  await expect(runRow(page).locator("[data-run-setup]")).toHaveText(/default effort$/);
+  await expect(runRow(page).locator("[data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, medium effort (your default)");
 
   await openSettings(page);
+  // The settings file names no model, so the default model and its effort are unknown. An alias has a known default effort.
+  await expect(field(page, "Model", 1).locator("option").first()).toHaveText("Use my default");
+  await expect(field(page, "Effort", 1).locator("option").first()).toHaveText("Use my default");
+  await field(page, "Model", 1).selectOption("haiku");
+  await expect(field(page, "Effort", 1).locator("option").first()).toHaveText("Use my default (medium)");
   await field(page, "Model", 1).selectOption("other");
   const id = page.getByLabel("Model ID of profile 1", { exact: true });
   await expect(id).toBeFocused();

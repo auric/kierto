@@ -266,3 +266,22 @@ Run: `bun scripts/gate/claude-checks.ts --only B11,B12`, then `bun scripts/gate/
 | U29. The downloaded byte count equals the reported `size` | UNVERIFIED | A mismatch is error "shape", and nothing is stored. This rule catches an SSO login page with status 200. |
 | B11. Real CLI with `--json-schema replyJsonSchema()` and `fixJsonSchema()` and the WP8 flag set: `structured_output` parses with zod, including a null judgement and a 2 KB `new` string | NOT RUN | One Haiku run per schema. |
 | B12. Read of a generated one-color PNG at `context/attachments/1.png` under `--restricted` | NOT RUN | PASS when the run has a Read `tool_result` for the file without `is_error`. The color answer is INFO only. |
+
+## Default model and effort (not run)
+
+Status: NOT RUN, 2026-10-14. The rows come from code.claude.com/docs (model-config, settings, settings-reference, env-vars, commands). `src/server/review/defaults.ts` implements them. The app reads only the user settings file `<config>/settings.json` and only the keys `model`, `effortLevel`, `maxEffortLevel`, `modelSettings`, and named `env` entries.
+
+Run: `bun scripts/gate/claude-checks.ts --only B14`.
+
+| Fact | Result | Evidence |
+|---|---|---|
+| U30. Effort order: `CLAUDE_CODE_EFFORT_LEVEL` or `--effort`, then the settings level, then the model default | DOCUMENTED | model-config "Adjust effort level". The run env has no `CLAUDE_CODE_*` variable. |
+| U31. `modelSettings[<model ID>].effortLevel` wins over the top-level `effortLevel` of the same file | DOCUMENTED | settings-reference `modelSettings`. Claude Code matches the alias, `[1m]`, and date-suffixed IDs to the entry of the model ID. |
+| U32. Opus 5.5, Sonnet 5.5, and Haiku 5.5 ignore a top-level `effortLevel` in the user settings file | DOCUMENTED | settings-reference `effortLevel`. The app applies the key only to the older models it knows. An unknown model gets no top-level level. |
+| U33. Model defaults: `medium` for the 5.5 models, `xhigh` for Opus 4.7, `high` for the other models with effort | DOCUMENTED | model-config "Adjust effort level", item 3. An organization default effort can change it. The app cannot see that value. |
+| U34. Aliases on the Anthropic API: `opus`, `sonnet`, `haiku` resolve to the 5.5 models | DOCUMENTED | model-config "Model aliases". An `ANTHROPIC_DEFAULT_<FAMILY>_MODEL` variable replaces the alias target. |
+| U35. Model order: `--model`, `ANTHROPIC_MODEL`, the `model` key, `ANTHROPIC_DEFAULT_MODEL`, the account default | DOCUMENTED | model-config "Setting your model". childEnv keeps `ANTHROPIC_MODEL`. An organization default or a managed `model` can override the user key. The app shows the source "from your settings" for `ANTHROPIC_DEFAULT_MODEL` and for the settings env block. |
+| U36. The `env` block of the user settings file wins over the settings keys, like a shell variable | UNVERIFIED | The docs do not state it. The app shows such values as "from your settings" and stores no run value from them. |
+| U37. Managed settings and the organization defaults do not change the default model or effort | UNVERIFIED | The app does not read managed sources. B14 compares the resolver with the CLI. |
+| U38. The init event names the effort level | NO | The fixtures carry `per_turn_effort_active` only. The run end resolves the effort for the init model instead. |
+| B14. `/effort status` in `-p`, without `--model` and with `--model haiku`, prints the level that the resolver gives | NOT RUN | Two calls, own cap 2. `/effort status` should make no model call. PASS when the first level in the output equals the resolver value for both runs. |

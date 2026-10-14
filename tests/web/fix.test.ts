@@ -40,6 +40,7 @@ const run = (id: number, o: Partial<RunDto> = {}): RunDto => ({
   cliVersion: "2.1.295",
   model: "m",
   effort: null,
+  effortDefault: null,
   usage: null,
   summary: null,
   startedAt: 1_000,

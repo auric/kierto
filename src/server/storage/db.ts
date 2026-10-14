@@ -17,6 +17,7 @@ import m015_fix from "./migrations/015_fix.sql" with { type: "text" };
 import m016_task_attachment from "./migrations/016_task_attachment.sql" with { type: "text" };
 import m017_branch_links from "./migrations/017_branch_links.sql" with { type: "text" };
 import m018_run_effort from "./migrations/018_run_effort.sql" with { type: "text" };
+import m019_run_effort_default from "./migrations/019_run_effort_default.sql" with { type: "text" };
 
 // Index i holds the SQL that raises user_version from i to i + 1. The list order, not the file number, sets the version.
 const MIGRATIONS = [
@@ -38,6 +39,7 @@ const MIGRATIONS = [
   m016_task_attachment,
   m017_branch_links,
   m018_run_effort,
+  m019_run_effort_default,
 ];
 
 const tables = (db: Database) =>

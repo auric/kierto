@@ -27,7 +27,7 @@ const schema = (path: string) => {
 
 test("migration runs on an empty file and creates every M1 table", () => {
   const s = schema(join(dir, "empty.sqlite"));
-  expect(s.version).toBe(18);
+  expect(s.version).toBe(19);
   expect(s.journal).toBe("wal");
   expect(s.fk).toBe(1);
   expect(s.busy).toBe(5000);
@@ -63,6 +63,7 @@ test("migration runs on an empty file and creates every M1 table", () => {
   expect(s.objects.find((o) => o.name === "review_run")?.sql).toContain("answer TEXT");
   expect(s.objects.find((o) => o.name === "review_run")?.sql).toContain("tasks_json TEXT");
   expect(s.objects.find((o) => o.name === "review_run")?.sql).toContain("effort TEXT");
+  expect(s.objects.find((o) => o.name === "review_run")?.sql).toContain("effort_default TEXT");
 });
 
 // The db.ts list order up to version 9.
@@ -79,8 +80,8 @@ const V9 = [
 ];
 
 const R2_COLUMNS = { since_head: null, range_base: null, question: null, answer: null };
-// 014_r3_runs.sql and 018_run_effort.sql.
-const R3_COLUMNS = { fix_json: null, tasks_json: null, effort: null };
+// 014_r3_runs.sql, 018_run_effort.sql, and 019_run_effort_default.sql.
+const R3_COLUMNS = { fix_json: null, tasks_json: null, effort: null, effort_default: null };
 
 test("migration from a version-9 database keeps every run", () => {
   const path = join(dir, "v9.sqlite");
@@ -96,7 +97,7 @@ test("migration from a version-9 database keeps every run", () => {
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(18);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
     expect(db.query("SELECT * FROM review_run ORDER BY id").all()).toEqual(
       before.map((r) => ({ ...r, profile_name: null, profile_revision: null, explain: null, ...R2_COLUMNS, ...R3_COLUMNS })),
     );
@@ -162,7 +163,7 @@ test("migration from a version-11 database keeps every run, event, item, and pos
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(18);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
     expect((db.query("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys).toBe(1);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "review_run")).toEqual([
@@ -174,6 +175,7 @@ test("migration from a version-11 database keeps every run, event, item, and pos
       "fix_json",
       "tasks_json",
       "effort",
+      "effort_default",
     ]);
     const after = dump(db);
     expect(after.review_run).toEqual((before.review_run as Record<string, unknown>[]).map((r) => ({ ...r, ...R2_COLUMNS, ...R3_COLUMNS })));
@@ -224,7 +226,7 @@ test("an orphan row in a table that no migration touches does not block the upgr
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(18);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([
       { table: "pr_task", rowid: expect.anything(), parent: "pull_request", fkid: 0 },
     ]);
@@ -279,9 +281,9 @@ test("migration from a version-13 database keeps every run, event, item, and pos
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(18);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(columns(db, "review_run")).toEqual([...oldColumns, "fix_json", "tasks_json", "effort"]);
+    expect(columns(db, "review_run")).toEqual([...oldColumns, "fix_json", "tasks_json", "effort", "effort_default"]);
     const after = dump(db);
     expect(after.review_run).toEqual((before.review_run as Record<string, unknown>[]).map((r) => ({ ...r, ...R3_COLUMNS })));
     for (const t of CHILDREN) expect(after[t]).toEqual(before[t] as unknown[]);

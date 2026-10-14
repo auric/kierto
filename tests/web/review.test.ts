@@ -76,6 +76,7 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
   cliVersion: "2.1.295",
   model: "m",
   effort: null,
+  effortDefault: null,
   usage: null,
   summary: null,
   startedAt: 1_000,
@@ -630,9 +631,17 @@ describe("one row per run kind", () => {
 
 describe("model and effort of a run", () => {
   test("the run row and the log footer name the model and the effort; an unknown value reads as default", () => {
-    expect(setupText({ model: "claude-opus-5-5", effort: "high" })).toBe("claude-opus-5-5, high effort");
-    expect(setupText({ model: null, effort: "default" })).toBe("default model, default effort");
+    expect(setupText({ model: "claude-opus-5-5", effort: "high", effortDefault: null })).toBe("claude-opus-5-5, high effort");
+    expect(setupText({ model: null, effort: "default", effortDefault: null })).toBe("default model, default effort");
     // A run from before the effort column ran without --effort.
-    expect(setupText({ model: "claude-haiku-5-5", effort: null })).toBe("claude-haiku-5-5, default effort");
+    expect(setupText({ model: "claude-haiku-5-5", effort: null, effortDefault: null })).toBe("claude-haiku-5-5, default effort");
+  });
+
+  test("a run without --effort names the effort from the user settings", () => {
+    expect(setupText({ model: "claude-opus-5-5", effort: "default", effortDefault: "xhigh" })).toBe(
+      "claude-opus-5-5, xhigh effort (your default)",
+    );
+    // An explicit --effort wins over a stale default.
+    expect(setupText({ model: "m", effort: "low", effortDefault: "xhigh" })).toBe("m, low effort");
   });
 });

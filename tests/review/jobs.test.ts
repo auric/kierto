@@ -821,6 +821,7 @@ describe("brief and meta", () => {
       models: ["opus", "sonnet", "haiku"],
       modelExample: "claude-opus-5-5",
       check: null,
+      defaults: null,
     });
     expect(meta.profiles.map((p) => [p.id, p.name, p.explain, p.maxTurns])).toEqual([
       ["general", "General", false, 100],
@@ -1161,6 +1162,46 @@ describe("editable profiles (M4)", () => {
       expect(last?.stdin).not.toContain("rl-reviewer");
       expect(d.run.effort).toBe("high");
       expect(d.run.model).toBe("claude-haiku-5-5");
+    },
+    SLOW,
+  );
+
+  test(
+    "a run without --effort stores the effort of the user settings: first for the settings model, then for the init model",
+    async () => {
+      const saved = process.env.CLAUDE_CONFIG_DIR;
+      const config = mkdtempSync(join(tmpdir(), "rl-jobs-config-"));
+      writeFileSync(
+        join(config, "settings.json"),
+        JSON.stringify({
+          model: "opus",
+          modelSettings: { "claude-opus-5-5": { effortLevel: "xhigh" }, "claude-haiku-5-5": { effortLevel: "low" } },
+        }),
+      );
+      process.env.CLAUDE_CONFIG_DIR = config;
+      try {
+        const h = await setup();
+        const meta = (await h.json<MetaDto>("/api/meta")).body;
+        expect(meta.runner.defaults).toEqual({
+          model: { value: "opus", sure: true },
+          effort: {
+            "": { value: "xhigh", sure: true },
+            opus: { value: "xhigh", sure: true },
+            sonnet: { value: "medium", sure: true },
+            haiku: { value: "low", sure: true },
+          },
+        });
+        await h.brief(NOTE, "general");
+        const a = await h.start();
+        expect(a.body).toMatchObject({ effort: "default", effortDefault: "xhigh" });
+        // The fake CLI init event names claude-haiku-5-5.
+        const d = await h.finish(a.body.id);
+        expect(d.run).toMatchObject({ model: "claude-haiku-5-5", effort: "default", effortDefault: "low" });
+      } finally {
+        if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+        else process.env.CLAUDE_CONFIG_DIR = saved;
+        rmSync(config, { recursive: true, force: true });
+      }
     },
     SLOW,
   );

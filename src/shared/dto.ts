@@ -357,6 +357,8 @@ export type RunDto = {
   model: string | null;
   // The --effort value of the run, or "default" for no flag. null for runs made before it was stored.
   effort: string | null;
+  // effort "default" only: the effort that the user settings give. null: unknown.
+  effortDefault: string | null;
   usage: RunUsage | null;
   // Ended runs with a valid result only.
   summary: RunSummary | null;
@@ -646,7 +648,13 @@ export type RunDetail = { run: RunDto; events: RunEvent[]; items: ReviewItemDto[
 // POST /api/prs/:id/review gives 409 with this body while another review runs (A14).
 export type RunConflict = ApiError & { running: { run: number; pr: number } };
 
-// GET /api/meta. Product names only, never a setting value.
+// sure: false when the source has a precedence that the runner docs do not state.
+export type SettingValue = { value: string; sure: boolean };
+// model: the model of a run without --model. null: the account default, which the app cannot see.
+// effort: the effort of a run without --effort, by model choice. Key "": no --model. An absent key: unknown.
+export type RunnerDefaults = { model: SettingValue | null; effort: Record<string, SettingValue> };
+
+// GET /api/meta. Product names, and the default model and effort of the runner. No other setting value.
 export type MetaDto = {
   forge: { name: string };
   // check: the cached runner check. null before the first check. Each run refreshes it.
@@ -660,6 +668,8 @@ export type MetaDto = {
     models: string[];
     modelExample: string;
     check: RunnerCheckDto | null;
+    // defaults: from the user settings file of the runner. null: the file is absent or unreadable.
+    defaults: RunnerDefaults | null;
   };
   // Run log labels, keyed by RunEvent.tool.
   tools: Record<string, string>;
