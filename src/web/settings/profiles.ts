@@ -231,7 +231,25 @@ export type Change =
   | { act: "add" }
   | { act: "remove"; i: number }
   | { act: "move"; i: number; d: -1 | 1 }
-  | { act: "edit"; i: number; patch: Edit };
+  | { act: "edit"; i: number; patch: Edit }
+  | { act: "copy"; i: number };
+
+const SETUP_KEYS = ["skills", "alwaysSkills", "mcp", "server", "tools"];
+// The skills, the Always use marks, and the MCP picks of a profile. A mark needs its skill (profileInput).
+const setupOf = (d: Draft): Pick<Draft, "skills" | "alwaysSkills" | "mcp"> => ({
+  skills: [...d.skills],
+  alwaysSkills: d.alwaysSkills.filter((id) => d.skills.includes(id)),
+  mcp: d.mcp.map((m) => ({ server: m.server, tools: [...m.tools] })),
+});
+const setupText = (d: Draft) => JSON.stringify(setupOf(d), SETUP_KEYS);
+
+// The indexes of the other profiles whose skills or MCP picks differ from those of profile i.
+export function copyTargets(list: Draft[], i: number): number[] {
+  const from = list[i];
+  if (!from) return [];
+  const text = setupText(from);
+  return list.flatMap((d, j) => (j !== i && setupText(d) !== text ? [j] : []));
+}
 
 export function change(list: Draft[], c: Change): Draft[] {
   switch (c.act) {
@@ -255,6 +273,12 @@ export function change(list: Draft[], c: Change): Draft[] {
     }
     case "edit":
       return list.map((d, i) => (i === c.i ? { ...d, ...c.patch } : d));
+    case "copy": {
+      const from = list[c.i];
+      const targets = copyTargets(list, c.i);
+      if (!from || !targets.length) return list;
+      return list.map((d, j) => (targets.includes(j) ? { ...d, ...setupOf(from) } : d));
+    }
   }
 }
 
@@ -280,6 +304,7 @@ export type Part =
   | "skills-label"
   | "mcp"
   | "mcp-label"
+  | "copy"
   | "up"
   | "down"
   | "remove"
@@ -353,6 +378,11 @@ export const unmarkedListQuestion = (tools: string[], server: string) =>
 
 // Words for a profile in labels. A profile can have no name while the user edits it.
 export const profileLabel = (d: Draft, i: number) => d.name.trim() || `profile ${i + 1}`;
+
+const count = (n: number, word: string) => (n ? `${n} ${word}${n === 1 ? "" : "s"}` : `no ${word}s`);
+export const setupSummary = (d: Draft, label: string) =>
+  `${label} has ${count(d.skills.length, "skill")} and ${count(d.mcp.length, "MCP server")}.`;
+export const copiedText = (label: string, n: number) => `Saved. ${count(n, "profile")} got the skills and MCP servers of ${label}.`;
 
 // The select value of a model text: "" for the default, one of the runner aliases, or "other" for any other ID.
 export const modelChoice = (text: string, aliases: string[]) => {

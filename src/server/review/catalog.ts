@@ -154,8 +154,11 @@ export const DEFAULT_PROFILE: ProfileId = "general";
 // Fix and reply runs get at least this turn cap, whatever the profile.
 export const MIN_EDIT_TURNS = 100;
 
-// The shipped profiles of each former PROFILES_VERSION (src/server/config.ts), as changes to the current ones.
-const FORMER: Record<number, Record<string, Partial<Profile>>> = {
+// The shipped field values of each former PROFILES_VERSION (src/server/config.ts) that differ from the current ones.
+// A change to a shipped value needs a PROFILES_VERSION bump and an entry with the old value. Without it, saved profiles keep the old value.
+// languageChecks: absent before version 3, so a stored profile of that time parses as false.
+type Former = Partial<Pick<Profile, "prompt" | "maxTurns" | "languageChecks">>;
+const FORMER: Record<number, Record<string, Former>> = {
   1: {
     general: { maxTurns: 40, prompt: V2_GENERAL, languageChecks: false },
     over: { maxTurns: 40, prompt: V2_OVER },
@@ -164,12 +167,16 @@ const FORMER: Record<number, Record<string, Partial<Profile>>> = {
   },
   2: { general: { prompt: V2_GENERAL, languageChecks: false }, over: { prompt: V2_OVER }, security: { languageChecks: false } },
 };
-// version: the PROFILES_VERSION of the saved config. A saved profile equal to the shipped profile of that version was never edited,
-// so it gets the current shipped profile. A profile equal to an older shipped profile was set back on purpose, so it stays.
+// version: the PROFILES_VERSION of the saved config. A field equal to its shipped value of that version was never edited,
+// so it gets the current shipped value. A field equal to an older shipped value was set back on purpose, so it stays.
+// The version 3 upgrade replaced only whole unedited profiles. A version 3 profile with its version 2 prompt kept all its version 2 fields.
 export function upgradeProfile(p: Profile, version: number): Profile {
   const shipped = SHIPPED_PROFILES.find((s) => s.id === p.id);
-  const former = FORMER[version]?.[p.id];
-  return shipped && former && profileRevision(p) === profileRevision({ ...shipped, ...former }) ? shipped : p;
+  if (!shipped) return p;
+  const from = version === 3 && p.prompt === FORMER[2]?.[p.id]?.prompt ? 2 : version;
+  const former = FORMER[from]?.[p.id] ?? {};
+  const unedited = (Object.keys(former) as (keyof Former)[]).filter((k) => p[k] === former[k]);
+  return { ...p, ...Object.fromEntries(unedited.map((k) => [k, shipped[k]])) };
 }
 
 // Returns the tool names of a remote MCP server. It throws when the server does not answer.

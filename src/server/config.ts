@@ -27,7 +27,7 @@ const config = z.object({
   checkSeconds: settingsInput.shape.checkSeconds.catch(undefined),
   // Absent: SHIPPED_PROFILES (src/server/review/catalog.ts).
   profiles: profileList.optional().catch(undefined),
-  // Absent: a config from before PROFILES_VERSION. settings.ts upgrades its unedited shipped profiles.
+  // Absent: a config from before PROFILES_VERSION. settings.ts upgrades the unedited fields of its shipped profiles.
   profilesVersion: z.number().optional().catch(undefined),
   // Absent: no Jira connection. The Jira token lives in the secret store under "jira-token".
   jira: z.object({ baseUrl: z.string(), caFile: z.string().optional() }).optional().catch(undefined),
@@ -39,7 +39,8 @@ export type Config = z.infer<typeof config>;
 
 // Version 2: the shipped turn caps went from 40 and 12 to 100 and 50.
 // Version 3: General and Security got language checks. General and Over-engineering got new prompts.
-export const PROFILES_VERSION = 3;
+// Version 4: no shipped value changed. The upgrade goes field by field, so profiles with other edits also get the version 3 values.
+export const PROFILES_VERSION = 4;
 
 export function dataDir(): string {
   const env = process.env;

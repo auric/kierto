@@ -2,7 +2,7 @@
 
 Review Loop is a local-first inbox for Bitbucket Server pull requests (PRs). It runs the user's own Claude Code CLI (`claude -p`) for reviews. The app runs on localhost and keeps all data on the user's machine.
 
-Status: Releases 1, 2, and 3 are code complete. Project instructions, always-use skills, language checks, and the severity rubric are code complete after Release 3. The user runs docs/smoke-m1.md, smoke-v3.md, smoke-m4.md, smoke-r2.md, and smoke-r3.md (with Gate B11, B12, and B15, and part I for the prompt features); see docs/plans/r2.md and r3.md. Do not assume that a file in the planned layout exists. Check first.
+Status: Releases 1, 2, and 3 are code complete. Project instructions, always-use skills, language checks, the severity rubric, field-by-field profile upgrades, and "Copy to all profiles" are code complete after Release 3. The user runs docs/smoke-m1.md, smoke-v3.md, smoke-m4.md, smoke-r2.md, and smoke-r3.md (with Gate B11, B12, and B15, and part I for the prompt features); see docs/plans/r2.md and r3.md. Do not assume that a file in the planned layout exists. Check first.
 
 ## Document map
 
@@ -66,7 +66,6 @@ Load the skill before you start the task. Read its SKILL.md for details.
 | Look for places where the UI lacks feedback motion. | `find-animation-opportunities` | Read-only. It proposes values and changes no code. |
 | Visual direction for new screens. | `frontend-design:frontend-design` (plugin) | Stay consistent with `prototype/index.html`. |
 | Maintain this file. | `claude-md-management:claude-md-improver` | Keep it compact and current. |
-| Audit or change the review prompts: shipped profiles, shared rules, language checklists, stdin sections. | `review-prompts` (local) | Report before edits. A shipped profile field change needs a PROFILES_VERSION bump. |
 
 Add or update a project skill:
 - Read the skill's SKILL.md at its source before you install it.

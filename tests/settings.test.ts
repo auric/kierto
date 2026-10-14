@@ -287,6 +287,21 @@ describe("settings API", () => {
   };
   const v2 = { general: stored(general, { prompt: OLD_GENERAL }), over: stored(over, { prompt: OLD_OVER }), security: stored(security) };
   const v1 = { general: { ...v2.general, maxTurns: 40 }, over: { ...v2.over, maxTurns: 40 }, security: { ...v2.security, maxTurns: 40 } };
+  // A version 3 config stores every field. The version 3 upgrade skipped each profile with an edit, so it kept its version 2 values.
+  const v3 = {
+    general: { ...v2.general, languageChecks: false },
+    over: { ...v2.over, languageChecks: false },
+    security: { ...v2.security, languageChecks: false },
+  };
+  // Run setup edits. No upgrade changes them.
+  const setupEdits = {
+    skills: ["test-check", "e2e-plugin:style"],
+    alwaysSkills: ["test-check"],
+    mcp: [{ server: "fake-docs", tools: ["search", "lookup"] }],
+    model: "opus",
+    effort: "high" as const,
+    reviewer: { model: "sonnet", effort: "low" as const, mode: "always" as const },
+  };
   const oldConfig = async () => {
     const s = setup();
     expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
@@ -294,45 +309,111 @@ describe("settings API", () => {
     const file = join(dir, "config.json");
     const { profilesVersion, ...old } = JSON.parse(readFileSync(file, "utf8"));
     expect(profilesVersion).toBe(PROFILES_VERSION);
-    return { file, old };
+    // version undefined: a config from before PROFILES_VERSION.
+    const write = (version: number | undefined, profiles: unknown[]) =>
+      writeFileSync(file, JSON.stringify({ ...old, ...(version === undefined ? {} : { profilesVersion: version }), profiles }));
+    const load = async () => {
+      const s = setup();
+      const { profiles } = await s.get();
+      s.settings.close();
+      return profiles;
+    };
+    return { file, write, load };
   };
 
-  test("a config from before PROFILES_VERSION gets the new shipped profiles on unedited ones and keeps edited ones", async () => {
-    const { file, old } = await oldConfig();
-    const editedOver = { ...v1.over, note: "My note" };
-    const ownSecurity = { ...v1.security, maxTurns: 30 };
-    const oldExplain = { ...explain, maxTurns: 12 };
-    writeFileSync(file, JSON.stringify({ ...old, profiles: [v1.general, editedOver, ownSecurity, oldExplain, custom] }));
-    const upgraded = [general, { ...editedOver, languageChecks: false }, { ...ownSecurity, languageChecks: false }, explain, custom];
+  test("a config from before PROFILES_VERSION jumps to the current shipped values field by field and keeps edited fields", async () => {
+    const { file, write } = await oldConfig();
+    write(undefined, [v1.general, { ...v1.over, note: "My note" }, { ...v1.security, maxTurns: 30 }, { ...explain, maxTurns: 12 }, custom]);
+    const upgraded = [general, { ...over, note: "My note" }, { ...security, maxTurns: 30 }, explain, custom];
     const again = setup();
     expect((await again.get()).profiles).toEqual(upgraded);
     // A save stamps the version, so a cap of 40 set after the update stays.
     expect((await again.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
-    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ profiles: upgraded, profilesVersion: PROFILES_VERSION });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ profiles: upgraded, profilesVersion: 4 });
     const oldGeneral = { ...general, maxTurns: 40 };
     expect((await again.put({ baseUrl: fake.url, profiles: [oldGeneral] })).status).toBe(200);
     again.settings.close();
     expect((await setup().get()).profiles).toEqual([oldGeneral]);
   });
 
-  test("a version 2 config gets language checks and the new prompts on unedited shipped profiles only", async () => {
-    const { file, old } = await oldConfig();
-    const editedSecurity = { ...v2.security, note: "Mine" };
-    // Version 2 upgraded the version 1 profiles. A version 1 profile in a version 2 config was set back on purpose.
-    const setBack = v1.general;
-    writeFileSync(file, JSON.stringify({ ...old, profilesVersion: 2, profiles: [v2.general, v2.over, v2.security, explain, custom] }));
-    const again = setup();
-    expect((await again.get()).profiles).toEqual([general, over, security, explain, custom]);
+  test("a version 2 config gets language checks and the new prompts field by field", async () => {
+    const { write, load } = await oldConfig();
+    write(2, [v2.general, v2.over, v2.security, explain, custom]);
+    expect(await load()).toEqual([general, over, security, explain, custom]);
     expect(general.languageChecks && security.languageChecks).toBe(true);
     expect(general.prompt).not.toBe(OLD_GENERAL);
     expect(over.prompt).not.toBe(OLD_OVER);
-    again.settings.close();
-    writeFileSync(file, JSON.stringify({ ...old, profilesVersion: 2, profiles: [setBack, over, editedSecurity] }));
-    expect((await setup().get()).profiles).toEqual([
-      { ...setBack, languageChecks: false },
-      over,
-      { ...editedSecurity, languageChecks: false },
+    // Version 2 upgraded the version 1 caps. A cap of 40 in a version 2 config was set back on purpose. The other fields still upgrade.
+    write(2, [v1.general, over, { ...v2.security, note: "Mine" }]);
+    expect(await load()).toEqual([{ ...general, maxTurns: 40 }, over, { ...security, note: "Mine" }]);
+  });
+
+  test("a profile with run setup edits and the old shipped prompt gets the new prompt and language checks, and keeps its setup", async () => {
+    const { write, load } = await oldConfig();
+    write(2, [
+      { ...v2.general, ...setupEdits },
+      { ...v2.over, ...setupEdits },
+      { ...v2.security, ...setupEdits },
     ]);
+    expect(await load()).toEqual([
+      { ...general, ...setupEdits },
+      { ...over, ...setupEdits },
+      { ...security, ...setupEdits },
+    ]);
+  });
+
+  test("an edited prompt stays; language checks arrive only when the config predates them", async () => {
+    const { write, load } = await oldConfig();
+    write(2, [
+      { ...v2.general, prompt: "My prompt" },
+      { ...v2.over, prompt: "My cuts" },
+    ]);
+    expect(await load()).toEqual([
+      { ...general, prompt: "My prompt" },
+      { ...over, prompt: "My cuts" },
+    ]);
+    // In a version 3 config, an edited prompt does not show whether the user switched the checks off.
+    write(3, [{ ...v3.general, prompt: "My prompt" }]);
+    expect(await load()).toEqual([{ ...v3.general, prompt: "My prompt" }]);
+  });
+
+  test("a version 3 config upgrades the profiles that the version 3 upgrade skipped", async () => {
+    expect(PROFILES_VERSION).toBe(4);
+    const { write, load } = await oldConfig();
+    write(3, [{ ...v3.general, ...setupEdits }, { ...v3.over, ...setupEdits }, { ...v3.security, ...setupEdits }, explain]);
+    // The version 2 prompt shows that the version 3 upgrade skipped General and Over-engineering.
+    // Security kept its prompt in version 3, so no field tells a skipped profile from one with the checks switched off.
+    expect(await load()).toEqual([{ ...general, ...setupEdits }, { ...over, ...setupEdits }, { ...v3.security, ...setupEdits }, explain]);
+    // The version 3 prompt shows that the version 3 upgrade replaced General. The user switched the checks off after it.
+    const off = { ...general, languageChecks: false, note: "Mine" };
+    write(3, [off]);
+    expect(await load()).toEqual([off]);
+  });
+
+  test("custom profiles keep every field, also the prompt and the turn cap of an old shipped profile", async () => {
+    const { write, load } = await oldConfig();
+    const { languageChecks: _, ...bare } = custom;
+    const lookalike = { ...v1.general, id: "mine", name: "Mine" };
+    write(undefined, [bare, lookalike]);
+    expect(await load()).toEqual([custom, { ...lookalike, languageChecks: false }]);
+    write(3, [bare, { ...lookalike, languageChecks: false }]);
+    expect(await load()).toEqual([custom, { ...lookalike, languageChecks: false }]);
+  });
+
+  test("the upgrade runs once: after a save stamps the version, a value set back on purpose stays", async () => {
+    const { file, write, load } = await oldConfig();
+    write(2, [{ ...v2.general, ...setupEdits }]);
+    const upgraded = [{ ...general, ...setupEdits }];
+    // Each load before the first save gives the same result.
+    expect(await load()).toEqual(upgraded);
+    const again = setup();
+    expect((await again.get()).profiles).toEqual(upgraded);
+    expect((await again.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ profiles: upgraded, profilesVersion: PROFILES_VERSION });
+    const setBack = { ...general, ...setupEdits, prompt: OLD_GENERAL, languageChecks: false };
+    expect((await again.put({ baseUrl: fake.url, profiles: [setBack] })).status).toBe(200);
+    again.settings.close();
+    expect(await load()).toEqual([setBack]);
   });
 
   test("401 gives 400 and stores nothing", async () => {

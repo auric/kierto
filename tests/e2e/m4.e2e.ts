@@ -430,6 +430,86 @@ test("an MCP server picked in the dialog gets only its ticked tools in the run",
   await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
 });
 
+test("Copy to all profiles asks first, then gives every profile the skills and MCP servers in one save that a reload keeps", async ({
+  page,
+  request,
+}) => {
+  const SETUP = {
+    skills: ["test-check", "e2e-plugin:style"],
+    alwaysSkills: ["test-check"],
+    mcp: [{ server: "fake-docs", tools: ["search", "lookup"] }],
+  };
+  const puts: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "PUT" && r.url() === `${APP}/api/settings`) puts.push(r.url());
+  });
+  await connect(page);
+  await openSettings(page);
+  await page.getByRole("button", { name: "Choose… skills of profile 1" }).click();
+  const skills = page.getByRole("dialog", { name: "Skills of General" });
+  await skills.getByRole("checkbox", { name: /^test-check test-check/ }).check();
+  await skills.getByRole("checkbox", { name: /^style e2e-plugin:style/ }).check();
+  await skills.getByRole("checkbox", { name: "Always use test-check" }).check();
+  await skills.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Choose… MCP servers of profile 1" }).click();
+  const servers = page.getByRole("dialog", { name: "MCP servers of General" });
+  await servers.getByRole("checkbox", { name: /^fake-docs Local command/ }).check();
+  await expect(page.getByRole("group", { name: "Tools of fake-docs" }).getByRole("checkbox", { checked: true })).toHaveCount(2);
+  await servers.getByRole("button", { name: "Done" }).click();
+  await saved(page);
+  await expect.poll(async () => (await settingsApi(request)).profiles[0]).toMatchObject(SETUP);
+
+  // The dialog names each profile that changes. Cancel changes nothing and gives the focus back.
+  const copy = page.getByRole("button", { name: "Copy to all profiles from profile 1" });
+  await expect(copy).toHaveAccessibleDescription("Gives the other profiles these skills and MCP servers.");
+  await copy.click();
+  const ask = page.getByRole("dialog", { name: "Copy the skills and MCP servers of General?" });
+  await expect(ask).toContainText(
+    "General has 2 skills and 1 MCP server. Each profile in the list gets the same skills, Always use marks, MCP servers, and tools. This replaces its current skills and MCP servers.",
+  );
+  await expect(ask.getByRole("list", { name: "Profiles that change" }).getByRole("listitem")).toHaveText([
+    "Over-engineering",
+    "Security",
+    "Explain",
+  ]);
+  await ask.getByRole("button", { name: "Cancel" }).click();
+  await expect(ask).toHaveCount(0);
+  await expect(copy).toBeFocused();
+  await expect(page.getByRole("list", { name: "Skills of profile 4" })).toHaveCount(0);
+
+  const before = puts.length;
+  await copy.click();
+  await ask.getByRole("button", { name: "Copy to 3 profiles" }).click();
+  await expect(ask).toHaveCount(0);
+  await expect(status(page)).toHaveText("Saved. 3 profiles got the skills and MCP servers of General.");
+  expect(puts.length - before).toBe(1);
+  expect((await settingsApi(request)).profiles.map((p) => ({ skills: p.skills, alwaysSkills: p.alwaysSkills, mcp: p.mcp }))).toEqual([
+    SETUP,
+    SETUP,
+    SETUP,
+    SETUP,
+  ]);
+  // The next change gives the plain save text again.
+  await field(page, "Note", 4).fill("Explain note");
+  await saved(page);
+
+  await page.reload();
+  await openSettings(page);
+  for (const n of [2, 3, 4]) {
+    await expect(page.getByRole("list", { name: `Skills of profile ${n}` }).getByRole("listitem")).toHaveText([
+      "test-check · Always",
+      "style",
+    ]);
+    await expect(page.getByRole("list", { name: `MCP servers of profile ${n}` })).toHaveText("fake-docs (2 tools)");
+  }
+  // Nothing left to copy: the dialog says so and changes nothing.
+  await page.getByRole("button", { name: "Copy to all profiles from profile 2" }).click();
+  const same = page.getByRole("dialog", { name: "Copy the skills and MCP servers of Over-engineering?" });
+  await expect(same).toContainText("The other profiles have the same skills and MCP servers.");
+  await same.getByRole("button", { name: "Close", exact: true }).first().click();
+  await expect(same).toHaveCount(0);
+});
+
 test("the run setup saves model, effort, and reviewer agents; the run row and the log show the model and the effort", async ({
   page,
   request,

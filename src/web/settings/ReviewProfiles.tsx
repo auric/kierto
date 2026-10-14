@@ -1,7 +1,7 @@
 // Review profiles settings (M4, BRIEF US9): name, note, prompt, Explain, Docs, turn cap, and the run setup, in the order of the review brief.
 // Each change saves by itself (autosave.tsx). A field with a problem stays unsaved until the user fixes it.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, CircleAlert, Plus, RotateCcw, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CircleAlert, Copy, Plus, RotateCcw, X } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,8 @@ import {
   addSkills,
   type Change,
   change,
+  copiedText,
+  copyTargets,
   type Draft,
   defaultChoice,
   type Edit,
@@ -46,6 +48,7 @@ import {
   sameProfiles,
   selectAll,
   setTools,
+  setupSummary,
   skillsPatch,
   tickAction,
   toDrafts,
@@ -112,6 +115,9 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
   const [resetError, setResetError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<number | null>(null);
   const removeFocus = useRef<string | null>(null);
+  const [copying, setCopying] = useState<number | null>(null);
+  // The status text of the save that a copy started. The next change clears it.
+  const [copied, setCopied] = useState<string | null>(null);
 
   // The cache holds the newest saved settings, also after a save in another section.
   const current = () => qc.getQueryData<SettingsDto>(["settings"]) ?? settings;
@@ -169,6 +175,7 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
     if (next === list.current) return;
     list.current = next;
     setDrafts(next);
+    setCopied(null);
     if (c.act === "add") setFocus({ id: focusAfter(c, next.length) as string, select: true });
     else if (c.act === "move") setFocus({ id: focusAfter(c, next.length) as string });
     saver.request(delay);
@@ -185,11 +192,21 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
     apply(c);
   };
 
+  // One change, so the copy goes out in one request.
+  const copy = (i: number) => {
+    const n = copyTargets(list.current, i).length;
+    const label = profileLabel(list.current[i] as Draft, i);
+    setCopying(null);
+    apply({ act: "copy", i });
+    setCopied(copiedText(label, n));
+  };
+
   const reset = async () => {
     saver.cancel();
     await saver.flush();
     setResetting(true);
     setResetError(null);
+    setCopied(null);
     try {
       const s = current();
       const dto = await putSettings({ baseUrl: s.baseUrl ?? "", caFile: s.caFile ?? "", profiles: null });
@@ -212,6 +229,8 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
 
   const invalid = drafts.some((d) => Object.keys(problems(d)).length > 0);
   const gone = removing === null ? undefined : drafts[removing];
+  const source = copying === null ? undefined : drafts[copying];
+  const targets = copying === null ? [] : copyTargets(drafts, copying);
   return (
     <section aria-labelledby="h-profiles" className="mt-6 grid max-w-[86ch] gap-3 border-t pt-4">
       {/* The save state stays in view while the list scrolls. -top-[18px] cancels the top padding of the Settings scroll pane. */}
@@ -224,7 +243,7 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
             id={STATUS_ID}
             state={state}
             problem={invalid ? "A marked field is not saved. Fix it to save it." : null}
-            saved="Saved. New runs use these profiles."
+            saved={copied ?? "Saved. New runs use these profiles."}
             onRetry={() => saver.request(0)}
           />
         </div>
@@ -248,6 +267,7 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
               onChange={apply}
               onBlur={() => void saver.flush()}
               onRemove={askRemove}
+              onCopy={setCopying}
             />
           ))}
         </ol>
@@ -300,6 +320,39 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
                 <Button variant="destructive" onClick={() => remove(removing)}>
                   Remove profile
                 </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={copying !== null} onOpenChange={(on) => !on && setCopying(null)}>
+        <DialogContent className="sm:max-w-[480px]" onKeyDown={dialogKeys(() => setCopying(null))}>
+          {source && copying !== null && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Copy the skills and MCP servers of {profileLabel(source, copying)}?</DialogTitle>
+                <DialogDescription>
+                  {targets.length
+                    ? `${setupSummary(source, profileLabel(source, copying))} Each profile in the list gets the same skills, Always use marks, MCP servers, and tools. This replaces its current skills and MCP servers.`
+                    : "The other profiles have the same skills and MCP servers."}
+                </DialogDescription>
+              </DialogHeader>
+              {targets.length > 0 && (
+                <ul aria-label="Profiles that change" className="m-0 list-disc pl-5 text-sm">
+                  {targets.map((j) => (
+                    <li key={drafts[j]?.key}>{profileLabel(drafts[j] as Draft, j)}</li>
+                  ))}
+                </ul>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setCopying(null)}>
+                  {targets.length ? "Cancel" : "Close"}
+                </Button>
+                {targets.length > 0 && (
+                  <Button onClick={() => copy(copying)}>
+                    Copy to {targets.length} {targets.length === 1 ? "profile" : "profiles"}
+                  </Button>
+                )}
               </DialogFooter>
             </>
           )}
@@ -368,6 +421,7 @@ type RowProps = {
   onChange: (c: Change, delay?: number) => void;
   onBlur: () => void;
   onRemove: (i: number) => void;
+  onCopy: (i: number) => void;
 };
 
 function ProfileRow(props: RowProps) {
@@ -629,6 +683,25 @@ function RunSetup(props: RowProps & { found: ReturnType<typeof problems> }) {
       </div>
       <SkillsField {...props} />
       <McpField {...props} />
+      <div className={setupRow}>
+        <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 @max-[559px]:col-start-1">
+          <Button
+            id={profileId(i, "copy")}
+            variant="outline"
+            size="sm"
+            aria-haspopup="dialog"
+            aria-describedby={`${profileId(i, "copy")}-help`}
+            disabled={props.count <= 1}
+            onClick={() => props.onCopy(i)}
+          >
+            <Copy data-icon="inline-start" />
+            Copy to all profiles<span className="sr-only"> from profile {i + 1}</span>
+          </Button>
+          <span id={`${profileId(i, "copy")}-help`} className="text-xs text-muted-foreground">
+            Gives the other profiles these skills and MCP servers.
+          </span>
+        </div>
+      </div>
     </fieldset>
   );
 }

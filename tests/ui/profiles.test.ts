@@ -5,6 +5,8 @@ import {
   addSkills,
   allValid,
   change,
+  copiedText,
+  copyTargets,
   type Draft,
   defaultChoice,
   focusAfter,
@@ -16,6 +18,7 @@ import {
   sameProfiles,
   selectAll,
   setTools,
+  setupSummary,
   skillsPatch,
   slug,
   tickAction,
@@ -260,6 +263,47 @@ describe("profile editor model", () => {
     expect(dirty(picked)).toBe(true);
     expect(toProfiles(picked)[0]?.mcp).toEqual(one);
     expect(dirty(change(picked, { act: "edit", i: 0, patch: { mcp: [] } }))).toBe(false);
+  });
+
+  test("copy gives every other profile the skills, the Always use marks, and the MCP picks with their tools", () => {
+    const mcp = [
+      { server: "docs", tools: ["search", "lookup"] },
+      { server: "p:graph", tools: ["explore"] },
+    ];
+    // A stale mark of the source never reaches a target. The Explain profile also takes skills and MCP servers.
+    const from = { skills: ["a", "p:b"], alwaysSkills: ["p:b", "gone"], mcp };
+    const d = toDrafts([
+      p("general", "General", { languageChecks: true, model: "opus" }),
+      p("security", "Security", { skills: ["c"], alwaysSkills: ["c"], mcp: [{ server: "old", tools: ["x"] }] }),
+      p("explain", "Explain", { explain: true }),
+      p("same", "Same", { skills: ["a", "p:b"], alwaysSkills: ["p:b"], mcp }),
+    ]);
+    const edited = change(d, { act: "edit", i: 0, patch: from });
+    expect(copyTargets(edited, 0)).toEqual([1, 2]);
+    const copied = change(edited, { act: "copy", i: 0 });
+    expect(copied[0]).toBe(edited[0]);
+    expect(copied[3]).toBe(edited[3]);
+    const out = toProfiles(copied);
+    for (const t of out.slice(1)) expect(t).toMatchObject({ skills: ["a", "p:b"], alwaysSkills: ["p:b"], mcp });
+    expect(profileList.safeParse(out).success).toBe(true);
+    // Only the picks change. The targets get their own lists, so a later tool edit of one profile leaves the others.
+    expect(out[1]).toEqual({ ...toProfiles(edited)[1], skills: ["a", "p:b"], alwaysSkills: ["p:b"], mcp } as ProfileInput);
+    expect(out[2]?.explain).toBe(true);
+    expect(copied[1]?.mcp[0]?.tools).not.toBe(edited[0]?.mcp[0]?.tools);
+    const later = change(copied, { act: "edit", i: 1, patch: { mcp: setTools(copied[1]?.mcp ?? [], "docs", ["search"]) } });
+    expect(later[2]?.mcp[0]?.tools).toEqual(["search", "lookup"]);
+    // Nothing to copy: the same list, so no save starts.
+    expect(copyTargets(copied, 0)).toEqual([]);
+    expect(change(copied, { act: "copy", i: 0 })).toBe(copied);
+    // An empty setup clears the picks of the others.
+    const cleared = toProfiles(
+      change(change(copied, { act: "edit", i: 0, patch: { skills: [], alwaysSkills: [], mcp: [] } }), { act: "copy", i: 0 }),
+    );
+    for (const t of cleared) expect(t).toMatchObject({ skills: [], alwaysSkills: [], mcp: [] });
+    expect(setupSummary(copied[0] as Draft, "General")).toBe("General has 2 skills and 2 MCP servers.");
+    expect(setupSummary(toDrafts([p("x", "X", { skills: ["a"] })])[0] as Draft, "X")).toBe("X has 1 skill and no MCP servers.");
+    expect(copiedText("General", 1)).toBe("Saved. 1 profile got the skills and MCP servers of General.");
+    expect(copiedText("General", 3)).toBe("Saved. 3 profiles got the skills and MCP servers of General.");
   });
 
   test("the limits match the shared request schema", () => {
