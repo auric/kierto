@@ -34,6 +34,8 @@ export type Scenario = {
   // PR 1004 (PROJ1/sample-repo-4, source branch fix/flush-lock): the PR of the token owner joins the author dashboard.
   // The reviewer asks for code changes in threads 5000001 and 5000002. makeClone(1004) gives a clone on its source branch.
   author: boolean;
+  // PR 1001: the source branch moves one commit on, with a C++ header and source and a Python file.
+  native: boolean;
 };
 
 // The next fake Claude Code run. tree: a subagent run with drafts. schema: a result that fails the schema. limit: a usage limit.
@@ -148,6 +150,14 @@ export async function runSkills(): Promise<string[] | null> {
   const res = await fetch(`${FAKE_URL}/__control/run-skills`, { method: "POST", headers: auth });
   if (!res.ok) throw new Error(`control run-skills: ${res.status}`);
   return ((await res.json()) as { files: string[] | null }).files;
+}
+
+// The prompt of each agent of the newest fake CLI run, by agent name. null before the first run and after the run ends.
+// Start a hang run first, as for runAttachments.
+export async function runAgents(): Promise<Record<string, string> | null> {
+  const res = await fetch(`${FAKE_URL}/__control/run-agents`, { method: "POST", headers: auth });
+  if (!res.ok) throw new Error(`control run-agents: ${res.status}`);
+  return ((await res.json()) as { prompts: Record<string, string> | null }).prompts;
 }
 
 export type RunMcp = { servers: string[] | null; allowed: string | null; denied: string | null };

@@ -177,10 +177,10 @@ describe("skill prompts and profiles", () => {
 
   test("a saved profile without skills reads as no skills and keeps its revision", () => {
     const dir = temp("cfg");
-    const { skills, ...old } = { ...general, prompt: "Mine." };
+    const { skills, languageChecks: _lang, ...old } = { ...general, prompt: "Mine." };
     json(join(dir, "config.json"), { baseUrl: "https://example.test", userSlug: "me", notifications: false, profiles: [old] });
     const read = readConfig(dir)?.profiles?.[0];
-    expect(read).toEqual({ ...old, skills: [] });
+    expect(read).toEqual({ ...old, skills: [], languageChecks: false });
     const before = createHash("sha256")
       .update(JSON.stringify(old, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
       .digest("hex");
@@ -264,10 +264,16 @@ describe("skill index (more than SKILL_INDEX_AFTER skills)", () => {
 
   test("a saved profile without the run setup reads as the defaults and keeps its revision", () => {
     const dir = temp("cfg-setup");
-    const { model, effort, reviewer, ...old } = { ...general, prompt: "Mine.", skills: ["x"] };
+    const { model, effort, reviewer, languageChecks: _lang, ...old } = { ...general, prompt: "Mine.", skills: ["x"] };
     json(join(dir, "config.json"), { baseUrl: "https://example.test", userSlug: "me", notifications: false, profiles: [old] });
     const read = readConfig(dir)?.profiles?.[0];
-    expect(read).toEqual({ ...old, model: null, effort: null, reviewer: { model: null, effort: null, mode: "auto" } });
+    expect(read).toEqual({
+      ...old,
+      model: null,
+      effort: null,
+      reviewer: { model: null, effort: null, mode: "auto" },
+      languageChecks: false,
+    });
     const before = createHash("sha256")
       .update(JSON.stringify(old, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
       .update(JSON.stringify(old.skills))

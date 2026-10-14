@@ -497,6 +497,13 @@ function ProfileRow(props: RowProps) {
           checked={d.docs}
           onChange={(docs) => edit({ docs })}
         />
+        <Toggle
+          id={profileId(i, "lang")}
+          label={<>Language checks{of}</>}
+          help="Adds checklists for the languages in the change. Review runs only."
+          checked={d.languageChecks}
+          onChange={(languageChecks) => edit({ languageChecks })}
+        />
       </div>
       <RunSetup {...props} found={found} />
       {errors.length > 0 && (

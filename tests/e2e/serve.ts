@@ -147,6 +147,7 @@ const INITIAL: Scenario = {
   forge: false,
   task: false,
   author: false,
+  native: false,
 };
 let sc: Scenario = { ...INITIAL };
 
@@ -228,7 +229,7 @@ const remoteGit = (args: string[]) => git(["--git-dir", remote.remote, ...args],
 // The dashboard and the PR route share the PR A object, so both report the pushed head and the description.
 // The git remote moves the PR ref too, so a review after the push fetches the pushed head (plan r2 UI-RR).
 const headA = async () => {
-  A.pr.fromRef.latestCommit = pushed.get(1001)?.head ?? (sc.push ? remote.next : remote.source);
+  A.pr.fromRef.latestCommit = pushed.get(1001)?.head ?? (sc.push ? remote.next : sc.native ? remote.native : remote.source);
   A.pr.description = sc.task ? `Synthetic e2e data. Implements ${JIRA_ISSUE}. See ABC-404.` : "Synthetic e2e data.";
   await remoteGit(["update-ref", "refs/pull-requests/1001/from", A.pr.fromRef.latestCommit]);
 };
@@ -602,10 +603,10 @@ r[key("POST", "/__control/run-skills")] = () => {
   const files = existsSync(dir) ? readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()) : [];
   return ok({ files: files.map((e) => relative(dir, join(e.parentPath, e.name)).replaceAll("\\", "/")).sort() });
 };
-// The server names in mcp.json and the --allowedTools and --disallowedTools values of the newest fake CLI run. null: no run.
-r[key("POST", "/__control/run-mcp")] = () => {
+// The argv of the newest fake CLI run, or undefined before the first run.
+function runArgv() {
   const record = join(claudeDir, "calls.jsonl");
-  const argv = existsSync(record)
+  return existsSync(record)
     ? readFileSync(record, "utf8")
         .split("\n")
         .filter(Boolean)
@@ -613,11 +614,24 @@ r[key("POST", "/__control/run-mcp")] = () => {
         .filter((a) => a.includes("-p"))
         .at(-1)
     : undefined;
+}
+const argvFlag = (argv: string[], name: string) => (argv.includes(name) ? (argv[argv.indexOf(name) + 1] ?? null) : null);
+// The server names in mcp.json and the --allowedTools and --disallowedTools values of the newest fake CLI run. null: no run.
+r[key("POST", "/__control/run-mcp")] = () => {
+  const argv = runArgv();
   if (!argv) return ok({ run: null });
-  const flag = (name: string) => (argv.includes(name) ? (argv[argv.indexOf(name) + 1] ?? null) : null);
+  const flag = (name: string) => argvFlag(argv, name);
   const file = flag("--mcp-config");
   const servers = file && existsSync(file) ? Object.keys(JSON.parse(readFileSync(file, "utf8")).mcpServers) : null;
   return ok({ run: { servers, allowed: flag("--allowedTools"), denied: flag("--disallowedTools") } });
+};
+// The prompt of each agent in the --agents file of the newest fake CLI run. null: no run, or the run ended and its folder is gone.
+r[key("POST", "/__control/run-agents")] = () => {
+  const argv = runArgv();
+  const file = argv && argvFlag(argv, "--agents");
+  if (!file || !existsSync(file)) return ok({ prompts: null });
+  const agents = JSON.parse(readFileSync(file, "utf8")) as Record<string, { prompt: string }>;
+  return ok({ prompts: Object.fromEntries(Object.entries(agents).map(([name, a]) => [name, a.prompt])) });
 };
 // Lets the running cycle end, changes the scenario, then runs one full cycle.
 r[key("POST", "/__control/state")] = async (req) => {

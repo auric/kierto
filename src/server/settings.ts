@@ -51,7 +51,9 @@ const activeRules = (c: Config): TaskRule[] => rulesOf(c).flatMap(({ timedOut, .
 const DEFAULT_CHECK_SECONDS = 60;
 const profilesOf = (c: Config | null): Profile[] => c?.profiles ?? SHIPPED_PROFILES;
 const upgradeConfig = (c: Config | null): Config | null =>
-  c?.profiles && c.profilesVersion !== PROFILES_VERSION ? { ...c, profiles: c.profiles.map(upgradeProfile) } : c;
+  c?.profiles && c.profilesVersion !== PROFILES_VERSION
+    ? { ...c, profiles: c.profiles.map((p) => upgradeProfile(p, c.profilesVersion ?? 1)) }
+    : c;
 const checkSecondsOf = (c: Config | null) => c?.checkSeconds ?? DEFAULT_CHECK_SECONDS;
 
 const originOf = (url: string) => new URL(url).origin;

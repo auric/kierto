@@ -46,6 +46,12 @@ export const TOOL_LABELS: Record<string, string> = {
 // prompt: the profile part of both agent prompts. 100 turns for reviews, 50 for Explain. docs: the run gets DOC_SERVERS.
 export type Profile = ProfileInput;
 
+// The shipped prompts before PROFILES_VERSION 3 (src/server/config.ts).
+const V2_GENERAL =
+  "Find defects in the change: wrong logic, missed edge cases, races and lock order, resource leaks, error handling, and effects on callers outside the diff.";
+const V2_OVER =
+  "Find code that the change can delete or simplify: abstractions with one use, code that the standard library or the platform already gives, unneeded dependencies, settings for fixed values, and dead code.";
+
 export const SHIPPED_PROFILES: Profile[] = [
   {
     id: "general",
@@ -54,13 +60,16 @@ export const SHIPPED_PROFILES: Profile[] = [
     explain: false,
     maxTurns: 100,
     docs: true,
+    languageChecks: true,
     skills: [],
     mcp: [],
     model: null,
     effort: null,
     reviewer: { ...DEFAULT_REVIEWER },
-    prompt:
-      "Find defects in the change: wrong logic, missed edge cases, races and lock order, resource leaks, error handling, and effects on callers outside the diff.",
+    prompt: [
+      V2_GENERAL,
+      "When the change fixes a bug in one place, Grep the other callers of the same code. A caller with the same bug is a finding.",
+    ].join("\n"),
   },
   {
     id: "over",
@@ -69,13 +78,22 @@ export const SHIPPED_PROFILES: Profile[] = [
     explain: false,
     maxTurns: 100,
     docs: true,
+    languageChecks: false,
     skills: [],
     mcp: [],
     model: null,
     effort: null,
     reviewer: { ...DEFAULT_REVIEWER },
-    prompt:
-      "Find code that the change can delete or simplify: abstractions with one use, code that the standard library or the platform already gives, unneeded dependencies, settings for fixed values, and dead code.",
+    prompt: [
+      "Find code that the change can delete or simplify.",
+      "Check each new function, class, dependency, and setting in this order. Is it needed? Does the repository have it? Does the standard library have it? Does the platform have it? Does an installed dependency have it?",
+      "Set category to delete, reuse, stdlib, native, yagni, or shrink.",
+      "In body, name what to cut and what replaces it: the function, the platform feature, or the repository path. For shrink, show the shorter form.",
+      "Use minor for a cut and nit for shrink. Use major when the cut removes a dependency or a layer.",
+      "Never propose to cut a security check or input validation at a trust boundary. Also keep error handling that prevents data loss, and small tests.",
+      "Put a defect that you notice into risks, not into findings.",
+      "In summary, give the number of lines that the cuts remove.",
+    ].join("\n"),
   },
   {
     id: "security",
@@ -84,6 +102,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     explain: false,
     maxTurns: 100,
     docs: true,
+    languageChecks: true,
     skills: [],
     mcp: [],
     model: null,
@@ -99,6 +118,7 @@ export const SHIPPED_PROFILES: Profile[] = [
     explain: true,
     maxTurns: 50,
     docs: false,
+    languageChecks: false,
     skills: [],
     mcp: [],
     model: null,
@@ -121,6 +141,7 @@ export const profileRevision = (p: Profile) =>
     .update(p.mcp.length ? `mcp${JSON.stringify(p.mcp, ["server", "tools"])}` : "")
     .update(p.model !== null || p.effort !== null ? `run${JSON.stringify([p.model, p.effort])}` : "")
     .update(defaultReviewer(p) ? "" : `reviewer${JSON.stringify(p.reviewer, ["model", "effort", "mode"])}`)
+    .update(p.languageChecks ? "lang" : "")
     .digest("hex");
 // A review run of the profile gets the rl-reviewer agent. The caller checks the run kind.
 export const usesReviewer = (p: Profile) => !p.explain && p.reviewer.mode !== "off";
@@ -128,13 +149,22 @@ export const DEFAULT_PROFILE: ProfileId = "general";
 // Fix and reply runs get at least this turn cap, whatever the profile.
 export const MIN_EDIT_TURNS = 100;
 
-// The turn caps of the shipped profiles before PROFILES_VERSION 2 (src/server/config.ts).
-const FORMER_TURNS: Record<string, number> = { general: 40, over: 40, security: 40, explain: 12 };
-// A saved profile equal to a former shipped profile was never edited, so it gets the current shipped profile.
-export function upgradeProfile(p: Profile): Profile {
+// The shipped profiles of each former PROFILES_VERSION (src/server/config.ts), as changes to the current ones.
+const FORMER: Record<number, Record<string, Partial<Profile>>> = {
+  1: {
+    general: { maxTurns: 40, prompt: V2_GENERAL, languageChecks: false },
+    over: { maxTurns: 40, prompt: V2_OVER },
+    security: { maxTurns: 40, languageChecks: false },
+    explain: { maxTurns: 12 },
+  },
+  2: { general: { prompt: V2_GENERAL, languageChecks: false }, over: { prompt: V2_OVER }, security: { languageChecks: false } },
+};
+// version: the PROFILES_VERSION of the saved config. A saved profile equal to the shipped profile of that version was never edited,
+// so it gets the current shipped profile. A profile equal to an older shipped profile was set back on purpose, so it stays.
+export function upgradeProfile(p: Profile, version: number): Profile {
   const shipped = SHIPPED_PROFILES.find((s) => s.id === p.id);
-  const turns = FORMER_TURNS[p.id];
-  return shipped && turns !== undefined && profileRevision(p) === profileRevision({ ...shipped, maxTurns: turns }) ? shipped : p;
+  const former = FORMER[version]?.[p.id];
+  return shipped && former && profileRevision(p) === profileRevision({ ...shipped, ...former }) ? shipped : p;
 }
 
 // Returns the tool names of a remote MCP server. It throws when the server does not answer.
@@ -204,6 +234,21 @@ const TASK_RULE = "Use ./context/task.md, when present, to judge whether a comme
 // The CLI Read tool refuses a file over 256 KB.
 export const LARGE_FILE_RULE = "Read fails on a file over 256 KB. For a large file, use Grep, or Read with offset and limit.";
 
+// Every agent of a review run gets these. An Explain run gives no findings.
+export const SEVERITY_RULES = [
+  "Set severity by what the merge must wait for.",
+  "blocker: the change must not merge as it is. Examples: data loss, a security hole, a crash on a normal path.",
+  "major: fix it before the merge. Examples: wrong behavior on a reachable path, a leak, a race, undefined behavior.",
+  "minor: a fix is good, but the merge can go on. Examples: a rare edge case, a small missing check, code to delete.",
+  "nit: optional polish. Give a nit only when the profile task, a chosen skill, or the user's note asks for it.",
+  "Give no finding for what a compiler, linter, or formatter reports. Give no finding for style or naming.",
+  "Report a problem in unchanged code only when the change makes it reachable or worse.",
+  "Give no finding to fill the list. An empty findings list is a valid result.",
+  "In body, give the trigger, the consequence, and a fix direction, in 3 sentences or fewer.",
+  "Set confidence to low when you did not trace the trigger.",
+];
+const severityRules = (p: Profile) => (p.explain ? [] : SEVERITY_RULES);
+
 const RESULT_RULES = [
   "Give each path from the repository root, for example src/app.ts, not repo/src/app.ts.",
   'For side "new", give the line numbers of the file in ./repo. For side "old", a removed line, give its line number at the merge base. The hunk headers of git_diff from the merge base give it.',
@@ -233,6 +278,7 @@ export function mainAgent(p: Profile): AgentSpec {
       p.prompt,
       ...TRUST,
       ...RESULT_RULES,
+      ...severityRules(p),
       "Put open points into questions, not into findings.",
       "In coverage, list what you read, what you skipped, and what was not available.",
       ...docsRule(p),
@@ -356,6 +402,7 @@ export function reviewerAgent(p: Profile): AgentSpec {
       p.prompt,
       ...TRUST,
       ...RESULT_RULES,
+      ...severityRules(p),
       ...docsRule(p),
       "Report each finding with path, side, line, lineEnd, anchorText, severity, category, body, evidence, evidenceStatus, and confidence.",
     ].join("\n"),

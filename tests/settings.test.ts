@@ -206,6 +206,7 @@ describe("settings API", () => {
     prompt: "Find slow code.",
     explain: false,
     docs: false,
+    languageChecks: false,
     maxTurns: 20,
     skills: [],
     mcp: [],
@@ -273,28 +274,64 @@ describe("settings API", () => {
     expect(await again.get()).toMatchObject({ baseUrl: fake.url, notifications: true, profiles: SHIPPED_PROFILES, checkSeconds: 60 });
   });
 
-  test("an old config gets the new caps on unedited shipped profiles and keeps edited ones", async () => {
+  // The shipped profiles before PROFILES_VERSION 3, as the configs of that time stored them: without languageChecks.
+  const [general, over, security, explain] = SHIPPED_PROFILES as [Profile, Profile, Profile, Profile];
+  const OLD_GENERAL =
+    "Find defects in the change: wrong logic, missed edge cases, races and lock order, resource leaks, error handling, and effects on callers outside the diff.";
+  const OLD_OVER =
+    "Find code that the change can delete or simplify: abstractions with one use, code that the standard library or the platform already gives, unneeded dependencies, settings for fixed values, and dead code.";
+  const stored = (p: Profile, o: Partial<Profile> = {}) => {
+    const { languageChecks: _, ...rest } = { ...p, ...o };
+    return rest;
+  };
+  const v2 = { general: stored(general, { prompt: OLD_GENERAL }), over: stored(over, { prompt: OLD_OVER }), security: stored(security) };
+  const v1 = { general: { ...v2.general, maxTurns: 40 }, over: { ...v2.over, maxTurns: 40 }, security: { ...v2.security, maxTurns: 40 } };
+  const oldConfig = async () => {
     const s = setup();
     expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
     s.settings.close();
     const file = join(dir, "config.json");
-    const [general, over, security, explain] = SHIPPED_PROFILES as [Profile, Profile, Profile, Profile];
-    const oldGeneral = { ...general, maxTurns: 40 };
-    const editedOver = { ...over, maxTurns: 40, note: "My note" };
-    const ownSecurity = { ...security, maxTurns: 30 };
-    const oldExplain = { ...explain, maxTurns: 12 };
     const { profilesVersion, ...old } = JSON.parse(readFileSync(file, "utf8"));
     expect(profilesVersion).toBe(PROFILES_VERSION);
-    writeFileSync(file, JSON.stringify({ ...old, profiles: [oldGeneral, editedOver, ownSecurity, oldExplain, custom] }));
-    const upgraded = [general, editedOver, ownSecurity, explain, custom];
+    return { file, old };
+  };
+
+  test("a config from before PROFILES_VERSION gets the new shipped profiles on unedited ones and keeps edited ones", async () => {
+    const { file, old } = await oldConfig();
+    const editedOver = { ...v1.over, note: "My note" };
+    const ownSecurity = { ...v1.security, maxTurns: 30 };
+    const oldExplain = { ...explain, maxTurns: 12 };
+    writeFileSync(file, JSON.stringify({ ...old, profiles: [v1.general, editedOver, ownSecurity, oldExplain, custom] }));
+    const upgraded = [general, { ...editedOver, languageChecks: false }, { ...ownSecurity, languageChecks: false }, explain, custom];
     const again = setup();
     expect((await again.get()).profiles).toEqual(upgraded);
     // A save stamps the version, so a cap of 40 set after the update stays.
     expect((await again.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ profiles: upgraded, profilesVersion: PROFILES_VERSION });
+    const oldGeneral = { ...general, maxTurns: 40 };
     expect((await again.put({ baseUrl: fake.url, profiles: [oldGeneral] })).status).toBe(200);
     again.settings.close();
     expect((await setup().get()).profiles).toEqual([oldGeneral]);
+  });
+
+  test("a version 2 config gets language checks and the new prompts on unedited shipped profiles only", async () => {
+    const { file, old } = await oldConfig();
+    const editedSecurity = { ...v2.security, note: "Mine" };
+    // Version 2 upgraded the version 1 profiles. A version 1 profile in a version 2 config was set back on purpose.
+    const setBack = v1.general;
+    writeFileSync(file, JSON.stringify({ ...old, profilesVersion: 2, profiles: [v2.general, v2.over, v2.security, explain, custom] }));
+    const again = setup();
+    expect((await again.get()).profiles).toEqual([general, over, security, explain, custom]);
+    expect(general.languageChecks && security.languageChecks).toBe(true);
+    expect(general.prompt).not.toBe(OLD_GENERAL);
+    expect(over.prompt).not.toBe(OLD_OVER);
+    again.settings.close();
+    writeFileSync(file, JSON.stringify({ ...old, profilesVersion: 2, profiles: [setBack, over, editedSecurity] }));
+    expect((await setup().get()).profiles).toEqual([
+      { ...setBack, languageChecks: false },
+      over,
+      { ...editedSecurity, languageChecks: false },
+    ]);
   });
 
   test("401 gives 400 and stores nothing", async () => {

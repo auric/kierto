@@ -34,6 +34,7 @@ const p = (id: string, name: string, o: Partial<ProfileInput> = {}): ProfileInpu
   prompt: `Check ${name}.`,
   explain: false,
   docs: true,
+  languageChecks: false,
   maxTurns: 40,
   skills: [],
   mcp: [],
@@ -116,7 +117,7 @@ describe("profile editor model", () => {
     expect(moved.map((x) => x.key)).toEqual([0, 2, 1].map((i) => d[i]?.key ?? -1));
     expect(change(d, { act: "move", i: 0, d: -1 })).toBe(d);
     expect(change(d, { act: "move", i: 2, d: 1 })).toBe(d);
-    // A new profile saves at once, so it starts valid: a review profile with 100 turns, documentation on, and the default run setup.
+    // A new profile saves at once, so it starts valid: a review profile with 100 turns, documentation and language checks on, and the default run setup.
     const fresh = change(d, { act: "add" });
     expect(fresh.at(-1)).toMatchObject({
       id: "new-profile",
@@ -124,6 +125,7 @@ describe("profile editor model", () => {
       prompt: NEW_PROMPT,
       explain: false,
       docs: true,
+      languageChecks: true,
       maxTurns: "100",
       model: "",
       effort: "",
@@ -191,6 +193,7 @@ describe("profile editor model", () => {
     expect(dirty(change(d, { act: "edit", i: 0, patch: { name: " General  " } }))).toBe(false);
     expect(dirty(change(d, { act: "edit", i: 0, patch: { maxTurns: "040" } }))).toBe(false);
     expect(dirty(change(d, { act: "edit", i: 0, patch: { docs: false } }))).toBe(true);
+    expect(dirty(change(d, { act: "edit", i: 0, patch: { languageChecks: true } }))).toBe(true);
     expect(dirty(change(d, { act: "edit", i: 2, patch: { prompt: "Other." } }))).toBe(true);
     const moved = change(d, { act: "move", i: 0, d: 1 });
     expect(dirty(moved)).toBe(true);

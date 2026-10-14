@@ -37,7 +37,7 @@ export const EFFORT_CHOICES: Effort[] = ["low", "medium", "high", "xhigh", "max"
 export const defaultChoice = (v: SettingValue | null | undefined) =>
   v ? `Use my default (${v.value}${v.sure ? "" : ", from your settings"})` : "Use my default";
 
-// A new profile saves at once, so it starts valid: a review profile with 100 turns and the documentation servers.
+// A new profile saves at once, so it starts valid: a review profile with 100 turns, the documentation servers, and language checks.
 const NEW_NAME = "New profile";
 export const NEW_PROMPT = "Find defects in the change: wrong logic, missed edge cases, and effects on callers outside the diff.";
 const NEW_TURNS = 100;
@@ -53,6 +53,7 @@ export type Draft = {
   prompt: string;
   explain: boolean;
   docs: boolean;
+  languageChecks: boolean;
   maxTurns: string;
   skills: string[];
   mcp: McpPick[];
@@ -106,6 +107,7 @@ export function toProfiles(list: Draft[]): ProfileInput[] {
       prompt: d.prompt.trim(),
       explain: d.explain,
       docs: d.docs,
+      languageChecks: d.languageChecks,
       maxTurns: turns ? Number(turns) : Number.NaN,
       skills: d.skills,
       mcp: d.mcp,
@@ -124,6 +126,7 @@ const KEYS = [
   "prompt",
   "explain",
   "docs",
+  "languageChecks",
   "maxTurns",
   "skills",
   "mcp",
@@ -173,6 +176,7 @@ const newProfile = (id: string): ProfileInput => ({
   prompt: NEW_PROMPT,
   explain: false,
   docs: true,
+  languageChecks: true,
   maxTurns: NEW_TURNS,
   skills: [],
   mcp: [],
@@ -201,7 +205,10 @@ export function toPayload(list: Draft[], saved: ProfileInput[]): ProfileInput[] 
 }
 
 export type Edit = Partial<
-  Pick<Draft, "name" | "note" | "prompt" | "explain" | "docs" | "maxTurns" | "skills" | "mcp" | "model" | "effort" | "reviewer">
+  Pick<
+    Draft,
+    "name" | "note" | "prompt" | "explain" | "docs" | "languageChecks" | "maxTurns" | "skills" | "mcp" | "model" | "effort" | "reviewer"
+  >
 >;
 
 export type Change =
@@ -244,6 +251,7 @@ export type Part =
   | "turns"
   | "explain"
   | "docs"
+  | "lang"
   | "model"
   | "model-id"
   | "effort"

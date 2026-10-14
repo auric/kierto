@@ -102,6 +102,7 @@ export const DEFAULT_REVIEWER: ReviewerSetup = { model: null, effort: null, mode
 // skills: the run gets a copy of each skill in ./skills. Absent in profiles saved before skills existed.
 // mcp: servers of the user's Claude config with the chosen tools. Absent in profiles saved before this field existed.
 // model, effort: --model and --effort of every run of the profile. reviewer: the rl-reviewer agent of review runs. Absent in older profiles.
+// languageChecks: review runs get the checklists for the languages of the change. Absent in older profiles.
 export const profileInput = z.object({
   id: profileId,
   name: z.string().trim().min(1).max(60),
@@ -109,6 +110,7 @@ export const profileInput = z.object({
   prompt: z.string().trim().min(1).max(MAX_NOTE),
   explain: z.boolean(),
   docs: z.boolean(),
+  languageChecks: z.boolean().default(false),
   maxTurns: z.number().int().min(2).max(200),
   skills: z
     .array(skillId)

@@ -59,6 +59,12 @@ export async function reviewRemote(root: string, prs: Record<number, "source" | 
   const target = await commit(base, { "docs/main.md": "main\n", "CLAUDE.md": "Name each lock after the data it guards.\n" }, "main moves");
   const source = await commit(base, { "src/cache/flush.ts": FLUSH_HEAD }, "Lock each entry");
   const next = await commit(source, { "docs/flush.md": "Flush order.\n" }, "Document the flush");
+  // A C++ header and source and a Python file after source, for the language checks.
+  const native = await commit(
+    source,
+    { "native/hash.h": "int hash(int x);\n", "native/hash.cpp": "int hash(int x) { return x * 31; }\n", "tools/check.py": "print(1)\n" },
+    "Add the native hash",
+  );
   await g(["update-ref", "refs/heads/main", target]);
   await g(["update-ref", "refs/heads/feature", source]);
   for (const [id, head] of Object.entries(prs)) await g(["update-ref", `refs/pull-requests/${id}/from`, head === "next" ? next : source]);
@@ -69,7 +75,7 @@ export async function reviewRemote(root: string, prs: Record<number, "source" | 
     targetRef: "refs/heads/main",
     fetchConfig: [],
   });
-  return { remote, source, next, target, gitRemote };
+  return { remote, source, next, native, target, gitRemote };
 }
 
 // No run reaches the documentation servers. The stub names one tool per server.

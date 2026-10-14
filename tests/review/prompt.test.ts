@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
+  askAgent,
+  fixAgent,
   LARGE_FILE_RULE,
   mainAgent,
   profileRevision,
+  replyAgent,
   reviewerAgent,
+  SEVERITY_RULES,
   SHIPPED_PROFILES,
   usesReviewer,
 } from "../../src/server/review/catalog";
@@ -96,6 +100,17 @@ ${rule}
     expect(reviewer).toContain(LARGE_FILE_RULE);
     expect(reviewer).toContain("The request names the paths and the git_diff range to review.");
   });
+
+  test("the review agents of a review profile get the severity rules after the result rules; Explain and the other runs do not", () => {
+    const rubric = SEVERITY_RULES.join("\n");
+    for (const prompt of [mainAgent(general).prompt, reviewerAgent(general).prompt]) {
+      expect(prompt).toContain(`\n${rubric}\n`);
+      expect(prompt.indexOf(rubric)).toBeGreaterThan(prompt.indexOf("Copy anchorText verbatim"));
+    }
+    const explain = SHIPPED_PROFILES.find((p) => p.explain) as (typeof SHIPPED_PROFILES)[number];
+    for (const agent of [mainAgent(explain), replyAgent(general), fixAgent(general), askAgent(general)])
+      for (const rule of SEVERITY_RULES) expect(agent.prompt).not.toContain(rule);
+  });
 });
 
 describe("reviewer agents (profile run setup)", () => {
@@ -139,6 +154,7 @@ describe("reviewer agents (profile run setup)", () => {
       { ...general, reviewer: { ...general.reviewer, mode: "off" as const } },
       { ...general, reviewer: { ...general.reviewer, model: "haiku" } },
       { ...general, reviewer: { ...general.reviewer, effort: "max" as const } },
+      { ...general, languageChecks: !general.languageChecks },
     ].map(profileRevision);
     expect(new Set([base, ...changed]).size).toBe(changed.length + 1);
   });

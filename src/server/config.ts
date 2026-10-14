@@ -36,7 +36,8 @@ const config = z.object({
 export type Config = z.infer<typeof config>;
 
 // Version 2: the shipped turn caps went from 40 and 12 to 100 and 50.
-export const PROFILES_VERSION = 2;
+// Version 3: General and Security got language checks. General and Over-engineering got new prompts.
+export const PROFILES_VERSION = 3;
 
 export function dataDir(): string {
   const env = process.env;

@@ -331,7 +331,7 @@ describe("user MCP prompts and profiles", () => {
   });
 
   test("an old profile reads as no MCP servers and keeps its revision", () => {
-    const { mcp: _, ...old } = general;
+    const { mcp: _, languageChecks: _lang, ...old } = general;
     const parsed = profileInput.parse(old);
     expect(parsed.mcp).toEqual([]);
     const before = createHash("sha256")

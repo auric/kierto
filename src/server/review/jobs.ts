@@ -79,6 +79,7 @@ import { type FixFile, type ValidEdit, validateFix } from "./fix";
 import { git, gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
 import { projectInstructions } from "./instructions";
+import { languagesOf, withLanguages } from "./languages";
 import { buildAskPrompt, buildFixPrompt, buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
 import { claudeConfigDir, copySkills } from "./skills";
 import { claudeJsonPath, userServers } from "./user-mcp";
@@ -1156,6 +1157,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
           .join(", ")}.`,
       );
     const folders = skills.copied.map((s) => s.folder);
+    // Review and re-review runs only. Explain gives no findings.
+    const langs = j.kind === "review" && profile.languageChecks && !profile.explain ? languagesOf(parseDiff(ws.diff)) : [];
+    if (langs.length) log(`Review run ${j.id} language checks: ${langs.join(", ")}.`);
     const gaps = [...docs.unavailable, ...user.gaps, ...skills.gaps];
     const input = {
       mergeBase: ws.mergeBase,
@@ -1191,14 +1195,19 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         cwd: ws.work,
         appDir: ws.app,
         ...spec,
-        main: withInstructions(withMcp(withSkills(spec.main, folders), used), instructions.text !== ""),
+        main: withInstructions(withMcp(withSkills(withLanguages(spec.main, langs), folders), used), instructions.text !== ""),
         maxTurns: reply || fix ? Math.max(profile.maxTurns, MIN_EDIT_TURNS) : profile.maxTurns,
         model: profile.model,
         effort: profile.effort,
         // Only a review gets subagents. With agents {}, the CLI gets no Agent tool.
         agents:
           j.kind === "review" && usesReviewer(profile)
-            ? { [REVIEWER]: withInstructions(withMcp(withSkills(reviewerAgent(profile), folders), used), instructions.text !== "") }
+            ? {
+                [REVIEWER]: withInstructions(
+                  withMcp(withSkills(withLanguages(reviewerAgent(profile), langs), folders), used),
+                  instructions.text !== "",
+                ),
+              }
             : {},
         mcpServers,
       },

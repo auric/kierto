@@ -2,7 +2,7 @@
 // and the settings section links.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runMcp, runSkills } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runAgents, runMcp, runSkills } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -81,6 +81,7 @@ type SavedProfile = {
   model?: string | null;
   effort?: string | null;
   reviewer?: unknown;
+  languageChecks?: boolean;
 };
 async function settingsApi(request: APIRequestContext) {
   return (await (await request.get(`${APP}/api/settings`)).json()) as { checkSeconds: number; profiles: SavedProfile[] };
@@ -428,6 +429,55 @@ test("the run setup saves model, effort, and reviewer agents; the run row and th
   await expect(runRow(page).locator("[data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, high effort");
   await page.keyboard.press("3");
   await expect(runLog(page).locator("footer [data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, high effort");
+});
+
+// The native scenario moves the PR head to a commit with native/hash.h, native/hash.cpp, and tools/check.py.
+test("Language checks: on for General and Security, saved at once, and a review run gives both agents the lists of the changed languages", async ({
+  page,
+  request,
+}) => {
+  await connect(page);
+  await control("state", { native: true });
+  await openSettings(page);
+  const lang = field(page, "Language checks", 1);
+  await expect(lang).toBeChecked();
+  await expect(page.locator("#profile-0-lang-help")).toHaveText("Adds checklists for the languages in the change. Review runs only.");
+  await expect(field(page, "Language checks", 2)).not.toBeChecked();
+  await expect(field(page, "Language checks", 3)).toBeChecked();
+  await expect(field(page, "Language checks", 4)).not.toBeChecked();
+  await closeSettings(page);
+
+  // The agents file exists only while the run runs, so the run hangs until the cancel.
+  const review = async () => {
+    await control("claude", { stream: "tree", hang: true });
+    await page.keyboard.press("Shift+R");
+    await page.getByLabel("Your note").press("Control+Enter");
+    await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+    await expect.poll(runAgents, { timeout: RUN_MS }).not.toBeNull();
+    const prompts = (await runAgents()) as Record<string, string>;
+    await runLine(page).getByRole("button", { name: "Cancel" }).click();
+    await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
+    return prompts;
+  };
+  const on = await review();
+  expect(Object.keys(on).sort()).toEqual(["rl-main", "rl-reviewer"]);
+  for (const prompt of Object.values(on)) {
+    expect(prompt).toContain("\nC++ list:\n- lifetime: ");
+    expect(prompt).toContain("\nPython list:\n- defaults: ");
+    expect(prompt).not.toContain("\nC list:");
+  }
+
+  await openSettings(page);
+  await lang.uncheck();
+  await saved(page);
+  await expect.poll(async () => (await settingsApi(request)).profiles[0]?.languageChecks).toBe(false);
+  await page.reload();
+  await openSettings(page);
+  await expect(field(page, "Language checks", 1)).not.toBeChecked();
+  await closeSettings(page);
+  await row(page).click();
+  const off = await review();
+  for (const prompt of Object.values(off)) expect(prompt).not.toContain(" list:\n- ");
 });
 
 test("Edit profile… in the Review menu opens the settings at the brief profile", async ({ page }) => {
