@@ -133,6 +133,7 @@ function setClaude(c: ClaudeScenario) {
     rereview: c.rereview,
     answer: c.answer,
     fix: c.fix,
+    improve: c.improve,
     authMethod: c.login,
   });
 }
@@ -632,14 +633,14 @@ function runArgv() {
     : undefined;
 }
 const argvFlag = (argv: string[], name: string) => (argv.includes(name) ? (argv[argv.indexOf(name) + 1] ?? null) : null);
-// The server names in mcp.json and the --allowedTools and --disallowedTools values of the newest fake CLI run. null: no run.
+// The server names in mcp.json and the --allowedTools, --disallowedTools, and --tools values of the newest fake CLI run. null: no run.
 r[key("POST", "/__control/run-mcp")] = () => {
   const argv = runArgv();
   if (!argv) return ok({ run: null });
   const flag = (name: string) => argvFlag(argv, name);
   const file = flag("--mcp-config");
   const servers = file && existsSync(file) ? Object.keys(JSON.parse(readFileSync(file, "utf8")).mcpServers) : null;
-  return ok({ run: { servers, allowed: flag("--allowedTools"), denied: flag("--disallowedTools") } });
+  return ok({ run: { servers, allowed: flag("--allowedTools"), denied: flag("--disallowedTools"), tools: flag("--tools") } });
 };
 // The prompt of each agent in the --agents file of the newest fake CLI run. null: no run, or the run ended and its folder is gone.
 r[key("POST", "/__control/run-agents")] = () => {

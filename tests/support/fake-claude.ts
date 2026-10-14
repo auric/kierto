@@ -19,11 +19,12 @@ export type FakeScenario = {
   hang?: boolean;
   // The structured_output of the result, by the --json-schema shape. Absent: the echo of the stdin.
   // replies: a reply run (properties.replies). rereview: a re-review (properties.earlier). answer: an ask run (properties.answer).
-  // fix: a fix run (properties.edits).
+  // fix: a fix run (properties.edits). improve: a prompt proposal (properties.reasons).
   replies?: unknown;
   rereview?: unknown;
   answer?: unknown;
   fix?: unknown;
+  improve?: unknown;
 };
 
 const CHILD = "process.stdin.on('end', () => {}); process.stdin.resume(); setInterval(() => {}, 1000);";
@@ -82,6 +83,13 @@ export function echoRereview(stdin: string, fixture: unknown) {
   };
 }
 
+// A prompt proposal: the fenced current prompt of the stdin with one added line, or a new prompt when the stdin has none.
+export function echoImprove(stdin: string) {
+  const fence = /^# Current prompt$[^#]*?^(`{3,})$\n([\s\S]*?)\n^\1$/m.exec(stdin);
+  const current = fence?.[2] ?? "Find defects in the change.";
+  return { prompt: `${current}\nEcho: report each finding with its trigger.`, reasons: ["Echo: added the trigger rule."] };
+}
+
 // An ask result. The question line is the last line with text in the "# Your instructions" section of the stdin.
 export function echoAnswer(stdin: string) {
   const lines = stdin.split(/\r?\n/);
@@ -136,16 +144,21 @@ async function main() {
   const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
   const props = JSON.parse(flag("--json-schema") ?? "null")?.properties ?? {};
   const agentTool = (flag("--tools") ?? "").split(",").includes("Agent");
+  // code.claude.com/docs/en/cli-reference: --tools "" disables every built-in tool. No MCP server stays, so init keeps StructuredOutput only.
+  const noTools = flag("--tools") === "";
   const result = (fixture: unknown) => {
     if (props.replies !== undefined) return s.replies ?? echoReplies(stdin);
     if (props.earlier !== undefined) return s.rereview ?? echoRereview(stdin, fixture);
     if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);
     if (props.edits !== undefined) return s.fix ?? echoFix(stdin);
+    if (props.reasons !== undefined) return s.improve ?? echoImprove(stdin);
     return undefined;
   };
   const rewrite = (l: string) => {
     const e = JSON.parse(l);
     // Gate B8: init lists the agent tool as Task. The real CLI lists it only when --tools names Agent.
+    if (e.type === "system" && e.subtype === "init" && Array.isArray(e.tools) && noTools)
+      return JSON.stringify({ ...e, tools: e.tools.filter((t: unknown) => t === "StructuredOutput"), mcp_servers: [] });
     if (e.type === "system" && e.subtype === "init" && Array.isArray(e.tools) && !agentTool)
       return JSON.stringify({ ...e, tools: e.tools.filter((t: unknown) => t !== "Task") });
     const r = e.type === "result" ? result(e.structured_output) : undefined;

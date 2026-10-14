@@ -1,9 +1,19 @@
 // Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR, S-ASK, r3 S-FIX): brief, start, re-review, ask, reply drafts, fix runs, cancel, run,
-// raw output, item triage. Every mutation broadcasts `changed`.
+// raw output, item triage, and Improve prompt. Every mutation of PR data broadcasts `changed`.
+// Improve prompt: a new start replaces the running proposal. Nothing saves until the user applies the proposal.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
 import type { z } from "zod";
-import { type ApiError, askInput, briefInput, fixRunInput, itemActionInput, replyRunInput, reviewRunInput } from "../../shared/dto";
+import {
+  type ApiError,
+  askInput,
+  briefInput,
+  fixRunInput,
+  improveInput,
+  itemActionInput,
+  replyRunInput,
+  reviewRunInput,
+} from "../../shared/dto";
 import type { Live } from "../live";
 import { triage } from "./items";
 import type { ReviewJobs } from "./jobs";
@@ -16,6 +26,7 @@ const positiveId = (what: string) =>
 const prParam = positiveId("pull request");
 const runParam = positiveId("run");
 const itemParam = positiveId("item");
+const proposalParam = positiveId("proposal");
 
 const unconfigured = { error: "Configure the Bitbucket URL and token first." } satisfies ApiError;
 const UNKNOWN_PROFILE = "Unknown review profile.";
@@ -187,6 +198,24 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
         live.broadcast("changed", { prs: [r.pr], runs: [r.item.run] });
         return c.json(r.item, 200);
       },
+    )
+    .post(
+      "/profiles/improve",
+      validator("json", (v, c) => {
+        const r = improveInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid profile or goal." }, 400);
+      }),
+      (c) => c.json(review.improve.start(c.req.valid("json")), 202),
+    )
+    .get("/profiles/improve/:id", proposalParam, (c) => {
+      const p = review.improve.get(c.req.valid("param").id);
+      c.header("Cache-Control", "no-store");
+      return p ? c.json(p, 200) : c.json(notFound("Proposal"), 404);
+    })
+    .post("/profiles/improve/:id/cancel", proposalParam, (c) =>
+      review.improve.cancel(c.req.valid("param").id)
+        ? c.json({ cancelling: true }, 202)
+        : c.json<ApiError>({ error: "The proposal is not running." }, 409),
     )
     .post("/runs/:id/cancel", runParam, (c) => {
       const db = review.open();

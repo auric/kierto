@@ -79,6 +79,7 @@ import { type DiffFile, parseDiff } from "./diffmap";
 import { type FixFile, type ValidEdit, validateFix } from "./fix";
 import { git, gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
+import { createImprover } from "./improve";
 import { projectInstructions } from "./instructions";
 import { languagesOf, withLanguages } from "./languages";
 import { buildAskPrompt, buildFixPrompt, buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
@@ -927,6 +928,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   const now = opts.now ?? Date.now;
   const dataDir = opts.dataDir ?? defaultDataDir();
   const runner = createClaudeRunner({ command: opts.runnerCommand });
+  // Its own runner: a proposal uses no run folder, no git ref, and no database, so it runs beside the review run slot.
+  const improve = createImprover({ command: opts.runnerCommand, now });
   const docServers = createDocServers(opts.listTools);
   const recovered = new WeakSet<Database>();
   let job: Job | null = null;
@@ -1428,12 +1431,13 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       await prune();
       await check().catch((e) => log(`Runner check failed: ${(e as Error).message}`));
     },
-    // Cancels the active run and waits for its end.
+    // Cancels the active run and the running prompt proposal, and waits for their end.
     async stop() {
       const j = job;
       cancelActive();
-      await j?.done;
+      await Promise.all([j?.done, improve.stop()]);
     },
+    improve,
     // Resolves when no run is active.
     wait: () => job?.done ?? Promise.resolve(),
     runnerCheck: (): RunnerCheckDto | null => (checked ? toCheckDto(checked) : null),

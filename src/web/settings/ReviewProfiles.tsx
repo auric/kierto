@@ -1,7 +1,7 @@
 // Review profiles settings (M4, BRIEF US9): name, note, prompt, Explain, Docs, turn cap, and the run setup, in the order of the review brief.
 // Each change saves by itself (autosave.tsx). A field with a problem stays unsaved until the user fixes it.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, CircleAlert, Copy, Plus, RotateCcw, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CircleAlert, Copy, Plus, RotateCcw, Sparkles, X } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ import { useMeta, useSkills } from "../meta";
 import { read } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { SaveStatus, TYPING_MS, useSaver } from "./autosave";
+import { ImproveDialog } from "./ImproveDialog";
 import {
   ADD_ID,
   addSkills,
@@ -118,6 +119,8 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
   const [copying, setCopying] = useState<number | null>(null);
   // The status text of the save that a copy started. The next change clears it.
   const [copied, setCopied] = useState<string | null>(null);
+  // The key of the draft in the Improve prompt dialog.
+  const [improving, setImproving] = useState<number | null>(null);
 
   // The cache holds the newest saved settings, also after a save in another section.
   const current = () => qc.getQueryData<SettingsDto>(["settings"]) ?? settings;
@@ -201,6 +204,13 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
     setCopied(copiedText(label, n));
   };
 
+  // Apply in the Improve prompt dialog: an edit of the prompt, saved at once.
+  const applyProposal = (prompt: string) => {
+    const i = list.current.findIndex((d) => d.key === improving);
+    setImproving(null);
+    if (i >= 0) apply({ act: "edit", i, patch: { prompt } });
+  };
+
   const reset = async () => {
     saver.cancel();
     await saver.flush();
@@ -231,6 +241,7 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
   const gone = removing === null ? undefined : drafts[removing];
   const source = copying === null ? undefined : drafts[copying];
   const targets = copying === null ? [] : copyTargets(drafts, copying);
+  const improveAt = drafts.findIndex((d) => d.key === improving);
   return (
     <section aria-labelledby="h-profiles" className="mt-6 grid max-w-[86ch] gap-3 border-t pt-4">
       {/* The save state stays in view while the list scrolls. -top-[18px] cancels the top padding of the Settings scroll pane. */}
@@ -268,6 +279,7 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
               onBlur={() => void saver.flush()}
               onRemove={askRemove}
               onCopy={setCopying}
+              onImprove={(j) => setImproving(list.current[j]?.key ?? null)}
             />
           ))}
         </ol>
@@ -358,6 +370,12 @@ export function ReviewProfiles({ settings, target }: { settings: SettingsDto; ta
           )}
         </DialogContent>
       </Dialog>
+      <ImproveDialog
+        draft={drafts[improveAt] ?? null}
+        label={improveAt < 0 ? "" : profileLabel(drafts[improveAt] as Draft, improveAt)}
+        onApply={applyProposal}
+        onClose={() => setImproving(null)}
+      />
     </section>
   );
 }
@@ -422,6 +440,7 @@ type RowProps = {
   onBlur: () => void;
   onRemove: (i: number) => void;
   onCopy: (i: number) => void;
+  onImprove: (i: number) => void;
 };
 
 function ProfileRow(props: RowProps) {
@@ -533,6 +552,25 @@ function ProfileRow(props: RowProps) {
           {...invalid("prompt")}
         />
       </label>
+      <div className="col-span-full -mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <Button
+          id={profileId(i, "improve")}
+          variant="outline"
+          size="sm"
+          aria-haspopup="dialog"
+          aria-describedby={`${profileId(i, "improve")}-help`}
+          onClick={() => {
+            onBlur();
+            props.onImprove(i);
+          }}
+        >
+          <Sparkles data-icon="inline-start" />
+          Improve prompt…<span className="sr-only"> of profile {i + 1}</span>
+        </Button>
+        <span id={`${profileId(i, "improve")}-help`} className="text-xs text-muted-foreground">
+          Proposes a clearer prompt. You see the changes before you apply them.
+        </span>
+      </div>
       <div className="col-span-full flex flex-wrap gap-x-8 gap-y-2">
         <Toggle
           id={profileId(i, "explain")}

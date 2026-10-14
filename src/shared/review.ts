@@ -165,6 +165,14 @@ export type AskResult = z.infer<typeof askResult>;
 
 export const askJsonSchema = (): Record<string, unknown> => z.toJSONSchema(askResult, { target: "draft-07" });
 
+// ---------- Improve prompt ----------
+
+// The server extends prompt with the profile prompt rule of dto.ts. dto.ts imports this module, so this module cannot import it.
+export const improveResult = z.object({
+  prompt: z.string(),
+  reasons: z.array(z.string().trim().min(1)).describe("One short line for each change."),
+});
+
 // ---------- Validator output ----------
 
 export type DiffKind = "add" | "del" | "ctx";

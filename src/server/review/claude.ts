@@ -47,6 +47,8 @@ export type RunSpec = {
   // Review subagents, by name. rl-main can call only these.
   agents: Record<string, AgentSpec>;
   mcpServers: Record<string, McpServerSpec>;
+  // No built-in tool and no MCP server: the model can only answer. agents and mcpServers must be empty.
+  noTools?: boolean;
 };
 
 export type RunnerCheck =
@@ -140,6 +142,7 @@ function prepare(spec: RunSpec) {
   for (const n of [...reviewers, ...servers.flatMap(([s, c]) => [s, ...c.tools, ...("user" in c ? c.deny : [])])])
     if (!NAME.test(n)) throw new Error(`Invalid agent, server, or tool name: ${n}`);
   if (reviewers.includes(MAIN_AGENT)) throw new Error(`${MAIN_AGENT} cannot be a review agent.`);
+  if (spec.noTools && (reviewers.length || servers.length)) throw new Error("A run without tools cannot have agents or MCP servers.");
   for (const [s, c] of servers)
     if ("url" in c && new URL(c.url).protocol !== "https:") throw new Error(`MCP server ${s} needs an https URL.`);
   for (const a of [spec, spec.main, ...Object.values(spec.agents)]) {
@@ -149,7 +152,8 @@ function prepare(spec: RunSpec) {
 
   // Gate B9: agent tool lists need full MCP tool names. --allowedTools needs mcp__<server>; a wildcard does not work.
   const mcpTools = servers.flatMap(([s, c]) => c.tools.map((t) => `mcp__${s}__${t}`));
-  const readTools = [...READ_TOOLS, ...mcpTools];
+  const builtins = spec.noTools ? [] : READ_TOOLS;
+  const readTools = [...builtins, ...mcpTools];
   const denied = servers.flatMap(([s, c]) => ("user" in c ? c.deny.map((t) => `mcp__${s}__${t}`) : []));
   const agentTool = reviewers.length ? [`Agent(${reviewers.join(", ")})`] : [];
   mkdirSync(spec.appDir, { recursive: true });
@@ -196,10 +200,15 @@ function prepare(spec: RunSpec) {
     "--strict-mcp-config",
     "--mcp-config",
     mcpFile,
+    // code.claude.com/docs/en/cli-reference: --tools "" disables all built-in tools. StructuredOutput comes from --json-schema.
     "--tools",
-    [...READ_TOOLS, ...(reviewers.length ? ["Agent"] : [])].join(","),
-    "--allowedTools",
-    [...READ_TOOLS, ...servers.flatMap(([s, c]) => ("user" in c ? c.tools.map((t) => `mcp__${s}__${t}`) : [`mcp__${s}`]))].join(","),
+    [...builtins, ...(reviewers.length ? ["Agent"] : [])].join(","),
+    ...(spec.noTools
+      ? []
+      : [
+          "--allowedTools",
+          [...READ_TOOLS, ...servers.flatMap(([s, c]) => ("user" in c ? c.tools.map((t) => `mcp__${s}__${t}`) : [`mcp__${s}`]))].join(","),
+        ]),
     // A deny rule wins over every allow rule. The other tools of a user server stay off.
     ...(denied.length ? ["--disallowedTools", denied.join(",")] : []),
     "--agents",

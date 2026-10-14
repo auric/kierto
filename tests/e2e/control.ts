@@ -50,6 +50,7 @@ export type ClaudeScenario = {
   rereview?: unknown;
   answer?: unknown;
   fix?: unknown;
+  improve?: unknown;
   login?: string;
 };
 
@@ -166,7 +167,8 @@ export async function runAgents(): Promise<Record<string, string> | null> {
   return ((await res.json()) as { prompts: Record<string, string> | null }).prompts;
 }
 
-export type RunMcp = { servers: string[] | null; allowed: string | null; denied: string | null };
+// tools: the --tools value. "" turns off every built-in tool.
+export type RunMcp = { servers: string[] | null; allowed: string | null; denied: string | null; tools: string | null };
 // The MCP setup of the newest fake CLI run, or null before the first run. As runAttachments, start a hang run first.
 export async function runMcp(): Promise<RunMcp | null> {
   const res = await fetch(`${FAKE_URL}/__control/run-mcp`, { method: "POST", headers: auth });

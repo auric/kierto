@@ -108,12 +108,13 @@ export const DEFAULT_REVIEWER: ReviewerSetup = { model: null, effort: null, mode
 // model, effort: --model and --effort of every run of the profile. reviewer: the rl-reviewer agent of review runs. Absent in older profiles.
 // alwaysSkills: chosen skills that every run reads first. A run does not start without them. Absent in older profiles.
 // languageChecks: review runs get the checklists for the languages of the change. Absent in older profiles.
+export const profilePrompt = z.string().trim().min(1).max(MAX_NOTE);
 export const profileInput = z
   .object({
     id: profileId,
     name: z.string().trim().min(1).max(60),
     note: z.string().trim().max(200),
-    prompt: z.string().trim().min(1).max(MAX_NOTE),
+    prompt: profilePrompt,
     explain: z.boolean(),
     docs: z.boolean(),
     languageChecks: z.boolean().default(false),
@@ -525,6 +526,28 @@ export const askInput = z.object({ question: z.string().trim().min(1).max(MAX_QU
 export type AskInput = z.infer<typeof askInput>;
 // answer: null until the run ends with a valid result.
 export type AskDto = { run: RunDto; answer: string | null };
+
+// ---------- Improve prompt (Settings > Review profiles) ----------
+
+// POST /api/profiles/improve: the profile fields as the editor shows them, and the user's goal. Empty prompt: write a new one.
+export const improveInput = z.object({
+  name: z.string().trim().max(60),
+  note: z.string().trim().max(200),
+  prompt: z.string().trim().max(MAX_NOTE),
+  explain: z.boolean(),
+  docs: z.boolean(),
+  languageChecks: z.boolean(),
+  model: modelName.nullable(),
+  effort: z.enum(EFFORTS).nullable(),
+  goal: z.string().trim().max(MAX_QUESTION),
+});
+export type ImproveInput = z.infer<typeof improveInput>;
+// GET /api/profiles/improve/:id. The server keeps only the newest proposal.
+export type ImproveDto =
+  | { id: number; status: "running"; startedAt: number }
+  | { id: number; status: "done"; prompt: string; reasons: string[] }
+  | { id: number; status: "failed"; kind: RunErrorKind; text: string }
+  | { id: number; status: "cancelled" };
 
 // ---------- Task context (plan r2 S-JIRA) ----------
 

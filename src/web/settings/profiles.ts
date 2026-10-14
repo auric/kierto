@@ -305,6 +305,7 @@ export type Part =
   | "mcp"
   | "mcp-label"
   | "copy"
+  | "improve"
   | "up"
   | "down"
   | "remove"

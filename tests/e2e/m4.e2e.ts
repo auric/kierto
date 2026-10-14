@@ -76,6 +76,7 @@ type SavedProfile = {
   id: string;
   name: string;
   note: string;
+  prompt?: string;
   skills?: string[];
   alwaysSkills?: string[];
   mcp?: unknown;
@@ -508,6 +509,72 @@ test("Copy to all profiles asks first, then gives every profile the skills and M
   await expect(same).toContainText("The other profiles have the same skills and MCP servers.");
   await same.getByRole("button", { name: "Close", exact: true }).first().click();
   await expect(same).toHaveCount(0);
+});
+
+test("Improve prompt shows a line diff of the proposal; Apply saves it for good, and Cancel or an error changes nothing", async ({
+  page,
+  request,
+}) => {
+  // The fake CLI adds this line to the current prompt (tests/support/fake-claude.ts echoImprove).
+  const ADDED = "Echo: report each finding with its trigger.";
+  await connect(page);
+  await openSettings(page);
+  // getByLabel misses a textarea: the label text then holds the textarea text too.
+  const prompt = page.getByRole("textbox", { name: "Prompt of profile 1", exact: true });
+  const before = await prompt.inputValue();
+  const improve = page.getByRole("button", { name: "Improve prompt… of profile 1" });
+  await expect(improve).toHaveAccessibleDescription("Proposes a clearer prompt. You see the changes before you apply them.");
+  const dialog = page.getByRole("dialog", { name: "Improve the prompt of General" });
+  const goal = dialog.getByLabel("What should the prompt focus on? Optional.");
+  const changes = dialog.getByRole("region", { name: "Changes to the prompt" });
+
+  // A running proposal shows the progress line. The run has no built-in tool. Cancel closes the dialog and gives the focus back.
+  await control("claude", { stream: "tree", hang: true });
+  await improve.click();
+  await goal.fill("C++ lifetime bugs in engine code");
+  await dialog.getByRole("button", { name: "Start" }).click();
+  await expect(dialog.getByRole("status")).toHaveText("Claude is writing a proposal…");
+  await expect.poll(async () => (await runMcp())?.tools).toBe("");
+  expect((await runMcp())?.allowed).toBeNull();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(improve).toBeFocused();
+
+  // The proposal shows as a line diff with its reasons. Cancel keeps the prompt.
+  await control("claude", { stream: "tree" });
+  await improve.click();
+  await goal.fill("C++ lifetime bugs in engine code");
+  await goal.press("Enter");
+  await expect(changes.locator("[data-k='add']")).toHaveCount(1);
+  await expect(changes.locator("[data-k='add']")).toContainText(ADDED);
+  await expect(changes.locator("[data-k='del']")).toHaveCount(0);
+  await expect(changes.locator("[data-k='same']")).toHaveCount(before.split("\n").length);
+  await expect(dialog.getByRole("list", { name: "Reasons" }).getByRole("listitem")).toHaveText(["Echo: added the trigger rule."]);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(prompt).toHaveValue(before);
+  expect((await settingsApi(request)).profiles[0]?.prompt).toBe(before);
+
+  // An invalid result shows the error and offers Try again, but no Apply.
+  await control("claude", { stream: "tree", improve: { prompt: "", reasons: [] } });
+  await improve.click();
+  await dialog.getByRole("button", { name: "Start" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("The proposal failed. The result does not match the proposal schema.");
+  await expect(dialog.getByRole("button", { name: "Apply" })).toHaveCount(0);
+
+  // Try again gives a good proposal. Apply saves it at once, and a reload keeps it.
+  await control("claude", { stream: "tree" });
+  await dialog.getByRole("button", { name: "Try again" }).click();
+  await expect(changes.locator("[data-k='add']")).toContainText(ADDED);
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Apply" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(prompt).toHaveValue(`${before}\n${ADDED}`);
+  await saved(page);
+  await expect.poll(async () => (await settingsApi(request)).profiles[0]?.prompt).toBe(`${before}\n${ADDED}`);
+  await page.reload();
+  await openSettings(page);
+  await expect(prompt).toHaveValue(`${before}\n${ADDED}`);
 });
 
 test("the run setup saves model, effort, and reviewer agents; the run row and the log show the model and the effort", async ({
