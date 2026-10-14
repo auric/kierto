@@ -326,7 +326,19 @@ export type BriefDto = BriefInput & { updatedAt: number | null };
 
 // The runner check without paths. kind auth: authMethod is not claude.ai.
 export type RunnerCheckDto = { ok: true; version: string } | { ok: false; kind: "unavailable" | "auth"; message: string };
-export type ProfileDto = { id: ProfileId; name: string; note: string; explain: boolean; maxTurns: number };
+// The run setup of a profile for the brief. model, effort: the profile flags; null: no flag. skillCount, mcpCount: the picked items.
+export type ProfileDto = {
+  id: ProfileId;
+  name: string;
+  note: string;
+  explain: boolean;
+  maxTurns: number;
+  model: string | null;
+  effort: Effort | null;
+  reviewerMode: ReviewerMode;
+  skillCount: number;
+  mcpCount: number;
+};
 
 export type RunUsage = { costUsd: number; turns: number; durationMs: number; tokens: Record<string, unknown> };
 // dropped: findings that the validator could not anchor. They show as coverage only.
@@ -653,7 +665,8 @@ export type RunConflict = ApiError & { running: { run: number; pr: number } };
 // sure: false when the source has a precedence that the runner docs do not state.
 export type SettingValue = { value: string; sure: boolean };
 // model: the model of a run without --model. null: the account default, which the app cannot see.
-// effort: the effort of a run without --effort, by model choice. Key "": no --model. An absent key: unknown.
+// effort: the effort of a run without --effort, by model choice. Key "": no --model. The other keys: each alias and each profile model text.
+// An absent key: unknown.
 export type RunnerDefaults = { model: SettingValue | null; effort: Record<string, SettingValue> };
 
 // GET /api/meta. Product names, and the default model and effort of the runner. No other setting value.

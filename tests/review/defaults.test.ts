@@ -99,6 +99,29 @@ describe("effort precedence", () => {
   });
 });
 
+describe("profile model texts", () => {
+  test("each profile model text is a key as given: a full ID, an alias with [1m], a date suffix, and any case", () => {
+    const dir = config({ modelSettings: { "claude-opus-5-5": { effortLevel: "xhigh" } } });
+    const texts = ["claude-opus-5-5", "opus[1m]", "Claude-Opus-5-5-20260101", "claude-opus-4-7", "claude-next-1", "opus"];
+    const effort = runnerDefaults(dir, {}, texts)?.effort ?? {};
+    expect(effort["claude-opus-5-5"]).toEqual(sure("xhigh"));
+    expect(effort["opus[1m]"]).toEqual(sure("xhigh"));
+    expect(effort["Claude-Opus-5-5-20260101"]).toEqual(sure("xhigh"));
+    expect(effort["claude-opus-4-7"]).toEqual(sure("xhigh"));
+    // An unknown model without its own modelSettings entry stays unknown.
+    expect(effort).not.toHaveProperty("claude-next-1");
+    // An alias text keeps its one key.
+    expect(Object.keys(effort).filter((k) => k === "opus")).toHaveLength(1);
+  });
+
+  test("a profile model follows an alias env variable and the settings env block", () => {
+    const pinned = runnerDefaults(config({}), { ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-7" }, ["opus[1m]"]);
+    expect(pinned?.effort["opus[1m]"]).toEqual(sure("xhigh"));
+    const block = runnerDefaults(config({ env: { CLAUDE_CODE_EFFORT_LEVEL: "low" } }), {}, ["claude-opus-5-5"]);
+    expect(block?.effort["claude-opus-5-5"]).toEqual({ value: "low", sure: false });
+  });
+});
+
 describe("model precedence and env", () => {
   test("ANTHROPIC_MODEL wins over the model key", () => {
     const dir = config({ model: "opus", modelSettings: { "claude-opus-5-5": { effortLevel: "xhigh" } } });

@@ -129,12 +129,13 @@ function input(dir: string, env: Env): Input | null {
 }
 
 // GET /api/meta: the default model, and the default effort per model choice. Key "": no --model.
-export function runnerDefaults(dir = claudeConfigDir(), env: Env = process.env): RunnerDefaults | null {
+// models: more model texts, such as the model of each profile. The key is the text as given, so the client finds it.
+export function runnerDefaults(dir = claudeConfigDir(), env: Env = process.env, models: readonly string[] = []): RunnerDefaults | null {
   const i = input(dir, env);
   if (!i) return null;
   const model = defaultModel(i);
   const effort: Record<string, SettingValue> = {};
-  for (const key of ["", ...RUNNER.models]) {
+  for (const key of new Set(["", ...RUNNER.models, ...models])) {
     const e = defaultEffort(i, key || (model?.value ?? null));
     if (e) effort[key] = key || model?.sure !== false ? e : { ...e, sure: false };
   }

@@ -139,6 +139,8 @@ test("profile menus: Draft replies runs once with another profile, the run line 
   await expect(replies).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(replies).toContainText("Security profile");
   await expect(page.locator("#review-btn")).toHaveText(/Review · General/);
+  // A reply run starts at once. Only a review opens the brief first.
+  await expect(page.locator("#brief")).toHaveCount(0);
 
   // Keyboard: the menu button opens the menu. Letters stay in the menu. Esc closes it and gives the focus back.
   await page.locator("#review-btn-menu").focus();
@@ -151,8 +153,14 @@ test("profile menus: Draft replies runs once with another profile, the run line 
   await expect(page.locator("#review-btn-menu")).toBeFocused();
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(A);
 
-  // Open brief in the Review menu: the brief opens with the focus in the note.
+  // A profile in the Review menu opens the brief with that profile and the focus in the note. Nothing runs yet.
   await page.locator("#review-btn-menu").click();
-  await page.getByRole("menuitem", { name: /^Open brief/ }).click();
+  await expect(page.getByRole("menuitem", { name: /^Open brief/ })).toHaveCount(0);
+  await page
+    .getByRole("menu")
+    .getByRole("menuitem", { name: /^Security/ })
+    .click();
   await expect(page.locator("#brief-note")).toBeFocused();
+  await expect(page.locator("#brief").getByRole("radio", { name: /^Security/ })).toBeChecked();
+  await expect(page.locator("#runline [data-run-kind='review']")).toHaveCount(0);
 });

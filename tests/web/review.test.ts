@@ -1,7 +1,7 @@
 // Plan v3 WP11, replies.md WP18, and r2 UI-RR: the pure review UI rules. The log tree, the run line, the brief state,
 // the Review runs view, the reply drafts, and the re-review.
 import { describe, expect, test } from "bun:test";
-import type { BriefDto, ProfileDto, PrRow, ReviewItemDto, RunDetail, RunDto, RunnerDefaults } from "../../src/shared/dto";
+import type { BriefDto, CommitDto, ProfileDto, PrRow, ReviewItemDto, RunDetail, RunDto, RunnerDefaults } from "../../src/shared/dto";
 import type { AnchoredFinding, Carried, Question, ReplyPayload } from "../../src/shared/review";
 import type { RunEvent } from "../../src/shared/run-log";
 import {
@@ -18,6 +18,8 @@ import {
   latestReview,
   limitText,
   logTree,
+  newCommits,
+  profileSetupText,
   RUN_TEXT,
   repliesButton,
   replyCard,
@@ -51,10 +53,11 @@ const agent = (id: string, seq: number, name: string, o: Partial<RunEvent> = {})
   ev(id, seq, { tool: "Agent", agent: name, target: `Check ${name}`, ...o });
 const shape = (nodes: ReturnType<typeof logTree>): unknown[] => nodes.map((n) => (n.kids.length ? [n.e.id, shape(n.kids)] : n.e.id));
 
+const setup = { model: null, effort: null, reviewerMode: "auto", skillCount: 0, mcpCount: 0 } as const;
 const PROFILES: ProfileDto[] = [
-  { id: "general", name: "General", note: "", explain: false, maxTurns: 40 },
-  { id: "security", name: "Security", note: "", explain: false, maxTurns: 40 },
-  { id: "explain", name: "Explain", note: "", explain: true, maxTurns: 12 },
+  { id: "general", name: "General", note: "", explain: false, maxTurns: 40, ...setup },
+  { id: "security", name: "Security", note: "", explain: false, maxTurns: 40, ...setup },
+  { id: "explain", name: "Explain", note: "", explain: true, maxTurns: 12, ...setup },
 ];
 
 const run = (o: Partial<RunDto> = {}): RunDto => ({
@@ -260,25 +263,65 @@ describe("run line", () => {
 describe("brief state", () => {
   const brief = (o: Partial<BriefDto> = {}): BriefDto => ({ note: "", profile: "general", updatedAt: null, ...o });
 
-  test("r opens the composer only without a stored brief and without a run", () => {
-    expect(briefState(brief(), null, null, 7, PROFILES).rerun).toBe("compose");
-    expect(briefState(undefined, null, null, 7, PROFILES).rerun).toBe("compose");
-    expect(briefState(brief({ updatedAt: 5 }), null, null, 7, PROFILES).rerun).toBe("start");
-    expect(briefState(brief(), run(), null, 7, PROFILES).rerun).toBe("start");
-  });
-
-  test("the button names the stored profile, and the hint names r and the note", () => {
-    const s = briefState(brief({ profile: "security", note: "Check X", updatedAt: 5 }), null, null, 7, PROFILES);
+  test("the button names the stored profile; the hint says that r opens the brief, also with a stored brief", () => {
+    const s = briefState(brief({ profile: "security", note: "Check X", updatedAt: 5 }), null, 7, PROFILES);
     expect(s.name).toBe("Security");
-    expect(s.hint).toBe("Run the review brief: Security with your note. Key: r. Shift+R opens the brief.");
-    expect(briefState(brief(), null, null, 7, PROFILES).hint).toBe("Open the review brief: task, your note, and profile. Key: r.");
-    expect(briefState(brief({ profile: "over" }), null, null, 7, PROFILES).name).toBe("General");
+    expect(s.hint).toBe("Open the review brief with the Security profile and your note. Start the review there. Key: r.");
+    expect(briefState(brief(), null, 7, PROFILES).hint).toBe(
+      "Open the review brief with the General profile. Start the review there. Key: r.",
+    );
+    expect(briefState(brief({ profile: "over" }), null, 7, PROFILES).name).toBe("General");
   });
 
   test("busy names the PR of a running review", () => {
-    expect(briefState(brief(), null, run({ pr: 9, status: "running" }), 7, PROFILES).busy).toEqual({ pr: 9, same: false });
-    expect(briefState(brief(), null, run({ pr: 7, status: "running" }), 7, PROFILES).busy).toEqual({ pr: 7, same: true });
-    expect(briefState(brief(), null, null, 7, PROFILES).busy).toBeNull();
+    expect(briefState(brief(), run({ pr: 9, status: "running" }), 7, PROFILES).busy).toEqual({ pr: 9, same: false });
+    expect(briefState(brief(), run({ pr: 7, status: "running" }), 7, PROFILES).busy).toEqual({ pr: 7, same: true });
+    expect(briefState(brief(), null, 7, PROFILES).busy).toBeNull();
+  });
+});
+
+describe("run setup of a profile in the brief", () => {
+  const p = (o: Partial<ProfileDto> = {}): ProfileDto => ({ ...(PROFILES[0] as ProfileDto), ...o });
+  const defaults: RunnerDefaults = {
+    model: { value: "opus", sure: true },
+    effort: {
+      "": { value: "xhigh", sure: true },
+      "claude-opus-5-5": { value: "medium", sure: true },
+      "opus[1m]": { value: "high", sure: false },
+    },
+  };
+
+  test("without flags it names the defaults of the runner settings", () => {
+    expect(profileSetupText(p(), defaults)).toBe(
+      "opus (your default), xhigh effort (your default). Reviewer agents: Auto. No skills or MCP servers.",
+    );
+    expect(profileSetupText(p(), null)).toBe("default model, default effort. Reviewer agents: Auto. No skills or MCP servers.");
+  });
+
+  test("a profile model finds its default effort by its own text; a value that is not sure stays plain", () => {
+    expect(profileSetupText(p({ model: "claude-opus-5-5" }), defaults)).toMatch(/^claude-opus-5-5, medium effort \(your default\)\./);
+    expect(profileSetupText(p({ model: "opus[1m]" }), defaults)).toMatch(/^opus\[1m\], default effort\./);
+    expect(profileSetupText(p({ model: "unknown-model" }), defaults)).toMatch(/^unknown-model, default effort\./);
+  });
+
+  test("flags, reviewer mode, and counts", () => {
+    expect(profileSetupText(p({ model: "haiku", effort: "low", reviewerMode: "always", skillCount: 2, mcpCount: 1 }), defaults)).toBe(
+      "haiku, low effort. Reviewer agents: Always. 2 skills, 1 MCP server.",
+    );
+    expect(profileSetupText(p({ explain: true, mcpCount: 3 }), defaults)).toBe(
+      "opus (your default), xhigh effort (your default). No reviewer agents. 3 MCP servers.",
+    );
+  });
+});
+
+describe("new commits since a run", () => {
+  const commits = ["c3", "c2", "c1"].map((hash) => ({ hash }) as CommitDto);
+
+  test("counts the commits after the run head; an unknown or newest head gives null", () => {
+    expect(newCommits(run({ sourceHead: "c1" }), commits)).toBe(2);
+    expect(newCommits(run({ sourceHead: "c3" }), commits)).toBeNull();
+    expect(newCommits(run({ sourceHead: "zz" }), commits)).toBeNull();
+    expect(newCommits(run({ sourceHead: "c1" }), undefined)).toBeNull();
   });
 });
 

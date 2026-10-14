@@ -59,7 +59,7 @@ async function reviewed(page: Page): Promise<string> {
 // The review row of a re-review names the head of the base run, then the new head.
 const range = (page: Page) => runRow(page).locator("code").allTextContents();
 
-test("a push after a review: c reviews the new commits, carries the open draft, closes the others, and the post goes to the new head", async ({
+test("a push after a review: c and the button open the brief; Start reviews the new commits, carries the open draft, closes the others, and the post goes to the new head", async ({
   page,
 }) => {
   await connect(page);
@@ -73,9 +73,32 @@ test("a push after a review: c reviews the new commits, carries the open draft, 
   await expect(runLine(page)).toContainText("New commits since");
   await expect(rereviewButton(page)).toHaveAccessibleName(`Review changes since ${head}`);
 
+  // c opens the brief for the new commits, with the stored note. Cancel starts nothing.
+  const brief = page.locator("#brief");
+  await page.keyboard.press("c");
+  await expect(brief.getByRole("heading", { name: `Review changes since ${head}` })).toBeVisible();
+  await expect(brief).toContainText(`after ${head}. The open drafts carry over and get a new check.`);
+  await expect(brief).toContainText("Run setup: default model, default effort. Reviewer agents: Auto.");
+  await expect(page.getByLabel("Your note")).toBeFocused();
+  await expect(page.getByLabel("Your note")).toHaveValue("ABC-1: check the lock scope.");
+  await brief.getByRole("button", { name: "Cancel" }).click();
+  await expect(brief).toHaveCount(0);
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done");
+  await expect(runLine(page)).not.toContainText("Reviewing changes since");
+
+  // The Explain profile gives no findings, so the brief blocks Start and says why.
+  await rereviewButton(page).click();
+  await brief.getByRole("radio", { name: /^Explain/ }).check();
+  const go = brief.getByRole("button", { name: "Review changes" });
+  await expect(go).toHaveAttribute("aria-disabled", "true");
+  await expect(go).toHaveAccessibleDescription("The Explain profile gives no findings. Pick a review profile first.");
+  await brief.getByRole("radio", { name: /^General/ }).check();
+  await expect(go).not.toHaveAttribute("aria-disabled", "true");
+
   // A cancelled re-review keeps the drafts and the offer of the review before it.
   await control("claude", { stream: "tree", hang: true });
-  await rereviewButton(page).click();
+  await go.click();
+  await expect(brief).toHaveCount(0);
   await expect(runLine(page)).toContainText(`Reviewing changes since ${head}…`);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
   await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
@@ -84,6 +107,7 @@ test("a push after a review: c reviews the new commits, carries the open draft, 
 
   await control("claude", { stream: "tree" });
   await rereviewButton(page).click();
+  await page.getByLabel("Your note").press("Control+Enter");
   await expect(runLine(page)).toContainText(`Reviewing changes since ${head}…`);
   // The arrow is hidden from screen readers. They read "to" instead.
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
@@ -146,6 +170,7 @@ test("a carried draft whose code is gone closes as outdated with no Restore, and
   await control("state", { push: true });
   await expect(runLine(page)).toContainText("New commits since");
   await page.keyboard.press("c");
+  await page.getByLabel("Your note").press("Control+Enter");
   await expect(runLine(page)).toContainText("0 new, 1 carried, 2 fixed or outdated, 1 question", { timeout: RUN_MS });
 
   await expect(drafts(page)).toHaveCount(3);

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunConflict, RunDetail, RunDto, RunKind } from "../../shared/dto";
+import { busyText } from "../ask/model";
 import { useFix } from "../fix/FixBar";
 import { canFix, fixWaiting } from "../fix/model";
 import type { Layer } from "../keys";
@@ -14,7 +15,7 @@ import { ordered, type ThreadModel } from "../pr/threads";
 import { planKey } from "../publish/data";
 import { Hint, type Hints } from "../shell/Hint";
 import { prKey } from "../shell/model";
-import { BriefComposer, ReviewButton } from "./Brief";
+import { BriefComposer, type BriefMode, ReviewButton } from "./Brief";
 import { AiSummary, type DraftCtx, Drafts, modeOf, type TriageState } from "./Drafts";
 import {
   replyKey,
@@ -34,15 +35,16 @@ import {
   drafts,
   kindRuns,
   latestReview,
+  newCommits,
   plural,
   questions,
-  RUN_TEXT,
   replyCard,
   replyMap,
   replyOf,
   rereviewState,
   runLine,
   severityJumps,
+  shortHash,
   staleText,
   triageText,
 } from "./model";
@@ -55,8 +57,9 @@ import type { TriageAction, TriageCtx } from "./Triage";
 export type Focus = { id: string; block: ScrollLogicalPosition; flash: boolean };
 
 export type ReviewApi = {
+  // Keys r and Shift+R: open the brief. Every review starts from it.
   rerun(): void;
-  // Key c (plan r2 UI-RR): review the commits since the newest review run.
+  // Key c (plan r2 UI-RR): open the brief for a review of the commits since the newest review run.
   rereview(): void;
   brief(): void;
   drafts(): void;
@@ -97,12 +100,13 @@ const NO_ITEMS: ReviewItemDto[] = [];
 const detailOf = (r: RunDto | null, d: RunDetail | undefined): RunDetail | null =>
   r ? (d?.run.id === r.id ? { ...d, run: { ...d.run, stale: r.stale } } : { run: r, events: [], items: [] }) : null;
 
-const doing = (r: RunDto | null) => RUN_TEXT[r?.kind ?? "review"].doing;
+// The open brief and the review that its Start begins. once: a profile for this review only.
+type Composer = { kind: "review"; once: string | null } | { kind: "rereview" } | null;
 
 // Plan r2 UI-RR. It shows only when the server takes a re-review (rereviewState).
 function RereviewButton({ since, busy, onClick }: { since: string; busy: boolean; onClick: () => void }) {
   return (
-    <Hint label={`Review only the commits after ${since}. The open drafts carry over and get a new check. Key: c`}>
+    <Hint label={`Open the review brief for the commits after ${since}. The open drafts carry over and get a new check. Key: c`}>
       <Button id="rereview-btn" size="sm" variant="outline" disabled={busy} aria-keyshortcuts="c" onClick={onClick}>
         Review changes since{" "}
         <code translate="no" className="font-mono">
@@ -153,7 +157,7 @@ export function useReview(
   const startReplies = useStartReplies(pr.id);
   const startRereview = useStartRereview(pr.id);
   const cancel = useCancelRun();
-  const [composer, setComposer] = useState(false);
+  const [composer, setComposer] = useState<Composer>(null);
   // of: "line" follows the run of the run line. "review" stays on the newest review run, for its drafts. A number is a run ID.
   const [log, setLog] = useState<(LogTarget & { of: "line" | "review" | number }) | null>(null);
   const pinned = useRun(typeof log?.of === "number" ? log.of : null);
@@ -173,21 +177,20 @@ export function useReview(
   const detail = detailOf(latest, run.data);
   const items = detail?.items ?? NO_ITEMS;
   const replyItems = replies.data ?? NO_ITEMS;
-  const state = briefState(brief.data, latest, active, pr.id, meta.profiles);
+  const state = briefState(brief.data, active, pr.id, meta.profiles);
   const { focusAfter } = o;
 
-  const busy = (() => {
-    if (!active || active.pr === pr.id) return null;
-    const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === active.pr);
-    return `${meta.runner.short} is ${doing(active)} ${other ? prKey(other) : "another pull request"}. One review runs at a time.`;
-  })();
+  const where = (id: number) => {
+    if (id === pr.id) return "this pull request";
+    const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === id);
+    return other ? prKey(other) : "another pull request";
+  };
+  // The run that holds the only slot, as words. The brief cannot start until it ends.
+  const busy = active ? busyText(meta.runner.short, active.kind, where(active.pr)) : null;
 
   const slotTaken = (c: RunConflict) => {
-    const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === c.running.pr);
-    const kind = active?.id === c.running.run ? active : null;
-    toast.add({
-      title: `One review runs at a time. ${meta.runner.short} is ${doing(kind)} ${other ? prKey(other) : "another pull request"}.`,
-    });
+    const kind = active?.id === c.running.run ? active.kind : "review";
+    toast.add({ title: busyText(meta.runner.short, kind, where(c.running.pr)) });
   };
 
   // profile: a profile for this review only. Absent: the brief profile.
@@ -195,22 +198,19 @@ export function useReview(
     start.mutate(profile, {
       onSuccess: (r) => {
         if ("conflict" in r) return slotTaken(r.conflict);
-        setComposer(false);
+        setComposer(null);
         focusAfter({ id: "runline-log", block: "nearest", flash: false });
       },
       onError: (e) => toast.add({ title: "The review did not start", description: e.message }),
     });
 
   const rr = rereviewState(latest, brief.data, meta.profiles);
-  const rereview = () => {
-    if ("why" in rr) {
-      toast.add({ title: rr.why });
-      return;
-    }
+  const rereviewNow = () => {
     if (startRereview.isPending) return;
     startRereview.mutate(undefined, {
       onSuccess: (r) => {
         if ("conflict" in r) return slotTaken(r.conflict);
+        setComposer(null);
         focusAfter({ id: "runline-log", block: "nearest", flash: false });
       },
       onError: (e) => toast.add({ title: "The review of the new commits did not start", description: e.message }),
@@ -234,14 +234,25 @@ export function useReview(
     );
   };
 
-  const openBrief = () => {
+  // An open brief keeps its note and only changes the review that Start begins.
+  const openBrief = (next: NonNullable<Composer> = { kind: "review", once: null }) => {
     if (composer) document.getElementById("brief-note")?.focus();
-    setComposer(true);
+    setComposer(next);
   };
   const closeBrief = () => {
-    setComposer(false);
+    setComposer(null);
     focusAfter({ id: "review-btn", block: "nearest", flash: false });
   };
+  const rereview = () => {
+    if ("why" in rr) toast.add({ title: rr.why });
+    else openBrief({ kind: "rereview" });
+  };
+  // A re-review keeps the head of its base also when the brief profile makes it impossible, so the brief can say why.
+  const mode: BriefMode =
+    composer?.kind === "rereview" && latest
+      ? { kind: "rereview", since: shortHash(latest.sourceHead), commits: newCommits(latest, o.commits) }
+      : { kind: "review", once: composer?.kind === "review" ? composer.once : null };
+  const blocked = busy ?? (mode.kind === "rereview" && "why" in rr ? rr.why : null);
 
   const openLog = (agent: string | null, raw = false, of: "line" | "review" | number = "line") => {
     if (typeof of !== "number" && !(of === "review" ? latest : newest)) {
@@ -456,12 +467,10 @@ export function useReview(
     return out;
   }, [o.threads, byThread, pending, triage, replyCtx, fixCards, fixes, commits, author]);
 
-  // The open brief can hold an unsaved note. There, Ctrl+Enter saves and starts, so r only focuses the note.
-  const rerun = () => (composer || state.rerun === "compose" ? openBrief() : runNow());
   const api: ReviewApi = {
-    rerun,
+    rerun: () => openBrief(),
     rereview,
-    brief: openBrief,
+    brief: () => openBrief(),
     drafts() {
       // prototype/v3 goDrafts: the first draft, else the summary with the questions.
       // The reply drafts come next, in screen order. A press in the review drafts goes on to them.
@@ -545,8 +554,7 @@ export function useReview(
             {fix.button}
           </>
         }
-        onRun={(p) => (p ? runNow(p) : rerun())}
-        onBrief={openBrief}
+        onOpen={(p) => openBrief({ kind: "review", once: p ?? null })}
         onEditProfile={() => o.onProfile(state.profile)}
       />
     ),
@@ -559,9 +567,11 @@ export function useReview(
           brief={brief.data}
           tasks={pr.tasks}
           meta={meta}
-          busy={busy}
-          starting={start.isPending}
-          onStart={runNow}
+          mode={mode}
+          blocked={blocked}
+          starting={start.isPending || startRereview.isPending}
+          onStart={(p) => (mode.kind === "rereview" ? rereviewNow() : runNow(p))}
+          onPick={() => setComposer((c) => (c?.kind === "review" ? { ...c, once: null } : c))}
           onClose={closeBrief}
           onSettings={o.onSettings}
           announce={o.announce}

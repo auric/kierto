@@ -1,10 +1,12 @@
-// Review button and review brief (prototype/v3 reviewBtn, briefHtml): task IDs, your note, the profile, then Start.
+// Review button and review brief (prototype/v3 reviewBtn, briefHtml): task IDs, your note, the profile, its run setup, then Start.
+// Each review start opens the brief first: the Review button, its profile items, r, and the re-review. Only Start runs it.
 // The note is the user's instruction. The server keeps the pull request text out of the prompt (plan v3 WP10).
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight,
   CircleAlert,
   Copy,
+  Cpu,
   Download,
   File,
   FileImage,
@@ -31,7 +33,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut } from "@/components/ui/dropdown-menu";
+import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -53,7 +55,7 @@ import { dialogKeys } from "../fix/CloneDialog";
 import { read } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { putBrief } from "./data";
-import type { BriefState } from "./model";
+import { type BriefState, plural, profileOf, profileSetupText } from "./model";
 import { RunSplit } from "./RunSplit";
 import { keyParam, TaskChips, taskKey, useTaskChips } from "./TaskChips";
 import {
@@ -93,18 +95,17 @@ function runnerNote(meta: MetaDto): { short: string; message: string } | null {
 }
 
 // The parts are items of the action bar (Header.tsx). extra: buttons before the Review button, such as Draft replies (WP18).
-// onRun: the r key without a profile, else a review with that profile only. onBrief: the Shift+R key.
+// onOpen: opens the brief, as the r key does. profile: the menu item, a profile for this review only.
 export function ReviewButton(props: {
   state: BriefState;
   meta: MetaDto;
   extra?: ReactNode;
-  onRun: (profile?: string) => void;
-  onBrief: () => void;
+  onOpen: (profile?: string) => void;
   // Opens the settings at the brief profile.
   onEditProfile: () => void;
 }) {
   const note = runnerNote(props.meta);
-  // Open brief moves the focus into the note, not back to the menu button. Edit profile moves it into the settings.
+  // A profile item moves the focus into the note of the brief, not back to the menu button. Edit profile moves it into the settings.
   const toBrief = useRef(false);
   const toSettings = useRef(false);
   return (
@@ -129,7 +130,10 @@ export function ReviewButton(props: {
         heading="Profile for this review"
         profiles={props.meta.profiles}
         current={props.state.profile}
-        onRun={props.onRun}
+        onRun={(profile, menu) => {
+          toBrief.current = !!menu;
+          props.onOpen(profile);
+        }}
         finalFocus={() => {
           const brief = toBrief.current;
           const settings = toSettings.current;
@@ -150,15 +154,6 @@ export function ReviewButton(props: {
               >
                 Edit profile…
                 <span className="sr-only"> {props.state.name}</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  toBrief.current = true;
-                  props.onBrief();
-                }}
-              >
-                Open brief
-                <DropdownMenuShortcut>Shift+R</DropdownMenuShortcut>
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </>
@@ -573,20 +568,28 @@ function Attachments({ pr, t, runner, announce }: { pr: number; t: TaskContextDt
   );
 }
 
+// The review that Start begins. once: the profile of the Review menu item, for this review only.
+// since: the short source head of the re-review base. commits: the PR commits after it, null when unknown.
+export type BriefMode = { kind: "review"; once: ProfileId | null } | { kind: "rereview"; since: string; commits: number | null };
+
 export function BriefComposer(props: {
   pr: number;
   brief: BriefDto;
   tasks: PrTask[];
   meta: MetaDto;
-  // The running review on another PR, as words. The server still decides (A14).
-  busy: string | null;
+  mode: BriefMode;
+  // Why Start cannot begin now, such as a running run. The server still decides (A14).
+  blocked: string | null;
   starting: boolean;
-  onStart: () => void;
+  // profile: a profile for this review only. Absent: the brief profile.
+  onStart: (profile?: ProfileId) => void;
+  // A profile pick in the brief ends the profile for this review only.
+  onPick: () => void;
   onClose: () => void;
   onSettings: () => void;
   announce: (text: string) => void;
 }) {
-  const { pr, meta } = props;
+  const { pr, meta, mode } = props;
   const qc = useQueryClient();
   const { source, chips } = useTaskChips(pr, props.tasks, meta);
   const now = Date.now();
@@ -635,6 +638,7 @@ export function BriefComposer(props: {
     timer.current = setTimeout(() => void flush(), SAVE_MS);
   };
   const changeProfile = (v: ProfileId) => {
+    props.onPick();
     setProfile(v);
     latest.current = { ...latest.current, profile: v };
     dirty.current = true;
@@ -642,9 +646,15 @@ export function BriefComposer(props: {
     qc.setQueryData<BriefDto>(["brief", pr], (old) => old && { ...old, profile: v });
     void flush();
   };
+  const once = mode.kind === "review" && mode.once !== profile ? mode.once : null;
+  const chosen = profileOf(meta.profiles, once ?? profile);
   const start = async () => {
     if (props.starting) return;
-    if (await flush()) props.onStart();
+    if (props.blocked) {
+      toast.add({ title: props.blocked });
+      return;
+    }
+    if (await flush()) props.onStart(once ?? undefined);
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -661,9 +671,27 @@ export function BriefComposer(props: {
       className="mt-1.5 mb-0.5 grid gap-3.5 rounded-lg border border-rule-strong px-4 pt-3.5 pb-4"
       onKeyDown={onKeyDown}
     >
-      <h2 id="brief-title" className="m-0 text-[15px] font-bold">
-        Review brief
-      </h2>
+      {mode.kind === "rereview" ? (
+        <div className="grid gap-1">
+          <h2 id="brief-title" className="m-0 text-[15px] font-bold">
+            Review changes since{" "}
+            <code translate="no" className="font-mono">
+              {mode.since}
+            </code>
+          </h2>
+          <p className="m-0 text-sm text-ink-2">
+            Reviews only the {mode.commits ? plural(mode.commits, "commit") : "commits"} after{" "}
+            <code translate="no" className="font-mono">
+              {mode.since}
+            </code>
+            . The open drafts carry over and get a new check.
+          </p>
+        </div>
+      ) : (
+        <h2 id="brief-title" className="m-0 text-[15px] font-bold">
+          Review brief
+        </h2>
+      )}
       <div className="grid gap-1.5">
         <TaskChips
           pr={pr}
@@ -716,7 +744,7 @@ export function BriefComposer(props: {
                 type="radio"
                 name={`brief-profile-${pr}`}
                 value={p.id}
-                checked={profile === p.id}
+                checked={chosen?.id === p.id}
                 className="m-0 mt-[3px] accent-foreground"
                 onChange={() => changeProfile(p.id)}
               />
@@ -724,12 +752,35 @@ export function BriefComposer(props: {
               <span className="col-start-2 text-xs text-muted-foreground">{p.note}</span>
             </label>
           ))}
+          {/* The words follow the profile pick, so a screen reader reads the new setup. */}
+          <div id="brief-setup" aria-live="polite" className="mt-1.5 grid gap-1 border-t pt-2 text-xs text-muted-foreground">
+            {once && (
+              <p className="m-0 text-ink-2">Only for this review. The brief keeps the {profileOf(meta.profiles, profile)?.name} profile.</p>
+            )}
+            {chosen && (
+              <p className="m-0 flex items-start gap-1.5">
+                <Cpu aria-hidden className="mt-px size-[13px] shrink-0" />
+                <span>
+                  <span className="font-medium text-ink-2">Run setup:</span> {profileSetupText(chosen, meta.runner.defaults)}
+                </span>
+              </p>
+            )}
+          </div>
         </FieldSet>
       </div>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-        <Button size="sm" disabled={props.starting} aria-keyshortcuts="Control+Enter" title="Key: Ctrl+Enter" onClick={() => void start()}>
+        <Button
+          size="sm"
+          disabled={props.starting || !!props.blocked}
+          focusableWhenDisabled
+          className="aria-disabled:cursor-default aria-disabled:opacity-50"
+          aria-describedby="brief-foot"
+          aria-keyshortcuts="Control+Enter"
+          title="Key: Ctrl+Enter"
+          onClick={() => void start()}
+        >
           {props.starting && <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin" />}
-          Start review
+          {mode.kind === "rereview" ? "Review changes" : "Start review"}
         </Button>
         <Button
           size="sm"
@@ -742,7 +793,9 @@ export function BriefComposer(props: {
         >
           Cancel
         </Button>
-        <span className="ml-1.5 text-xs text-muted-foreground">{props.busy ?? "Ctrl+Enter starts the review. Esc closes the brief."}</span>
+        <span id="brief-foot" className="ml-1.5 text-xs text-muted-foreground">
+          {props.blocked ?? "Ctrl+Enter starts the review. Esc closes the brief."}
+        </span>
       </div>
     </section>
   );

@@ -1,9 +1,10 @@
 import { ArrowLeft, type LucideIcon, Monitor, Moon, Sun, X } from "lucide-react";
-import { type FormEvent, type MouseEvent, useState } from "react";
+import { type FormEvent, type MouseEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import { CHECK_CHOICES, type PrRow, type SettingsDto } from "../../shared/dto";
 import { useForge, useMeta } from "../meta";
 import { notifyPermission } from "../notify";
@@ -25,8 +26,87 @@ const AT_ONCE = "Changes save at once.";
 function jump(e: MouseEvent<HTMLAnchorElement>, id: string) {
   e.preventDefault();
   const el = document.getElementById(id);
-  el?.scrollIntoView({ block: "start" });
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  el?.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
   el?.focus({ preventScroll: true });
+}
+
+// A heading above this part of the pane height is in view. The line stays near the top, so a short section such as Checks also gets its turn.
+const SPY_LINE = 0.1;
+const USER_SCROLL = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+
+// The section in view: the last heading above the spy line, or the last section at the end of the pane.
+// A link click sets its section at once. Pane changes then wait for the next user input, so a smooth scroll does not flicker.
+function useSectionSpy(ids: string[]) {
+  const pane = useRef<HTMLDivElement>(null);
+  const end = useRef<HTMLDivElement>(null);
+  const nav = useRef<HTMLUListElement>(null);
+  const held = useRef(false);
+  const [active, setActive] = useState<string | null>(null);
+  const key = ids.join(" ");
+  useEffect(() => {
+    const root = pane.current;
+    const tail = end.current;
+    const list = key ? key.split(" ") : [];
+    if (!root || !tail || !list.length) return;
+    let atEnd = false;
+    const pick = () => {
+      if (held.current) return;
+      if (atEnd && root.scrollTop > 0) return setActive(list[list.length - 1] ?? null);
+      const line = root.getBoundingClientRect().top + root.clientHeight * SPY_LINE;
+      let id = list[0] ?? null;
+      for (const x of list) {
+        const top = document.getElementById(x)?.getBoundingClientRect().top;
+        if (top !== undefined && top <= line) id = x;
+      }
+      setActive(id);
+    };
+    // The root margin keeps the band above the spy line, so a heading that crosses the line calls pick.
+    const heads = new IntersectionObserver(pick, { root, rootMargin: `0px 0px -${(1 - SPY_LINE) * 100}% 0px` });
+    const bottom = new IntersectionObserver(
+      ([e]) => {
+        atEnd = !!e?.isIntersecting;
+        pick();
+      },
+      { root },
+    );
+    for (const x of list) {
+      const el = document.getElementById(x);
+      if (el) heads.observe(el);
+    }
+    bottom.observe(tail);
+    const release = () => {
+      held.current = false;
+    };
+    for (const t of USER_SCROLL) root.addEventListener(t, release, { passive: true, capture: true });
+    return () => {
+      heads.disconnect();
+      bottom.disconnect();
+      for (const t of USER_SCROLL) root.removeEventListener(t, release, { capture: true });
+    };
+  }, [key]);
+  const current = active ?? ids[0] ?? null;
+  // The narrow nav scrolls sideways. The active link stays in view, also after the pane gets narrow.
+  useEffect(() => {
+    const ul = nav.current;
+    const a = current && ul?.querySelector<HTMLElement>(`a[href="#${current}"]`);
+    if (!ul || !a) return;
+    const show = () => {
+      const left = a.offsetLeft - 16;
+      const right = a.offsetLeft + a.offsetWidth + 16 - ul.clientWidth;
+      if (ul.scrollLeft > left) ul.scrollLeft = left;
+      else if (ul.scrollLeft < right) ul.scrollLeft = right;
+    };
+    show();
+    const resize = new ResizeObserver(show);
+    resize.observe(ul);
+    return () => resize.disconnect();
+  }, [current]);
+  const hold = (id: string) => {
+    held.current = true;
+    setActive(id);
+  };
+  return { pane, end, nav, active: current, hold };
 }
 
 const checkText = (s: number) => (s < 60 ? `Every ${s} seconds` : s === 60 ? "Every minute" : `Every ${s / 60} minutes`);
@@ -73,6 +153,7 @@ export function Settings({
           ...(tracker ? ([["h-tracker", tracker.name]] as [string, string][]) : []),
           ["h-clones", "Clones"],
         ];
+  const spy = useSectionSpy(sections.map(([id]) => id));
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -117,20 +198,38 @@ export function Settings({
         </div>
         <h1 className="m-0 text-(length:--fs-title) leading-tight font-bold tracking-[-0.015em]">Settings</h1>
         {sections.length > 0 && (
-          <nav aria-label="Settings sections">
-            <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-sm">
-              {sections.map(([id, label]) => (
-                <li key={id}>
-                  <a href={`#${id}`} className="rounded font-medium text-pen hover:underline" onClick={(e) => jump(e, id)}>
-                    {label}
-                  </a>
-                </li>
-              ))}
+          <nav aria-label="Settings sections" className="min-w-0">
+            {/* The pill names the section in view, also by its shape. A narrow pane scrolls the links sideways. Its padding keeps the focus ring unclipped. */}
+            <ul
+              ref={spy.nav}
+              className="relative -mx-2 flex list-none flex-wrap gap-x-1 gap-y-1 p-0 text-sm max-[759px]:-mx-3 max-[759px]:flex-nowrap max-[759px]:overflow-x-auto max-[759px]:p-1 max-[759px]:[scrollbar-width:thin]"
+            >
+              {sections.map(([id, label]) => {
+                const on = spy.active === id;
+                return (
+                  <li key={id} className="shrink-0">
+                    <a
+                      href={`#${id}`}
+                      aria-current={on || undefined}
+                      className={cn(
+                        "block rounded-md px-2 py-0.5 font-medium whitespace-nowrap transition-colors duration-150",
+                        on ? "bg-sel text-foreground" : "text-pen hover:bg-hover",
+                      )}
+                      onClick={(e) => {
+                        spy.hold(id);
+                        jump(e, id);
+                      }}
+                    >
+                      {label}
+                    </a>
+                  </li>
+                );
+              })}
             </ul>
           </nav>
         )}
       </header>
-      <div className="@container relative flex-1 overflow-auto px-6 pt-[18px] pb-16 max-[759px]:px-4">
+      <div ref={spy.pane} className="@container relative flex-1 overflow-auto px-6 pt-[18px] pb-16 max-[759px]:px-4">
         <section aria-labelledby="h-connection" className="grid max-w-[560px] gap-3">
           <div className="grid gap-0.5">
             <h2 id="h-connection" tabIndex={-1} className={sectionTitle}>
@@ -223,6 +322,7 @@ export function Settings({
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
         {settings.baseUrl !== null && <JiraSettings settings={settings} />}
         {settings.baseUrl !== null && <Clones />}
+        <div ref={spy.end} aria-hidden className="h-px" />
       </div>
     </>
   );

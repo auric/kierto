@@ -171,9 +171,8 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
   {
     group: "AI review",
     keys: [
-      { keys: ["r"], text: "Run the brief of this pull request again. With no brief yet, open the review brief." },
-      { keys: ["Shift", "R"], text: "Open the review brief: task, your note, and profile" },
-      { keys: ["c"], text: "Review only the commits since the last review. Its open drafts carry over." },
+      { keys: ["r"], text: "Open the review brief: task, your note, profile, and run setup. The review starts only from there." },
+      { keys: ["c"], text: "Open the review brief for only the commits since the last review. Its open drafts carry over." },
       { keys: ["q"], text: "Ask a question about this pull request. The answer stays here. Nothing posts." },
       { keys: ["Ctrl", "Enter"], text: "Start the review from the brief, or send the question from the Ask box" },
       { keys: ["Esc"], text: "Close an edit, the review brief, the post confirm, or the run log" },

@@ -59,7 +59,10 @@ async function startWithBrief(page: Page, note = NOTE) {
   await field.press("Control+Enter");
 }
 
-test("a brief with a note and a profile; drafts, summary, and the subagent tree; r runs the brief again", async ({ page, request }) => {
+test("a brief with a note and a profile; drafts, summary, and the subagent tree; r opens the stored brief again", async ({
+  page,
+  request,
+}) => {
   await connect(page);
   await page.keyboard.press("Shift+R");
   await expect(page.getByLabel("Your note")).toBeFocused();
@@ -102,13 +105,17 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await expect(log).toBeHidden();
   await expect(page.getByRole("button", { name: "from rl-reviewer" })).toBeFocused();
 
-  // 3 opens the log, 2 goes to the first draft, r runs the stored brief again.
+  // 3 opens the log, 2 goes to the first draft, r opens the stored brief again. Only Start runs it.
   await page.keyboard.press("3");
   await expect(log).toBeVisible();
   await page.keyboard.press("Escape");
   await page.keyboard.press("2");
   await expect(page.locator("[data-draft]").first()).toBeFocused();
   await page.keyboard.press("r");
+  await expect(page.getByLabel("Your note")).toHaveValue(NOTE);
+  await expect(page.getByRole("radio", { name: /^Security/ })).toBeChecked();
+  expect((await runs(request)).length).toBe(1);
+  await page.getByLabel("Your note").press("Control+Enter");
   await expect.poll(async () => (await runs(request)).length, { timeout: RUN_MS }).toBe(2);
   expect((await runs(request))[0]).toMatchObject({ profile: "security", note: NOTE });
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
@@ -124,7 +131,7 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
 test("Esc closes the brief; cancel stops a running review, and nothing from it stays", async ({ page, request }) => {
   await control("claude", { stream: "tree", hang: true });
   await connect(page);
-  // Without a brief and a run, r opens the brief.
+  // r opens the brief. Esc closes it and starts nothing.
   await page.keyboard.press("r");
   await expect(page.getByLabel("Your note")).toBeFocused();
   await page.keyboard.press("Escape");
@@ -181,7 +188,11 @@ test("a failed run shows its raw output, read-only, with Copy", async ({ page, c
   await expect(raw).toHaveCount(0);
 });
 
-test("two pages share one run: the same brief joins it, and a cancel in one page ends it in both", async ({ page, context, request }) => {
+test("two pages share one run: the brief of the second page cannot start while it runs, and a cancel in one page ends it in both", async ({
+  page,
+  context,
+  request,
+}) => {
   await control("claude", { stream: "tree", hang: true });
   await connect(page);
   await startWithBrief(page);
@@ -192,10 +203,16 @@ test("two pages share one run: the same brief joins it, and a cancel in one page
   await row(other).click();
   await expect(runLine(other)).toContainText("Reviewing…");
   await expect(other.locator("#nav-runs")).toHaveAccessibleName("Review runs: 1, 1 running");
-  // The stored brief has the same key, so the server answers with the running review (A14).
+  // r opens the brief. Start stays disabled while the run holds the only slot (A14), and Ctrl+Enter only says why.
   await other.keyboard.press("r");
-  await expect(other.getByText(/One review runs at a time/)).toHaveCount(0);
+  const start = other.locator("#brief").getByRole("button", { name: "Start review" });
+  await expect(start).toHaveAttribute("aria-disabled", "true");
+  await expect(start).toHaveAccessibleDescription("Claude is reviewing this pull request. One review runs at a time.");
+  await other.getByLabel("Your note").press("Control+Enter");
+  await expect(other.locator("[data-slot=toast-title]", { hasText: "Claude is reviewing this pull request." })).toBeVisible();
   expect((await runs(request)).length).toBe(1);
+  await other.keyboard.press("Escape");
+  await expect(other.locator("#brief")).toHaveCount(0);
 
   await runLine(other).getByRole("button", { name: "Cancel" }).click();
   await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });

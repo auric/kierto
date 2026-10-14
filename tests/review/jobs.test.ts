@@ -1208,6 +1208,16 @@ describe("editable profiles (M4)", () => {
         // An explicit --effort never gets a default.
         h.db.query("UPDATE review_run SET effort = 'high' WHERE id = ?").run(a.body.id);
         expect(await runOf()).toMatchObject({ effort: "high", effortDefault: null, effortNow: false });
+
+        // The model text of each profile is a key of its own, so the settings page and the brief find its default effort.
+        const own = { ...general, model: "Opus[1m]", skills: ["a-skill"], reviewer: { model: null, effort: null, mode: "off" as const } };
+        expect((await putProfiles(h, [own, { ...general, id: "full", name: "Full ID", model: "claude-opus-5-5-20260101" }])).status).toBe(
+          200,
+        );
+        const after = (await h.json<MetaDto>("/api/meta")).body;
+        expect(after.runner.defaults?.effort["Opus[1m]"]).toEqual({ value: "xhigh", sure: true });
+        expect(after.runner.defaults?.effort["claude-opus-5-5-20260101"]).toEqual({ value: "xhigh", sure: true });
+        expect(after.profiles[0]).toMatchObject({ model: "Opus[1m]", effort: null, reviewerMode: "off", skillCount: 1, mcpCount: 0 });
       } finally {
         if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
         else process.env.CLAUDE_CONFIG_DIR = saved;
@@ -1242,8 +1252,30 @@ describe("editable profiles (M4)", () => {
       expect((await h.brief(NOTE, "no-such-id")).status).toBe(400);
       const meta = (await h.json<MetaDto>("/api/meta")).body;
       expect(meta.profiles).toEqual([
-        { id: "perf", name: "Performance", note: "", explain: false, maxTurns: 9 },
-        { id: "general", name: "General", note: general.note, explain: false, maxTurns: 100 },
+        {
+          id: "perf",
+          name: "Performance",
+          note: "",
+          explain: false,
+          maxTurns: 9,
+          model: null,
+          effort: null,
+          reviewerMode: "auto",
+          skillCount: 0,
+          mcpCount: 0,
+        },
+        {
+          id: "general",
+          name: "General",
+          note: general.note,
+          explain: false,
+          maxTurns: 100,
+          model: general.model,
+          effort: general.effort,
+          reviewerMode: general.reviewer.mode,
+          skillCount: general.skills.length,
+          mcpCount: general.mcp.length,
+        },
       ]);
       const d = await h.finish((await h.start()).body.id);
       expect(d.run).toMatchObject({ profile: "perf", profileName: "Performance" });

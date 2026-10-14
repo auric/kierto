@@ -6,6 +6,7 @@ import type {
   ItemActionInput,
   ProfileDto,
   PrRow,
+  ReviewerMode,
   ReviewItemDto,
   RunDetail,
   RunDto,
@@ -159,8 +160,14 @@ export type RunLineState =
 export function staleText(r: RunDto, commits: CommitDto[] | undefined): string | null {
   if (!r.stale) return null;
   if (!r.stale.source) return "The target branch moved since";
+  const n = newCommits(r, commits);
+  return n ? `${plural(n, "commit")} since` : "New commits since";
+}
+
+// The count of PR commits after the source head of r. The list is newest first. null: none, or the list does not hold that head.
+export function newCommits(r: RunDto, commits: CommitDto[] | undefined): number | null {
   const i = commits?.findIndex((c) => c.hash === r.sourceHead) ?? -1;
-  return i > 0 ? `${plural(i, "commit")} since` : "New commits since";
+  return i > 0 ? i : null;
 }
 
 // The outcome of an ended run. items, edits: undefined while they load.
@@ -305,34 +312,36 @@ export const profileOf = (profiles: ProfileDto[], id: string) => profiles.find((
 export type BriefState = {
   profile: string;
   name: string;
-  // r: "start" runs the stored brief. "compose" opens the composer first (prototype/v3 rerun).
-  rerun: "start" | "compose";
   // A running review on any PR. One review runs at a time (A14).
   busy: { pr: number; same: boolean } | null;
   hint: string;
 };
 
-export function briefState(
-  brief: BriefDto | undefined,
-  latest: RunDto | null,
-  active: RunDto | null,
-  pr: number,
-  profiles: ProfileDto[],
-): BriefState {
+// Every review start opens the brief first. The review starts only from its Start button.
+export function briefState(brief: BriefDto | undefined, active: RunDto | null, pr: number, profiles: ProfileDto[]): BriefState {
   const p = profileOf(profiles, brief?.profile ?? "general");
-  const rerun = latest || (brief && brief.updatedAt !== null) ? "start" : "compose";
-  // The Review button does what r does. Shift+R opens the brief.
-  const hint =
-    rerun === "start"
-      ? `Run the review brief: ${p?.name ?? ""}${brief?.note.trim() ? " with your note" : ""}. Key: r. Shift+R opens the brief.`
-      : "Open the review brief: task, your note, and profile. Key: r.";
+  const note = brief?.note.trim() ? " and your note" : "";
   return {
     profile: p?.id ?? "general",
     name: p?.name ?? "",
-    rerun,
     busy: active ? { pr: active.pr, same: active.pr === pr } : null,
-    hint,
+    hint: `Open the review brief with the ${p?.name ?? ""} profile${note}. Start the review there. Key: r.`,
   };
+}
+
+const MODE_NAME: Record<ReviewerMode, string> = { auto: "Auto", always: "Always", off: "Off" };
+
+// The run setup of a profile before a run, as the brief shows it. A model or effort without a flag names the runner default.
+export function profileSetupText(p: ProfileDto, defaults: RunnerDefaults | null): string {
+  const effort = defaults?.effort[p.model ?? ""];
+  // A profile reads the settings of now, as a running run does.
+  const flags = setupText(
+    { model: p.model, effort: p.effort, effortDefault: effort?.sure ? effort.value : null, effortNow: false, status: "running" },
+    defaults,
+  );
+  const agents = p.explain ? "No reviewer agents" : `Reviewer agents: ${MODE_NAME[p.reviewerMode]}`;
+  const tools = [p.skillCount ? plural(p.skillCount, "skill") : "", p.mcpCount ? plural(p.mcpCount, "MCP server") : ""].filter(Boolean);
+  return `${flags}. ${agents}. ${tools.length ? tools.join(", ") : "No skills or MCP servers"}.`;
 }
 
 // ---------- Drafts and summary ----------

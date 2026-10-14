@@ -1,4 +1,5 @@
-// M4 browser acceptance (BRIEF US9): the check interval and the review profiles in the settings.
+// M4 browser acceptance (BRIEF US9): the check interval and the review profiles in the settings, the brief before each review,
+// and the settings section links.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
 import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runMcp, runSkills } from "./control";
@@ -83,6 +84,12 @@ type SavedProfile = {
 };
 async function settingsApi(request: APIRequestContext) {
   return (await (await request.get(`${APP}/api/settings`)).json()) as { checkSeconds: number; profiles: SavedProfile[] };
+}
+
+async function runs(request: APIRequestContext) {
+  const prs = (await (await request.get(`${APP}/api/prs`)).json()) as { id: number; title: string }[];
+  const id = prs.find((p) => p.title === TITLE)?.id;
+  return (await (await request.get(`${APP}/api/prs/${id}/runs`)).json()) as { profile: string; kind: string }[];
 }
 
 // Remove asks first. The dialog names the profile.
@@ -388,6 +395,8 @@ test("the run setup saves model, effort, and reviewer agents; the run row and th
   await expect(page.getByText("Enter a model name without spaces that starts with a letter or a digit.")).toBeVisible();
   await id.fill("claude-opus-5-5");
   await id.blur();
+  // The server resolves the default effort for the full model ID of the profile too.
+  await expect(field(page, "Effort", 1).locator("option").first()).toHaveText("Use my default (medium)");
   await field(page, "Effort", 1).selectOption("high");
   await page.getByRole("radiogroup", { name: "Reviewer agents of profile 1" }).getByText("Always", { exact: true }).click();
   await expect(page.getByRole("radio", { name: "Always" }).first()).toBeChecked();
@@ -408,7 +417,11 @@ test("the run setup saves model, effort, and reviewer agents; the run row and th
   await saved(page);
   await closeSettings(page);
 
+  // The brief shows the run setup of the profile before the run.
   await page.keyboard.press("Shift+R");
+  await expect(page.locator("#brief-setup")).toHaveText(
+    "Run setup: claude-opus-5-5, high effort. Reviewer agents: Always. No skills or MCP servers.",
+  );
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   // The fake CLI init event names claude-haiku-5-5, the model that ran.
@@ -436,4 +449,119 @@ test("Edit profile… in the Review menu opens the settings at the brief profile
   await closeSettings(page);
   await openSettings(page);
   await expect(field(page, "Name", 3)).not.toBeFocused();
+});
+
+test("every review start opens the brief first; Cancel and Esc start nothing; a menu profile runs once and the brief keeps its profile", async ({
+  page,
+  request,
+}) => {
+  await connect(page);
+  const brief = page.locator("#brief");
+  const note = page.getByLabel("Your note");
+  const setup = page.locator("#brief-setup");
+
+  // The Review button opens the brief with the run setup of the brief profile. Cancel starts nothing.
+  await reviewButton(page).click();
+  await expect(note).toBeFocused();
+  await expect(setup).toHaveText("Run setup: default model, default effort. Reviewer agents: Auto. No skills or MCP servers.");
+  await brief.getByRole("button", { name: "Cancel" }).click();
+  await expect(brief).toHaveCount(0);
+  await expect(reviewButton(page)).toBeFocused();
+
+  // r opens the brief. Esc closes it and starts nothing.
+  await page.keyboard.press("r");
+  await expect(note).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(brief).toHaveCount(0);
+
+  // A profile item of the Review menu opens the brief with that profile, for this review only.
+  await page.locator("#review-btn-menu").click();
+  await page
+    .getByRole("menu")
+    .getByRole("menuitem", { name: /^Security/ })
+    .click();
+  await expect(note).toBeFocused();
+  await expect(brief.getByRole("radio", { name: /^Security/ })).toBeChecked();
+  await expect(setup).toContainText("Only for this review. The brief keeps the General profile.");
+  await expect(reviewButton(page)).toHaveText(/Review · General/);
+  expect(await runs(request)).toEqual([]);
+
+  // Start runs the picked profile once. The brief keeps its profile.
+  await brief.getByRole("button", { name: "Start review" }).click();
+  await expect(brief).toHaveCount(0);
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  expect((await runs(request)).map((r) => [r.kind, r.profile])).toEqual([["review", "security"]]);
+  await expect(reviewButton(page)).toHaveText(/Review · General/);
+
+  // A profile pick in the brief saves the brief profile and ends the profile for this review only.
+  await page.locator("#review-btn-menu").click();
+  await page
+    .getByRole("menu")
+    .getByRole("menuitem", { name: /^Explain/ })
+    .click();
+  await brief.getByRole("radio", { name: /^Over-engineering/ }).check();
+  await expect(setup).not.toContainText("Only for this review");
+  await expect(reviewButton(page)).toHaveText(/Review · Over-engineering/);
+  await page.keyboard.press("Escape");
+  await expect(brief).toHaveCount(0);
+  expect(await runs(request)).toHaveLength(1);
+});
+
+test("the settings section links mark the section in view: at once on a click, on scroll, and the last section at the end", async ({
+  page,
+}) => {
+  await connect(page);
+  await openSettings(page);
+  const nav = page.getByRole("navigation", { name: "Settings sections" });
+  const current = nav.locator("[aria-current='true']");
+  // The settings scroll pane holds the sections.
+  const pane = page.locator("section[aria-labelledby='h-connection']").locator("xpath=..");
+  const settle = () =>
+    expect
+      .poll(async () => {
+        const a = await pane.evaluate((e) => e.scrollTop);
+        await page.waitForTimeout(150);
+        return a === (await pane.evaluate((e) => e.scrollTop));
+      })
+      .toBe(true);
+  await expect(current).toHaveCount(1);
+  await expect(current).toHaveText("Connection");
+
+  // A click marks its link at once. The scroll after it never moves the mark to another link.
+  await nav.evaluate((el) => {
+    const marks: string[] = [];
+    Object.assign(window, { marks });
+    new MutationObserver(() => {
+      const t = el.querySelector("[aria-current='true']")?.textContent ?? "";
+      if (marks.at(-1) !== t) marks.push(t);
+    }).observe(el, { subtree: true, attributes: true, attributeFilter: ["aria-current"] });
+  });
+  await nav.getByRole("link", { name: "Task IDs" }).click();
+  await expect(current).toHaveText("Task IDs");
+  await expect(page.getByRole("heading", { name: "Task IDs" })).toBeFocused();
+  await settle();
+  expect(await page.evaluate(() => (window as unknown as { marks: string[] }).marks)).toEqual(["Task IDs"]);
+
+  // Scroll: the end of the pane marks the last section, also when its heading cannot reach the top. The top marks the first.
+  await pane.hover({ position: { x: 8, y: 8 } });
+  await page.mouse.wheel(0, 50_000);
+  await expect(current).toHaveText("Clones");
+  await page.mouse.wheel(0, -50_000);
+  await expect(current).toHaveText("Connection");
+  // A heading at the top of the pane marks its section, also when the section is short.
+  await pane.evaluate((e) => {
+    const h = document.getElementById("h-appearance");
+    if (h) e.scrollTop += h.getBoundingClientRect().top - e.getBoundingClientRect().top - 20;
+  });
+  await expect(current).toHaveText("Appearance");
+
+  // A narrow pane scrolls the links sideways and keeps the marked link in view.
+  await page.setViewportSize({ width: 400, height: 800 });
+  await pane.hover({ position: { x: 8, y: 8 } });
+  await page.mouse.wheel(0, 50_000);
+  await expect(current).toHaveText("Clones");
+  await expect(current).toBeInViewport({ ratio: 1 });
+  await page.mouse.wheel(0, -50_000);
+  await expect(current).toHaveText("Connection");
+  await expect(current).toBeInViewport({ ratio: 1 });
 });

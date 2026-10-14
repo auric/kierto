@@ -21,7 +21,7 @@ const dim = "aria-disabled:cursor-default aria-disabled:opacity-50";
 
 // id: the main part. label: its accessible name. current: the brief profile, marked Default.
 // menu: the name of the menu button. heading: the label of the profile list. more: menu items after the profiles.
-// finalFocus: the element that takes the focus when the menu closes. Absent or true: the menu button.
+// onRun: menu is true for a profile item. finalFocus: the element that takes the focus when the menu closes. Absent or true: the menu button.
 export function RunSplit(props: {
   id: string;
   variant: "default" | "outline";
@@ -35,7 +35,7 @@ export function RunSplit(props: {
   heading: string;
   profiles: ProfileDto[];
   current: string;
-  onRun: (profile?: string) => void;
+  onRun: (profile?: string, menu?: boolean) => void;
   more?: ReactNode;
   finalFocus?: () => HTMLElement | boolean | null;
 }) {
@@ -75,7 +75,7 @@ export function RunSplit(props: {
                 key={p.id}
                 data-profile={p.id}
                 className="items-start py-1.5"
-                onClick={() => props.onRun(p.id === props.current ? undefined : p.id)}
+                onClick={() => props.onRun(p.id === props.current ? undefined : p.id, true)}
               >
                 <span className="grid min-w-0 flex-1">
                   <span className="font-medium">{p.name}</span>
