@@ -4,7 +4,17 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { git, gitEnv } from "../../src/server/review/git";
-import { buildInstructions, cloneReader, codeRanges, FILE_CAP, scan, TOTAL_CAP, treeReader } from "../../src/server/review/instructions";
+import {
+  buildInstructions,
+  cloneReader,
+  codeRanges,
+  configReader,
+  FILE_CAP,
+  INSTRUCTIONS_TRUST,
+  scan,
+  TOTAL_CAP,
+  treeReader,
+} from "../../src/server/review/instructions";
 
 const root = mkdtempSync(join(tmpdir(), "rl-instr-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -125,14 +135,16 @@ describe("clone files", () => {
     expect(b.notLoaded).toEqual(["@l5.md, imported by l4.md from your clone (more than 4 import levels)"]);
   });
 
-  test("the total stops at 256 KB", async () => {
+  test("the total stops at the prompt cap of 120,000 bytes", async () => {
+    expect(TOTAL_CAP).toBe(120_000);
     const big = "y".repeat(FILE_CAP - 10);
-    const files: Record<string, string> = { "CLAUDE.md": "@p1.md @p2.md @p3.md @p4.md @p5.md" };
-    for (let i = 1; i <= 5; i++) files[`p${i}.md`] = big;
+    const files: Record<string, string> = { "CLAUDE.md": "@p1.md @p2.md @p3.md", "p3.md": "small" };
+    for (let i = 1; i <= 2; i++) files[`p${i}.md`] = big;
     const b = await local(clone(files), ["CLAUDE.md"]);
     expect(b.bytes).toBeLessThanOrEqual(TOTAL_CAP);
-    expect(b.files.map((f) => f.path)).toEqual(["CLAUDE.md", "p1.md", "p2.md", "p3.md", "p4.md"]);
-    expect(b.notLoaded).toEqual(["@p5.md, imported by CLAUDE.md from your clone (the instructions are over 256 KB)"]);
+    expect(b.files.map((f) => f.path)).toEqual(["CLAUDE.md", "p1.md", "p3.md"]);
+    expect(b.notLoaded).toEqual(["@p2.md, imported by CLAUDE.md from your clone (the instructions are over 120,000 bytes)"]);
+    expect(b.text).toContain("small");
   });
 
   test("a link out of the clone does not load", async () => {
@@ -198,5 +210,79 @@ describe("target branch", () => {
     const bad = await buildInstructions({ target: treeReader(bare, env, "0".repeat(40)), clone: null, local: [], extra: "" });
     expect(bad.files).toEqual([]);
     expect(bad.notLoaded[0]).toContain("the app cannot read the target branch commit");
+  });
+});
+
+describe("global file", () => {
+  const config = (files: Record<string, string>) => clone(files);
+
+  test("comes first with its own header; imports resolve inside the config folder; an escape and a missing file are not loaded", async () => {
+    const dir = config({
+      "CLAUDE.md": "GLOBAL-CANARY. @rules/a.md @../out.md @~/home-out.md @nope.md\n",
+      "rules/a.md": "RULE-A. @b.md\n",
+      "rules/b.md": "RULE-B\n",
+    });
+    writeFileSync(join(dirname(dir), "out.md"), "OUT-CANARY");
+    const proj = clone({ "CLAUDE.md": "PROJECT\n" });
+    const b = await buildInstructions({
+      global: configReader(dir),
+      target: null,
+      clone: cloneReader(proj),
+      local: ["CLAUDE.md"],
+      extra: "X",
+    });
+    expect(b.files.map((f) => [f.source, f.path])).toEqual([
+      ["global", "CLAUDE.md"],
+      ["global", "rules/a.md"],
+      ["global", "rules/b.md"],
+      ["clone", "CLAUDE.md"],
+      ["settings", ""],
+    ]);
+    expect(
+      b.text.startsWith(`# Project instructions\n\n${INSTRUCTIONS_TRUST}\n\n## From your global Claude Code settings: CLAUDE.md\n`),
+    ).toBe(true);
+    expect(b.text).toContain("## From your global Claude Code settings: rules/b.md (imported by rules/a.md)");
+    expect(b.text.indexOf("RULE-B")).toBeLessThan(b.text.indexOf("## From your clone: CLAUDE.md"));
+    expect(b.text).not.toContain("OUT-CANARY");
+    const g = b.notLoaded.join("\n");
+    expect(g).toContain("@../out.md, imported by CLAUDE.md from your global Claude Code settings (the path is outside the config folder)");
+    expect(g).toContain(
+      "@~/home-out.md, imported by CLAUDE.md from your global Claude Code settings (the path is outside the config folder)",
+    );
+    expect(g).toContain("@nope.md, imported by CLAUDE.md from your global Claude Code settings (the file does not exist)");
+  });
+
+  test("a missing global file is a warning; a missing config folder too", async () => {
+    const b = await buildInstructions({
+      global: configReader(config({ "other.md": "x" })),
+      target: null,
+      clone: null,
+      local: [],
+      extra: "",
+    });
+    expect(b.notLoaded).toEqual(["CLAUDE.md from your global Claude Code settings (the file does not exist)"]);
+    expect(b.text).toBe("");
+    const gone = await buildInstructions({
+      global: configReader(join(root, "no-such-config")),
+      target: null,
+      clone: null,
+      local: [],
+      extra: "",
+    });
+    expect(gone.notLoaded).toEqual(["CLAUDE.md from your global Claude Code settings (the config folder does not exist)"]);
+  });
+
+  test("a link out of the config folder does not load", async () => {
+    const dir = config({ "CLAUDE.md": "@link.md" });
+    writeFileSync(join(root, "global-secret.md"), "GLOBAL-SECRET-CANARY");
+    try {
+      symlinkSync(join(root, "global-secret.md"), join(dir, "link.md"), "file");
+    } catch {
+      // Windows without the link privilege. The path check covers the rest.
+      return;
+    }
+    const b = await buildInstructions({ global: configReader(dir), target: null, clone: null, local: [], extra: "" });
+    expect(b.text).not.toContain("GLOBAL-SECRET-CANARY");
+    expect(b.notLoaded.join("\n")).toContain("a link points outside the config folder");
   });
 });

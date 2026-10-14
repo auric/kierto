@@ -286,18 +286,24 @@ Run: `bun scripts/gate/claude-checks.ts --only B14`.
 | U38. The init event names the effort level | NO | The fixtures carry `per_turn_effort_active` only. The run end resolves the effort for the init model instead. |
 | B14. `/effort status` in `-p`, without `--model` and with `--model haiku`, prints the level that the resolver gives | NOT RUN | Two calls, own cap 2. `/effort status` should make no model call. PASS when the first level in the output equals the resolver value for both runs. |
 
-## Project instructions (not run)
+## Project instructions
 
-Status: NOT RUN, 2026-10-14. The rows come from code.claude.com/docs/en/memory, code.claude.com/docs/en/sub-agents, and `claude --help` (2.1.296). No real CLI run checked them. `src/server/review/instructions.ts` implements them.
+Status: B15 RUN by the user, 2026-10-14, claude 2.1.296. Result: FAIL, so U40 is refuted. The other rows come from code.claude.com/docs/en/memory, code.claude.com/docs/en/sub-agents, and `claude --help` (2.1.296). `src/server/review/instructions.ts` implements them.
+
+Raw B15 line: `FAIL B15 calls=2 main: exit=0 word=false tools=none; import text leaked=false; reviewer (INFO): agent call=Agent ran=true word=false reviewer tools=none`.
+
+The B15 prompts did not hold the fallback line. The rl-main prompt was "You do the user task exactly. You change no files.", and the ask said "Do not call any tool." So B15 shows only that the CLI did not load `work/CLAUDE.md`. It does not show that the model ignores a read instruction.
 
 Run: `bun scripts/gate/claude-checks.ts --only B15`.
 
 | Fact | Result | Evidence |
 |---|---|---|
 | U39. Claude Code loads CLAUDE.md and CLAUDE.local.md from the cwd and every folder above it | DOCUMENTED | memory "How CLAUDE.md files load". The run writes `work/CLAUDE.md` in the cwd. |
-| U40. `--restricted` still loads the cwd CLAUDE.md | UNVERIFIED | The `--restricted` help names settings files only, not CLAUDE.md. In B8 the model reported no user CLAUDE.md under `--restricted` (model report only). Fallback: the agent prompts tell the model to read ./CLAUDE.md when its context does not hold it. B15 checks it. |
-| U41. A subagent with `omitClaudeMd` starts without CLAUDE.md | DOCUMENTED | sub-agents "What loads at startup". The app keeps `omitClaudeMd` on rl-reviewer. Its prompt tells it to read ./CLAUDE.md. B15 run 2 records it (INFO). |
+| U40. `--restricted` still loads the cwd CLAUDE.md | REFUTED | B15 (2.1.296): the main thread did not know the canary of `work/CLAUDE.md` (word=false, exit 0, no tool call). B8 also saw no user CLAUDE.md under `--restricted`. The app no longer relies on the CLI to load the file (U45). |
+| U41. A subagent with `omitClaudeMd` starts without CLAUDE.md | DOCUMENTED | sub-agents "What loads at startup". B15 run 2: rl-reviewer ran and did not know the canary (INFO). The app keeps `omitClaudeMd` on rl-reviewer and puts the text into its prompt (U45). |
 | U42. A CLAUDE.md in a subfolder of the cwd loads on demand when Claude reads a file there; AGENTS.md also loads | DOCUMENTED | memory "Troubleshooting" and "When Claude Code reads AGENTS.md". The snapshot renames every CLAUDE.md, CLAUDE.local.md, and AGENTS.md of the PR head to *.untrusted.md at any depth and removes `.claude/`. |
 | U43. `@path` imports resolve relative to the importing file, nest at most four hops, and skip code spans and fenced code blocks | DOCUMENTED | memory "Import additional files". The app resolves imports itself with the same rules, inside the clone or the target tree only. It puts every import token of work/CLAUDE.md into a code span, so the CLI imports nothing. |
 | U44. The CLI reads an "@" token after a space or a line start as an import, and not an "@" inside a word | UNVERIFIED | The docs show examples only. The app resolves only tokens that look like a path (user decision): a "/" or a backslash, a "~/" start, or a file extension. It puts every "@" token that does not follow a letter or digit into a code span. B15 checks that a code-span token imports nothing. |
-| B15. `work/CLAUDE.md` with a canary under the runner flag set: the main thread knows the canary with no tool call; a code-span `@repo/b15.txt` imports nothing; rl-reviewer with `omitClaudeMd` (INFO) | NOT RUN | Two Haiku calls, own cap 2. Dry run: 2 planned calls. |
+| U45. Inline delivery: the project instructions reach the model without CLI loading | BY DESIGN | The stdin prompt holds the combined text as the "# Project instructions" section, right before "# Your instructions". The rl-reviewer prompt ends with the same text. The CLI reads the agents file by path (`--agents <file>`), so the 32,000-character argv cap does not apply to it. The total cap is 120,000 bytes: the CLI 2.1.296 warns above max(120,000, the per-file limit) characters for all instruction files (bundle functions `JRt`, `OZn`: `IZn=120000`, per-file floor `MZn=40000`). `work/CLAUDE.md` keeps a copy. No real CLI run checked the inline path yet. |
+| U46. The global CLAUDE.md lives in the Claude config folder | DOCUMENTED | memory "User memory": `~/.claude/CLAUDE.md`. The app reads `CLAUDE_CONFIG_DIR` or `~/.claude` (the same folder as the skills), only when the global switch is on. Imports resolve inside that folder only, with real path checks. A "~/" import resolves from the home folder and must also end inside it. |
+| B15. `work/CLAUDE.md` with a canary under the runner flag set: the main thread knows the canary with no tool call; a code-span `@repo/b15.txt` imports nothing; rl-reviewer with `omitClaudeMd` (INFO) | FAIL (2.1.296, 2026-10-14) | main word=false, no tool call, exit 0; import text leaked=false; rl-reviewer ran, word=false. U40 refuted. B15 still tests CLI loading, not the inline path. |

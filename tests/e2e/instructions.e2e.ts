@@ -120,3 +120,51 @@ test("Settings: tick a clone file, see the preview and the warning for a gone fi
   await expect(reply.locator("[data-run-not-loaded]")).toHaveText(missed);
   await expect(reply).not.toContainText("incomplete");
 });
+
+test("Settings: the global switch adds the global file to every preview and to the run inputs; it stays on after a reload", async ({
+  page,
+}) => {
+  await connect(page);
+  await page.locator("nav[aria-label='Views']").getByRole("button", { name: "Settings" }).click();
+  const section = page.getByRole("region", { name: "Project instructions" });
+  const global = section.getByRole("switch", { name: "Use your global CLAUDE.md" });
+  await expect(global).not.toBeChecked();
+  await expect(section.locator("[data-instructions-global]")).toContainText("CLAUDE.md and its imports before the other sources");
+  const row = section.locator(`[data-instructions='${REPO}']`);
+  await row.locator("summary").click();
+  const preview = row.locator("[data-instructions-preview]");
+  await expect(preview).toContainText("Read at");
+  await expect(preview).not.toContainText("2 sources");
+
+  await global.click();
+  await expect(global).toBeChecked();
+  await expect(preview).toContainText(/A run gets .+ from 2 sources/);
+  await expect(row.locator("summary").first()).toContainText("global file");
+  await preview.getByText("Show the text").click();
+  const pre = preview.locator("pre");
+  await expect(pre).toContainText("## From your global Claude Code settings: CLAUDE.md");
+  await expect(pre).toContainText("## From your global Claude Code settings: rules/locks.md (imported by CLAUDE.md)");
+  await expect(pre).toContainText("GLOBAL-IMPORT-E2E-CANARY");
+
+  await page.reload();
+  await page.locator("nav[aria-label='Views']").getByRole("button", { name: "Settings" }).click();
+  await expect(
+    page.getByRole("region", { name: "Project instructions" }).getByRole("switch", { name: "Use your global CLAUDE.md" }),
+  ).toBeChecked();
+
+  // A run lists the global file in its inputs and its log.
+  await page.keyboard.press("Escape");
+  await page.locator("[data-row]", { hasText: TITLE }).first().click();
+  await control("claude", { stream: "tree" });
+  await page.getByRole("button", { name: /^Draft replies · / }).click();
+  const reply = page.locator("#runline [data-run-kind='reply']");
+  await expect(reply).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  const inputs = reply.locator("[data-run-instructions]");
+  await expect(inputs).toContainText("global CLAUDE.md, global rules/locks.md");
+  await expect(inputs).toHaveAttribute("title", /CLAUDE\.md from your global settings/);
+  await reply.getByRole("button", { name: "Log of the reply drafts run" }).click();
+  const log = page.getByRole("dialog", { name: "Reply drafts run log" });
+  await expect(log.locator("footer [data-run-instructions]")).toContainText(
+    "Project instructions: global CLAUDE.md, global rules/locks.md",
+  );
+});

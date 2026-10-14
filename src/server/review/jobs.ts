@@ -1099,11 +1099,12 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     notify(j.id);
     if (j.cancelled) return cancelled();
 
-    // The run reads every source again. The text stays in the run folder. SQLite and the log get the paths and sizes only.
+    // The run reads every source again. The text goes to the prompts and the run folder. SQLite and the log get the paths and sizes only.
     const instructions = await projectInstructions(
       j.db,
       { project: pr.project, repo: pr.repo },
       { cache: ws.cache, env: gitEnv("/dev/null"), commit: ws.targetHead },
+      settings.globalInstructions() ? (opts.claudeConfigDir ?? claudeConfigDir()) : null,
     );
     if (instructions.text) writeFileSync(join(ws.work, "CLAUDE.md"), instructions.text);
     j.db
@@ -1199,6 +1200,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       skills: folders,
       alwaysSkills: always,
       mcp: used,
+      instructions: instructions.text,
     };
     const reply = j.kind === "reply" ? j.threads : null;
     const fix = j.kind === "fix" ? j.threads : null;
@@ -1221,7 +1223,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         cwd: ws.work,
         appDir: ws.app,
         ...spec,
-        main: withInstructions(withMcp(withSkills(withLanguages(spec.main, langs), folders, always), used), instructions.text !== ""),
+        main: withMcp(withSkills(withLanguages(spec.main, langs), folders, always), used),
         maxTurns: reply || fix ? Math.max(profile.maxTurns, MIN_EDIT_TURNS) : profile.maxTurns,
         model: profile.model,
         effort: profile.effort,
@@ -1231,7 +1233,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
             ? {
                 [REVIEWER]: withInstructions(
                   withMcp(withSkills(withLanguages(reviewerAgent(profile), langs), folders, always), used),
-                  instructions.text !== "",
+                  instructions.text,
                 ),
               }
             : {},
@@ -1561,6 +1563,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         .sort((a, b) => (a.thread ?? 0) - (b.thread ?? 0))
         .map(toItemDto);
     },
+
+    // The Claude config folder of the runs. The instructions preview reads the global file from it.
+    configDir: () => opts.claudeConfigDir ?? claudeConfigDir(),
 
     cancel(db: Database, run: number): "cancelled" | "not_running" | null {
       if (!runRow(db, run)) return null;

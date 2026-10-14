@@ -31,6 +31,8 @@ const config = z.object({
   profilesVersion: z.number().optional().catch(undefined),
   // Absent: no Jira connection. The Jira token lives in the secret store under "jira-token".
   jira: z.object({ baseUrl: z.string(), caFile: z.string().optional() }).optional().catch(undefined),
+  // Absent: off. On: each run reads the global CLAUDE.md of the Claude config folder (src/server/review/instructions.ts).
+  globalInstructions: z.boolean().optional().catch(undefined),
 });
 
 export type Config = z.infer<typeof config>;

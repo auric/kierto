@@ -15,6 +15,8 @@ import {
   type FixCommitInput,
   type FixConflict,
   fixCommitInput,
+  type GlobalInstructionsDto,
+  globalInstructionsInput,
   type InstructionPreviewDto,
   type InstructionRepoDto,
   type InstructionsInput,
@@ -48,7 +50,7 @@ import {
   treeEntries,
 } from "./clone";
 import { GitError, git } from "./git";
-import { instructionSettings, projectInstructions, saveInstructionSettings } from "./instructions";
+import { GLOBAL_FILE, instructionSettings, projectInstructions, saveInstructionSettings } from "./instructions";
 import type { ReviewJobs } from "./jobs";
 import { cachePath, gitSetup, locked, longPath } from "./workspace";
 
@@ -397,6 +399,21 @@ export function createFixRoutes(opts: {
         200,
       );
     })
+    .get("/instructions/global", (c) => {
+      c.header("Cache-Control", "no-store");
+      return c.json<GlobalInstructionsDto>({ on: settings.globalInstructions(), path: join(review.configDir(), GLOBAL_FILE) }, 200);
+    })
+    .put(
+      "/instructions/global",
+      validator("json", (v, c) => {
+        const r = globalInstructionsInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid global instructions switch." }, 400);
+      }),
+      async (c) => {
+        if (!(await settings.saveGlobalInstructions(c.req.valid("json").on))) return c.json(unconfigured, 409);
+        return c.json<GlobalInstructionsDto>({ on: settings.globalInstructions(), path: join(review.configDir(), GLOBAL_FILE) }, 200);
+      },
+    )
     .put(
       "/prs/:id/instructions",
       prParam,
@@ -421,7 +438,12 @@ export function createFixRoutes(opts: {
       if (!pr) return c.json(notFound("Pull request"), 404);
       const cache = cacheOf(pr);
       const cached = pr.target_head !== null && existsSync(cache);
-      const b = await projectInstructions(db, pr, cached ? { cache, env: env(), commit: pr.target_head as string } : null);
+      const b = await projectInstructions(
+        db,
+        pr,
+        cached ? { cache, env: env(), commit: pr.target_head as string } : null,
+        settings.globalInstructions() ? review.configDir() : null,
+      );
       const isFile = (p: string) => {
         try {
           return statSync(p).isFile();

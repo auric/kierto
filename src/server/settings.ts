@@ -294,6 +294,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets; jiraSecr
             checkSeconds: input.checkSeconds ?? prev?.checkSeconds,
             profiles: input.profiles === undefined ? prev?.profiles : (input.profiles ?? undefined),
             jira: prev?.jira,
+            globalInstructions: prev?.globalInstructions,
           };
           const caFile = input.caFile || undefined;
           const notifications = input.notifications ?? prev?.notifications ?? false;
@@ -407,6 +408,17 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets; jiraSecr
       return c && token ? createBitbucketProvider({ baseUrl: c.baseUrl, token, caFile: c.caFile }) : null;
     },
     saveJira,
+    // The global instruction switch. Off without a config.
+    globalInstructions: () => current()?.globalInstructions === true,
+    // false: no config yet.
+    saveGlobalInstructions: (on: boolean) =>
+      serial(async () => {
+        const prev = current();
+        if (!prev) return false;
+        config = { ...prev, globalInstructions: on || undefined };
+        writeConfig(dir, config);
+        return true;
+      }),
     // A Jira source for the current settings, or null without Jira config or token. Throws for an unreadable CA file.
     async jira(): Promise<ContextSource | null> {
       const j = current()?.jira;

@@ -320,7 +320,8 @@ describe("R11 injection guard", () => {
           .filter(Boolean)
           .map((s) => [s.slice(0, s.indexOf("\n")), s]),
       );
-      expect(Object.keys(sections)).toEqual(["Task", "Tools", "Your instructions", "Metadata"]);
+      // The fixture target branch has a CLAUDE.md, so the project instructions come before the note.
+      expect(Object.keys(sections)).toEqual(["Task", "Tools", "Project instructions", "Your instructions", "Metadata"]);
       expect(stdin.split(NOTE).length).toBe(2);
       expect(sections["Your instructions"]).toContain(NOTE);
       expect(sections.Task).toContain('"### Comment N"');

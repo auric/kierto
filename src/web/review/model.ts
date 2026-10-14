@@ -297,8 +297,13 @@ export function instructionsText(
   const files = run.instructions?.files ?? [];
   const missed = run.instructions?.notLoaded ?? [];
   if (!files.length && !missed.length) return null;
-  const label = (f: InstructionFileDto) => (f.source === "settings" ? "your text" : f.path);
-  const from = { target: "from the target branch", clone: "from your clone", settings: "from Review Loop settings" } as const;
+  const label = (f: InstructionFileDto) => (f.source === "settings" ? "your text" : f.source === "global" ? `global ${f.path}` : f.path);
+  const from = {
+    global: "from your global settings",
+    target: "from the target branch",
+    clone: "from your clone",
+    settings: "from Review Loop settings",
+  } as const;
   return {
     short: files.length ? `${[...new Set(files.map(label))].join(", ")} (${sizeText(run.instructions?.bytes ?? 0)})` : null,
     long: files.map((f) => `${f.source === "settings" ? "Text" : f.path} ${from[f.source]}, ${sizeText(f.bytes)}`).join("\n"),

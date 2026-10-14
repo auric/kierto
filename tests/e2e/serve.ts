@@ -91,6 +91,10 @@ writeFileSync(
     },
   }),
 );
+// The global instruction file and one import. Runs read them only when the global switch is on.
+writeFileSync(join(claudeConfig, "CLAUDE.md"), "GLOBAL-E2E-CANARY: name each lock. See @rules/locks.md\n");
+mkdirSync(join(claudeConfig, "rules"), { recursive: true });
+writeFileSync(join(claudeConfig, "rules", "locks.md"), "GLOBAL-IMPORT-E2E-CANARY\n");
 process.env.CLAUDE_CONFIG_DIR = claudeConfig;
 
 // ---------- Review data (plan v3 WP11) ----------

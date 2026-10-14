@@ -1,5 +1,5 @@
 // Project instructions per repository: the instruction file from the target branch, files of the user's clone, and extra text.
-// Each run reads the sources again and gets them as its own instruction file. The preview reads them the same way, with no network.
+// Each run reads the sources again and gets them in its prompt. The preview reads them the same way, with no network.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
 import { useRef, useState } from "react";
@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   CLONE_INSTRUCTION_FILES,
   EXTRA_INSTRUCTIONS_MAX,
+  type GlobalInstructionsDto,
   type InstructionPreviewDto,
   type InstructionRepoDto,
   type InstructionsInput,
@@ -21,6 +22,7 @@ import { read } from "../shell/data";
 import { SaveStatus, TYPING_MS, useSaver } from "./autosave";
 
 const reposKey = ["instructions"] as const;
+const globalKey = ["instructions", "global"] as const;
 const previewKey = (pr: number) => ["instructions", pr, "preview"] as const;
 const name = (r: Pick<InstructionRepoDto, "project" | "repo">) => `${r.project}/${r.repo}`;
 // UI code holds no product name (tests/ui/names.test.ts), so the file names come from the shared list.
@@ -41,9 +43,10 @@ export function ProjectInstructions() {
         </p>
       </div>
       <p className="m-0 max-w-[72ch] text-sm text-ink-2">
-        Each run reads these sources again and gets them as its {MAIN}. They never change the safety rules: runs stay read-only and post
+        Each run reads these sources again and gets them in its prompt. They never change the safety rules: runs stay read-only and post
         nothing. {MAIN} files of the pull request head do not load as instructions.
       </p>
+      <GlobalSwitch />
       {q.isPending ? (
         <Skeleton className="h-16 w-full" />
       ) : q.error ? (
@@ -63,6 +66,52 @@ export function ProjectInstructions() {
         </p>
       )}
     </section>
+  );
+}
+
+// One switch for every repository. The app config stores it.
+function GlobalSwitch() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: globalKey, queryFn: async () => read<GlobalInstructionsDto>(await api.api.instructions.global.$get()) });
+  const [problem, setProblem] = useState<string | null>(null);
+  const set = async (on: boolean) => {
+    setProblem(null);
+    try {
+      qc.setQueryData(globalKey, await read<GlobalInstructionsDto>(await api.api.instructions.global.$put({ json: { on } })));
+      // Every preview reads the global file.
+      void qc.invalidateQueries({ queryKey: reposKey });
+    } catch (e) {
+      setProblem((e as Error).message);
+    }
+  };
+  if (q.isPending) return <Skeleton className="h-10 w-full" />;
+  if (q.error)
+    return (
+      <p className="m-0 flex items-start gap-1.5 text-sm text-destructive">
+        <CircleAlert aria-hidden className="mt-0.5 size-[15px] shrink-0" />
+        Cannot read the global switch. {q.error.message}
+      </p>
+    );
+  return (
+    <Field orientation="horizontal" data-instructions-global>
+      <Switch id="instr-global" aria-describedby="instr-global-help" checked={q.data.on} onCheckedChange={(on) => void set(on)} />
+      <div className="grid gap-px">
+        <FieldLabel htmlFor="instr-global">Use your global {MAIN}</FieldLabel>
+        <FieldDescription id="instr-global-help">
+          For all repositories. Runs read{" "}
+          <code translate="no" className="font-mono text-xs [overflow-wrap:anywhere]">
+            {q.data.path}
+          </code>{" "}
+          and its imports before the other sources.
+        </FieldDescription>
+        {problem && (
+          <p role="alert" className="m-0 flex items-start gap-1.5 text-xs text-destructive">
+            <CircleAlert aria-hidden className="mt-px size-[13px] shrink-0" />
+            Cannot save the switch. {problem}
+          </p>
+        )}
+      </div>
+    </Field>
   );
 }
 
@@ -99,6 +148,7 @@ function RepoRow({ r }: { r: InstructionRepoDto }) {
   // The detected files, and ticked files that are gone.
   const shown = CLONE_INSTRUCTION_FILES.filter((f) => p?.found.includes(f) || s.local.includes(f));
   const summary = [
+    p?.files.some((f) => f.source === "global") && "global file",
     s.target && "target branch",
     s.local.length > 0 && `${s.local.length} clone ${s.local.length > 1 ? "files" : "file"}`,
     s.extra.trim() && "your text",

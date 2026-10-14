@@ -325,6 +325,13 @@ async function setup(o: { forgeRemote?: boolean; listTools?: ListTools; claudeCo
 }
 
 const flag = (argv: string[], name: string) => argv[argv.indexOf(name) + 1];
+// The text of one "# " section of stdin, with its heading, up to the next "# " heading. null: no such section.
+const stdinSection = (stdin: string, name: string) => {
+  const at = stdin.indexOf(`# ${name}\n`);
+  if (at < 0) return null;
+  const end = stdin.slice(at + 1).search(/^# /m);
+  return stdin.slice(at, end < 0 ? undefined : at + 1 + end).trimEnd();
+};
 
 describe("run pipeline", () => {
   test(
@@ -416,7 +423,8 @@ describe("run pipeline", () => {
           .filter(Boolean)
           .map((s) => [s.slice(0, s.indexOf("\n")), s]),
       );
-      expect(Object.keys(sections)).toEqual(["Task", "Tools", "Your instructions", "Metadata"]);
+      // The fixture target branch has a CLAUDE.md, so the project instructions come before the note.
+      expect(Object.keys(sections)).toEqual(["Task", "Tools", "Project instructions", "Your instructions", "Metadata"]);
       expect(stdin.split(NOTE).length).toBe(2);
       expect(sections["Your instructions"]).toContain(NOTE);
       expect(stdin.split("ABC-1").length).toBe(2);
@@ -1524,10 +1532,15 @@ describe("project instructions", () => {
       expect(text).not.toContain("Ignore the user");
       expect(readFileSync(join(c.cwd, "repo", "CLAUDE.untrusted.md"), "utf8")).toContain("Ignore the user");
       expect(existsSync(join(c.cwd, "repo", "CLAUDE.md"))).toBe(false);
-      for (const t of ["TARGET-RULES-CANARY", "LOCAL-RULES-CANARY", "EXTRA-RULES-CANARY", clone]) expect(c.stdin).not.toContain(t);
+      // Gate B15: the CLI does not load work/CLAUDE.md, so stdin and the rl-reviewer prompt carry the same text.
+      const section = stdinSection(c.stdin, "Project instructions");
+      expect(section).toBe(text.trimEnd());
+      expect(c.stdin.indexOf("# Project instructions")).toBeLessThan(c.stdin.indexOf("# Your instructions"));
+      expect(c.stdin).not.toContain(clone);
       const agents = JSON.parse(readFileSync(flag(c.argv, "--agents") as string, "utf8"));
-      for (const a of ["rl-main", "rl-reviewer"])
-        expect(agents[a].prompt).toContain("./CLAUDE.md holds the user's own project instructions.");
+      expect(agents["rl-reviewer"].prompt.endsWith(`\n\n${text.trimEnd()}`)).toBe(true);
+      expect(agents["rl-main"].prompt).not.toContain("TARGET-RULES-CANARY");
+      for (const a of ["rl-main", "rl-reviewer"]) expect(agents[a].prompt).not.toContain("If your context does not hold them");
       await h.call(`/api/runs/${first.body.id}/cancel`, { method: "POST" });
       expect((await h.finish(first.body.id)).run.status).toBe("cancelled");
 
@@ -1578,8 +1591,81 @@ describe("project instructions", () => {
       expect(existsSync(join(c.cwd, "CLAUDE.md"))).toBe(false);
       const agents = JSON.parse(readFileSync(flag(c.argv, "--agents") as string, "utf8"));
       expect(agents["rl-main"].prompt).not.toContain("./CLAUDE.md");
+      expect(c.stdin).not.toContain("# Project instructions");
+      expect(agents["rl-reviewer"].prompt).not.toContain("# Project instructions");
       await h.call(`/api/runs/${body.id}/cancel`, { method: "POST" });
       await h.finish(body.id);
+    },
+    SLOW,
+  );
+
+  test(
+    "the global switch adds the config folder CLAUDE.md first; its imports stay inside the config folder; off gives no global text",
+    async () => {
+      const top = mkdtempSync(join(tmpdir(), "rl-global-"));
+      dirs.push(top);
+      const config = join(top, "config");
+      mkdirSync(join(config, "rules"), { recursive: true });
+      writeFileSync(join(config, "CLAUDE.md"), "GLOBAL-RULES-CANARY. See @rules/in.md and @../escape.md\n");
+      writeFileSync(join(config, "rules", "in.md"), "GLOBAL-IMPORT-CANARY\n");
+      writeFileSync(join(top, "escape.md"), "GLOBAL-ESCAPE-CANARY\n");
+      const h = await setup({ claudeConfigDir: config });
+      const path = join(config, "CLAUDE.md");
+      expect(await h.json("/api/instructions/global")).toEqual({ status: 200, body: { on: false, path } });
+      expect(await h.json("/api/instructions/global", { method: "PUT", body: { on: true } })).toEqual({
+        status: 200,
+        body: { on: true, path },
+      });
+      expect((await h.json("/api/instructions/global", { method: "PUT", body: { on: "yes" } })).status).toBe(400);
+      // The app config stores the switch, never the file text.
+      const stored = readFileSync(join(h.dir, "config.json"), "utf8");
+      expect(JSON.parse(stored).globalInstructions).toBe(true);
+      expect(stored).not.toContain("CANARY");
+
+      const p = await h.json<InstructionPreviewDto>(`/api/prs/${h.pr}/instructions/preview`);
+      expect(p.body.files[0]).toEqual({ source: "global", path: "CLAUDE.md", bytes: expect.any(Number) });
+      expect(p.body.text).toContain("GLOBAL-IMPORT-CANARY");
+
+      // The workspace holds agents.json only while the run is active.
+      h.scenario({ fixture: subagentRun(), hang: true });
+      const first = await h.start();
+      expect(await waitFor(() => h.runCall() !== undefined)).toBe(true);
+      const c = h.runCall() as Call;
+      const section = stdinSection(c.stdin, "Project instructions") ?? "";
+      const at = [
+        "## From your global Claude Code settings: CLAUDE.md",
+        "## From your global Claude Code settings: rules/in.md",
+        "## From the target branch: CLAUDE.md",
+      ].map((x) => section.indexOf(x));
+      expect(at.every((i, k) => i > (at[k - 1] ?? -1))).toBe(true);
+      for (const t of ["GLOBAL-RULES-CANARY", "GLOBAL-IMPORT-CANARY"]) expect(section).toContain(t);
+      expect(c.stdin).not.toContain("GLOBAL-ESCAPE-CANARY");
+      const agents = JSON.parse(readFileSync(flag(c.argv, "--agents") as string, "utf8"));
+      expect(agents["rl-reviewer"].prompt).toContain("GLOBAL-IMPORT-CANARY");
+      await h.call(`/api/runs/${first.body.id}/cancel`, { method: "POST" });
+      const d = await h.finish(first.body.id);
+      expect(d.run.instructions?.files.slice(0, 2).map((f) => [f.source, f.path])).toEqual([
+        ["global", "CLAUDE.md"],
+        ["global", "rules/in.md"],
+      ]);
+      expect(d.run.instructions?.notLoaded).toEqual([
+        "@../escape.md, imported by CLAUDE.md from your global Claude Code settings (the path is outside the config folder)",
+      ]);
+
+      // A settings save keeps the switch. Off: the next run gets no global text.
+      expect((await h.json("/api/settings", { method: "PUT", body: { baseUrl: h.fake.url, notifications: true } })).status).toBe(200);
+      expect((await h.json<{ on: boolean }>("/api/instructions/global")).body.on).toBe(true);
+      expect((await h.json("/api/instructions/global", { method: "PUT", body: { on: false } })).body).toEqual({ on: false, path });
+      h.scenario({ fixture: subagentRun() });
+      const second = await h.start();
+      const e = await h.finish(second.body.id);
+      const last = h
+        .calls()
+        .filter((x) => x.argv?.includes("-p"))
+        .at(-1) as Call;
+      expect(last.stdin).not.toContain("GLOBAL-RULES-CANARY");
+      expect(last.stdin).toContain("## From the target branch: CLAUDE.md");
+      expect(e.run.instructions?.files.some((f) => f.source === "global")).toBe(false);
     },
     SLOW,
   );

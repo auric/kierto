@@ -691,7 +691,12 @@ export type InstructionsInput = z.infer<typeof instructionsInput>;
 // GET /api/instructions: one row per repository of a stored PR. pr: the newest PR of the repository. clone: null when not set.
 export type InstructionRepoDto = { project: string; repo: string; pr: number; clone: string | null; settings: InstructionsInput };
 // path: from the repository or clone root. Empty for the settings text.
-export type InstructionFileDto = { source: "target" | "clone" | "settings"; path: string; bytes: number };
+// path: from the config folder for the global source.
+export type InstructionFileDto = { source: "global" | "target" | "clone" | "settings"; path: string; bytes: number };
+// GET and PUT /api/instructions/global: the switch for the global instruction file of the runner config folder. It applies to every repository.
+// path: the file that runs read when the switch is on.
+export const globalInstructionsInput = z.object({ on: z.boolean() });
+export type GlobalInstructionsDto = { on: boolean; path: string };
 // GET /api/prs/:id/instructions/preview. found: the clone files that exist now. target "no-cache": no run fetched the target branch yet.
 export type InstructionPreviewDto = {
   readAt: number;
