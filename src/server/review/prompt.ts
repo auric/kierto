@@ -150,6 +150,8 @@ export function buildFixPrompt(i: PromptInput & { threads: ReplyThread[] }): str
     "",
     `Fix threads: ${i.threads.map((t) => `${t.thread} (comment ${t.replyTo})`).join(", ")}`,
     "",
+    "Read the whole thread of each entry, not only its newest message.",
+    "",
     PR_HEADINGS,
     "",
     ...common(i),

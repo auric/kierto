@@ -107,6 +107,16 @@ ${rule}
     expect(withInstructions(reviewerAgent(general), "")).toEqual(reviewerAgent(general));
   });
 
+  test("a fix run reads the whole thread and may judge that no change is needed", () => {
+    expect(buildFixPrompt({ ...input, threads })).toContain(
+      "\nFix threads: 1 (comment 2)\n\nRead the whole thread of each entry, not only its newest message.\n",
+    );
+    expect(fixAgent(general).prompt).toContain(
+      "\nRead the whole thread. Set fixed to false, with the reason, when the code is already right or the thread asks for no change.\n",
+    );
+    expect(buildReplyPrompt({ ...input, threads })).not.toContain("Read the whole thread");
+  });
+
   test("a re-review names its range and the merge base for removed lines", () => {
     const text = buildRereviewPrompt({ ...input, since: "c".repeat(40), rangeBase: "d".repeat(40), earlier: [] });
     expect(text).toContain(`Review the change ${"d".repeat(40)}..${"b".repeat(40)} in ./repo.`);

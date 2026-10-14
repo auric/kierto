@@ -289,6 +289,26 @@ describe("thread selection and refusals", () => {
   );
 
   test(
+    "a listed thread whose only message is by the author starts a fix run without a reply draft",
+    async () => {
+      const h = await setup();
+      h.db
+        .query(
+          `INSERT INTO comment (pr, comment_id, version, root_id, author_slug, text, thread_resolved, created_at, updated_at)
+          VALUES ($pr, 1001, 0, 1001, $me, 'x', 0, 1001, 1001)`,
+        )
+        .run({ pr: h.pr, me: FAKE_USER });
+      const r = await h.start([1001]);
+      expect(r.status).toBe(202);
+      await h.finish(r.body.id);
+      const stdin = h.runCalls()[0]?.stdin;
+      expect(stdin).toContain("\nFix threads: 1001 (comment 1001)\n");
+      expect(stdin).toContain("\nRead the whole thread of each entry, not only its newest message.\n");
+    },
+    SLOW,
+  );
+
+  test(
     "404, unsynced, non-author, Explain, no valid draft, and more than 25 threads give errors; a list passes the reply checks",
     async () => {
       const h = await setup();

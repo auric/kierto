@@ -11,7 +11,7 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 - Use a new, empty data folder. Never use the data folder of your daily instance.
 - The app never pushes. Each push in this test is your own `git push`.
 - Do not copy tokens, host names, code, comment text, issue text, or file names into files, issues, or chat. Record payload shapes (key names and types), counts, and tag names only.
-- Expect about twelve runs on your Claude subscription quota: five in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, and one in part I.
+- Expect about twelve runs on your Claude subscription quota: five in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, one in part I, and two in part J.
 - Part I sends your project instructions to Claude. Turn on the global CLAUDE.md only when it holds nothing that the approval does not cover.
 - In this document, `<BITBUCKET_URL>` is the base URL of the Bitbucket server, `<JIRA_URL>` is the base URL of the Jira server, `<TEST_PR_URL>` is the URL of the test pull request, `<KEY>` is a Jira issue key that the test pull request names, and `<CLONE>` is the absolute path of your test clone.
 
@@ -137,6 +137,23 @@ Use a test pull request that changes C++, C, or Python files for step 4. If it h
 7. Disable the plugin of the marked skill, or rename its folder in your Claude config. Press r. Expect the brief to show "Skill <id> is marked Always use, but it is not found." with the fix hint, and Start to be disabled. Expect the skills dialog to show "Not found in <runner>. Runs do not start while it is marked Always use." Restore the skill. Expect Start to be enabled again.
 8. Remove the Always use mark and the extra text. Turn off the global switch.
 
+## J. Fix on your own comments and on threads without a reply draft
+
+Run this part after the Fix picker ships (docs/plans/fix-ux.md, WP2). Steps J10 to J12 need phase 2 (WP3 and WP4). Until then, record them as not run.
+
+1. As the PR author, write two comments on the test pull request. T8 asks for one small change in a text source file. T9 asks for a change that the code already has. Click "Check now".
+2. Expect no reply draft for T8 and T9, because your message is the newest in each. If no thread waits for you, expect the Draft replies hint "Your message is the newest in each open thread. They wait for the other person."
+3. Expect the header button "Fix · N" to be enabled. Click it. Expect the picker with one checkbox per open, unresolved thread with a live message. Expect T8 and T9 in the list and unticked. Expect ticks only on threads with a Valid or Partly valid draft.
+4. Tick only T8 and T9. Click "Propose fixes for 2". Wait for the end of the run. Expect edits for T8. Expect T9 with no edit and a reason that says the code is already right. Do not apply.
+5. Click Log on the fix card. Expect no Edit, Write, or Agent tool in the init line. Close the log.
+6. Focus T8 and press f. Expect a fix run for T8 only. Wait for the end of the run. Do not apply.
+7. Resolve T9 in Bitbucket. Click "Check now". Press F. Expect T9 absent from the picker and the count of resolved threads in the picker text. Close the picker.
+8. Ask the second user for a test pull request where you are a reviewer. Open it. Do not post on it. If none exists, record this step as not run. Expect no Fix button and no "Fix · N". Focus a thread and press f. Expect the toast "Fix works only on your own pull requests."
+9. Delete T8 and T9 in Bitbucket by hand.
+10. Phase 2: run a review on the test pull request. Accept one finding that names a real change. Do not post it. Click Fix on the finding. Expect a fix card for the finding.
+11. Phase 2: apply the edit and commit in your clone. Expect the finding to show "Fixed in <short>" and to leave Ready to post. Expect p to post nothing for it.
+12. Phase 2: restore the finding. Expect it back in Ready to post. Click Undo on the fix card. Discard the finding.
+
 ## H. Record
 
 - The build commit from the startup line.
@@ -144,4 +161,5 @@ Use a test pull request that changes C++, C, or Python files for step 4. If it h
 - The result of each step: pass or fail, with a short reason for a fail.
 - The judgement chip of each thread T1 to T7.
 - For each fix run: the proposed edits and the skipped edits. This gives the rate of dropped edits.
+- From part J: the reason that the fix run gave for T9 in step 4.
 - B11, B12, and B15, the tag names from E5, and the shapes from F1. From part I: the languages of step 4, the severity counts of step 6, and any coverage line from step 5. Update the "Release 3 (not run)" rows in integration-check.md.
