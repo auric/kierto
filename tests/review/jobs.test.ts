@@ -1196,7 +1196,18 @@ describe("editable profiles (M4)", () => {
         expect(a.body).toMatchObject({ effort: "default", effortDefault: "xhigh" });
         // The fake CLI init event names claude-haiku-5-5.
         const d = await h.finish(a.body.id);
-        expect(d.run).toMatchObject({ model: "claude-haiku-5-5", effort: "default", effortDefault: "low" });
+        expect(d.run).toMatchObject({ model: "claude-haiku-5-5", effort: "default", effortDefault: "low", effortNow: false });
+        // A run from before migration 019 stored no default effort. A run from before 018 stored no effort. Both ran without --effort.
+        const runOf = async () => (await h.json<RunDetail>(`/api/runs/${a.body.id}`)).body.run;
+        h.db.query("UPDATE review_run SET effort_default = NULL WHERE id = ?").run(a.body.id);
+        expect(await runOf()).toMatchObject({ effort: "default", effortDefault: "low", effortNow: true });
+        h.db.query("UPDATE review_run SET effort = NULL WHERE id = ?").run(a.body.id);
+        expect(await runOf()).toMatchObject({ effort: null, effortDefault: "low", effortNow: true });
+        // The DTO resolves the value. The row keeps NULL.
+        expect(h.db.query("SELECT effort_default FROM review_run WHERE id = ?").get(a.body.id)).toEqual({ effort_default: null });
+        // An explicit --effort never gets a default.
+        h.db.query("UPDATE review_run SET effort = 'high' WHERE id = ?").run(a.body.id);
+        expect(await runOf()).toMatchObject({ effort: "high", effortDefault: null, effortNow: false });
       } finally {
         if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
         else process.env.CLAUDE_CONFIG_DIR = saved;

@@ -357,8 +357,10 @@ export type RunDto = {
   model: string | null;
   // The --effort value of the run, or "default" for no flag. null for runs made before it was stored.
   effort: string | null;
-  // effort "default" only: the effort that the user settings give. null: unknown.
+  // effort "default" or null only: the effort that the user settings give. null: unknown.
   effortDefault: string | null;
+  // true: effortDefault comes from the current settings, because the run stored none.
+  effortNow: boolean;
   usage: RunUsage | null;
   // Ended runs with a valid result only.
   summary: RunSummary | null;

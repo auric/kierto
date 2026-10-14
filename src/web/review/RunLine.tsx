@@ -206,7 +206,7 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onGaps }: 
           Log<span className="sr-only"> of the {KIND_LABEL[run.kind].toLowerCase()} run</span>
         </button>
       </Hint>
-      <Inputs run={run} stale={row.stale} />
+      <Inputs run={run} stale={row.stale} meta={meta} />
     </li>
   );
 }
@@ -214,7 +214,7 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onGaps }: 
 // What the run read: the commit or the range, the profile, the model and the effort, the tasks of plan r3 Feature C, and your note as plain text.
 // A menu of a run button can pick another profile than the brief one, so the row names it.
 // The run records its tasks at its start. A run from before Release 3 has no record, so it shows no task.
-function Inputs({ run, stale }: { run: RunDto; stale: string | null }) {
+function Inputs({ run, stale, meta }: { run: RunDto; stale: string | null; meta: MetaDto }) {
   const tasks = run.tasks ?? [];
   const ids = tasks.map((t) => t.key).join(", ");
   const range = run.since?.incremental ? shortHash(run.since.head) : null;
@@ -250,7 +250,7 @@ function Inputs({ run, stale }: { run: RunDto; stale: string | null }) {
       <span className={item} data-run-setup>
         <Cpu aria-hidden className={icon} />
         <span className="sr-only">Model and effort: </span>
-        {setupText(run)}
+        {setupText(run, meta.runner.defaults)}
       </span>
       {tasks.length > 0 && (
         <span className={item} title={`Task text that this run read: ${ids}`}>

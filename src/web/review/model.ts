@@ -10,6 +10,7 @@ import type {
   RunDetail,
   RunDto,
   RunKind,
+  RunnerDefaults,
   RunUsage,
 } from "../../shared/dto";
 import {
@@ -279,17 +280,23 @@ export function rereviewState(
 export const limitText = (runner: string, text: string | null) =>
   `${text?.trim() ? `${runner}: ${text.trim()}` : `${runner} usage limit reached.`} Review Loop does not retry by itself.`;
 
-// The model and the effort of a run. A run without an init event and without --model shows "default model".
-// A run from before the effort column had no --effort flag, so it shows "default effort" too.
-// effortDefault: the effort that the user settings gave a run without --effort.
-export const setupText = (run: Pick<RunDto, "model" | "effort" | "effortDefault">) =>
-  `${run.model ?? "default model"}, ${
+// The model and the effort of a run. A run without an init event and without --model names the default model of the settings.
+// effortNow: the run stored no default effort, so the text names the effort of the current settings.
+// defaults null: the settings file is absent or unreadable, so the text stays plain.
+export const setupText = (
+  run: Pick<RunDto, "model" | "effort" | "effortDefault" | "effortNow" | "status">,
+  defaults: RunnerDefaults | null,
+) => {
+  const mine = run.status === "running" ? "your default" : "your default now";
+  const model = run.model ?? (defaults?.model?.sure ? `${defaults.model.value} (${mine})` : "default model");
+  const effort =
     run.effort && run.effort !== "default"
       ? `${run.effort} effort`
       : run.effortDefault
-        ? `${run.effortDefault} effort (your default)`
-        : "default effort"
-  }`;
+        ? `${run.effortDefault} effort (${run.effortNow ? "your default now" : "your default"})`
+        : "default effort";
+  return `${model}, ${effort}`;
+};
 
 // ---------- Brief ----------
 

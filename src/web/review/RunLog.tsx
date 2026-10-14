@@ -212,7 +212,7 @@ export function RunLog(props: {
         {detail && (
           <span data-run-setup className="text-muted-foreground">
             <span className="sr-only">Model and effort: </span>
-            {setupText(detail.run)}
+            {setupText(detail.run, meta.runner.defaults)}
           </span>
         )}
       </footer>

@@ -23,6 +23,7 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
   model: "m",
   effort: null,
   effortDefault: null,
+  effortNow: false,
   usage: { costUsd: 0, turns: 3, durationMs: 9000, tokens: { input_tokens: 1200, output_tokens: 300 } },
   summary: {
     summary: "flush() has two callers.",

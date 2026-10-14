@@ -41,6 +41,7 @@ const run = (id: number, o: Partial<RunDto> = {}): RunDto => ({
   model: "m",
   effort: null,
   effortDefault: null,
+  effortNow: false,
   usage: null,
   summary: null,
   startedAt: 1_000,

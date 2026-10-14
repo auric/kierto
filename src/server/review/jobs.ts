@@ -819,7 +819,21 @@ function toFixEditDto(r: FixEditRow) {
   return { id: r.id, thread: r.thread, path: r.path, added: count("add"), removed: count("del"), rows };
 }
 
-function toRunDto(r: RunRow): RunDto {
+// The effort that the current user settings give a run without --effort. It reads the settings file once per model.
+function effortsNow() {
+  const seen = new Map<string, string | null>();
+  return (model: string | null) => {
+    const k = model ?? "";
+    if (!seen.has(k)) seen.set(k, runEffort(model));
+    return seen.get(k) ?? null;
+  };
+}
+
+// A run without --effort and without a stored default (for example, from before migration 019) gets the effort of the current settings.
+// A run from before migration 018 has effort null and ran without --effort.
+function toRunDto(r: RunRow, resolve = effortsNow()): RunDto {
+  const noFlag = r.effort === null || r.effort === "default";
+  const resolved = noFlag && r.effort_default === null ? resolve(r.model) : null;
   const source = r.pr_source !== null && r.pr_source !== r.source_head;
   const target = r.pr_target !== null && r.pr_target !== r.target_head;
   return {
@@ -841,7 +855,8 @@ function toRunDto(r: RunRow): RunDto {
     cliVersion: r.cli_version,
     model: r.model,
     effort: r.effort,
-    effortDefault: r.effort === "default" ? r.effort_default : null,
+    effortDefault: noFlag ? (r.effort_default ?? resolved) : null,
+    effortNow: resolved !== null,
     usage: r.usage_json ? (JSON.parse(r.usage_json) as RunUsage) : null,
     summary: r.summary_json ? (JSON.parse(r.summary_json) as RunSummary) : null,
     startedAt: r.started_at,
@@ -1413,7 +1428,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // The newest ask runs of a PR with their answers. null for an unknown PR.
     asks(db: Database, pr: number): AskDto[] | null {
       if (!prRow(db, pr)) return null;
-      return (db.query(`${SQL.run} ${SQL.asks}`).all({ pr }) as RunRow[]).map((r) => ({ run: toRunDto(r), answer: r.answer }));
+      const now = effortsNow();
+      return (db.query(`${SQL.run} ${SQL.asks}`).all({ pr }) as RunRow[]).map((r) => ({ run: toRunDto(r, now), answer: r.answer }));
     },
 
     // Starts a reply-draft run of the stored brief (plan replies.md WP17). It shares the run slot with reviews.
@@ -1455,8 +1471,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const pr = prRow(db, id);
       if (!pr) return null;
       const cache = cachePath(longPath(dataDir), { project: pr.project, repo: pr.repo, id: pr.pr_id });
+      const now = effortsNow();
       return (db.query(`${SQL.run} ${SQL.fixes}`).all({ pr: id }) as RunRow[]).map((r) => ({
-        run: toRunDto(r),
+        run: toRunDto(r, now),
         threads: r.fix_json ? (JSON.parse(r.fix_json) as FixThread[]) : [],
         edits: (db.query(SQL.fixEdits).all({ run: r.id }) as FixEditRow[]).map(toFixEditDto),
         commits: (db.query(SQL.fixCommits).all({ run: r.id }) as FixCommitRow[]).map((c) => toFixCommitDto(c, cache)),
@@ -1490,7 +1507,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
               OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review')
               OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review' AND status IN ('completed', 'incomplete'))
               ORDER BY r.id DESC`;
-      return (db.query(sql).all(pr === null ? { limit } : { pr, limit }) as RunRow[]).map((r) => withPhase(db, toRunDto(r)));
+      const now = effortsNow();
+      return (db.query(sql).all(pr === null ? { limit } : { pr, limit }) as RunRow[]).map((r) => withPhase(db, toRunDto(r, now)));
     },
 
     run(db: Database, id: number): RunDetail | null {

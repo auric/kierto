@@ -1,7 +1,7 @@
 // Plan v3 WP11, replies.md WP18, and r2 UI-RR: the pure review UI rules. The log tree, the run line, the brief state,
 // the Review runs view, the reply drafts, and the re-review.
 import { describe, expect, test } from "bun:test";
-import type { BriefDto, ProfileDto, PrRow, ReviewItemDto, RunDetail, RunDto } from "../../src/shared/dto";
+import type { BriefDto, ProfileDto, PrRow, ReviewItemDto, RunDetail, RunDto, RunnerDefaults } from "../../src/shared/dto";
 import type { AnchoredFinding, Carried, Question, ReplyPayload } from "../../src/shared/review";
 import type { RunEvent } from "../../src/shared/run-log";
 import {
@@ -77,6 +77,7 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
   model: "m",
   effort: null,
   effortDefault: null,
+  effortNow: false,
   usage: null,
   summary: null,
   startedAt: 1_000,
@@ -630,18 +631,49 @@ describe("one row per run kind", () => {
 });
 
 describe("model and effort of a run", () => {
-  test("the run row and the log footer name the model and the effort; an unknown value reads as default", () => {
-    expect(setupText({ model: "claude-opus-5-5", effort: "high", effortDefault: null })).toBe("claude-opus-5-5, high effort");
-    expect(setupText({ model: null, effort: "default", effortDefault: null })).toBe("default model, default effort");
+  const run = (o: Partial<Pick<RunDto, "model" | "effort" | "effortDefault" | "effortNow" | "status">>) => ({
+    model: null,
+    effort: "default",
+    effortDefault: null,
+    effortNow: false,
+    status: "completed" as const,
+    ...o,
+  });
+  const defaults: RunnerDefaults = { model: { value: "opus", sure: true }, effort: { "": { value: "xhigh", sure: true } } };
+
+  test("without a settings file, an unknown value reads as default", () => {
+    expect(setupText(run({ model: "claude-opus-5-5", effort: "high" }), null)).toBe("claude-opus-5-5, high effort");
+    expect(setupText(run({}), null)).toBe("default model, default effort");
     // A run from before the effort column ran without --effort.
-    expect(setupText({ model: "claude-haiku-5-5", effort: null, effortDefault: null })).toBe("claude-haiku-5-5, default effort");
+    expect(setupText(run({ model: "claude-haiku-5-5", effort: null }), null)).toBe("claude-haiku-5-5, default effort");
   });
 
   test("a run without --effort names the effort from the user settings", () => {
-    expect(setupText({ model: "claude-opus-5-5", effort: "default", effortDefault: "xhigh" })).toBe(
+    expect(setupText(run({ model: "claude-opus-5-5", effortDefault: "xhigh" }), defaults)).toBe(
       "claude-opus-5-5, xhigh effort (your default)",
     );
     // An explicit --effort wins over a stale default.
-    expect(setupText({ model: "m", effort: "low", effortDefault: "xhigh" })).toBe("m, low effort");
+    expect(setupText(run({ model: "m", effort: "low", effortDefault: "xhigh" }), defaults)).toBe("m, low effort");
+  });
+
+  test("a running run before its init event names the default model and the effort stored at its start", () => {
+    expect(setupText(run({ status: "running", effortDefault: "xhigh" }), defaults)).toBe(
+      "opus (your default), xhigh effort (your default)",
+    );
+    // A model value that the runner docs do not rank stays plain.
+    expect(setupText(run({ status: "running" }), { ...defaults, model: { value: "opus", sure: false } })).toBe(
+      "default model, default effort",
+    );
+  });
+
+  test("a run that stored no default effort names the current settings value as now", () => {
+    expect(setupText(run({ model: "claude-opus-5-5", effortDefault: "xhigh", effortNow: true }), defaults)).toBe(
+      "claude-opus-5-5, xhigh effort (your default now)",
+    );
+    expect(setupText(run({ model: "claude-haiku-5-5", effort: null, effortDefault: "medium", effortNow: true }), defaults)).toBe(
+      "claude-haiku-5-5, medium effort (your default now)",
+    );
+    // A run that ended before its init event without --model.
+    expect(setupText(run({ status: "failed" }), defaults)).toBe("opus (your default now), default effort");
   });
 });
