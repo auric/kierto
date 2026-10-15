@@ -5,6 +5,7 @@ import {
   type AnchoredFinding,
   type Carried,
   type DiffKind,
+  type FixedMark,
   MAX_FIX_EDITS,
   MAX_QUESTION,
   MAX_REPLY_THREADS,
@@ -429,8 +430,8 @@ export type ReviewItemDto = {
   kind: "finding" | "question" | "reply";
   body: string;
   // finding: the AnchoredFinding as validated. question: the Question. reply: the ReplyPayload; body is empty for action none.
-  // carried: the item came from the base run of a re-review.
-  payload: (AnchoredFinding | Question | ReplyPayload) & { carried?: Carried };
+  // carried: the item came from the base run of a re-review. fixed: findings only, a fix commit covers the finding.
+  payload: (AnchoredFinding | Question | ReplyPayload) & { carried?: Carried; fixed?: FixedMark };
   // Findings only: the current anchor.
   anchor: (Anchor & { side: Side }) | null;
   status: ItemStatus;
@@ -633,11 +634,25 @@ export type DiffFetchNeeded = ApiError & { fetch: true };
 
 // ---------- Fix it (plan r3) ----------
 
-// POST /api/prs/:id/fix-run. Absent threads: the newest valid or partly reply draft of each thread.
-export const fixRunInput = z.object({ threads: z.array(positiveInt).min(1).max(MAX_REPLY_THREADS).optional(), profile: runProfile });
+// POST /api/prs/:id/fix-run. findings: review item IDs. Absent threads and findings: the newest valid or partly reply draft of each thread.
+// docs/plans/fix-ux.md WP3: one run takes at most MAX_REPLY_THREADS threads and findings together. The route shows the refine message.
+const fixTargets = z.array(positiveInt).min(1).max(MAX_REPLY_THREADS).optional();
+export const fixRunInput = z
+  .object({ threads: fixTargets, findings: fixTargets, profile: runProfile })
+  .refine((v) => (v.threads?.length ?? 0) + (v.findings?.length ?? 0) <= MAX_REPLY_THREADS, {
+    message: `Pick at most ${MAX_REPLY_THREADS} threads and findings for one run.`,
+  });
 
-// One stored edit. added, removed: the line counts of rows.
-export type FixEditDto = { id: number; thread: number; path: string; added: number; removed: number; rows: DiffRowDto[] };
+// One stored edit. Exactly one of thread and finding is set. added, removed: the line counts of rows.
+export type FixEditDto = {
+  id: number;
+  thread?: number;
+  finding?: number;
+  path: string;
+  added: number;
+  removed: number;
+  rows: DiffRowDto[];
+};
 
 export const fixModes = ["clone", "cache"] as const;
 export type FixMode = (typeof fixModes)[number];
@@ -659,10 +674,10 @@ export type FixCommitDto = {
   createdAt: number;
 };
 
-// GET /api/prs/:id/fixes gives FixDto[], newest first, at most 10.
+// GET /api/prs/:id/fixes gives FixDto[], newest first, at most 10. Each note names exactly one of thread and finding.
 export type FixDto = {
   run: RunDto;
-  threads: { thread: number; fixed: boolean; reason: string }[];
+  threads: { thread?: number; finding?: number; fixed: boolean; reason: string }[];
   edits: FixEditDto[];
   commits: FixCommitDto[];
 };

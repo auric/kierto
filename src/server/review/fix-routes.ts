@@ -65,7 +65,8 @@ type PrRow = {
 };
 // source: the source head S of the run.
 type RunRow = { run: number; kind: string; source: string; pr: number; project: string; repo: string; pr_id: number };
-type EditRow = PatchEdit & { thread: number };
+// Exactly one of thread and item is set. item: the review_item ID of a finding.
+type EditRow = PatchEdit & { thread: number | null; item: number | null };
 type CommitRow = FixCommitRow & { project: string; repo: string };
 
 const SQL = {
@@ -81,7 +82,7 @@ const SQL = {
     JOIN pull_request p ON p.project = c.project AND p.repo = c.repo GROUP BY c.project, c.repo ORDER BY c.project, c.repo`,
   run: `SELECT r.id AS run, r.kind, r.source_head AS source, p.id AS pr, p.project, p.repo, p.pr_id
     FROM review_run r JOIN pull_request p ON p.id = r.pr WHERE r.id = $id`,
-  edits: "SELECT id, thread, path, old, new FROM fix_edit WHERE run = $run ORDER BY ord",
+  edits: "SELECT id, thread, item, path, old, new FROM fix_edit WHERE run = $run ORDER BY ord",
   byKey: "SELECT id FROM fix_commit WHERE idem_key = $key AND state <> 'undone'",
   commit: "SELECT c.*, p.pr_id, p.project, p.repo FROM fix_commit c JOIN pull_request p ON p.id = c.pr WHERE c.id = $id",
   insert: `INSERT INTO fix_commit (pr, run, idem_key, edits_json, mode, clone_path, branch, before_head, state, message, created_at, updated_at)
@@ -99,6 +100,17 @@ const SQL = {
   discard: `UPDATE review_item SET status = 'discarded', revision = revision + 1
     WHERE kind = 'reply' AND status IN ('new', 'accepted') AND json_extract(payload_json, '$.fix.id') = $id`,
   pushed: "SELECT 1 FROM pr_commit WHERE pr = $pr AND hash = $hash",
+  // docs/plans/fix-ux.md decision 3: the commit discards each open finding that it covers. In SQLite, SET reads the old status.
+  fixed: `UPDATE review_item SET status = 'discarded', revision = revision + 1,
+      payload_json = json_set(payload_json, '$.fixed', json_object('id', $id, 'commit', $commit, 'short', $short, 'was', status))
+    WHERE id = $item AND kind = 'finding' AND status IN ('new', 'accepted') AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
+  // Undo: a finding that the mark still discards gets its status back. A finding that the user restored keeps its status. A posted one stays.
+  unfixed: `UPDATE review_item SET status = CASE WHEN status = 'discarded' THEN json_extract(payload_json, '$.fixed.was') ELSE status END,
+      payload_json = json_remove(payload_json, '$.fixed'), revision = revision + 1
+    WHERE kind = 'finding' AND status <> 'posted' AND json_extract(payload_json, '$.fixed.id') = $id`,
+  // The runs of the findings that a commit covers. Their drafts change with the commit and the undo.
+  findingRuns: `SELECT DISTINCT i.run FROM fix_edit e JOIN review_item i ON i.id = e.item
+    WHERE e.id IN (SELECT value FROM json_each($edits)) ORDER BY i.run`,
 };
 
 const positiveId = (what: string) =>
@@ -140,9 +152,11 @@ export function createFixRoutes(opts: {
     const r = commitRow(db, id) as CommitRow;
     return toFixCommitDto(r, cacheOf(r));
   };
-  // A commit or an undo changes the fix commits and the reply drafts of the PR.
-  const changed = (db: Database, dto: FixCommitDto) =>
-    live.broadcast("changed", { prs: [(commitRow(db, dto.id) as CommitRow).pr], runs: [dto.run] });
+  // A commit or an undo changes the fix commits, the reply drafts, and the covered findings of the PR.
+  const changed = (db: Database, dto: FixCommitDto) => {
+    const found = db.query(SQL.findingRuns).all({ edits: JSON.stringify(dto.edits) }) as { run: number }[];
+    live.broadcast("changed", { prs: [(commitRow(db, dto.id) as CommitRow).pr], runs: [dto.run, ...found.map((r) => r.run)] });
+  };
   // GET and PUT: no network. The synced source head stands for the live head.
   const cloneState = (db: Database, pr: PrRow): Promise<CloneDto> =>
     checkClone(cloneOf(db, pr), { branch: pr.source_branch ?? "", ...(pr.source_head ? { live: pr.source_head } : {}) });
@@ -160,11 +174,13 @@ export function createFixRoutes(opts: {
     return (db.query(SQL.insert).get(v) as { id: number }).id;
   }
 
-  // One transaction: the commit, the superseded drafts of each thread, and one "Fixed in" reply draft per thread.
+  // One transaction: the commit, the superseded drafts of each thread, one "Fixed in" reply draft per thread, and the fixed mark of each finding.
   function finish(db: Database, run: RunRow, id: number, edits: EditRow[], made: { commit: string; short: string }) {
     db.transaction(() => {
       db.query(SQL.committed).run({ id, hash: made.commit, short: made.short, now: Date.now() });
-      for (const thread of new Set(edits.map((e) => e.thread))) {
+      for (const item of new Set(edits.flatMap((e) => (e.item === null ? [] : [e.item]))))
+        db.query(SQL.fixed).run({ item, pr: run.pr, id, commit: made.commit, short: made.short });
+      for (const thread of new Set(edits.flatMap((e) => (e.thread === null ? [] : [e.thread])))) {
         db.query(SQL.supersede).run({ thread, pr: run.pr });
         const last = newestLive(db.query(SQL.thread).all({ pr: run.pr, root: thread }) as TurnMsg[]);
         if (!last) continue;
@@ -317,6 +333,7 @@ export function createFixRoutes(opts: {
       db.transaction(() => {
         db.query(SQL.undone).run({ id, now: Date.now() });
         db.query(SQL.discard).run({ id });
+        db.query(SQL.unfixed).run({ id });
       })();
       return { status: 200, dto: dtoOf(db, id) };
     });

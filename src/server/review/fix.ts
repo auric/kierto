@@ -8,9 +8,11 @@ import { MAX_FILE_CHARS, repoPath } from "./validate";
 // blocked: a folder, or a path below a file. size: a blob above MAX_FILE_CHARS bytes.
 export type FixFile = { mode: string; bytes: Uint8Array } | "blocked" | "size";
 
-// ord: the index of the edit in the result.
-export type ValidEdit = Located & { ord: number; thread: number; path: string; rows: DiffRowDto[] };
+// ord: the index of the edit in the result. Exactly one of thread and finding is set.
+export type ValidEdit = Located & { ord: number; thread: number | null; finding: number | null; path: string; rows: DiffRowDto[] };
 export type ValidatedFix = { summary: string; coverage: Coverage; threads: FixThread[]; edits: ValidEdit[] };
+// The threads and the findings that the run asked for.
+export type FixRequest = { threads: readonly number[]; findings: readonly number[] };
 
 const PROBLEMS: Record<string, string> = {
   link: "the path is a link or a submodule",
@@ -26,22 +28,44 @@ const PROBLEMS: Record<string, string> = {
 const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ");
 const utf8 = (s: string) => Buffer.byteLength(s, "utf8");
 
-// Only requested threads pass. Every drop, every thread without a note, and every fixed note without a valid edit go to coverage.skipped.
-export function validateFix(result: FixResult, requested: readonly number[], files: ReadonlyMap<string, FixFile>): ValidatedFix {
-  const wanted = new Set(requested);
+type Target = { key: string; kind: "thread" | "finding" };
+// docs/plans/fix-ux.md WP3: a note or an edit names exactly one thread or one finding. Returns the drop reason otherwise.
+function targetOf(x: { thread?: number; finding?: number }): Target | string {
+  if (x.thread !== undefined && x.finding !== undefined) return `it names both thread ${x.thread} and finding ${x.finding}`;
+  if (x.thread !== undefined) return { key: `thread ${x.thread}`, kind: "thread" };
+  if (x.finding !== undefined) return { key: `finding ${x.finding}`, kind: "finding" };
+  return "it names no thread and no finding";
+}
+
+// Only requested threads and findings pass. Every drop, every target without a note, and every fixed note without a valid edit go to coverage.skipped.
+export function validateFix(result: FixResult, requested: FixRequest, files: ReadonlyMap<string, FixFile>): ValidatedFix {
+  const byNumber = (a: number, b: number) => a - b;
+  const order = [
+    ...new Set([
+      ...[...requested.threads].sort(byNumber).map((t) => `thread ${t}`),
+      ...[...requested.findings].sort(byNumber).map((f) => `finding ${f}`),
+    ]),
+  ];
+  const wanted = new Set(order);
   const skipped = [...result.coverage.skipped];
-  const notes = new Map<number, FixThread>();
-  for (const t of result.threads) {
-    const why = !wanted.has(t.thread) ? "the thread was not requested" : notes.has(t.thread) ? "a second note for the thread" : null;
-    if (why) skipped.push(`Note for thread ${t.thread} dropped: ${why}.`);
-    else notes.set(t.thread, t);
+  const notes = new Map<string, FixThread>();
+  for (const [i, t] of result.threads.entries()) {
+    const at = targetOf(t);
+    if (typeof at === "string") {
+      skipped.push(`Note ${i + 1} dropped: ${at}.`);
+      continue;
+    }
+    const why = !wanted.has(at.key) ? `the ${at.kind} was not requested` : notes.has(at.key) ? `a second note for the ${at.kind}` : null;
+    if (why) skipped.push(`Note for ${at.key} dropped: ${why}.`);
+    else notes.set(at.key, t);
   }
 
   const edits: ValidEdit[] = [];
+  const edited = new Set<string>();
   let bytes = 0;
-  const check = (e: FixResult["edits"][number], ord: number): string | null => {
-    if (!wanted.has(e.thread)) return "the thread was not requested";
-    if (!notes.has(e.thread)) return "the thread has no note";
+  const check = (e: FixResult["edits"][number], at: Target, ord: number): string | null => {
+    if (!wanted.has(at.key)) return `the ${at.kind} was not requested`;
+    if (!notes.has(at.key)) return `the ${at.kind} has no note`;
     const path = repoPath(e.path);
     if (path === null) return "the path is not a repository path";
     if (deniedPath(path)) return "the app never edits this path";
@@ -54,27 +78,31 @@ export function validateFix(result: FixResult, requested: readonly number[], fil
       if ("problem" in p) return PROBLEMS[p.problem] as string;
       text = p.text;
     }
-    const at = locate(text, e.old, e.new);
-    if ("problem" in at) return PROBLEMS[at.problem] as string;
-    if (text !== null && at.old === at.new) return "the edit changes nothing";
-    const other = edits.find((x) => x.path === path && overlaps(x, at));
+    const loc = locate(text, e.old, e.new);
+    if ("problem" in loc) return PROBLEMS[loc.problem] as string;
+    if (text !== null && loc.old === loc.new) return "the edit changes nothing";
+    const other = edits.find((x) => x.path === path && overlaps(x, loc));
     if (other) return `the edit overlaps edit ${other.ord + 1}`;
-    const size = utf8(at.old) + utf8(at.new);
+    const size = utf8(loc.old) + utf8(loc.new);
     if (bytes + size > MAX_FIX_BYTES) return `the edits exceed ${MAX_FIX_BYTES} bytes`;
     bytes += size;
-    edits.push({ ...at, ord, thread: e.thread, path, rows: editRows(text ?? "", at) });
+    edits.push({ ...loc, ord, thread: e.thread ?? null, finding: e.finding ?? null, path, rows: editRows(text ?? "", loc) });
+    edited.add(at.key);
     return null;
   };
-  result.edits.forEach((e, ord) => {
-    const why = check(e, ord);
-    if (why) skipped.push(`Edit ${ord + 1} (thread ${e.thread}, ${oneLine(e.path)}) dropped: ${why}.`);
-  });
+  for (const [ord, e] of result.edits.entries()) {
+    const at = targetOf(e);
+    const why = typeof at === "string" ? at : check(e, at, ord);
+    const label = typeof at === "string" ? oneLine(e.path) : `${at.key}, ${oneLine(e.path)}`;
+    if (why) skipped.push(`Edit ${ord + 1} (${label}) dropped: ${why}.`);
+  }
 
   const threads: FixThread[] = [];
-  for (const thread of [...wanted].sort((a, b) => a - b)) {
-    const note = notes.get(thread);
-    if (!note) skipped.push(`Thread ${thread} has no note.`);
-    else if (note.fixed && !edits.some((e) => e.thread === thread)) skipped.push(`Thread ${thread} has no valid edit.`);
+  for (const key of order) {
+    const name = key.charAt(0).toUpperCase() + key.slice(1);
+    const note = notes.get(key);
+    if (!note) skipped.push(`${name} has no note.`);
+    else if (note.fixed && !edited.has(key)) skipped.push(`${name} has no valid edit.`);
     else threads.push(note);
   }
   return { summary: result.summary, coverage: { ...result.coverage, skipped }, threads, edits };

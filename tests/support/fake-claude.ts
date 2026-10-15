@@ -54,13 +54,17 @@ export function echoReplies(stdin: string) {
   };
 }
 
-// A fix result with one note per thread of the stdin "Fix threads:" line, no fix, and no edit.
+// A fix result with one note per thread of the stdin "Fix threads:" line and per ID of the "Fix findings:" line, no fix, and no edit.
 export function echoFix(stdin: string) {
   const line = /^Fix threads: (.*)$/m.exec(stdin)?.[1] ?? "";
   const threads = [...line.matchAll(/(\d+)(?: \([^)]*\))?/g)].map((m) => Number(m[1]));
+  const findings = [...(/^Fix findings: (.*)$/m.exec(stdin)?.[1] ?? "").matchAll(/\d+/g)].map((m) => Number(m[0]));
   return {
-    summary: `Checked ${threads.length} threads.`,
-    threads: threads.map((thread) => ({ thread, fixed: false, reason: "Echo" })),
+    summary: findings.length ? `Checked ${threads.length} threads and ${findings.length} findings.` : `Checked ${threads.length} threads.`,
+    threads: [
+      ...threads.map((thread) => ({ thread, fixed: false, reason: "Echo" })),
+      ...findings.map((finding) => ({ finding, fixed: false, reason: "Echo" })),
+    ],
     edits: [],
     coverage: NO_COVERAGE,
   };

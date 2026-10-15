@@ -97,8 +97,14 @@ export const MAX_FIX_EDITS = 50;
 export const MAX_FIX_BYTES = 200_000;
 const MAX_EDIT_TEXT = 20_000;
 
+// docs/plans/fix-ux.md WP3: each note and each edit names exactly one thread or one finding. validateFix checks it.
+const fixTarget = {
+  thread: lineNo.optional().describe("A thread number from the Fix threads line. Leave it out for a finding."),
+  finding: lineNo.optional().describe("A finding ID from the Fix findings line. Leave it out for a thread."),
+};
+
 export const fixEdit = z.object({
-  thread: lineNo.describe("A thread number from the Fix threads line."),
+  ...fixTarget,
   path: z.string().describe("File path relative to the repository root, with / separators."),
   old: z
     .string()
@@ -108,14 +114,14 @@ export const fixEdit = z.object({
 });
 
 export const fixThread = z.object({
-  thread: lineNo.describe("A thread number from the Fix threads line."),
-  fixed: z.boolean().describe("true: the edits of this thread fix the review point."),
+  ...fixTarget,
+  fixed: z.boolean().describe("true: the edits of this thread or finding fix the review point."),
   reason: z.string().describe("One line: what the edits change, or why there is no fix."),
 });
 
 export const fixResult = z.object({
   summary: z.string().describe("One line."),
-  threads: z.array(fixThread).max(MAX_REPLY_THREADS),
+  threads: z.array(fixThread).max(MAX_REPLY_THREADS).describe("One entry per thread and per finding."),
   edits: z.array(fixEdit).max(MAX_FIX_EDITS),
   coverage,
 });
@@ -150,6 +156,10 @@ export const rereviewJsonSchema = (): Record<string, unknown> => z.toJSONSchema(
 
 // A finding or question that a re-review copied from its base run. from: the source item ID. since: the head that the base run reviewed.
 export type Carried = { from: number; verdict: Verdict; reason: string; since: string };
+
+// docs/plans/fix-ux.md decision 3: a fix commit that covers an open finding discards it with this mark. id: the fix_commit ID.
+// was: the status before the mark. An undo of the commit restores it. A restore by the user keeps the mark.
+export type FixedMark = { id: number; commit: string; short: string; was: "new" | "accepted" };
 
 // ---------- Ask (plan r2 S-ASK) ----------
 

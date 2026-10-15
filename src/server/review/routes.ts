@@ -141,14 +141,16 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       prParam,
       validator("json", (v, c) => {
         const r = fixRunInput.safeParse(v);
-        return r.success ? r.data : c.json<ApiError>({ error: invalid(r.error, "Invalid thread list.") }, 400);
+        // The custom issue is the cap on threads and findings together.
+        const cap = r.error?.issues.find((i) => i.code === "custom")?.message;
+        return r.success ? r.data : c.json<ApiError>({ error: invalid(r.error, cap ?? "Invalid thread or finding list.") }, 400);
       }),
       (c) => {
         const db = review.open();
         if (!db) return c.json(unconfigured, 409);
-        const { threads, profile } = c.req.valid("json");
+        const { threads, findings, profile } = c.req.valid("json");
         if (profile && !review.hasProfile(profile)) return c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
-        const r = review.fix(db, c.req.valid("param").id, threads, profile);
+        const r = review.fix(db, c.req.valid("param").id, { threads, findings }, profile);
         if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
         if ("conflict" in r) return c.json(r.conflict, 409);
         if (r.status === 400) return c.json({ error: r.error }, 400);

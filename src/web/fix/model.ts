@@ -48,7 +48,8 @@ export function fixTargets(threads: ThreadModel[], replies: ReviewItemDto[] | un
     for (const c of f.commits) {
       if (c.state !== "committed") continue;
       for (const e of f.edits)
-        if (c.edits.includes(e.id) && !fixedIn.has(e.thread)) fixedIn.set(e.thread, c.short ?? shortHash(c.commit ?? ""));
+        if (e.thread !== undefined && c.edits.includes(e.id) && !fixedIn.has(e.thread))
+          fixedIn.set(e.thread, c.short ?? shortHash(c.commit ?? ""));
     }
   const out: FixTargets = { rows: [], resolved: 0, deleted: 0 };
   for (const t of ordered(threads, false)) {
@@ -134,7 +135,7 @@ export function freeEdits(f: FixDto): FixEditDto[] {
 // ticks: the choice of the user per edit ID. Without a choice, the edits of the newest run are ticked and older ones are not.
 export function selection(f: FixDto, newest: boolean, ticks: ReadonlyMap<number, boolean>) {
   const edits = freeEdits(f).filter((e) => ticks.get(e.id) ?? newest);
-  return { edits: edits.map((e) => e.id), threads: [...new Set(edits.map((e) => e.thread))] };
+  return { edits: edits.map((e) => e.id), threads: [...new Set(edits.flatMap((e) => (e.thread === undefined ? [] : [e.thread])))] };
 }
 
 export const applyText = (edits: number, threads: number) => `Apply ${plural(edits, "edit")} from ${plural(threads, "comment")}`;

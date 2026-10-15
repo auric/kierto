@@ -33,6 +33,8 @@ const STDIN = [
   "",
   "Fix threads: 101 (comment 105), 102 (comment 107)",
   "",
+  "Fix findings: 31, 32",
+  "",
   "# Your instructions",
   "",
   "The user wrote the text below.",
@@ -126,12 +128,14 @@ describe("fake CLI", () => {
     ]);
   });
 
-  test("a fix schema echoes one unfixed note per Fix threads ID and no edit; a scenario fix result replaces it", async () => {
+  test("a fix schema echoes one unfixed note per Fix threads and Fix findings ID and no edit; a scenario fix result replaces it", async () => {
     const r = await run(fixJsonSchema(), "Read,Grep,Glob");
     expect(fixResult.safeParse(r.output).success).toBe(true);
     expect(r.output.threads).toEqual([
       { thread: 101, fixed: false, reason: "Echo" },
       { thread: 102, fixed: false, reason: "Echo" },
+      { finding: 31, fixed: false, reason: "Echo" },
+      { finding: 32, fixed: false, reason: "Echo" },
     ]);
     expect(r.output.edits).toEqual([]);
     expect(r.tools).not.toContain("Task");

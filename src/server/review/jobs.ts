@@ -11,6 +11,7 @@ import {
   type BriefInput,
   type DiffRowDto,
   type FixDto,
+  type FixEditDto,
   type PrTask,
   type ReviewItemDto,
   type RunConflict,
@@ -27,6 +28,7 @@ import {
   askResult,
   type Carried,
   type Finding,
+  type FixedMark,
   type FixThread,
   fixJsonSchema,
   fixResult,
@@ -234,7 +236,8 @@ type Ending = {
 // items: the findings and questions of the base run with status new or accepted at the start.
 type Carry = { base: number; since: string; sinceBase: string | null; incomplete: boolean; items: ItemRow[] };
 
-// threads: the threads of a reply or fix run, else null. question: the question of an ask run, else null. profile: the profile as it was at the start.
+// threads: the threads of a reply or fix run, else null. findings: the review item IDs of a fix run.
+// question: the question of an ask run, else null. profile: the profile as it was at the start.
 type Job = {
   id: number;
   pr: number;
@@ -243,6 +246,7 @@ type Job = {
   db: Database;
   profile: Profile;
   threads: ReplyThread[] | null;
+  findings: number[];
   carry: Carry | null;
   question: string | null;
   cancelled: boolean;
@@ -287,8 +291,13 @@ const SQL = {
   end: `UPDATE review_run SET status = $status, error_kind = $kind, error_text = $text, session_id = $session, cli_version = $cli, model = COALESCE($model, model),
       effort_default = CASE WHEN $init_effort THEN $effort_default ELSE effort_default END, usage_json = $usage, summary_json = $summary, answer = $answer, fix_json = $fix, raw_output = $raw, finished_at = $now
     WHERE id = $id AND status = 'running'`,
-  fixEdit: `INSERT INTO fix_edit (run, ord, thread, path, old, new, start, rows_json) VALUES ($run, $ord, $thread, $path, $old, $new, $start, $rows)`,
-  fixEdits: "SELECT id, thread, path, rows_json FROM fix_edit WHERE run = $run ORDER BY ord",
+  fixEdit: `INSERT INTO fix_edit (run, ord, thread, item, path, old, new, start, rows_json)
+    VALUES ($run, $ord, $thread, $item, $path, $old, $new, $start, $rows)`,
+  fixEdits: "SELECT id, thread, item, path, rows_json FROM fix_edit WHERE run = $run ORDER BY ord",
+  // A finding of a fix run with the heads of its run. copy: the newest re-review copy of the finding.
+  fixFinding: `SELECT i.*, r.pr AS run_pr, r.source_head AS run_head, r.merge_base AS run_base,
+      (SELECT MAX(c.id) FROM review_item c WHERE c.kind = 'finding' AND json_extract(c.payload_json, '$.carried.from') = i.id) AS copy
+    FROM review_item i JOIN review_run r ON r.id = i.run WHERE i.id = $id`,
   fixCommits: "SELECT c.*, p.pr_id FROM fix_commit c JOIN pull_request p ON p.id = c.pr WHERE c.run = $run ORDER BY c.id",
   fixes: "WHERE r.pr = $pr AND r.kind = 'fix' ORDER BY r.id DESC LIMIT 10",
   // A run that was running at the last stop has no process now.
@@ -578,18 +587,21 @@ const indent = (s: string) =>
     .map((l) => `    ${l}`)
     .join("\n");
 
-// context/findings.md of a re-review. Indented blocks, so no stored text can start a heading.
-function findingsFile(rows: ItemRow[], carry: Carry): ContextFile {
+// A finding of a fix run (SQL.fixFinding).
+type FindingRow = ItemRow & { run_pr: number; run_head: string; run_base: string | null; copy: number | null };
+
+// context/findings.md of a re-review or a fix run. Indented blocks, so no stored text can start a heading.
+// at: the commit that the lines of the finding count on.
+function findingsFile<R extends ItemRow>(rows: R[], at: (r: R, side: Finding["side"]) => string): ContextFile {
   const out = rows.flatMap((r) => {
     const { finding: f } = earlierItem(r);
     const end = f.lineEnd !== null && f.lineEnd !== f.line ? `-${f.lineEnd}` : "";
-    const at = f.side === "new" ? carry.since : (carry.sinceBase ?? "the earlier merge base");
     return [
       `## Finding ${r.id}`,
       "",
       `- Path: ${oneLine(f.path)}`,
       `- Side: ${f.side}`,
-      `- Lines: ${f.line}${end} at ${at}`,
+      `- Lines: ${f.line}${end} at ${at(r, f.side)}`,
       `- Severity: ${f.severity}`,
       "",
       "Code at the finding:",
@@ -811,7 +823,14 @@ async function readFixFiles(ws: Workspace, paths: string[]): Promise<Map<string,
 }
 
 // Plan r3 S-FIX: a fix run makes no items. Its notes go to fix_json and its edits to fix_edit.
-async function judgeFix(o: RunOutcome, ws: Workspace, threads: ReplyThread[], servers: string[], gaps: string[]): Promise<Ending> {
+async function judgeFix(
+  o: RunOutcome,
+  ws: Workspace,
+  threads: ReplyThread[],
+  findings: number[],
+  servers: string[],
+  gaps: string[],
+): Promise<Ending> {
   const raw = rawOutput(o);
   if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
   const parsed = fixResult.safeParse(o.result?.structured_output);
@@ -820,11 +839,7 @@ async function judgeFix(o: RunOutcome, ws: Workspace, threads: ReplyThread[], se
     ws,
     parsed.data.edits.map((e) => e.path),
   );
-  const v = validateFix(
-    parsed.data,
-    threads.map((t) => t.thread),
-    files,
-  );
+  const v = validateFix(parsed.data, { threads: threads.map((t) => t.thread), findings }, files);
   const coverage = { ...v.coverage, unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)] };
   return ended(raw, o, {
     summary: { summary: v.summary, risks: [], coverage, dropped: [] },
@@ -833,12 +848,20 @@ async function judgeFix(o: RunOutcome, ws: Workspace, threads: ReplyThread[], se
   });
 }
 
-type FixEditRow = { id: number; thread: number; path: string; rows_json: string };
+type FixEditRow = { id: number; thread: number | null; item: number | null; path: string; rows_json: string };
 
-function toFixEditDto(r: FixEditRow) {
+function toFixEditDto(r: FixEditRow): FixEditDto {
   const rows = JSON.parse(r.rows_json) as DiffRowDto[];
   const count = (kind: DiffRowDto["kind"]) => rows.filter((x) => x.kind === kind).length;
-  return { id: r.id, thread: r.thread, path: r.path, added: count("add"), removed: count("del"), rows };
+  return {
+    id: r.id,
+    ...(r.thread !== null && { thread: r.thread }),
+    ...(r.item !== null && { finding: r.item }),
+    path: r.path,
+    added: count("add"),
+    removed: count("del"),
+    rows,
+  };
 }
 
 // The effort that the current user settings give a run without --effort. It reads the settings file once per model.
@@ -1029,6 +1052,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
           run: j.id,
           ord: x.ord,
           thread: x.thread,
+          item: x.finding,
           path: x.path,
           old: x.old,
           new: x.new,
@@ -1082,7 +1106,21 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         : carry || j.profile.explain
           ? null
           : historyFile(j.db, j.pr, pr.source_head, true);
-    const extra = [...(carry && earlier.length ? [findingsFile(current(j.db, earlier), carry)] : []), ...(history ? [history] : [])];
+    // The findings of a fix run as they are now. A user edit or move after the start counts.
+    const fixRows = j.findings.flatMap((id) => (j.db.query(SQL.fixFinding).get({ id }) as FindingRow | null) ?? []);
+    const extra = [
+      ...(carry && earlier.length
+        ? [
+            findingsFile(current(j.db, earlier), (_, side) =>
+              side === "new" ? carry.since : (carry.sinceBase ?? "the earlier merge base"),
+            ),
+          ]
+        : []),
+      ...(fixRows.length
+        ? [findingsFile(fixRows, (r, side) => (side === "new" ? r.run_head : (r.run_base ?? `the merge base of run ${r.run}`)))]
+        : []),
+      ...(history ? [history] : []),
+    ];
     try {
       ws = await prepareWorkspace({
         dataDir,
@@ -1211,7 +1249,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const spec = reply
       ? { prompt: buildReplyPrompt({ ...input, threads: reply }), schema: replyJsonSchema(), main: replyAgent(profile) }
       : fix
-        ? { prompt: buildFixPrompt({ ...input, threads: fix }), schema: fixJsonSchema(), main: fixAgent(profile) }
+        ? { prompt: buildFixPrompt({ ...input, threads: fix, findings: j.findings }), schema: fixJsonSchema(), main: fixAgent(profile) }
         : question !== null
           ? { prompt: buildAskPrompt({ ...input, question }), schema: askJsonSchema(), main: askAgent(profile) }
           : carry
@@ -1261,7 +1299,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       return { ...e, raw: `${unmarked}\n\n${e.raw}` };
     };
     if (reply) return noted(judgeReplies(o, reply, servers, gaps));
-    if (fix) return noted(await judgeFix(o, ws, fix, servers, gaps));
+    if (fix) return noted(await judgeFix(o, ws, fix, j.findings, servers, gaps));
     if (question !== null) return noted(judgeAsk(o, servers, gaps));
     const rereview = carry && { carry, items: current(j.db, earlier).map(earlierItem) };
     return noted(await judge(o, ws, profile, servers, gaps, rereview));
@@ -1324,7 +1362,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     profile: Profile,
     key: string,
     kind: RunKind,
-    o: { threads?: ReplyThread[]; carry?: Carry; question?: string } = {},
+    o: { threads?: ReplyThread[]; findings?: number[]; carry?: Carry; question?: string } = {},
   ): StartResult {
     if (job) {
       const running = runRow(job.db, job.id);
@@ -1334,7 +1372,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // A missing always-use skill refuses the start, so no failed run is stored.
     const missing = alwaysProblems(profile.alwaysSkills, opts.claudeConfigDir ?? claudeConfigDir());
     if (missing.length) return { status: 409, error: missing.join(" ") };
-    const { threads = null, carry = null, question = null } = o;
+    const { threads = null, findings = [], carry = null, question = null } = o;
     const { id: runId } = db.query(SQL.insert).get({
       pr: pr.id,
       kind,
@@ -1354,7 +1392,20 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       effort: profile.effort ?? "default",
       effort_default: profile.effort ? null : runEffort(profile.model),
     }) as { id: number };
-    const j: Job = { id: runId, pr: pr.id, kind, key, db, profile, threads, carry, question, cancelled: false, done: Promise.resolve() };
+    const j: Job = {
+      id: runId,
+      pr: pr.id,
+      kind,
+      key,
+      db,
+      profile,
+      threads,
+      findings,
+      carry,
+      question,
+      cancelled: false,
+      done: Promise.resolve(),
+    };
     job = j;
     j.done = execute(j, pr, brief).finally(() => {
       if (job === j) job = null;
@@ -1413,6 +1464,26 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         error: `${out.length} threads have a valid reply draft. Fix at most ${MAX_REPLY_THREADS} at a time, per thread.`,
       };
     return out.sort((a, b) => a.thread - b.thread);
+  }
+
+  // The findings of a fix run (docs/plans/fix-ux.md WP3): open findings of this PR that are not posted and have a place in the code.
+  function fixFindings(db: Database, pr: PrRow, list: number[]): number[] | { status: 400; error: string } {
+    const ids = [...new Set(list)].sort((a, b) => a - b);
+    for (const id of ids) {
+      const r = db.query(SQL.fixFinding).get({ id }) as FindingRow | null;
+      const refuse = (why: string) => ({ status: 400 as const, error: `Finding ${id} ${why}` });
+      if (r?.kind !== "finding" || r.run_pr !== pr.id) return refuse("is not a finding of this pull request.");
+      if (r.status === "posted") return refuse("is posted. Fix its thread instead.");
+      if (r.status === "discarded") {
+        const p = JSON.parse(r.payload_json) as { carried?: Carried; fixed?: FixedMark };
+        if (p.fixed) return refuse(`is closed: it is fixed in ${p.fixed.short}.`);
+        if (p.carried && p.carried.verdict !== "open") return refuse(`is closed: a re-review found it ${p.carried.verdict}.`);
+        if (r.copy !== null) return refuse(`is closed: a re-review carried it over as finding ${r.copy}.`);
+        return refuse("is discarded. Fix works only on open findings.");
+      }
+      if (r.path === null || r.side === null || r.line === null) return refuse("has no place in the code.");
+    }
+    return ids;
   }
 
   // ---------- Reads ----------
@@ -1530,9 +1601,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "reply", { threads });
     },
 
-    // Plan r3 S-FIX: proposes edits for the valid and partly valid review points on the user's own PR. It shares the run slot.
-    // profile: a profile for this run only. Absent: the brief profile.
-    fix(db: Database, id: number, list?: number[], profileId?: string): StartResult {
+    // Plan r3 S-FIX: proposes edits for the review points on the user's own PR. It shares the run slot.
+    // pick: the threads and the review findings to fix. Absent both: the threads with a valid or partly valid reply draft.
+    // fixRunInput caps the threads and the findings together. profile: a profile for this run only. Absent: the brief profile.
+    fix(db: Database, id: number, pick: { threads?: number[]; findings?: number[] } = {}, profileId?: string): StartResult {
       const pr = prRow(db, id);
       if (!pr) return { status: 404, error: "Pull request not found." };
       const { source_head, target_head } = pr;
@@ -1541,11 +1613,13 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const brief = briefOf(db, id);
       const profile = profileOf(settings.profiles(), profileId ?? brief.profile);
       if (profile.explain) return { status: 409, error: "The Explain profile proposes no fixes. Pick a review profile first." };
-      const threads = fixThreads(db, pr, list);
+      const threads = pick.threads || !pick.findings ? fixThreads(db, pr, pick.threads) : [];
       if (!Array.isArray(threads)) return threads;
-      const at = threads.map((t) => `${t.thread}@${t.replyTo}`);
+      const findings = pick.findings ? fixFindings(db, pr, pick.findings) : [];
+      if (!Array.isArray(findings)) return findings;
+      const at = [...threads.map((t) => `${t.thread}@${t.replyTo}`), ...findings.map((f) => `finding${f}`)];
       const key = [id, "fix", source_head, target_head, profile.id, profileRevision(profile), ...at].join(":");
-      return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "fix", { threads });
+      return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "fix", { threads, findings });
     },
 
     // The newest fix runs of a PR with their notes, edits, and commits. null for an unknown PR.

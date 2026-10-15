@@ -212,13 +212,15 @@ async function setup() {
       VALUES ($pr, 'fix', 'general', '', 'fix', $s, $t, 'completed', 1, 2) RETURNING id`,
     )
     .get({ pr: id, s: heads.source, t: heads.main }) as { id: number };
-  const edit = (e: { path: string; old: string; new: string }, thread = ROOT) =>
+  // item: the review_item ID of a finding edit. A finding edit has no thread.
+  const edit = (e: { path: string; old: string; new: string }, thread: number | null = ROOT, item: number | null = null) =>
     (
       db
         .query(
-          `INSERT INTO fix_edit (run, ord, thread, path, old, new, start, rows_json) VALUES ($run, 0, $thread, $path, $old, $new, 0, '[]') RETURNING id`,
+          `INSERT INTO fix_edit (run, ord, thread, item, path, old, new, start, rows_json)
+          VALUES ($run, 0, $thread, $item, $path, $old, $new, 0, '[]') RETURNING id`,
         )
-        .get({ run, thread, path: e.path, old: e.old, new: e.new }) as { id: number }
+        .get({ run, thread, item, path: e.path, old: e.old, new: e.new }) as { id: number }
     ).id;
   const ids = EDITS.map((e) => edit(e));
   // An open reply draft of thread ROOT. The commit supersedes it.
@@ -269,7 +271,7 @@ async function setup() {
         )
         .get({ pr: id, root: ROOT }) as { comment_id: number }
     ).comment_id;
-  return { pr, fake, db, id, run, ids, edit, draft, dir, cache, call, setClone, apply, undo, row, items, newest, folders };
+  return { pr, fake, db, id, run, ids, edit, draft, dir, cache, call, setClone, apply, undo, row, items, newest, folders, live };
 }
 
 // HEAD and the status, to prove that a refused apply changed nothing.
@@ -726,6 +728,105 @@ describe("undo", () => {
       const again = await s.apply(s.ids);
       expect(again.status).toBe(201);
       expect(again.body.id).not.toBe(r.body.id);
+    },
+    SLOW,
+  );
+
+  test(
+    "finding edits (fix-ux.md decision 3): no Fixed in reply, the findings close with the fixed mark and leave the post plan; Undo restores them",
+    async () => {
+      for (const m of ["fix-routes", "jobs"])
+        console.log(`fix-ux WP3 imports ${Bun.resolveSync(`../../src/server/review/${m}`, import.meta.dir)}`);
+      const s = await setup();
+      const clone = await makeClone();
+      expect((await s.setClone(clone)).status).toBe(200);
+      const { id: review } = s.db
+        .query(
+          `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, merge_base, status, started_at, finished_at)
+          VALUES ($pr, 'review', 'general', '', 'review', $s, $t, $b, 'completed', 1, 2) RETURNING id`,
+        )
+        .get({ pr: s.id, s: heads.source, t: heads.main, b: heads.base }) as { id: number };
+      const excerpt = [{ n: 1, kind: "add", text: "# Sample" }];
+      const anchor = { state: "exact", path: "README.md", oldPath: null, line: 1, lineEnd: 1, excerpt };
+      const finding = (status: string) => {
+        const payload = {
+          path: "README.md",
+          side: "new",
+          line: 1,
+          lineEnd: null,
+          anchorText: "# Sample",
+          severity: "minor",
+          category: "Docs",
+          body: `Rename the title (${status}).`,
+          evidence: "E.",
+          evidenceStatus: "code",
+          confidence: "high",
+          agent: null,
+          anchor,
+        };
+        return (
+          s.db
+            .query(
+              `INSERT INTO review_item (run, kind, payload_json, body, path, side, line, line_end, anchor_state, excerpt_json, status)
+              VALUES ($run, 'finding', $payload, $body, 'README.md', 'new', 1, 1, 'exact', $excerpt, $status) RETURNING id`,
+            )
+            .get({ run: review, payload: JSON.stringify(payload), body: payload.body, status, excerpt: JSON.stringify(excerpt) }) as {
+            id: number;
+          }
+        ).id;
+      };
+      const accepted = finding("accepted");
+      const fresh = finding("new");
+      const edits = [s.edit(EDITS[2] as (typeof EDITS)[number], null, accepted), s.edit(EDITS[1] as (typeof EDITS)[number], null, fresh)];
+      const findings = () =>
+        (
+          s.db.query("SELECT id, status, revision, payload_json FROM review_item WHERE kind = 'finding' ORDER BY id").all() as {
+            id: number;
+            status: string;
+            revision: number;
+            payload_json: string;
+          }[]
+        ).map((r) => ({ id: r.id, status: r.status, revision: r.revision, fixed: JSON.parse(r.payload_json).fixed }));
+      const planned = async () =>
+        (await s.call<{ posts: { items: { id: number }[] }[] }>("GET", `/api/prs/${s.id}/post-plan`)).body.posts.flatMap((p) =>
+          p.items.map((i) => i.id),
+        );
+      expect(await planned()).toEqual([accepted]);
+      const replies = s.items();
+      const sent: unknown[] = [];
+      const broadcast = s.live.broadcast;
+      s.live.broadcast = (event, data) => {
+        sent.push([event, data]);
+        broadcast(event, data);
+      };
+
+      const r = await s.apply(edits);
+      expect(r.status).toBe(201);
+      const head = await cg(clone, ["rev-parse", "HEAD"]);
+      expect(sent).toEqual([["changed", { prs: [s.id], runs: [s.run, review] }]]);
+      // No thread edit: the reply draft of thread ROOT stays, and no Fixed in reply appears.
+      expect(s.items()).toEqual(replies);
+      const mark = (was: string) => ({ id: r.body.id, commit: head, short: r.body.short, was });
+      expect(findings()).toEqual([
+        { id: accepted, status: "discarded", revision: 1, fixed: mark("accepted") },
+        { id: fresh, status: "discarded", revision: 1, fixed: mark("new") },
+      ]);
+      expect(await planned()).toEqual([]);
+
+      // The user restores one finding. It keeps the mark.
+      const restore = await s.call<{ status: string }>("POST", `/api/items/${fresh}`, { action: "restore", revision: 1 });
+      expect([restore.status, restore.body.status]).toEqual([200, "new"]);
+
+      sent.length = 0;
+      const u = await s.undo(r.body.id);
+      expect([u.status, u.body.state]).toEqual([200, "undone"]);
+      expect(sent).toEqual([["changed", { prs: [s.id], runs: [s.run, review] }]]);
+      expect(findings()).toEqual([
+        { id: accepted, status: "accepted", revision: 2, fixed: undefined },
+        { id: fresh, status: "new", revision: 3, fixed: undefined },
+      ]);
+      expect(await planned()).toEqual([accepted]);
+      expect(s.items()).toEqual(replies);
     },
     SLOW,
   );

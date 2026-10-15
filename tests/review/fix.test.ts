@@ -110,7 +110,7 @@ async function fixRemote(root: string) {
   return { remote, base, source, target, gitRemote, env };
 }
 
-type Call = { argv: string[]; stdin: string };
+type Call = { argv: string[]; stdin: string; cwd: string };
 const flag = (argv: string[], name: string) => argv[argv.indexOf(name) + 1];
 
 async function waitFor(pred: () => boolean, ms = 30_000) {
@@ -201,6 +201,66 @@ async function setup(o: { baseUrl?: string } = {}) {
     ).id;
   };
 
+  // A completed review run of PR prId at the heads of the remote.
+  const reviewRun = (prId: number) =>
+    (
+      db
+        .query(
+          `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, merge_base, status, started_at)
+          VALUES ($pr, 'review', 'general', '', 'review-key', $source, $target, $base, 'completed', 1) RETURNING id`,
+        )
+        .get({ pr: prId, source: remote.source, target: remote.target, base: remote.base }) as { id: number }
+    ).id;
+  // A finding of an earlier review run on line 2 of src/app.ts. anchored false: a carried finding whose code is gone.
+  // The first finding makes the review run, so the other tests get no history.md.
+  let review1: number | null = null;
+  const finding = (o: { status?: string; anchored?: boolean; payload?: Record<string, unknown>; run?: number; kind?: string } = {}) => {
+    const anchor = {
+      state: "exact",
+      path: "src/app.ts",
+      oldPath: null,
+      line: 2,
+      lineEnd: 2,
+      excerpt: [{ n: 2, kind: "ctx", text: "const b = 2;" }],
+    };
+    const payload = {
+      path: "src/app.ts",
+      side: "new",
+      line: 2,
+      lineEnd: null,
+      anchorText: "const b = 2;",
+      severity: "major",
+      category: "Logic",
+      body: "FINDING-CANARY b is wrong.",
+      evidence: "E.",
+      evidenceStatus: "code",
+      confidence: "high",
+      agent: null,
+      anchor,
+      ...o.payload,
+    };
+    const at =
+      o.anchored === false
+        ? { path: null, side: null, line: null, line_end: null, anchor_state: null, excerpt_json: null }
+        : { path: "src/app.ts", side: "new", line: 2, line_end: 2, anchor_state: "exact", excerpt_json: JSON.stringify(anchor.excerpt) };
+    if (o.run === undefined && review1 === null) review1 = reviewRun(pr);
+    return (
+      db
+        .query(
+          `INSERT INTO review_item (run, kind, payload_json, body, path, side, line, line_end, anchor_state, excerpt_json, status)
+          VALUES ($run, $kind, $payload, $body, $path, $side, $line, $line_end, $anchor_state, $excerpt_json, $status) RETURNING id`,
+        )
+        .get({
+          run: o.run ?? review1,
+          kind: o.kind ?? "finding",
+          payload: JSON.stringify(payload),
+          body: payload.body,
+          status: o.status ?? "accepted",
+          ...at,
+        }) as { id: number }
+    ).id;
+  };
+
   const json = async <T>(path: string, init: { method?: string; body?: unknown } = {}) => {
     const res = await app.request(`${ORIGIN}${path}`, {
       method: init.method ?? (init.body === undefined ? "GET" : "POST"),
@@ -211,6 +271,7 @@ async function setup(o: { baseUrl?: string } = {}) {
   };
   type Start = RunDto & RunConflict & ApiError;
   const start = (threads?: number[], id = pr) => json<Start>(`/api/prs/${id}/fix-run`, { body: threads ? { threads } : {} });
+  const startFix = (body: { threads?: number[]; findings?: number[] }) => json<Start>(`/api/prs/${pr}/fix-run`, { body });
   const finish = async (id: number) => {
     await review.wait();
     return (await json<RunDetail>(`/api/runs/${id}`)).body;
@@ -227,7 +288,26 @@ async function setup(o: { baseUrl?: string } = {}) {
       : [];
   const editRows = (run: number) =>
     db.query("SELECT ord, thread, path, old, new, start FROM fix_edit WHERE run = $run ORDER BY ord").all({ run });
-  return { root, dir, remote, db, pr, review, options, scenario, json, start, finish, fixes, runCalls, draft, editRows };
+  return {
+    root,
+    dir,
+    remote,
+    db,
+    pr,
+    review,
+    options,
+    scenario,
+    json,
+    start,
+    startFix,
+    finish,
+    fixes,
+    runCalls,
+    draft,
+    editRows,
+    reviewRun,
+    finding,
+  };
 }
 
 const edit = (thread: number, path: string, old: string, next = `${old} changed`): FixEdit => ({ thread, path, old, new: next });
@@ -332,7 +412,7 @@ describe("thread selection and refusals", () => {
       expect(none.body.error).toBe("No reply draft finds a comment valid or partly valid. Draft replies first.");
       expect((await h.start([999])).status).toBe(400);
       expect((await h.start([701])).status).toBe(400);
-      expect((await h.start([])).body.error).toBe("Invalid thread list.");
+      expect((await h.start([])).body.error).toBe("Invalid thread or finding list.");
 
       h.db.query("UPDATE pull_request SET my_role = 'REVIEWER' WHERE id = $pr").run({ pr: h.pr });
       const role = await h.start([101]);
@@ -720,9 +800,168 @@ describe("Feature C: tasks_json", () => {
   );
 });
 
+describe("review findings (docs/plans/fix-ux.md phase 2)", () => {
+  test(
+    "a findings-only run lists the IDs, writes findings.md at the review head, and stores item; GET fixes names the finding",
+    async () => {
+      const h = await setup();
+      const f = h.finding();
+      h.scenario({ hang: true });
+      const a = await h.startFix({ findings: [f] });
+      expect(a.status).toBe(202);
+      expect(await waitFor(() => h.runCalls().length === 1)).toBe(true);
+      const c = h.runCalls()[0] as Call;
+      expect(c.stdin).toContain(`\nFix findings: ${f}\n`);
+      expect(c.stdin).not.toContain("Fix threads:");
+      expect(c.stdin).not.toContain("FINDING-CANARY");
+      const md = readFileSync(join(c.cwd, "context", "findings.md"), "utf8");
+      expect(md.split("\n")[0]).toBe("# UNTRUSTED DATA");
+      expect(md).toContain(`## Finding ${f}\n`);
+      expect(md).toContain(`- Lines: 2 at ${h.remote.source}\n`);
+      expect(md).toContain("    FINDING-CANARY b is wrong.\n");
+      // The same pick returns the running run.
+      expect((await h.startFix({ findings: [f, f] })).body.id).toBe(a.body.id);
+      await h.json(`/api/runs/${a.body.id}/cancel`, { method: "POST" });
+      await h.finish(a.body.id);
+
+      h.scenario({
+        fix: {
+          summary: "One fix.",
+          threads: [{ finding: f, fixed: true, reason: "Sets b to 3." }],
+          edits: [{ finding: f, path: "src/app.ts", old: "const b = 2;", new: "const b = 3;" }],
+          coverage: emptyCoverage,
+        },
+      });
+      const d = await h.finish((await h.startFix({ findings: [f] })).body.id);
+      expect(d.run).toMatchObject({ kind: "fix", status: "completed" });
+      expect(h.db.query("SELECT thread, item, path FROM fix_edit WHERE run = $run").all({ run: d.run.id })).toEqual([
+        { thread: null, item: f, path: "src/app.ts" },
+      ]);
+      const [fx] = await h.fixes();
+      expect(fx?.threads).toEqual([{ finding: f, fixed: true, reason: "Sets b to 3." }]);
+      expect(fx?.edits.map((e) => [e.thread, e.finding, e.path, e.added, e.removed])).toEqual([[undefined, f, "src/app.ts", 1, 1]]);
+    },
+    SLOW,
+  );
+
+  test(
+    "a mixed run lists threads and findings; the echo gives one note per thread and per finding; edits store thread or item",
+    async () => {
+      const h = await setup();
+      const f = h.finding({ status: "new" });
+      const r = await h.startFix({ threads: [101], findings: [f] });
+      expect(r.status).toBe(202);
+      await h.finish(r.body.id);
+      const stdin = h.runCalls()[0]?.stdin ?? "";
+      expect(stdin).toContain(`\nFix threads: 101 (comment 103)\n\nRead the whole thread of each entry, not only its newest message.\n`);
+      expect(stdin).toContain(`\nFix findings: ${f}\n`);
+      expect((await h.fixes())[0]?.threads).toEqual([note(101, "Echo", false), { finding: f, fixed: false, reason: "Echo" }]);
+
+      h.scenario({
+        fix: {
+          summary: "Two fixes.",
+          threads: [note(101), { finding: f, fixed: true, reason: "F." }],
+          edits: [edit(101, "src/app.ts", "const a = 1;"), { finding: f, path: "src/app.ts", old: "const c = 3;", new: "const c = 4;" }],
+          coverage: emptyCoverage,
+        },
+      });
+      const d = await h.finish((await h.startFix({ threads: [101], findings: [f] })).body.id);
+      expect(d.run.status).toBe("completed");
+      expect(h.db.query("SELECT ord, thread, item FROM fix_edit WHERE run = $run ORDER BY ord").all({ run: d.run.id })).toEqual([
+        { ord: 0, thread: 101, item: null },
+        { ord: 1, thread: null, item: f },
+      ]);
+    },
+    SLOW,
+  );
+
+  test(
+    "a finding that is not open gives 400 with the reason and starts no run; more than 25 threads and findings give 400",
+    async () => {
+      const h = await setup();
+      const open = h.finding();
+      const discarded = h.finding({ status: "discarded" });
+      const posted = h.finding({ status: "posted" });
+      const since = h.remote.base;
+      const closed = h.finding({ status: "discarded", payload: { carried: { from: open, verdict: "fixed", reason: "R.", since } } });
+      const source = h.finding({ status: "discarded" });
+      const copy = h.finding({ payload: { carried: { from: source, verdict: "open", reason: "R.", since } } });
+      const fixed = h.finding({ status: "discarded", payload: { fixed: { id: 1, commit: "c0ffee", short: "c0f", was: "accepted" } } });
+      const gone = h.finding({ anchored: false });
+      const question = h.finding({ kind: "question" });
+      const { id: other } = h.db
+        .query(
+          `INSERT INTO pull_request (project, repo, pr_id, title, author_slug, my_role, state, source_head, target_head)
+          VALUES ('PROJ', 'repo', 3, 'T', 'x', 'AUTHOR', 'OPEN', 'a', 'b') RETURNING id`,
+        )
+        .get() as { id: number };
+      const elsewhere = h.finding({ run: h.reviewRun(other) });
+      for (const [id, why] of [
+        [discarded, "is discarded. Fix works only on open findings."],
+        [posted, "is posted. Fix its thread instead."],
+        [closed, "is closed: a re-review found it fixed."],
+        [source, `is closed: a re-review carried it over as finding ${copy}.`],
+        [fixed, "is closed: it is fixed in c0f."],
+        [gone, "has no place in the code."],
+        [question, "is not a finding of this pull request."],
+        [elsewhere, "is not a finding of this pull request."],
+        [999_999, "is not a finding of this pull request."],
+      ] as const) {
+        const r = await h.startFix({ threads: [101], findings: [open, id] });
+        expect([r.status, r.body.error]).toEqual([400, `Finding ${id} ${why}`]);
+      }
+
+      const threads = Array.from({ length: 20 }, (_, i) => 2000 + i);
+      const many = await h.startFix({ threads, findings: [1, 2, 3, 4, 5, 6] });
+      expect([many.status, many.body.error]).toEqual([400, "Pick at most 25 threads and findings for one run."]);
+      expect((await h.startFix({ findings: [] })).body.error).toBe("Invalid thread or finding list.");
+      expect(h.runCalls()).toEqual([]);
+    },
+    SLOW,
+  );
+});
+
 describe("validateFix", () => {
   const file = (text: string): FixFile => ({ mode: "100644", bytes: new TextEncoder().encode(text) });
   const result = (o: Partial<FixResult>): FixResult => ({ summary: "S.", threads: [note(1)], edits: [], coverage: emptyCoverage, ...o });
+  const ONE = { threads: [1], findings: [] };
+
+  test("each note and each edit names exactly one thread or one finding; finding notes follow the thread notes (fix-ux.md WP3)", () => {
+    const v = validateFix(
+      result({
+        threads: [
+          { finding: 7, fixed: true, reason: "F7." },
+          note(1),
+          { thread: 1, finding: 7, fixed: true, reason: "Both." },
+          { fixed: false, reason: "None." },
+          { finding: 8, fixed: false, reason: "Not asked." },
+        ],
+        edits: [
+          { finding: 7, path: "a.ts", old: "one", new: "ONE" },
+          edit(1, "a.ts", "two"),
+          { thread: 1, finding: 7, path: "a.ts", old: "three", new: "3" },
+          { path: "a.ts", old: "three", new: "3" },
+          { finding: 9, path: "a.ts", old: "three", new: "3" },
+        ],
+      }),
+      { threads: [1], findings: [9, 7] },
+      new Map([["a.ts", file("one\ntwo\nthree\n")]]),
+    );
+    expect(v.threads).toEqual([note(1), { finding: 7, fixed: true, reason: "F7." }]);
+    expect(v.edits.map((e) => [e.ord, e.thread, e.finding])).toEqual([
+      [0, null, 7],
+      [1, 1, null],
+    ]);
+    expect(v.coverage.skipped).toEqual([
+      "Note 3 dropped: it names both thread 1 and finding 7.",
+      "Note 4 dropped: it names no thread and no finding.",
+      "Note for finding 8 dropped: the finding was not requested.",
+      "Edit 3 (a.ts) dropped: it names both thread 1 and finding 7.",
+      "Edit 4 (a.ts) dropped: it names no thread and no finding.",
+      "Edit 5 (finding 9, a.ts) dropped: the finding has no note.",
+      "Finding 9 has no note.",
+    ]);
+  });
 
   test("a file above the size cap and edits beyond MAX_FIX_BYTES drop; a note with fixed false keeps its edits", () => {
     const big = "x".repeat(MAX_FIX_BYTES / 2 + 1);
@@ -731,7 +970,7 @@ describe("validateFix", () => {
         threads: [note(1, "Partly.", false)],
         edits: [edit(1, "a.ts", "", big), edit(1, "b.ts", "", big), edit(1, "c.ts", "", "y"), edit(1, "huge.ts", "x")],
       }),
-      [1],
+      ONE,
       new Map<string, FixFile>([["huge.ts", "size"]]),
     );
     expect(v.edits.map((e) => [e.ord, e.path])).toEqual([
@@ -750,7 +989,7 @@ describe("validateFix", () => {
       result({
         edits: [edit(1, "src\\a.ts", "one"), edit(1, "src/a.ts", "\ntwo"), edit(1, "n.ts", "", "1"), edit(1, "./n.ts", "", "2")],
       }),
-      [1],
+      ONE,
       new Map([["src/a.ts", file("one\ntwo\n")]]),
     );
     expect(v.edits.map((e) => [e.path, e.start])).toEqual([
@@ -774,7 +1013,7 @@ describe("validateFix", () => {
       ".gitmodules",
       "AGENTS.md",
     ];
-    const v = validateFix(result({ edits: paths.map((p) => edit(1, p, "", "x")) }), [1], new Map());
+    const v = validateFix(result({ edits: paths.map((p) => edit(1, p, "", "x")) }), ONE, new Map());
     expect(v.edits).toEqual([]);
     expect(v.coverage.skipped.slice(0, -1).map((s) => s.endsWith("the app never edits this path."))).toEqual(paths.map(() => true));
     expect(v.coverage.skipped.at(-1)).toBe("Thread 1 has no valid edit.");
