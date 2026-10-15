@@ -1,5 +1,18 @@
 // Overview, Files, and Commits of the detail pane (prototype/v3 overview, filesSec, commitsSec).
-import { ChevronRight, Copy, ExternalLink, File, FileDiff, FileMinus, FilePlus, FileSymlink, MessageSquare } from "lucide-react";
+import {
+  ChevronRight,
+  CircleAlert,
+  Copy,
+  ExternalLink,
+  File,
+  FileDiff,
+  FileMinus,
+  FilePlus,
+  FileSymlink,
+  LoaderCircle,
+  type LucideIcon,
+  MessageSquare,
+} from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ChangedFile, CommitDto, PrDetail } from "../../shared/dto";
@@ -115,7 +128,7 @@ export function Fold({
   );
 }
 
-const CHANGE: Record<string, [typeof File, string]> = {
+const CHANGE: Record<string, [LucideIcon, string]> = {
   ADD: [FilePlus, "Added"],
   MODIFY: [FileDiff, "Modified"],
   DELETE: [FileMinus, "Deleted"],
@@ -123,9 +136,22 @@ const CHANGE: Record<string, [typeof File, string]> = {
   COPY: [Copy, "Copied"],
 };
 
-// Plan r2 UI-DIFF: every loaded PR has Files. n: the file count, null while no list is known. children: the file list.
+const icon = "size-[15px] shrink-0";
+
+export function Err({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex items-start gap-1.5 text-destructive">
+      <CircleAlert aria-hidden className={cn(icon, "mt-0.5")} />
+      <span>{children}</span>
+    </span>
+  );
+}
+
+// Plan r2 UI-DIFF: every loaded PR has Files. n: the file count, null while no list is known. stat: "+a −d" once the code is there.
+// children: the file list.
 export function FilesFold(props: {
   n: number | null;
+  stat: string | null;
   open: boolean;
   onOpen: (open: boolean) => void;
   web: string | null;
@@ -138,7 +164,12 @@ export function FilesFold(props: {
       wide
       open={props.open}
       onOpen={props.onOpen}
-      head={<FoldHead label="Files" n={props.n === null ? "" : `${props.n}`} />}
+      head={
+        <>
+          <FoldHead label="Files" n={props.n === null ? "" : `${props.n}`} />
+          {props.stat && <span className="font-mono text-xs font-normal text-muted-foreground">{props.stat}</span>}
+        </>
+      }
     >
       {props.children}
       {props.web && <DiffLink web={props.web} forge={props.forge} />}
@@ -146,41 +177,114 @@ export function FilesFold(props: {
   );
 }
 
-// The forge file list. It shows until the git index of the diff viewer loads.
-export function ForgeFiles(props: { files: ChangedFile[]; threads: ThreadModel[]; onFile: (path: string) => void; hints: Hints }) {
+// One file row (plan pr-view-v4 2.9). The whole row is the button that opens the diff under it, so every file has an action.
+// The open row sticks under the action bar: the list sets --rl-bar to the bar height. busy: the row waits for the code.
+export function FileRowButton(props: {
+  id: string;
+  path: string;
+  icon: LucideIcon;
+  word: string;
+  threads: number;
+  open: boolean;
+  controls?: string;
+  busy?: boolean;
+  stat?: string;
+  hints: Hints;
+  onClick: () => void;
+}) {
+  const { path, word, threads, icon: Icon } = props;
+  const cut = path.lastIndexOf("/") + 1;
   return (
-    <ul className="m-0 mb-2.5 list-none p-0">
-      {props.files.map((f) => {
+    <button
+      id={props.id}
+      type="button"
+      aria-expanded={props.open}
+      aria-controls={props.controls}
+      aria-busy={props.busy || undefined}
+      onClick={props.onClick}
+      className={cn(
+        "grid w-full cursor-pointer grid-cols-[15px_15px_minmax(0,1fr)_auto_auto] items-center gap-2 border-b px-1.5 py-1.5 text-left text-sm hover:bg-hover",
+        props.open && "sticky top-[var(--rl-bar,0px)] z-[2] bg-sunken",
+      )}
+    >
+      <ChevronRight aria-hidden className={cn("rl-chev text-muted-foreground", icon)} />
+      <HintTrigger hints={props.hints} label={word}>
+        <span className="inline-flex text-muted-foreground">
+          <Icon aria-hidden className={icon} />
+        </span>
+      </HintTrigger>
+      <span translate="no" className="min-w-0 font-mono [overflow-wrap:anywhere]">
+        <span className="text-muted-foreground">{path.slice(0, cut)}</span>
+        {path.slice(cut)}
+      </span>
+      <span className="sr-only">. {word}.</span>
+      {threads > 0 ? (
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+          <MessageSquare aria-hidden className={icon} />
+          {threads}
+          <span className="sr-only">{threads === 1 ? " thread" : " threads"}</span>
+        </span>
+      ) : (
+        <span />
+      )}
+      {props.busy ? (
+        <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap">
+          <LoaderCircle aria-hidden className={cn(icon, "animate-spin motion-reduce:animate-none")} />
+          Getting the code
+        </span>
+      ) : (
+        <span className="min-w-[9ch] text-right font-mono text-xs whitespace-nowrap text-muted-foreground">{props.stat}</span>
+      )}
+    </button>
+  );
+}
+
+// The forge file list. It shows until the git index of the diff viewer loads. A row click gets the code, then opens the file.
+// busy: the path of the row that waits for the code. error: the path and the error text of the row whose fetch failed.
+export function ForgeFiles(props: {
+  files: ChangedFile[];
+  threads: ThreadModel[];
+  hints: Hints;
+  busy: string | null;
+  error: { path: string; text: string } | null;
+  onOpen: (path: string) => void;
+}) {
+  return (
+    <ul aria-label="Changed files" className="m-0 mb-2.5 max-w-[86ch] list-none border-t p-0">
+      {props.files.map((f, i) => {
         const [Icon, type] = CHANGE[f.type] ?? [File, "Changed"];
-        const word = f.srcPath ? `${type} from ${f.srcPath}` : type;
-        const count = props.threads.filter((t) => t.anchor?.path === f.path).length;
-        const go = `Go to ${count === 1 ? "the thread" : `the first of ${count} threads`} on this file`;
-        const cut = f.path.lastIndexOf("/") + 1;
+        const failed = props.error?.path === f.path ? props.error.text : null;
         return (
-          <li key={f.path} className="grid grid-cols-[15px_minmax(0,1fr)_auto] items-center gap-3 border-b py-1.5">
-            <HintTrigger hints={props.hints} label={word}>
-              <span role="img" aria-label={word} className="inline-flex text-muted-foreground">
-                <Icon aria-hidden className="size-[15px]" />
-              </span>
-            </HintTrigger>
-            <span translate="no" className="min-w-0 font-mono text-sm [overflow-wrap:anywhere]">
-              <span className="text-muted-foreground">{f.path.slice(0, cut)}</span>
-              {f.path.slice(cut)}
-            </span>
-            {count > 0 ? (
-              <HintTrigger hints={props.hints} label={go}>
-                <button
-                  type="button"
-                  aria-label={go}
-                  onClick={() => props.onFile(f.path)}
-                  className="inline-flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-sm font-medium text-ink-2 hover:underline"
-                >
-                  <MessageSquare aria-hidden className="size-[15px]" />
-                  {count}
-                </button>
-              </HintTrigger>
-            ) : (
-              <span />
+          <li key={f.path}>
+            <FileRowButton
+              id={`ff-${i}`}
+              path={f.path}
+              icon={Icon}
+              word={f.srcPath ? `${type} from ${f.srcPath}` : type}
+              threads={props.threads.filter((t) => t.anchor?.path === f.path).length}
+              open={false}
+              busy={props.busy === f.path}
+              hints={props.hints}
+              onClick={() => props.onOpen(f.path)}
+            />
+            {failed !== null && (
+              // The same columns as the row, so the text starts under the path.
+              <p className="m-0 grid grid-cols-[15px_15px_minmax(0,1fr)] gap-2 border-b px-1.5 py-1.5 text-sm">
+                <span className="col-start-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <Err>Cannot get the code. {failed}</Err>
+                  <button
+                    type="button"
+                    className={cn(linkish, "cursor-pointer")}
+                    onClick={() => {
+                      // The retry removes this line, so the focus goes to the row that shows the progress.
+                      document.getElementById(`ff-${i}`)?.focus();
+                      props.onOpen(f.path);
+                    }}
+                  >
+                    Try again
+                  </button>
+                </span>
+              </p>
             )}
           </li>
         );

@@ -17,7 +17,7 @@ const param = (id: number) => ({ param: { id: String(id) } });
 export const diffKey = (pr: number) => ["pr", pr, "diff"] as const;
 const pageKey = (pr: number, path: string, start: number) => ["pr", pr, "diff", path, start] as const;
 
-// fetch: the local cache does not hold the PR heads. Only a click on "Get the code" fetches them (plan r2 section 6).
+// fetch: the local cache does not hold the PR heads. Only a click on "Get the code" or on a file row fetches them (plan r2 section 6).
 export type DiffIndex = DiffIndexDto | { fetch: true };
 
 type Res = { ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> };
@@ -93,16 +93,16 @@ export async function loadUntil(qc: QueryClient, pr: number, path: string, total
 }
 
 // POST /api/prs/:id/diff/fetch. git fetch of the PR heads into the local cache. A review run fills it too.
-// onGot runs also when the button that started the fetch unmounted.
-export function useGetCode(pr: number, onGot: (index: DiffIndexDto) => void) {
+// The mutation variable is the path of the file row that started the fetch, or null. onGot runs also when that row unmounted.
+export function useGetCode(pr: number, onGot: (index: DiffIndexDto, path: string | null) => void) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => read<DiffIndexDto>(await api.api.prs[":id"].diff.fetch.$post(param(pr))),
-    onSuccess: (index) => {
+    mutationFn: async (_path: string | null) => read<DiffIndexDto>(await api.api.prs[":id"].diff.fetch.$post(param(pr))),
+    onSuccess: (index, path) => {
       qc.setQueryData<DiffIndex>(diffKey(pr), index);
       // Pages of earlier heads can be in the cache.
       void qc.invalidateQueries({ queryKey: diffKey(pr), predicate: (q) => q.queryKey.length > 3 });
-      onGot(index);
+      onGot(index, path);
     },
   });
 }

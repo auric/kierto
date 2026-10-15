@@ -481,7 +481,7 @@ test("keys j, k, Enter, Esc, /, n, N, o, g f, and ? work", async ({ page }) => {
   await page.keyboard.press("f");
   await expect(page.locator("#s-files")).toHaveAttribute("open", "");
   await expect(page.locator("#s-files-sum")).toBeFocused();
-  await expect(page.locator("#s-files").getByRole("button", { name: "Get the code from Bitbucket" })).toBeVisible();
+  await expect(page.locator("#s-files").getByRole("button", { name: "Get the code", exact: true })).toBeVisible();
 
   await page.keyboard.press("?");
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });

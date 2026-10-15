@@ -58,9 +58,17 @@ test("an inline thread shows its excerpt and its link; the task, Files, and Comm
   await page.keyboard.press("g");
   await page.keyboard.press("f");
   await expect(page.locator("#s-files")).toHaveAttribute("open", "");
-  // Plan r2 UI-DIFF: the forge list shows until a click gets the code.
-  await expect(page.locator("#s-files")).toContainText("sample1.md");
-  await expect(page.locator("#s-files").getByRole("button", { name: "Get the code from Bitbucket" })).toBeVisible();
+  // Plan r2 UI-DIFF: the forge list shows until a click gets the code. Plan pr-view-v4 P6: each row is the button that gets it.
+  const row = page.locator("#s-files").getByRole("list", { name: "Changed files" }).locator("button[aria-expanded]");
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("sample1.md");
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("#s-files").getByRole("button", { name: "Get the code now" })).toBeVisible();
+  // The fake git remote has no sample1.md in this diff. The focus then goes to the first file of the git list.
+  await row.click();
+  await expect(page.locator("#df-0")).toBeFocused();
+  await expect(page.locator("#df-0")).toContainText("src/cache/flush.ts");
+  await expect(page.locator("p[role='status'].sr-only")).toHaveText("Got the code. 1 changed file. sample1.md is not in the diff.");
   await page.keyboard.press("g");
   await page.keyboard.press("c");
   await expect(page.locator("#s-commits")).toHaveAttribute("open", "");

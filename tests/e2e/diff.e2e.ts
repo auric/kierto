@@ -1,7 +1,7 @@
 // Plan r2 UI-DIFF in the browser: get the code on a click, open a file, threads and drafts on their lines, Show in diff and
 // back, and the diff marks nothing read. Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, writes } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, makeClone, pushClone, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -67,9 +67,9 @@ async function review(page: Page) {
   await expect(drafts(page)).toHaveCount(3);
 }
 
-// The fetch moves the focus to the first file.
+// The fetch moves the focus to the first file. PR 1001 has no forge file list, so the note offers the fetch alone.
 async function getCode(page: Page, first: string) {
-  const get = files(page).getByRole("button", { name: "Get the code from Bitbucket" });
+  const get = files(page).getByRole("button", { name: "Get the code", exact: true });
   await expect(get).toBeVisible();
   await get.click();
   await expect(page.locator("#df-0")).toBeFocused();
@@ -150,9 +150,9 @@ test("the Files link of the summary line opens Files and its first file; without
   await expect(page.locator("#diff-get")).toBeFocused();
   await getCode(page, "src/cache/flush.ts");
   await expect(first).toHaveAttribute("aria-expanded", "false");
-  // One count for the link and the head of Files.
+  // One count for the link and the head of Files. The head adds the line counts once the code is there.
   await expect(link).toHaveText("Files 1");
-  await expect(page.locator("#s-files-sum")).toHaveText("Files1");
+  await expect(page.locator("#s-files-sum")).toHaveText(/^Files1\+\d+ −\d+$/);
 
   await link.click();
   await expect(first).toHaveAttribute("aria-expanded", "true");
@@ -196,4 +196,92 @@ test("after a push, the drafts of the older head go to the list above the lines"
   // Show in diff now focuses the entry in the list.
   await drafts(page).nth(0).getByRole("button", { name: "Show in diff" }).click();
   await expect(list.locator("li").first()).toBeFocused();
+});
+
+// Plan pr-view-v4 P6. The native commit and a push give PR 1001 a forge file list of 4 files. The cache does not hold that head.
+async function forgeList(page: Page) {
+  await control("state", { native: true });
+  await pushClone(1001, await makeClone(1001));
+  await control("state", {});
+  await page.keyboard.press("g");
+  await page.keyboard.press("f");
+  // The forge list before the fetch and the git list after it have the same name.
+  const list = files(page).getByRole("list", { name: "Changed files" });
+  await expect(list.locator("button[aria-expanded]")).toHaveCount(4);
+  return list;
+}
+const live = (page: Page) => page.locator("p[role='status'].sr-only");
+const FETCH = "**/api/prs/*/diff/fetch";
+
+// The next fetches wait until the test calls the result, so the progress stays on screen.
+async function holdFetch(page: Page) {
+  let release = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  await page.route(FETCH, async (route) => {
+    await held;
+    await route.continue();
+  });
+  return release;
+}
+
+test("a file row without the code gets the code, shows the progress in the row, then opens that file", async ({ page }) => {
+  await connect(page);
+  const list = await forgeList(page);
+  await expect(files(page)).toContainText("Select a file to see its diff.");
+  await expect(files(page).getByRole("button", { name: "Get the code now" })).toBeVisible();
+  // Rows keep the reading measure while no diff is open.
+  expect(await list.evaluate((el) => getComputedStyle(el).maxWidth)).not.toBe("none");
+
+  const release = await holdFetch(page);
+  // The third row, so the diff that opens cannot be the first file by chance.
+  const flush = list.locator("button[aria-expanded]", { hasText: "src/cache/flush.ts" });
+  await expect(list.locator("button[aria-expanded]").nth(2)).toContainText("src/cache/flush.ts");
+  await flush.click();
+  await expect(flush).toHaveAttribute("aria-busy", "true");
+  await expect(flush).toContainText("Getting the code");
+  await expect(flush).toBeFocused();
+  await expect(live(page)).toHaveText("Getting the code. Fetching both branches from Bitbucket.");
+  release();
+
+  await expect(flush).toHaveAttribute("aria-expanded", "true");
+  await expect(flush).toBeFocused();
+  await expect(live(page)).toHaveText("Got the code. 4 changed files. Showing src/cache/flush.ts.");
+  await expect(page.locator(`#${await flush.getAttribute("aria-controls")}`)).toContainText("const lock = cache.lock();");
+  await expect(list.locator("button[aria-expanded='true']")).toHaveCount(1);
+  await expect(page.locator("#s-files-sum")).toHaveText(/^Files4\+\d+ −\d+$/);
+  // The open diff takes the full width. Its row sticks under the action bar.
+  expect(await list.evaluate((el) => getComputedStyle(el).maxWidth)).toBe("none");
+  const bar = await page.locator("[data-actionbar]").evaluate((el) => (el as HTMLElement).offsetHeight);
+  expect(await flush.evaluate((el) => [getComputedStyle(el).position, getComputedStyle(el).top])).toEqual(["sticky", `${bar}px`]);
+  expect(await writes()).toEqual([]);
+});
+
+test("a failed fetch shows in its file row with Try again, and the focus stays on the row", async ({ page }) => {
+  await connect(page);
+  const list = await forgeList(page);
+  const error = "The pull request has new commits. Sync first.";
+  await page.route(FETCH, (route) => route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error }) }));
+  const flush = list.locator("button[aria-expanded]", { hasText: "src/cache/flush.ts" });
+  const item = list.locator("li").filter({ hasText: "src/cache/flush.ts" });
+  await flush.click();
+  await expect(item).toContainText(`Cannot get the code. ${error}`);
+  await expect(live(page)).toHaveText(`Cannot get the code. ${error}`);
+  await expect(flush).toBeFocused();
+  await expect(flush).toHaveAttribute("aria-expanded", "false");
+  // Only the row that started the fetch shows the error.
+  await expect(list.getByRole("button", { name: "Try again" })).toHaveCount(1);
+
+  // The retry removes the error line. The focus goes to the row, which shows the progress.
+  await page.unroute(FETCH);
+  const release = await holdFetch(page);
+  await item.getByRole("button", { name: "Try again" }).click();
+  await expect(flush).toHaveAttribute("aria-busy", "true");
+  await expect(flush).toBeFocused();
+  await expect(list.getByRole("button", { name: "Try again" })).toHaveCount(0);
+  release();
+  await expect(flush).toHaveAttribute("aria-expanded", "true");
+  await expect(flush).toBeFocused();
+  expect(await writes()).toEqual([]);
 });

@@ -1,11 +1,10 @@
 // Diff viewer (plan r2 UI-DIFF): the Files section with the git file list, a paged view of each file, and the threads and drafts on
-// their lines. Cards take no ackRef, so the diff marks nothing read. Only a click on "Get the code" fetches from the forge.
+// their lines. Cards take no ackRef, so the diff marks nothing read. Only a click on "Get the code" or on a file row fetches from
+// the forge (plan pr-view-v4 2.9).
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   Check,
-  ChevronRight,
-  CircleAlert,
   Download,
   FileDiff as FileChanged,
   FileMinus,
@@ -15,7 +14,18 @@ import {
   type LucideIcon,
   MessageSquare,
 } from "lucide-react";
-import { type CSSProperties, Fragment, memo, type ReactNode, useCallback, useMemo, useState } from "react";
+import {
+  type CSSProperties,
+  Fragment,
+  memo,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
@@ -30,13 +40,13 @@ import {
   type ReviewItemDto,
 } from "../../shared/dto";
 import type { AnchoredFinding } from "../../shared/review";
-import { FilesFold, ForgeFiles } from "../pr/Sections";
+import { Err, FileRowButton, FilesFold, ForgeFiles } from "../pr/Sections";
 import { Avatar, NewMark } from "../pr/Thread";
 import { firstName, snippet, type ThreadModel } from "../pr/threads";
 import { AiAvatar, Severity } from "../review/Drafts";
 import { plural } from "../review/model";
 import type { Focus } from "../review/useReview";
-import { type Hints, HintTrigger } from "../shell/Hint";
+import type { Hints } from "../shell/Hint";
 import { cachedIndex, type DiffIndex, fileCount, loadUntil, useDiffIndex, useDiffPages, useGetCode } from "./data";
 import {
   type Card,
@@ -57,15 +67,6 @@ import {
 
 const icon = "size-[15px] shrink-0";
 const linkish = "inline-flex shrink-0 cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
-
-function Err({ children }: { children: ReactNode }) {
-  return (
-    <span className="inline-flex items-start gap-1.5 text-destructive">
-      <CircleAlert aria-hidden className={cn(icon, "mt-0.5")} />
-      <span>{children}</span>
-    </span>
-  );
-}
 
 export type DiffCtx = {
   pr: number;
@@ -92,6 +93,8 @@ export type DiffView = {
   open: ReadonlySet<string>;
   pages: ReadonlyMap<string, number>;
   toggle: (name: string) => void;
+  // Opens the file and keeps it open when it already is.
+  openFile: (name: string) => void;
   more: (name: string) => void;
   // Opens Files and the file, loads the pages up to the line, then focuses its row.
   show: (card: Card) => void;
@@ -121,6 +124,7 @@ export function useDiffView(
       }),
     [],
   );
+  const openFile = useCallback((name: string) => setOpen((s) => (s.has(name) ? s : new Set(s).add(name))), []);
   const more = useCallback((name: string) => setPages((m) => new Map(m).set(name, (m.get(name) ?? 1) + 1)), []);
 
   const show = async (card: Card) => {
@@ -162,7 +166,7 @@ export function useDiffView(
       return;
     }
     const id = targetOf(i, got.rows, place(got.rows, got.complete, [item]), card);
-    setOpen((s) => (s.has(name) ? s : new Set(s).add(name)));
+    openFile(name);
     setPages((m) => ((m.get(name) ?? 1) >= got.pages ? m : new Map(m).set(name, got.pages)));
     o.focusAfter({ id: id ?? `df-${i}`, block: "center", flash: true });
   };
@@ -180,12 +184,11 @@ export function useDiffView(
     if ("fetch" in index) return o.focusAfter({ id: "diff-get", block: "center", flash: false });
     const f = index.files[0];
     if (!f) return o.focusAfter(list);
-    const name = fileName(f);
-    setOpen((s) => (s.has(name) ? s : new Set(s).add(name)));
+    openFile(fileName(f));
     o.focusAfter({ id: "df-0", block: "start", flash: false });
   };
 
-  return { open, pages, toggle, more, show: (card) => void show(card), first: () => void first() };
+  return { open, pages, toggle, openFile, more, show: (card) => void show(card), first: () => void first() };
 }
 
 // ---------- Files section ----------
@@ -200,10 +203,28 @@ export function DiffSection(props: {
   view: DiffView;
   ctx: DiffCtx;
 }) {
-  const { ctx, forge } = props;
+  const { ctx, forge, view } = props;
   const q = useDiffIndex(ctx.pr, props.open);
   const index = q.data && !("fetch" in q.data) ? q.data : null;
   const n = fileCount(q.data, props.files);
+  // path: the file row that started the fetch. Its diff opens when the code is there.
+  const get = useGetCode(ctx.pr, (got, path) => {
+    const i = path === null ? -1 : fileOf(got.files, path);
+    const f = got.files[i];
+    const head = `Got the code. ${plural(got.files.length, "changed file")}.`;
+    if (f) view.openFile(fileName(f));
+    ctx.announce(f ? `${head} Showing ${path}.` : path === null ? head : `${head} ${path} is not in the diff.`);
+    // The focus follows the fetch only when the user did not move it out of Files.
+    const at = document.activeElement;
+    if (at && at !== document.body && !at.closest("#s-files")) return;
+    ctx.focusAfter({ id: got.files.length ? `df-${Math.max(i, 0)}` : "s-files-sum", block: "nearest", flash: false });
+  });
+  const fetchCode = (path: string | null) => {
+    if (get.isPending) return;
+    ctx.announce(`Getting the code. Fetching both branches from ${forge}.`);
+    get.mutate(path, { onError: (e) => ctx.announce(`Cannot get the code. ${e.message}`) });
+  };
+  const failed = get.isError ? get.variables : undefined;
   let state: ReactNode = null;
   if (q.error)
     state = (
@@ -214,20 +235,30 @@ export function DiffSection(props: {
         </button>
       </p>
     );
-  else if (q.data && "fetch" in q.data) state = <GetCode ctx={ctx} forge={forge} />;
-  else if (q.isFetching) state = <Skeleton className="mt-2 h-7 w-56" />;
+  else if (!q.data && q.isFetching) state = <Skeleton className="mt-2 h-7 w-56" />;
   return (
-    <FilesFold n={n} open={props.open} onOpen={props.onOpen} web={props.web} forge={forge}>
+    <FilesFold n={n} stat={index && diffStat(index)} open={props.open} onOpen={props.onOpen} web={props.web} forge={forge}>
       {index ? (
-        <DiffFiles index={index} view={props.view} ctx={ctx} />
+        <DiffFiles index={index} view={view} ctx={ctx} />
       ) : (
         <>
+          {q.data && "fetch" in q.data && (
+            <CodeNote
+              list={!!props.files?.length}
+              forge={forge}
+              busy={get.isPending && get.variables === null}
+              error={failed === null ? (get.error?.message ?? "") : null}
+              onGet={() => fetchCode(null)}
+            />
+          )}
           {props.files?.length ? (
             <ForgeFiles
               files={props.files}
               threads={ctx.threads}
               hints={ctx.hints}
-              onFile={(path) => ctx.onThreads(new Set(ctx.threads.filter((t) => t.anchor?.path === path).map((t) => t.id)))}
+              busy={(get.isPending && get.variables) || null}
+              error={failed ? { path: failed, text: get.error?.message ?? "" } : null}
+              onOpen={fetchCode}
             />
           ) : null}
           {state}
@@ -237,31 +268,28 @@ export function DiffSection(props: {
   );
 }
 
-function GetCode({ ctx, forge }: { ctx: DiffCtx; forge: string }) {
-  const get = useGetCode(ctx.pr, (index) => {
-    ctx.announce(`Got the code. ${plural(index.files.length, "changed file")}.`);
-    if (index.files.length) ctx.focusAfter({ id: "df-0", block: "nearest", flash: false });
-  });
+const diffStat = (index: DiffIndexDto) =>
+  index.files.length ? `+${index.files.reduce((n, f) => n + f.added, 0)} −${index.files.reduce((n, f) => n + f.removed, 0)}` : null;
+
+// list: the forge file list shows under the note. busy and error: a fetch from this button.
+function CodeNote(props: { list: boolean; forge: string; busy: boolean; error: string | null; onGet: () => void }) {
   return (
-    <div className="mt-2.5 mb-1 grid gap-1.5">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <Button id="diff-get" size="sm" variant="outline" disabled={get.isPending} onClick={() => get.mutate()}>
-          {get.isPending ? (
-            <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin motion-reduce:animate-none" />
-          ) : (
-            <Download aria-hidden data-icon="inline-start" />
-          )}
-          Get the code from {forge}
-        </Button>
-        <span role="status" className="text-xs text-muted-foreground">
-          {get.isPending
-            ? "Fetching the two branches…"
-            : "The diff needs the code of both branches. Review Loop keeps it in a local cache."}
+    <div className="mb-2.5 grid max-w-[86ch] gap-1.5">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-md bg-sunken px-2.5 py-2 text-sm text-ink-2">
+        <Download aria-hidden className={icon} />
+        <span className="min-w-0 flex-[1_1_260px]">
+          {props.list
+            ? `Select a file to see its diff. The first one gets the code of both branches from ${props.forge} and keeps it in a local cache.`
+            : `The diff needs the code of both branches from ${props.forge}. Review Loop keeps it in a local cache.`}
         </span>
+        <Button id="diff-get" size="sm" variant="outline" aria-busy={props.busy || undefined} onClick={props.onGet}>
+          {props.busy && <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin motion-reduce:animate-none" />}
+          {props.list ? "Get the code now" : "Get the code"}
+        </Button>
       </div>
-      {get.error && (
+      {props.error !== null && (
         <p className="m-0 text-sm">
-          <Err>{get.error.message}</Err>
+          <Err>Cannot get the code. {props.error}</Err>
         </p>
       )}
     </div>
@@ -291,9 +319,13 @@ function DiffFiles({ index, view, ctx }: { index: DiffIndexDto; view: DiffView; 
     for (const d of drafts) add(draftItem(d, head, index.sourceHead));
     return out;
   }, [index, threads, drafts, head]);
+  const list = useRef<HTMLUListElement>(null);
+  useBarTop(list, index.files.length > 0);
   if (!index.files.length) return <p className="m-0 mt-1 mb-2.5 text-muted-foreground">No file changed between the two branches.</p>;
+  // Rows keep the reading measure until a diff opens. An open diff takes the full pane width.
+  const wide = index.files.some((f) => view.open.has(fileName(f)));
   return (
-    <ul className="m-0 mb-2.5 list-none p-0">
+    <ul ref={list} aria-label="Changed files" className={cn("m-0 mb-2.5 list-none border-t p-0", !wide && "max-w-[86ch]")}>
       {index.files.map((f, i) => {
         const name = fileName(f);
         return (
@@ -316,6 +348,19 @@ function DiffFiles({ index, view, ctx }: { index: DiffIndexDto; view: DiffView; 
 
 const NO_ITEMS: Item[] = [];
 
+// The open file row sticks under the action bar of the detail (Header.tsx data-actionbar). The bar height changes with the pane width.
+// shown: the list renders.
+function useBarTop(list: RefObject<HTMLUListElement | null>, shown: boolean) {
+  useLayoutEffect(() => {
+    const ul = list.current;
+    const bar = ul?.closest("[data-scroll]")?.querySelector<HTMLElement>("[data-actionbar]");
+    if (!shown || !ul || !bar) return;
+    const ro = new ResizeObserver(() => ul.style.setProperty("--rl-bar", `${bar.offsetHeight}px`));
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [list, shown]);
+}
+
 const FileRow = memo(function FileRow(props: {
   i: number;
   f: DiffFileDto;
@@ -329,51 +374,21 @@ const FileRow = memo(function FileRow(props: {
   const { i, f, open, items, ctx } = props;
   const name = fileName(f);
   const [Icon, word] = changeOf(f);
-  const cut = name.lastIndexOf("/") + 1;
-  const ids = new Set(items.flatMap((x) => (x.card.kind === "thread" ? [x.card.id] : [])));
-  const go = `Go to ${ids.size === 1 ? "the thread" : `the first of ${ids.size} threads`} on this file`;
+  const threads = new Set(items.flatMap((x) => (x.card.kind === "thread" ? [x.card.id] : []))).size;
   return (
-    <li className="border-b">
-      <div className="flex items-center gap-0.5">
-        <button
-          id={`df-${i}`}
-          type="button"
-          aria-expanded={open}
-          aria-controls={`dfb-${i}`}
-          onClick={() => props.toggle(name)}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded px-1.5 py-1.5 text-left text-sm hover:bg-hover"
-        >
-          <ChevronRight aria-hidden className={cn("rl-chev text-muted-foreground", icon)} />
-          <HintTrigger hints={ctx.hints} label={word}>
-            <span className="inline-flex text-muted-foreground">
-              <Icon aria-hidden className={icon} />
-            </span>
-          </HintTrigger>
-          <span translate="no" className="min-w-0 font-mono [overflow-wrap:anywhere]">
-            <span className="text-muted-foreground">{name.slice(0, cut)}</span>
-            {name.slice(cut)}
-          </span>
-          <span className="sr-only">. {word}.</span>
-          <span className="ml-auto shrink-0 pl-2 text-xs whitespace-nowrap text-muted-foreground">
-            {f.binary ? "Binary" : `+${f.added} −${f.removed}`}
-          </span>
-        </button>
-        <span className="flex w-[44px] flex-none justify-end">
-          {ids.size > 0 && (
-            <HintTrigger hints={ctx.hints} label={go}>
-              <button
-                type="button"
-                aria-label={go}
-                onClick={() => ctx.onThreads(ids)}
-                className="inline-flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-sm font-medium text-ink-2 hover:underline"
-              >
-                <MessageSquare aria-hidden className={icon} />
-                {ids.size}
-              </button>
-            </HintTrigger>
-          )}
-        </span>
-      </div>
+    <li>
+      <FileRowButton
+        id={`df-${i}`}
+        path={name}
+        icon={Icon}
+        word={word}
+        threads={threads}
+        open={open}
+        controls={`dfb-${i}`}
+        stat={f.binary ? "Binary" : `+${f.added} −${f.removed}`}
+        hints={ctx.hints}
+        onClick={() => props.toggle(name)}
+      />
       <div id={`dfb-${i}`} hidden={!open}>
         {open && <FileBody i={i} f={f} pages={props.pages} items={items} more={props.more} ctx={ctx} />}
       </div>
