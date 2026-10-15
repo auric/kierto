@@ -136,16 +136,17 @@ async function setup(me = ME) {
 }
 
 describe("branch links", () => {
-  test("a row gives the stored branch pages, and null before a sync stores them", async () => {
+  test("a row gives the stored branch pages and author page, and null before a sync stores them", async () => {
     const h = await setup();
     const p = h.pr();
-    expect(await h.row(p)).toMatchObject({ sourceBranchUrl: null, targetBranchUrl: null });
+    expect(await h.row(p)).toMatchObject({ sourceBranchUrl: null, targetBranchUrl: null, authorUrl: null });
     h.db
-      .query("INSERT INTO pr_branch_link (pr, source_url, target_url) VALUES ($pr, $s, NULL)")
-      .run({ pr: p, s: "https://h.test/users/a/repos/r/browse?at=refs%2Fheads%2Fx" });
+      .query("INSERT INTO pr_branch_link (pr, source_url, target_url, author_url) VALUES ($pr, $s, NULL, $a)")
+      .run({ pr: p, s: "https://h.test/users/a/repos/r/browse?at=refs%2Fheads%2Fx", a: "https://h.test/users/a" });
     expect(await h.row(p)).toMatchObject({
       sourceBranchUrl: "https://h.test/users/a/repos/r/browse?at=refs%2Fheads%2Fx",
       targetBranchUrl: null,
+      authorUrl: "https://h.test/users/a",
     });
   });
 });

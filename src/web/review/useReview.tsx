@@ -19,6 +19,7 @@ import { BriefComposer, type BriefMode, ReviewButton } from "./Brief";
 import { type DraftCtx, Drafts, modeOf, Questions, type TriageState } from "./Drafts";
 import {
   replyKey,
+  saveLastProfile,
   sendItem,
   useBrief,
   useCancelRun,
@@ -104,8 +105,8 @@ const NO_ITEMS: ReviewItemDto[] = [];
 const detailOf = (r: RunDto | null, d: RunDetail | undefined): RunDetail | null =>
   r ? (d?.run.id === r.id ? { ...d, run: { ...d.run, stale: r.stale } } : { run: r, events: [], items: [] }) : null;
 
-// The open brief and the review that its Start begins. once: a profile for this review only.
-type Composer = { kind: "review"; once: string | null } | { kind: "rereview" } | null;
+// The open brief and the review that its Start begins.
+type Composer = { kind: "review" } | { kind: "rereview" } | null;
 
 // Plan r2 UI-RR. It shows only when the server takes a re-review (rereviewState).
 function RereviewButton({ since, busy, onClick }: { since: string; busy: boolean; onClick: () => void }) {
@@ -133,7 +134,7 @@ export function useReview(
     reveal: (thread: number) => void;
     announce: (text: string) => void;
     onSettings: () => void;
-    // Opens the settings at one profile.
+    // Opens the settings at one profile: "Edit <profile>" in the brief.
     onProfile: (id: string) => void;
     // Focuses the line of a draft in the diff.
     showInDiff: (draft: number) => void;
@@ -191,11 +192,12 @@ export function useReview(
     toast.add({ title: busyText(meta.runner.short, kind, where(c.running.pr)) });
   };
 
-  // profile: a profile for this review only. Absent: the brief profile.
-  const runNow = (profile?: string) =>
-    start.mutate(profile, {
+  // A review runs the stored brief. Its profile becomes the last used one (decision D2).
+  const runNow = () =>
+    start.mutate(undefined, {
       onSuccess: (r) => {
         if ("conflict" in r) return slotTaken(r.conflict);
+        saveLastProfile(r.run.profile);
         setComposer(null);
         focusAfter({ id: "runline-log", block: "nearest", flash: false });
       },
@@ -208,6 +210,7 @@ export function useReview(
     startRereview.mutate(undefined, {
       onSuccess: (r) => {
         if ("conflict" in r) return slotTaken(r.conflict);
+        saveLastProfile(r.run.profile);
         setComposer(null);
         focusAfter({ id: "runline-log", block: "nearest", flash: false });
       },
@@ -215,17 +218,16 @@ export function useReview(
     });
   };
 
-  // threads absent: every thread where it is my turn, as the server selects them (WP17). profile absent: the brief profile.
-  const draftReplies = (threads?: number[], profile?: string) => {
+  // threads absent: every thread where it is my turn, as the server selects them (WP17). The run uses the brief profile.
+  const draftReplies = (threads?: number[]) => {
     const ids = threads ?? o.threads.filter((t) => t.turn === "your").map((t) => t.id);
     startReplies.mutate(
-      { threads, profile },
+      { threads },
       {
         onSuccess: (r) => {
           if ("conflict" in r) return slotTaken(r.conflict);
           setAsked({ run: r.run.id, threads: ids });
-          const what = threads ? "Drafting a reply" : `Drafting replies for ${plural(ids.length, "thread")}`;
-          o.announce(`${what}${profile ? ` with the ${r.run.profileName} profile` : ""}.`);
+          o.announce(threads ? "Drafting a reply." : `Drafting replies for ${plural(ids.length, "thread")}.`);
         },
         onError: (e) => toast.add({ title: "The reply drafts did not start", description: e.message }),
       },
@@ -233,7 +235,7 @@ export function useReview(
   };
 
   // An open brief keeps its note and only changes the review that Start begins.
-  const openBrief = (next: NonNullable<Composer> = { kind: "review", once: null }) => {
+  const openBrief = (next: NonNullable<Composer> = { kind: "review" }) => {
     if (composer) document.getElementById("brief-note")?.focus();
     setComposer(next);
   };
@@ -249,7 +251,7 @@ export function useReview(
   const mode: BriefMode =
     composer?.kind === "rereview" && latest
       ? { kind: "rereview", since: shortHash(latest.sourceHead), commits: newCommits(latest, o.commits) }
-      : { kind: "review", once: composer?.kind === "review" ? composer.once : null };
+      : { kind: "review" };
   const blocked = busy ?? (mode.kind === "rereview" && "why" in rr ? rr.why : null);
 
   const openLog = (agent: string | null, raw = false, of: "line" | "review" | number = "line") => {
@@ -544,7 +546,6 @@ export function useReview(
     };
   });
   const logRun = typeof log?.of === "number" ? log.of : (log?.of === "review" ? latest : newest)?.id;
-  const your = o.threads.filter((t) => t.turn === "your").length;
   return {
     action: (
       <ReviewButton
@@ -553,17 +554,11 @@ export function useReview(
         extra={
           <>
             {"since" in rr && <RereviewButton since={rr.since} busy={startRereview.isPending} onClick={rereview} />}
-            <DraftRepliesButton
-              your={your}
-              meta={meta}
-              profile={{ id: state.profile, name: state.name }}
-              onRun={(p) => draftReplies(undefined, p)}
-            />
+            <DraftRepliesButton turns={o.threads.map((t) => t.turn)} onRun={() => draftReplies()} />
             {fix.button}
           </>
         }
-        onOpen={(p) => openBrief({ kind: "review", once: p ?? null })}
-        onEditProfile={() => o.onProfile(state.profile)}
+        onOpen={() => openBrief()}
       />
     ),
     // Plan r3 Feature C: every run kind reads the fetched task text. While the brief is closed, its task row shows here,
@@ -578,10 +573,10 @@ export function useReview(
           mode={mode}
           blocked={blocked}
           starting={start.isPending || startRereview.isPending}
-          onStart={(p) => (mode.kind === "rereview" ? rereviewNow() : runNow(p))}
-          onPick={() => setComposer((c) => (c?.kind === "review" ? { ...c, once: null } : c))}
+          onStart={() => (mode.kind === "rereview" ? rereviewNow() : runNow())}
           onClose={closeBrief}
           onSettings={o.onSettings}
+          onEditProfile={o.onProfile}
           announce={o.announce}
         />
       ) : (

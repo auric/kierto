@@ -1,8 +1,32 @@
-// Detail header (prototype/v3 renderDetail .dh, pr-view-v4 2.3): key, branches, task IDs, title, the action bar, and the status strip.
+// Detail header (plan pr-view-v4 2.1 to 2.3): the key link, the title, the byline, the action bar, and the status strip.
 // The action bar sticks to the top of the pane. When the title leaves the view, the bar shows the key and the title.
-import { Archive, Check, Copy, ExternalLink, FileDiff, MessageCircleQuestionMark, MessageSquare, Reply, Star } from "lucide-react";
+// Rule 2.1: each name of a server object opens that object. The key "PROJ/repo #id" opens the PR (decision D1).
+import {
+  Archive,
+  Check,
+  ClipboardCopy,
+  ClipboardPaste,
+  Copy,
+  Ellipsis,
+  ExternalLink,
+  FileDiff,
+  Link,
+  MessageCircleQuestionMark,
+  MessageSquare,
+  Reply,
+  Star,
+} from "lucide-react";
 import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
@@ -12,7 +36,7 @@ import { useMeta } from "../meta";
 import { useArchive, useFollow } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { prKey, taskHint } from "../shell/model";
-import { NewMark } from "./Thread";
+import { Avatar, NewMark } from "./Thread";
 import { visitText } from "./threads";
 
 // Only http(s) links from the server reach an href.
@@ -26,9 +50,11 @@ export function webLink(url: string | null): string | null {
 }
 
 const iconBtn = "text-ink-2 hover:bg-hover hover:text-foreground";
+const external = { target: "_blank", rel: "noopener noreferrer" } as const;
 
-// The branch name links to its page on the forge. The copy button shows on hover and on focus, and always on a touch screen.
-function BranchRef({ name, url, forge, announce }: { name: string; url: string | null; forge: string; announce: (text: string) => void }) {
+// The branch name links to its page on the forge. copy: a visible copy button after the name (plan pr-view-v4 2.1, H3).
+function BranchRef(props: { name: string; url: string | null; forge: string; copy?: boolean; announce: (text: string) => void }) {
+  const { name, announce } = props;
   // A count, so a second copy within 1.5 s starts the time again.
   const [copied, setCopied] = useState(0);
   useEffect(() => {
@@ -36,37 +62,171 @@ function BranchRef({ name, url, forge, announce }: { name: string; url: string |
     const h = setTimeout(() => setCopied(0), 1500);
     return () => clearTimeout(h);
   }, [copied]);
-  const href = webLink(url);
+  const href = webLink(props.url);
   const copy = () =>
     copyText(name).then((ok) => {
       if (!ok) return toast.add({ title: "The clipboard is blocked here. Select the branch name and press Ctrl+C." });
       setCopied((n) => n + 1);
       announce(`Copied ${name}.`);
     });
-  const text = "min-w-0 font-mono text-ink-2 [overflow-wrap:anywhere]";
+  const text = "min-w-0 font-mono text-xs text-ink-2 [overflow-wrap:anywhere]";
   return (
-    <span data-branch={name} className="group/br inline-flex min-w-0 items-center">
+    <span data-branch={name} className="inline-flex min-w-0 items-center">
       {href ? (
-        <Hint label={`Open the branch in ${forge}`}>
-          <a href={href} target="_blank" rel="noopener noreferrer" className={cn(text, "rounded hover:text-pen hover:underline")}>
+        <Hint label={`Open the branch in ${props.forge}`}>
+          <a
+            href={href}
+            {...external}
+            className={cn(
+              text,
+              "rounded underline decoration-rule-strong decoration-dotted underline-offset-3 hover:text-pen hover:decoration-current hover:decoration-solid",
+            )}
+          >
             {name}
           </a>
         </Hint>
       ) : (
         <code className={text}>{name}</code>
       )}
-      <Hint label={copied ? "Copied" : "Copy the branch name"}>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Copy ${name}`}
-          className="ml-0.5 text-muted-foreground opacity-0 group-focus-within/br:opacity-100 group-hover/br:opacity-100 hover:text-foreground pointer-coarse:opacity-100"
-          onClick={() => void copy()}
-        >
-          {copied ? <Check key={copied} aria-hidden className="rl-pop" /> : <Copy aria-hidden />}
-        </Button>
-      </Hint>
+      {props.copy && (
+        <Hint label={copied ? "Copied" : "Copy the branch name"}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Copy ${name}`}
+            className="ml-0.5 text-muted-foreground hover:text-foreground"
+            onClick={() => void copy()}
+          >
+            {copied ? <Check key={copied} aria-hidden className="rl-pop" /> : <Copy aria-hidden />}
+          </Button>
+        </Hint>
+      )}
     </span>
+  );
+}
+
+// The author's name links to the user page when the server gives one with the configured origin (data need N2).
+function Author({ pr, forge }: { pr: PrRow; forge: string }) {
+  const name = pr.authorName ?? pr.authorSlug;
+  if (!name) return null;
+  const own = pr.role === "AUTHOR";
+  const href = own ? null : webLink(pr.authorUrl);
+  const word = "font-medium text-foreground";
+  return (
+    <span data-author className="inline-flex min-w-0 items-center gap-1.5">
+      <Avatar p={{ slug: pr.authorSlug ?? name, name, me: own }} />
+      <span className="sr-only">Opened by </span>
+      {own ? (
+        <span className={word}>You</span>
+      ) : href ? (
+        <Hint label={`Open the user page in ${forge}`}>
+          <a
+            href={href}
+            {...external}
+            className={cn(word, "rounded [overflow-wrap:anywhere] hover:text-pen hover:underline underline-offset-3")}
+          >
+            {name}
+          </a>
+        </Hint>
+      ) : (
+        <span className={cn(word, "[overflow-wrap:anywhere]")}>{name}</span>
+      )}
+    </span>
+  );
+}
+
+const chip = "inline-flex items-center gap-1 rounded-[5px] border px-[7px] font-mono text-xs leading-5 whitespace-nowrap";
+
+// A task ID with a link opens the task. Without a link pattern, the chip opens Settings, Task IDs (plan pr-view-v4 2.1, H2).
+// The dashed border and the name carry the state, not only the color.
+function TaskChip({ t, onTaskIds }: { t: PrRow["tasks"][number]; onTaskIds: () => void }) {
+  const url = webLink(t.url);
+  return url ? (
+    <Hint label={taskHint(t)}>
+      <a
+        href={url}
+        {...external}
+        translate="no"
+        data-task-chip={t.key}
+        className={cn(chip, "border-rule-strong text-pen hover:border-pen hover:underline")}
+      >
+        {t.key}
+        <ExternalLink aria-hidden className="size-3 shrink-0" />
+      </a>
+    </Hint>
+  ) : (
+    <Hint label="No link pattern yet. Opens Settings, Task IDs.">
+      <button
+        type="button"
+        translate="no"
+        data-task-chip={t.key}
+        aria-label={`${t.key}. No task link yet. Opens Settings, Task IDs.`}
+        className={cn(
+          chip,
+          "cursor-pointer border-dashed border-rule-strong text-ink-2 hover:border-muted-foreground hover:text-foreground",
+        )}
+        onClick={onTaskIds}
+      >
+        {t.key}
+      </button>
+    </Hint>
+  );
+}
+
+// Plan pr-view-v4 2.2 and section 9: More holds the PR link actions. The places for the session consult wait for package S1.
+function MoreMenu({ pr, forge, announce }: { pr: PrRow; forge: string; announce: (text: string) => void }) {
+  const web = webLink(pr.webUrl);
+  const own = pr.role === "AUTHOR";
+  if (!web && !own) return null;
+  const copyLink = (url: string) =>
+    copyText(url).then((ok) =>
+      ok
+        ? announce("Copied the pull request link.")
+        : toast.add({ title: "The clipboard is blocked here. Copy the link from the address bar of the server page." }),
+    );
+  const planned = (label: string, note: string, Icon: typeof Link) => (
+    <DropdownMenuItem disabled className="items-start py-1.5">
+      <Icon aria-hidden className="mt-0.5" />
+      <span className="grid min-w-0 flex-1 gap-0.5">
+        <span className="flex items-center gap-1.5 font-medium">
+          {label}
+          <Badge variant="quiet">Planned</Badge>
+        </span>
+        <span className="text-xs text-muted-foreground">{note}</span>
+      </span>
+    </DropdownMenuItem>
+  );
+  return (
+    <DropdownMenu modal={false}>
+      <Hint label="More actions">
+        <DropdownMenuTrigger render={<Button id="more-btn" variant="ghost" size="icon-sm" aria-label="More actions" className={iconBtn} />}>
+          <Ellipsis aria-hidden />
+        </DropdownMenuTrigger>
+      </Hint>
+      <DropdownMenuContent align="end" className="w-72">
+        {web && (
+          <DropdownMenuGroup>
+            <DropdownMenuItem render={<a href={web} {...external} />}>
+              <ExternalLink aria-hidden />
+              Open on {forge}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void copyLink(web)}>
+              <Link aria-hidden />
+              Copy the pull request link
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        )}
+        {own && (
+          <>
+            {web && <DropdownMenuSeparator />}
+            <DropdownMenuGroup>
+              {planned("Copy for your session…", "Give open comments to the session that wrote the code.", ClipboardCopy)}
+              {planned("Paste the answer…", "Turn its verdicts into reply drafts and Fix ticks.", ClipboardPaste)}
+            </DropdownMenuGroup>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -115,8 +275,8 @@ function ActionBar({
       className="sticky top-0 z-[3] flex items-center gap-3 border-b border-transparent bg-pane px-6 py-2 max-[759px]:px-4 data-stuck:border-border"
     >
       {stuck && (
-        // The h1 above holds the same words for a screen reader. A narrow pane gives the width to the buttons.
-        <p aria-hidden className="rl-fade rl-wide-pane m-0 flex min-w-0 flex-[1_1_0] items-baseline gap-2 overflow-hidden">
+        // The h1 above holds the same words for a screen reader. A pane of 520 px or less gives the width to the buttons.
+        <p aria-hidden className="rl-fade m-0 flex min-w-0 flex-[1_1_0] items-baseline gap-2 overflow-hidden @max-[520px]/detail:hidden">
           <span translate="no" className="max-w-[40%] shrink-0 truncate font-mono text-xs text-muted-foreground">
             {label}
           </span>
@@ -203,12 +363,13 @@ export function Strip(p: {
 }
 
 // action, brief: the run buttons and the review brief under the strip (plan v3 WP11). strip: the parts of the status strip, null
-// while the PR loads. onAsk: the q key (plan r2 UI-ASK).
+// while the PR loads. onAsk: the q key (plan r2 UI-ASK). onTaskIds: opens Settings, Task IDs.
 export function Header(props: {
   pr: PrRow;
   strip: ReactNode;
   onLeave: () => void;
   onAsk: () => void;
+  onTaskIds: () => void;
   announce: (text: string) => void;
   action: ReactNode;
   brief: ReactNode;
@@ -231,118 +392,104 @@ export function Header(props: {
   // The archive notice of the detail holds the one action for an archived PR.
   const listed = !archived(pr);
   const pad = "px-6 max-[759px]:px-4";
+  const keyText = (
+    <>
+      <span className="[overflow-wrap:anywhere]">
+        {pr.project}/{pr.repo}
+      </span>{" "}
+      <b className="font-semibold whitespace-nowrap text-foreground group-hover/key:text-pen">#{pr.prId}</b>
+    </>
+  );
   return (
     <>
-      <header ref={top} className={cn("grid gap-1.5 pt-3 max-[759px]:pt-2", pad)}>
-        <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-muted-foreground">
-          <span translate="no" className="font-mono [overflow-wrap:anywhere]">
-            {key}
-          </span>
-          {pr.sourceBranch && (
-            <span translate="no" className="flex min-w-0 flex-wrap items-center gap-x-1 max-[759px]:order-3 max-[759px]:basis-full">
-              <BranchRef name={pr.sourceBranch} url={pr.sourceBranchUrl} forge={forge} announce={announce} />
-              into
-              {pr.targetBranch ? (
-                <BranchRef name={pr.targetBranch} url={pr.targetBranchUrl} forge={forge} announce={announce} />
-              ) : (
-                <code className="font-mono text-ink-2">?</code>
-              )}
+      <header ref={top} className={cn("grid gap-1.5 pt-3.5 max-[759px]:pt-2", pad)}>
+        <div className="flex min-w-0 items-center gap-1.5">
+          {web ? (
+            <Hint label={`Open the pull request in ${forge}`}>
+              <a
+                id="pr-key"
+                href={web}
+                {...external}
+                translate="no"
+                className="group/key inline-flex min-w-0 items-center gap-1.5 rounded font-mono text-xs text-ink-2 underline-offset-3 hover:text-pen hover:underline"
+              >
+                <span className="min-w-0">{keyText}</span>
+                <ExternalLink aria-hidden className="size-[13px] shrink-0" />
+              </a>
+            </Hint>
+          ) : (
+            <span id="pr-key" translate="no" className="min-w-0 font-mono text-xs text-ink-2">
+              {keyText}
             </span>
           )}
-          {pr.tasks.map((t) => {
-            const url = webLink(t.url);
-            const chip =
-              "inline-flex items-baseline rounded-[5px] border px-2 py-0.5 font-mono text-xs whitespace-nowrap max-[759px]:order-4";
-            return (
-              <Hint key={t.key} label={taskHint(t)}>
-                {url ? (
-                  <a
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    translate="no"
-                    className={cn(chip, "text-pen hover:border-rule-strong hover:underline")}
-                  >
-                    {t.key}
-                  </a>
-                ) : (
-                  <span translate="no" className={cn(chip, "text-ink-2")}>
-                    {t.key}
-                  </span>
-                )}
-              </Hint>
-            );
-          })}
-          <span className="ml-auto flex items-center gap-0.5">
-            {web && (
-              <Hint label={`Open in ${forge}`}>
-                <a
-                  href={web}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`Open in ${forge}`}
-                  className={buttonVariants({ variant: "ghost", size: "icon-sm", className: iconBtn })}
+          {listed && (
+            <span className="ml-auto flex shrink-0 items-center gap-0.5">
+              <Hint label={following}>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className={iconBtn}
+                  aria-label="Follow"
+                  aria-pressed={pr.followed}
+                  disabled={follow.isPending}
+                  onClick={() => {
+                    // Off the dashboard, an unfollowed PR leaves every list but Archive.
+                    if (pr.followed && !pr.onDashboard) props.onLeave();
+                    follow.mutate({ pr, followed: !pr.followed });
+                  }}
                 >
-                  <ExternalLink aria-hidden />
-                </a>
+                  <Star aria-hidden className={cn(pr.followed && "fill-current")} />
+                </Button>
               </Hint>
-            )}
-            {listed && (
-              <>
-                <Hint label={following}>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className={iconBtn}
-                    aria-label="Follow"
-                    aria-pressed={pr.followed}
-                    disabled={follow.isPending}
-                    onClick={() => {
-                      // Off the dashboard, an unfollowed PR leaves every list but Archive.
-                      if (pr.followed && !pr.onDashboard) props.onLeave();
-                      follow.mutate({ pr, followed: !pr.followed });
-                    }}
-                  >
-                    <Star aria-hidden className={cn(pr.followed && "fill-current")} />
-                  </Button>
-                </Hint>
-                <Hint label="Archive">
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className={iconBtn}
-                    aria-label="Archive"
-                    disabled={archive.isPending}
-                    onClick={onArchive}
-                  >
-                    <Archive aria-hidden />
-                  </Button>
-                </Hint>
-              </>
-            )}
-          </span>
+              <Hint label="Archive">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className={iconBtn}
+                  aria-label="Archive"
+                  disabled={archive.isPending}
+                  onClick={onArchive}
+                >
+                  <Archive aria-hidden />
+                </Button>
+              </Hint>
+            </span>
+          )}
         </div>
         <h1 className="m-0 min-w-0 text-(length:--fs-title) leading-tight font-bold tracking-[-0.015em] text-balance [overflow-wrap:anywhere]">
           {title}
         </h1>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3.5 gap-y-1 text-sm text-ink-2">
+          <Author pr={pr} forge={forge} />
+          {pr.sourceBranch && (
+            <span translate="no" className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+              <BranchRef name={pr.sourceBranch} url={pr.sourceBranchUrl} forge={forge} copy announce={announce} />
+              <span className="text-muted-foreground">into</span>
+              {pr.targetBranch ? (
+                <BranchRef name={pr.targetBranch} url={pr.targetBranchUrl} forge={forge} announce={announce} />
+              ) : (
+                <code className="font-mono text-xs text-ink-2">?</code>
+              )}
+            </span>
+          )}
+          {pr.tasks.length > 0 && (
+            <span className="inline-flex flex-wrap gap-1.5">
+              {pr.tasks.map((t) => (
+                <TaskChip key={t.key} t={t} onTaskIds={props.onTaskIds} />
+              ))}
+            </span>
+          )}
+        </div>
       </header>
       <ActionBar top={top} label={key} title={title}>
         <Hint label={`Ask ${runner} a question about this pull request. Key: q`}>
-          <Button
-            id="ask-btn"
-            size="sm"
-            variant="outline"
-            aria-label={`Ask ${runner}`}
-            aria-keyshortcuts="q"
-            className="@max-[560px]/detail:pr-1.5"
-            onClick={props.onAsk}
-          >
+          <Button id="ask-btn" size="sm" variant="outline" aria-label={`Ask ${runner}`} aria-keyshortcuts="q" onClick={props.onAsk}>
             <MessageCircleQuestionMark aria-hidden data-icon="inline-start" />
-            {/* A narrow pane keeps the bar on one line where it can. */}
-            <span className="@max-[560px]/detail:sr-only">Ask</span>
+            Ask
           </Button>
         </Hint>
         {props.action}
+        <MoreMenu pr={pr} forge={forge} announce={announce} />
       </ActionBar>
       <nav
         aria-label="Pull request summary"

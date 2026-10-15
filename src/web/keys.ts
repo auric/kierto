@@ -169,7 +169,10 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
       { keys: ["o"], text: "Open or close the current thread" },
       { keys: ["g"], second: ["f", "c"], text: "Open and go to Files or Commits" },
       { keys: ["g"], second: ["d"], text: "Show the current inline thread or draft on its line in the diff" },
-      { keys: ["1", "2", "3"], text: "Go to the overview, go to the drafts and then the reply drafts, open the run log" },
+      {
+        keys: ["1", "2", "3"],
+        text: "Go to the top with the description and the review record, go to the drafts and then the reply drafts, open the run log",
+      },
       { keys: ["?"], text: "Show or hide this list" },
     ],
   },

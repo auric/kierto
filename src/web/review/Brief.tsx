@@ -1,5 +1,5 @@
 // Review button and review brief (prototype/v3 reviewBtn, briefHtml): task IDs, your note, the profile, its run setup, then Start.
-// Each review start opens the brief first: the Review button, its profile items, r, and the re-review. Only Start runs it.
+// Each review start opens the brief first: the Review button, r, and the re-review. Only Start runs it.
 // The note is the user's instruction. The server keeps the pull request text out of the prompt (plan v3 WP10).
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import {
@@ -31,9 +31,9 @@ import {
   useState,
 } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -53,12 +53,12 @@ import {
 } from "../../shared/dto";
 import { api } from "../api";
 import { dialogKeys } from "../fix/CloneDialog";
+import { formatRoute } from "../lib/route";
 import { useSkills } from "../meta";
 import { read } from "../shell/data";
 import { Hint } from "../shell/Hint";
-import { putBrief } from "./data";
-import { type BriefState, plural, profileOf, profileSetupText } from "./model";
-import { RunSplit } from "./RunSplit";
+import { loadLastProfile, putBrief } from "./data";
+import { type BriefState, briefProfile, plural, profileOf, profileSetupText } from "./model";
 import { keyParam, TaskChips, taskKey, useTaskChips } from "./TaskChips";
 import {
   type AttachmentRow,
@@ -97,19 +97,9 @@ function runnerNote(meta: MetaDto): { short: string; message: string } | null {
 }
 
 // The parts are items of the action bar (Header.tsx). extra: buttons before the Review button, such as Draft replies (WP18).
-// onOpen: opens the brief, as the r key does. profile: the menu item, a profile for this review only.
-export function ReviewButton(props: {
-  state: BriefState;
-  meta: MetaDto;
-  extra?: ReactNode;
-  onOpen: (profile?: string) => void;
-  // Opens the settings at the brief profile.
-  onEditProfile: () => void;
-}) {
+// onOpen: opens the brief, as the r key does. The brief holds the profile pick (plan pr-view-v4 2.2).
+export function ReviewButton(props: { state: BriefState; meta: MetaDto; extra?: ReactNode; onOpen: () => void }) {
   const note = runnerNote(props.meta);
-  // A profile item moves the focus into the note of the brief, not back to the menu button. Edit profile moves it into the settings.
-  const toBrief = useRef(false);
-  const toSettings = useRef(false);
   return (
     <>
       {note && (
@@ -122,47 +112,17 @@ export function ReviewButton(props: {
         </Hint>
       )}
       {props.extra}
-      <RunSplit
-        id="review-btn"
-        variant="default"
-        hint={props.state.hint}
-        keys="r"
-        describedBy={note ? "review-note" : undefined}
-        menu="Review with another profile"
-        heading="Profile for this review"
-        profiles={props.meta.profiles}
-        current={props.state.profile}
-        onRun={(profile, menu) => {
-          toBrief.current = !!menu;
-          props.onOpen(profile);
-        }}
-        finalFocus={() => {
-          const brief = toBrief.current;
-          const settings = toSettings.current;
-          toBrief.current = false;
-          toSettings.current = false;
-          return settings ? false : brief ? document.getElementById("brief-note") : true;
-        }}
-        more={
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem
-                id="review-btn-edit-profile"
-                onClick={() => {
-                  toSettings.current = true;
-                  props.onEditProfile();
-                }}
-              >
-                Edit profile…
-                <span className="sr-only"> {props.state.name}</span>
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </>
-        }
-      >
-        Review<span className="@max-[560px]/detail:sr-only"> · {props.state.name}</span>
-      </RunSplit>
+      <Hint label={props.state.hint}>
+        <Button
+          id="review-btn"
+          size="sm"
+          aria-keyshortcuts="r"
+          aria-describedby={note ? "review-note" : undefined}
+          onClick={() => props.onOpen()}
+        >
+          Review
+        </Button>
+      </Hint>
     </>
   );
 }
@@ -570,9 +530,11 @@ function Attachments({ pr, t, runner, announce }: { pr: number; t: TaskContextDt
   );
 }
 
-// The review that Start begins. once: the profile of the Review menu item, for this review only.
-// since: the short source head of the re-review base. commits: the PR commits after it, null when unknown.
-export type BriefMode = { kind: "review"; once: ProfileId | null } | { kind: "rereview"; since: string; commits: number | null };
+// The review that Start begins. since: the short source head of the re-review base. commits: the PR commits after it, null
+// when unknown.
+export type BriefMode = { kind: "review" } | { kind: "rereview"; since: string; commits: number | null };
+
+const LAST_USED = { pr: "The last profile you used on this pull request.", any: "The last profile you used on any pull request." };
 
 export function BriefComposer(props: {
   pr: number;
@@ -583,12 +545,11 @@ export function BriefComposer(props: {
   // Why Start cannot begin now, such as a running run. The server still decides (A14).
   blocked: string | null;
   starting: boolean;
-  // profile: a profile for this review only. Absent: the brief profile.
-  onStart: (profile?: ProfileId) => void;
-  // A profile pick in the brief ends the profile for this review only.
-  onPick: () => void;
+  onStart: () => void;
   onClose: () => void;
   onSettings: () => void;
+  // Opens the settings at one profile, through the URL (plan pr-view-v4 section 5).
+  onEditProfile: (id: ProfileId) => void;
   announce: (text: string) => void;
 }) {
   const { pr, meta, mode } = props;
@@ -596,8 +557,10 @@ export function BriefComposer(props: {
   const { source, chips } = useTaskChips(pr, props.tasks, meta);
   const now = Date.now();
   const [note, setNote] = useState(props.brief.note);
-  const [profile, setProfile] = useState<ProfileId>(props.brief.profile);
-  const latest = useRef<BriefInput>({ note: props.brief.note, profile: props.brief.profile });
+  // Decision D2. The mark stays on the preselected profile after another pick.
+  const [pre] = useState(() => briefProfile(props.brief, loadLastProfile(), meta.profiles));
+  const [profile, setProfile] = useState<ProfileId>(pre.profile);
+  const latest = useRef<BriefInput>({ note: props.brief.note, profile: pre.profile });
   const dirty = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
@@ -640,16 +603,14 @@ export function BriefComposer(props: {
     timer.current = setTimeout(() => void flush(), SAVE_MS);
   };
   const changeProfile = (v: ProfileId) => {
-    props.onPick();
     setProfile(v);
     latest.current = { ...latest.current, profile: v };
     dirty.current = true;
-    // The Review button names the profile at once.
+    // Draft replies and Fix use the brief profile at once.
     qc.setQueryData<BriefDto>(["brief", pr], (old) => old && { ...old, profile: v });
     void flush();
   };
-  const once = mode.kind === "review" && mode.once !== profile ? mode.once : null;
-  const chosen = profileOf(meta.profiles, once ?? profile);
+  const chosen = profileOf(meta.profiles, profile);
   // The server check is the real guard. This shows a skill that GET /api/skills already misses.
   const skillList = useSkills(!!chosen?.alwaysSkills.length).data;
   const lost = skillList && chosen?.alwaysSkills.find((id) => !skillList.has(id));
@@ -660,7 +621,9 @@ export function BriefComposer(props: {
       toast.add({ title: blocked });
       return;
     }
-    if (await flush()) props.onStart(once ?? undefined);
+    // The server runs the stored brief, so a brief that is not stored yet saves first, with its preselected profile (D2).
+    if (props.brief.updatedAt === null || latest.current.profile !== props.brief.profile) dirty.current = true;
+    if (await flush()) props.onStart();
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -737,14 +700,29 @@ export function BriefComposer(props: {
             only.
           </FieldDescription>
         </Field>
-        <FieldSet className="min-w-0 gap-1">
-          <FieldLegend variant="label" className="mb-1 text-sm font-semibold">
-            Profile
+        {/* The group name is "Profile" only. The Edit link in the legend keeps its own name. */}
+        <FieldSet aria-labelledby="brief-profile-h" className="min-w-0 gap-1">
+          <FieldLegend variant="label" className="mb-1 flex w-full items-baseline gap-2 text-sm font-semibold">
+            <span id="brief-profile-h">Profile</span>
+            {chosen && (
+              <a
+                href={formatRoute({ kind: "settings", section: "profiles", profile: chosen.id })}
+                className="ml-auto min-w-0 truncate rounded text-xs font-medium text-pen hover:underline"
+                onClick={(e) => {
+                  // A modified click opens the profile URL in a new tab or window.
+                  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+                  e.preventDefault();
+                  props.onEditProfile(chosen.id);
+                }}
+              >
+                Edit {chosen.name}
+              </a>
+            )}
           </FieldLegend>
           {meta.profiles.map((p) => (
             <label
               key={p.id}
-              className="-mx-1.5 grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] gap-x-2 rounded-[5px] px-1.5 py-[5px] hover:bg-hover"
+              className="-mx-1.5 grid cursor-pointer grid-cols-[auto_auto_minmax(0,1fr)] gap-x-2 rounded-[5px] px-1.5 py-[5px] hover:bg-hover"
             >
               <input
                 type="radio"
@@ -755,14 +733,16 @@ export function BriefComposer(props: {
                 onChange={() => changeProfile(p.id)}
               />
               <span className="text-sm font-semibold">{p.name}</span>
-              <span className="col-start-2 text-xs text-muted-foreground">{p.note}</span>
+              {pre.tag && p.id === pre.profile && (
+                <Badge variant="quiet" title={LAST_USED[pre.tag]} className="self-center justify-self-start">
+                  Last used
+                </Badge>
+              )}
+              <span className="col-span-2 col-start-2 text-xs text-muted-foreground">{p.note}</span>
             </label>
           ))}
           {/* The words follow the profile pick, so a screen reader reads the new setup. */}
           <div id="brief-setup" aria-live="polite" className="mt-1.5 grid gap-1 border-t pt-2 text-xs text-muted-foreground">
-            {once && (
-              <p className="m-0 text-ink-2">Only for this review. The brief keeps the {profileOf(meta.profiles, profile)?.name} profile.</p>
-            )}
             {chosen && (
               <p className="m-0 flex items-start gap-1.5">
                 <Cpu aria-hidden className="mt-px size-[13px] shrink-0" />

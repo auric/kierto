@@ -563,6 +563,15 @@ describe("forge data", () => {
     });
   });
 
+  test("the author page comes from author.user.links.self, from the configured origin only (plan pr-view-v4 N2)", async () => {
+    const body = clone(fixture<{ author: { user: { links: { self: { href: string }[] } } } }>("pull-request.json"));
+    const p = setup({ [key("GET", PR_PATH)]: body });
+    // The recorded link has another host.
+    expect((await p.getPullRequest(PR_REF)).authorUrl).toBeUndefined();
+    body.body.author.user.links.self = [{ href: `${fake.url}/users/jdoe` }];
+    expect((await p.getPullRequest(PR_REF)).authorUrl).toBe(`${fake.url}/users/jdoe`);
+  });
+
   test("a PR from a fork links its source branch in the fork and its target branch in the PR repository", async () => {
     const body = clone(fixture<Refs>("pull-request.json"));
     const p = setup({ [key("GET", PR_PATH)]: body });

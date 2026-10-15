@@ -39,8 +39,8 @@ const SQL = {
       on_dashboard = excluded.on_dashboard,
       reviewers_json = excluded.reviewers_json
     RETURNING id`,
-  branchLink: `INSERT INTO pr_branch_link (pr, source_url, target_url) VALUES ($pr, $source, $target)
-    ON CONFLICT (pr) DO UPDATE SET source_url = excluded.source_url, target_url = excluded.target_url`,
+  branchLink: `INSERT INTO pr_branch_link (pr, source_url, target_url, author_url) VALUES ($pr, $source, $target, $author)
+    ON CONFLICT (pr) DO UPDATE SET source_url = excluded.source_url, target_url = excluded.target_url, author_url = excluded.author_url`,
   offDashboard:
     "UPDATE pull_request SET on_dashboard = 0 WHERE on_dashboard = 1 AND id NOT IN (SELECT value FROM json_each($ids)) RETURNING id",
   prState: "SELECT my_role, initialized_at, source_head, target_head, meta_head FROM pull_request WHERE id = $id",
@@ -189,7 +189,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
           })),
         ),
       }) as { id: number };
-      run(SQL.branchLink, { pr: id, source: pr.sourceBranchUrl ?? null, target: pr.targetBranchUrl ?? null });
+      run(SQL.branchLink, { pr: id, source: pr.sourceBranchUrl ?? null, target: pr.targetBranchUrl ?? null, author: pr.authorUrl ?? null });
       settings.applyTasks(db, id, tasks);
       const before = row && {
         role: row.my_role,

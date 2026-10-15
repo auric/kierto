@@ -127,9 +127,8 @@ test("the check interval persists after a reload", async ({ page, request }) => 
   await expect(page.getByLabel("Check for new activity")).toHaveValue("300");
 });
 
-test("a renamed profile shows in the Review button and in the run labels; a run keeps the name it started with", async ({ page }) => {
+test("a renamed profile shows in the brief and in the run labels; a run keeps the name it started with", async ({ page }) => {
   await connect(page);
-  await expect(reviewButton(page)).toHaveText(/Review · General/);
   await openSettings(page);
   const name = field(page, "Name", 1);
   await expect(name).toHaveValue("General");
@@ -137,10 +136,12 @@ test("a renamed profile shows in the Review button and in the run labels; a run 
   await name.blur();
   await saved(page);
   await closeSettings(page);
-  await expect(reviewButton(page)).toHaveText(/Review · Correctness/);
+  // The Review button names no profile. The brief holds the pick and its Edit link.
+  await expect(reviewButton(page)).toHaveText("Review");
 
   await page.keyboard.press("Shift+R");
   await expect(page.getByRole("radio", { name: /^Correctness/ })).toBeChecked();
+  await expect(page.locator("#brief").getByRole("link", { name: "Edit Correctness" })).toBeVisible();
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await page.keyboard.press("3");
@@ -148,13 +149,13 @@ test("a renamed profile shows in the Review button and in the run labels; a run 
   await page.keyboard.press("Escape");
   await expect(runLog(page)).toBeHidden();
 
-  // The Review button follows a second rename at once. The finished run keeps its first name and its explain flag.
+  // The brief follows a second rename at once. The finished run keeps its first name and its explain flag.
   await openSettings(page);
   await field(page, "Name", 1).fill("Logic");
   await field(page, "Explain only", 1).check();
   await saved(page);
   await closeSettings(page);
-  await expect(reviewButton(page)).toHaveText(/Review · Logic/);
+  expect(await briefNames(page)).toEqual(["Logic", "Over-engineering", "Security", "Explain"]);
   await expect(runRow(page)).toContainText("Correctness profile");
   await page.keyboard.press("3");
   await expect(runLog(page)).toContainText("Correctness profile");
@@ -263,7 +264,6 @@ test("reset brings back the four shipped profiles", async ({ page, request }) =>
   await expect.poll(() => names(page)).toEqual(SHIPPED);
   expect((await settingsApi(request)).profiles.map((p) => p.name)).toEqual(SHIPPED);
   await closeSettings(page);
-  await expect(reviewButton(page)).toHaveText(/Review · General/);
   expect(await briefNames(page)).toEqual(SHIPPED);
 });
 
@@ -687,18 +687,19 @@ test("Language checks: on for General and Security, saved at once, and a review 
   for (const prompt of Object.values(off)) expect(prompt).not.toContain(" list:\n- ");
 });
 
-test("Edit profile… in the Review menu opens the settings at the brief profile", async ({ page }) => {
+test("Edit <profile> in the brief opens the settings at the checked profile, through the profile URL", async ({ page }) => {
   await connect(page);
   await page.keyboard.press("Shift+R");
-  await page
-    .locator("#brief")
-    .getByRole("radio", { name: /^Security/ })
-    .check();
-  await page.keyboard.press("Escape");
-  await expect(reviewButton(page)).toHaveText(/Review · Security/);
-  await page.locator("#review-btn-menu").click();
-  await page.getByRole("menuitem", { name: /^Edit profile…/ }).click();
+  const brief = page.locator("#brief");
+  // The Edit link keeps its own name: the radio group is named "Profile" only.
+  await expect(brief.getByRole("group", { name: "Profile", exact: true })).toBeVisible();
+  await expect(brief.getByRole("link", { name: "Edit General" })).toHaveAttribute("href", "/settings/profiles/general");
+  await brief.getByRole("radio", { name: /^Security/ }).check();
+  const edit = brief.getByRole("link", { name: "Edit Security" });
+  await expect(edit).toHaveAttribute("href", "/settings/profiles/security");
+  await edit.click();
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+  await expect(page).toHaveURL(`${APP}/settings/profiles/security`);
   await expect(field(page, "Name", 3)).toBeFocused();
   await expect(field(page, "Name", 3)).toHaveValue("Security");
   await expect(field(page, "Name", 3)).toBeInViewport();
@@ -708,7 +709,7 @@ test("Edit profile… in the Review menu opens the settings at the brief profile
   await expect(field(page, "Name", 3)).not.toBeFocused();
 });
 
-test("every review start opens the brief first; Cancel and Esc start nothing; a menu profile runs once and the brief keeps its profile", async ({
+test("every review start opens the brief first; Cancel and Esc start nothing; the brief preselects the last used profile (decision D2)", async ({
   page,
   request,
 }) => {
@@ -716,11 +717,21 @@ test("every review start opens the brief first; Cancel and Esc start nothing; a 
   const brief = page.locator("#brief");
   const note = page.getByLabel("Your note");
   const setup = page.locator("#brief-setup");
+  const radio = (name: string) => brief.getByRole("radio", { name: new RegExp(`^${name}`) });
+  const lastUsed = brief.locator("label", { hasText: "Last used" });
+  const stored = () => page.evaluate(() => localStorage.getItem("rl:last-profile"));
+
+  // Review is one plain button: no profile name and no profile menu.
+  await expect(reviewButton(page)).toHaveText("Review");
+  await expect(page.locator("#review-btn-menu")).toHaveCount(0);
 
   // The Review button opens the brief with the run setup of the brief profile. Cancel starts nothing.
   await reviewButton(page).click();
   await expect(note).toBeFocused();
   await expect(setup).toHaveText("Run setup: default model, default effort. Reviewer agents: Auto. No skills or MCP servers.");
+  // No stored brief and no profile used yet: the default profile, without the mark.
+  await expect(radio("General")).toBeChecked();
+  await expect(lastUsed).toHaveCount(0);
   await brief.getByRole("button", { name: "Cancel" }).click();
   await expect(brief).toHaveCount(0);
   await expect(reviewButton(page)).toBeFocused();
@@ -730,38 +741,37 @@ test("every review start opens the brief first; Cancel and Esc start nothing; a 
   await expect(note).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(brief).toHaveCount(0);
-
-  // A profile item of the Review menu opens the brief with that profile, for this review only.
-  await page.locator("#review-btn-menu").click();
-  await page
-    .getByRole("menu")
-    .getByRole("menuitem", { name: /^Security/ })
-    .click();
-  await expect(note).toBeFocused();
-  await expect(brief.getByRole("radio", { name: /^Security/ })).toBeChecked();
-  await expect(setup).toContainText("Only for this review. The brief keeps the General profile.");
-  await expect(reviewButton(page)).toHaveText(/Review · General/);
   expect(await runs(request)).toEqual([]);
 
-  // Start runs the picked profile once. The brief keeps its profile.
+  // A review on another PR used Security. This PR has no stored brief, so the brief preselects Security and marks it.
+  await page.evaluate(() => localStorage.setItem("rl:last-profile", "security"));
+  await page.keyboard.press("r");
+  await expect(radio("Security")).toBeChecked();
+  await expect(lastUsed).toHaveCount(1);
+  await expect(lastUsed).toContainText("Security");
+  await expect(lastUsed.locator("[title]")).toHaveAttribute("title", "The last profile you used on any pull request.");
+  // Start stores the preselected profile first, so the run uses it. The started run sets the last used profile again.
+  await page.evaluate(() => localStorage.removeItem("rl:last-profile"));
   await brief.getByRole("button", { name: "Start review" }).click();
   await expect(brief).toHaveCount(0);
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   expect((await runs(request)).map((r) => [r.kind, r.profile])).toEqual([["review", "security"]]);
-  await expect(reviewButton(page)).toHaveText(/Review · General/);
+  expect(await stored()).toBe("security");
 
-  // A profile pick in the brief saves the brief profile and ends the profile for this review only.
-  await page.locator("#review-btn-menu").click();
-  await page
-    .getByRole("menu")
-    .getByRole("menuitem", { name: /^Explain/ })
-    .click();
-  await brief.getByRole("radio", { name: /^Over-engineering/ }).check();
-  await expect(setup).not.toContainText("Only for this review");
-  await expect(reviewButton(page)).toHaveText(/Review · Over-engineering/);
+  // A pick saves the brief profile at once. The mark stays on the preselected profile.
+  await page.keyboard.press("r");
+  await radio("Over-engineering").check();
+  await expect(lastUsed).toContainText("Security");
   await page.keyboard.press("Escape");
   await expect(brief).toHaveCount(0);
+  // The stored brief of this PR wins over the last used profile.
+  await page.keyboard.press("r");
+  await expect(radio("Over-engineering")).toBeChecked();
+  await expect(lastUsed).toContainText("Over-engineering");
+  await expect(lastUsed.locator("[title]")).toHaveAttribute("title", "The last profile you used on this pull request.");
+  await page.keyboard.press("Escape");
   expect(await runs(request)).toHaveLength(1);
+  expect(await stored()).toBe("security");
 });
 
 test("the settings section links mark the section in view: at once on a click, on scroll, and the last section at the end", async ({

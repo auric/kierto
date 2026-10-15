@@ -107,7 +107,7 @@ test("a click opens a PR and a file with their own entries; Back closes the file
   await expect(file).toHaveAttribute("aria-expanded", "true");
 });
 
-test("Settings sections and Edit profile… push entries; Back walks the sections, then returns to the PR", async ({ page }) => {
+test("Settings sections and Edit <profile> push entries; Back walks the sections, then returns to the PR", async ({ page }) => {
   await connect(page);
   await row(page, A).click();
   await expect(h1(page)).toHaveText(A);
@@ -132,11 +132,11 @@ test("Settings sections and Edit profile… push entries; Back walks the section
   await expect(h1(page)).toHaveText(A);
   expect(path(page)).toBe(prUrl);
 
-  // Edit profile… opens the profile URL. Back returns to the PR.
-  await page.locator("#review-btn-menu").click();
-  await page.getByRole("menuitem", { name: /^Edit profile…/ }).click();
+  // "Edit <profile>" in the brief opens the profile URL. Back returns to the PR.
+  await page.keyboard.press("r");
+  await page.locator("#brief").getByRole("link", { name: "Edit General" }).click();
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  await expect(page).toHaveURL(/\/settings\/profiles\/[^/]+$/);
+  await expect(page).toHaveURL(`${APP}/settings/profiles/general`);
   await page.goBack();
   await expect(h1(page)).toHaveText(A);
 

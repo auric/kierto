@@ -32,7 +32,7 @@ function scoped(scope: string) {
   const where = `(${scope}) AND ($id IS NULL OR p.id = $id)`;
   return {
     rows: `SELECT p.id, p.project, p.repo, p.pr_id, p.title, p.author_slug, p.author_name, p.my_role, p.state, p.my_status, p.last_reviewed_commit,
-      p.source_head, p.source_branch, p.target_branch, p.web_url, b.source_url AS source_branch_url, b.target_url AS target_branch_url,
+      p.source_head, p.source_branch, p.target_branch, p.web_url, b.source_url AS source_branch_url, b.target_url AS target_branch_url, b.author_url,
       p.on_dashboard, p.followed, p.archived_at, p.reviewers_json, p.seen_at,
       (SELECT COUNT(*) FROM comment c WHERE ${UNREAD}) AS unread,
       MAX(COALESCE(p.updated_date, 0), COALESCE((SELECT MAX(c.updated_at) FROM comment c WHERE c.pr = p.id), 0)) AS last_activity,
@@ -96,6 +96,7 @@ type RawRow = {
   web_url: string | null;
   source_branch_url: string | null;
   target_branch_url: string | null;
+  author_url: string | null;
   reviewers_json: string | null;
   seen_at: number | null;
   on_dashboard: number;
@@ -193,6 +194,7 @@ const toRow = (r: RawRow, t: Turns, tasks: PrTask[]): PrRow => ({
   webUrl: r.web_url,
   sourceBranchUrl: r.source_branch_url,
   targetBranchUrl: r.target_branch_url,
+  authorUrl: r.author_url,
   reviewers:
     r.reviewers_json === null
       ? []

@@ -1,5 +1,5 @@
-// One action pattern for Review, Draft replies, and Fix all valid: the main part runs with the brief profile.
-// The menu runs once with another profile. The brief keeps its profile.
+// The split button of Fix all valid: the main part runs with the brief profile. The menu runs once with another profile.
+// Plan pr-view-v4 P7 replaces it with a plain Fix button. Review and Draft replies are plain buttons (P3).
 import { ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";

@@ -1,7 +1,8 @@
-// Detail header (Group 1a): the sticky action bar, the branch links with their copy button, the profile menus of the run buttons,
-// and the Ask button. Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
+// Detail header (Group 1a, plan pr-view-v4 2.1 and 2.2): the sticky action bar, the key, author, branch, and task links, the plain
+// run buttons, the More menu, and the Ask button. Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake
+// Claude Code CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, type Scenario } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, JIRA_ISSUE, type Scenario } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 // A run passes the git workspace, the fake CLI, and the validator.
@@ -107,13 +108,15 @@ test("branch links: the source branch of a fork PR opens in the fork, the copy b
   // The target repository has the recorded link of another host, so its branch shows without a link.
   await expect(page.locator('[data-branch="topic/sample-4"]').getByRole("link")).toHaveCount(0);
 
-  // The copy button shows on hover and on focus. Keyboard focus reaches it.
+  // The copy button of the source branch is always visible (H3). Keyboard focus reaches it. The target branch has none.
   const copy = src.getByRole("button", { name: `Copy ${B_BRANCH}` });
-  await expect(copy).toHaveCSS("opacity", "0");
-  await copy.focus();
+  await expect(copy).toBeVisible();
   await expect(copy).toHaveCSS("opacity", "1");
+  await expect(page.locator('[data-branch="topic/sample-4"]').getByRole("button")).toHaveCount(0);
+  await copy.focus();
   await page.keyboard.press("Enter");
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(B_BRANCH);
+  await expect(page.getByRole("status").filter({ hasText: `Copied ${B_BRANCH}.` })).toHaveCount(1);
 
   // A PR from the same repository: the source branch opens there.
   await row(page, A).click();
@@ -124,43 +127,124 @@ test("branch links: the source branch of a fork PR opens in the fork, the copy b
   );
 });
 
-test("profile menus: Draft replies runs once with another profile, the run line names it, and the brief keeps its profile", async ({
-  page,
-}) => {
-  await connect(page, A);
-  await control("state", { turns: 3 });
-  await expect(page.locator("#replies-btn")).toHaveAccessibleName("Draft replies · General, 3 threads");
-  await page.locator("#replies-btn-menu").click();
-  const menu = page.getByRole("menu");
-  await expect(menu).toContainText("Profile for these replies");
-  await expect(menu.getByRole("menuitem", { name: /^General.*Default$/ })).toBeVisible();
-  await menu.getByRole("menuitem", { name: /^Security/ }).click();
-  const replies = page.locator("#runline [data-run-kind='reply']");
-  await expect(replies).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
-  await expect(replies).toContainText("Security profile");
-  await expect(page.locator("#review-btn")).toHaveText(/Review · General/);
-  // A reply run starts at once. Only a review opens the brief first.
-  await expect(page.locator("#brief")).toHaveCount(0);
+const detail = (page: Page) => page.locator("section[aria-label='Details']");
+const B_KEY = "PLATFORM_RELEASE_ENGINEERING_TOOLS/release-pipeline-observability-dashboard #210";
+const B_WEB = `${FAKE_URL}/projects/PLATFORM_RELEASE_ENGINEERING_TOOLS/repos/release-pipeline-observability-dashboard/pull-requests/210`;
+// PR 1004 of the token owner (scenario author).
+const D = "Release the write lock after each entry";
 
-  // Keyboard: the menu button opens the menu. Letters stay in the menu. Esc closes it and gives the focus back.
-  await page.locator("#review-btn-menu").focus();
+test("the key opens the PR on the server, the author name opens the user page, and More opens or copies the PR link", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: APP });
+  await connect(page, B, { tall: 1 });
+  // The whole key is one link to the PR. The separate link icon is gone.
+  const key = detail(page).getByRole("link", { name: B_KEY, exact: true });
+  await expect(key).toHaveAttribute("href", B_WEB);
+  await expect(key).toHaveAttribute("target", "_blank");
+  await expect(key).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(detail(page).getByRole("link", { name: /^Open in / })).toHaveCount(0);
+
+  // serve.ts gives Maria a user link on the fake server (N2).
+  const author = page.locator("[data-author]");
+  await expect(author.getByRole("link", { name: "Maria Lopez" })).toHaveAttribute("href", `${FAKE_URL}/users/mlopez`);
+  await expect(author).toContainText("Opened by Maria Lopez");
+
+  // More: open the PR on the server, or copy its link. A reviewer PR has no planned items.
+  await page.locator("#more-btn").click();
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem", { name: "Open on Bitbucket" })).toHaveAttribute("href", B_WEB);
+  await expect(menu.getByRole("menuitem", { name: /^Copy for your session/ })).toHaveCount(0);
+  await menu.getByRole("menuitem", { name: "Copy the pull request link" }).click();
+  await expect(menu).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(B_WEB);
+  await expect(page.getByRole("status").filter({ hasText: "Copied the pull request link." })).toHaveCount(1);
+  // Keyboard: Enter opens the menu, Esc closes it and gives the focus back. Letters stay in the menu.
+  await page.locator("#more-btn").focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("j");
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toHaveCount(0);
-  await expect(page.locator("#review-btn-menu")).toBeFocused();
-  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(A);
+  await expect(page.locator("#more-btn")).toBeFocused();
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(B);
 
-  // A profile in the Review menu opens the brief with that profile and the focus in the note. Nothing runs yet.
-  await page.locator("#review-btn-menu").click();
-  await expect(page.getByRole("menuitem", { name: /^Open brief/ })).toHaveCount(0);
-  await page
-    .getByRole("menu")
-    .getByRole("menuitem", { name: /^Security/ })
-    .click();
-  await expect(page.locator("#brief-note")).toBeFocused();
-  await expect(page.locator("#brief").getByRole("radio", { name: /^Security/ })).toBeChecked();
-  await expect(page.locator("#runline [data-run-kind='review']")).toHaveCount(0);
+  // Alex's recorded user link has another host, so his name stays text.
+  await row(page, A).click();
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(A);
+  await expect(author).toContainText("Alex");
+  await expect(author.getByRole("link")).toHaveCount(0);
+});
+
+test("task chips: a chip without a link pattern opens Settings, Task IDs; with a pattern it opens the task", async ({ page }) => {
+  await connect(page, A, { task: true });
+  const chip = detail(page).locator(`header [data-task-chip="${JIRA_ISSUE}"]`);
+  // The dashed border and the name carry the missing link, not only the color (H2).
+  await expect(chip).toHaveAccessibleName(`${JIRA_ISSUE}. No task link yet. Opens Settings, Task IDs.`);
+  await expect(chip).toHaveCSS("border-style", "dashed");
+  await chip.click();
+  await expect(page).toHaveURL(`${APP}/settings/task-ids`);
+  await expect(page.getByRole("heading", { name: "Task IDs" })).toBeFocused();
+
+  await page.getByLabel("Task link (optional)").fill("https://tracker.example.test/browse/{key}");
+  await expect(page.locator("#taskids-status")).toHaveText("Saved. The inbox finds the task IDs again in the background.");
+  await page.getByRole("button", { name: "Close the settings" }).click();
+  await row(page, A).click();
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(A);
+  const link = detail(page).locator("header").getByRole("link", { name: JIRA_ISSUE, exact: true });
+  await expect(link).toHaveAttribute("href", `https://tracker.example.test/browse/${JIRA_ISSUE}`);
+  await expect(link).toHaveAttribute("target", "_blank");
+  await expect(link).toHaveCSS("border-style", "solid");
+});
+
+test("Review and Draft replies are plain buttons; a zero count explains itself; an own PR keeps the planned More items", async ({
+  page,
+}) => {
+  await connect(page, A);
+  // No split button and no profile name in a label (plan pr-view-v4 2.2).
+  await expect(page.locator("#review-btn")).toHaveText("Review");
+  await expect(page.locator("#review-btn-menu, #replies-btn-menu")).toHaveCount(0);
+  await expect(page.locator("#ask-btn")).toHaveText("Ask");
+
+  // Your message is the newest in the one open thread, so a click explains why no run starts.
+  const replies = page.locator("#replies-btn");
+  await expect(replies).toHaveAccessibleName("Draft replies");
+  await replies.click();
+  const pop = page.locator("[data-slot='popover-content']");
+  await expect(pop).toContainText("No thread waits for your reply.");
+  await expect(pop).toContainText("Your message is the newest in the open thread. It waits for the other person.");
+  // Esc closes the popover only. The PR stays open.
+  await page.keyboard.press("Escape");
+  await expect(pop).toHaveCount(0);
+  await expect(replies).toBeFocused();
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(A);
+  await expect(page.locator("#runline [data-run-kind='reply']")).toHaveCount(0);
+
+  // A your-turn thread gives the count, and a click starts the run with the brief profile.
+  await control("state", { turns: 2 });
+  await expect(replies).toHaveAccessibleName("Draft replies, 2 threads");
+  await expect(replies).toHaveText(/^Draft replies\s*2$/, { useInnerText: true });
+  await replies.click();
+  await expect(page.locator("#runline [data-run-kind='reply']")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  await expect(page.locator("#runline [data-run-kind='reply']")).toContainText("General profile");
+
+  // A pane of 520 px or less shows "Replies". Every button keeps a text label, and the stuck title hides.
+  await page.setViewportSize({ width: 400, height: 800 });
+  await expect(replies).toHaveText(/^Replies\s*2$/, { useInnerText: true });
+  await expect(page.locator("#ask-btn")).toHaveText("Ask");
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // An own PR: More keeps the places of the session consult. They are planned and do nothing yet.
+  await control("state", { author: true });
+  await row(page, D).click();
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(D);
+  await expect(page.locator("[data-author]")).toContainText("Opened by You");
+  await page.locator("#more-btn").click();
+  const planned = page.getByRole("menu").getByRole("menuitem", { name: /^Copy for your session…/ });
+  await expect(planned).toContainText("Planned");
+  await expect(planned).toHaveAttribute("aria-disabled", "true");
+  await expect(page.getByRole("menu").getByRole("menuitem", { name: /^Paste the answer…/ })).toContainText("Planned");
+  await page.keyboard.press("Escape");
 });

@@ -23,7 +23,8 @@ export const pullRequest = z.object({
   description: z.string().optional(),
   state: z.string(),
   updatedDate: z.number(),
-  author: z.object({ user }),
+  // author.user.links.self: the user page (fixtures/bitbucket/pull-request.json).
+  author: z.object({ user: user.extend({ links }) }),
   reviewers: z.array(z.object({ user, status: z.string(), lastReviewedCommit: z.string().optional() })),
   fromRef: ref,
   toRef: ref,

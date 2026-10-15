@@ -87,7 +87,9 @@ async function openThread(page: Page, id: number) {
 // Reply drafts for both threads: valid for LOCK, partly valid for LOOP.
 async function draftReplies(page: Page) {
   await expect(page.getByRole("button", { name: /^Fix all valid/ })).toHaveAccessibleName(/^Fix all valid\. No reply draft finds/);
-  await page.getByRole("button", { name: /^Draft replies · / }).click();
+  // The button counts the threads where it is your turn. Without one, a click opens the reason instead of a run.
+  await expect(page.locator("#replies-btn")).toHaveAccessibleName(/^Draft replies, \d+ threads?$/);
+  await page.locator("#replies-btn").click();
   await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   for (const id of [LOCK, LOOP]) await openThread(page, id);
   await expect(draft(page, LOCK).locator("[data-judgement]")).toHaveText("Valid");

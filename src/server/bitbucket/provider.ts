@@ -145,6 +145,7 @@ export function createBitbucketProvider(opts: ClientOptions) {
       repoUrl,
       sourceBranchUrl: branchUrl(own(p.fromRef.repository.links?.self?.[0]?.href), p.fromRef.id),
       targetBranchUrl: branchUrl(repoUrl, p.toRef.id),
+      authorUrl: own(p.author.user.links?.self?.[0]?.href),
       updatedDate: p.updatedDate,
     };
   }

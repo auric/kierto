@@ -183,8 +183,8 @@ test("A17: a comment that tells the AI to answer another thread is data; no draf
       coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
     },
   });
-  const btn = page.getByRole("button", { name: /^Draft replies · / });
-  await expect(btn).toHaveAccessibleName("Draft replies · General, 1 thread");
+  const btn = page.locator("#replies-btn");
+  await expect(btn).toHaveAccessibleName("Draft replies, 1 thread");
   await btn.click();
   await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runLine(page)).toContainText("1 reply draft");

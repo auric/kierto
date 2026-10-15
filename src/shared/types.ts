@@ -29,6 +29,8 @@ export type PullRequest = {
   // The branch pages. The source branch of a PR from a fork is in the fork. Present only when the repository link has the configured origin.
   sourceBranchUrl?: string;
   targetBranchUrl?: string;
+  // The user page of the author. Present only when it has the configured origin.
+  authorUrl?: string;
   updatedDate: number;
 };
 

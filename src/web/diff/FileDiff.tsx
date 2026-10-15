@@ -100,7 +100,6 @@ export type DiffView = {
   // Opens Files and the file of the URL. focus: also loads the pages up to the line and focuses it, else the file row.
   // Without the code, Files shows the file list and the fetch. Nothing fetches.
   goFile: (to: { path: string; line: number | null; side: "new" | "old" }, focus: boolean) => void;
-  first: () => void;
   // g f: opens Files and focuses its first row without a diff open.
   firstRow: () => void;
 };
@@ -204,9 +203,9 @@ export function useDiffView(
     o.focusAfter({ id: `df-${i}`, block: "start", flash: false });
   };
 
-  // Opens Files and its first file (open), then focuses that file. Without the code, it focuses the first row of the forge file
-  // list, else Get the code. Files shows an error itself.
-  const first = async (open: boolean) => {
+  // Opens Files and focuses its first row. Without the code, it focuses the first row of the forge file list, else Get the code.
+  // Files shows an error itself.
+  const firstRow = async () => {
     o.openFold();
     const list = { id: "s-files-sum", block: "start", flash: false } as const;
     let index: DiffIndex;
@@ -219,9 +218,7 @@ export function useDiffView(
       return o.focusAfter(
         document.getElementById("ff-0") ? { id: "ff-0", block: "start", flash: false } : { id: "diff-get", block: "center", flash: false },
       );
-    const f = index.files[0];
-    if (!f) return o.focusAfter(list);
-    if (open) openFile(fileName(f));
+    if (!index.files[0]) return o.focusAfter(list);
     o.focusAfter({ id: "df-0", block: "start", flash: false });
   };
 
@@ -234,8 +231,7 @@ export function useDiffView(
     more,
     show: (card) => void show(card),
     goFile: (to, focus) => void goFile(to, focus),
-    first: () => void first(true),
-    firstRow: () => void first(false),
+    firstRow: () => void firstRow(),
   };
 }
 

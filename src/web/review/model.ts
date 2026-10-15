@@ -25,6 +25,7 @@ import {
   type Side,
 } from "../../shared/review";
 import type { RunEvent } from "../../shared/run-log";
+import type { Turn } from "../../shared/turn";
 import { matches } from "../shell/model";
 import { sizeText } from "./tasks";
 
@@ -367,16 +368,25 @@ export type BriefState = {
   hint: string;
 };
 
-// Every review start opens the brief first. The review starts only from its Start button.
+// Every review start opens the brief first. The review starts only from its Start button. The brief holds the profile pick.
 export function briefState(brief: BriefDto | undefined, active: RunDto | null, pr: number, profiles: ProfileDto[]): BriefState {
   const p = profileOf(profiles, brief?.profile ?? "general");
-  const note = brief?.note.trim() ? " and your note" : "";
+  const note = brief?.note.trim() ? " with your note" : "";
   return {
     profile: p?.id ?? "general",
     name: p?.name ?? "",
     busy: active ? { pr: active.pr, same: active.pr === pr } : null,
-    hint: `Open the review brief with the ${p?.name ?? ""} profile${note}. Start the review there. Key: r.`,
+    hint: `Open the review brief${note}. Pick the profile and start the review there. Key: r.`,
   };
+}
+
+// Decision D2 (plan pr-view-v4): the brief preselects the profile of the stored brief of this PR. A PR without one gets the
+// last profile that started a review on any PR. last: that profile ID, null when unknown. tag: what the "Last used" mark
+// stands for, null when no profile was used yet.
+export function briefProfile(brief: BriefDto, last: string | null, profiles: ProfileDto[]): { profile: string; tag: "pr" | "any" | null } {
+  if (brief.updatedAt !== null) return { profile: brief.profile, tag: "pr" };
+  if (last && profiles.some((p) => p.id === last)) return { profile: last, tag: "any" };
+  return { profile: brief.profile, tag: null };
 }
 
 const MODE_NAME: Record<ReviewerMode, string> = { auto: "Auto", always: "Always", off: "Off" };
@@ -489,16 +499,30 @@ export function replyCard(it: ReviewItemDto | undefined, newest: number | null, 
   return it.status === "discarded" ? { kind: "discarded", it } : { kind: "draft", it, stale };
 }
 
-// The Draft replies button. D12: the server refuses more than MAX_REPLY_THREADS threads in one run.
-export function repliesButton(your: number, profile: string): { disabled: boolean; hint: string } {
-  if (!your) return { disabled: true, hint: "No thread waits for your reply." };
+// The Draft replies button (plan pr-view-v4 2.2). turns: the turn of each thread of the PR. your: the count on the button.
+// why: the popover text when a click starts no run, null when it starts one. D12: the server refuses more than
+// MAX_REPLY_THREADS threads in one run. "wait" means that your message is the newest (shared/turn.ts).
+export function repliesButton(turns: readonly Turn[]): { your: number; why: { title: string; text: string } | null; hint: string } {
+  const your = turns.filter((t) => t === "your").length;
+  const why = repliesWhy(turns, your);
+  const which = your === 1 ? "the thread" : `each of the ${your} threads`;
+  return { your, why, hint: why ? why.title : `Draft a reply for ${which} where it is your turn.` };
+}
+
+function repliesWhy(turns: readonly Turn[], your: number): { title: string; text: string } | null {
   if (your > MAX_REPLY_THREADS)
     return {
-      disabled: true,
-      hint: `${your} threads wait for your reply. Draft at most ${MAX_REPLY_THREADS} at a time: use Draft reply in each thread.`,
+      title: `${your} threads wait for your reply.`,
+      text: `Draft at most ${MAX_REPLY_THREADS} at a time: use Draft reply in each thread.`,
     };
-  const which = your === 1 ? "the thread" : `each of the ${your} threads`;
-  return { disabled: false, hint: `Draft a reply for ${which} where it is your turn. Profile: ${profile}.` };
+  if (your) return null;
+  const open = turns.filter((t) => t !== "resolved").length;
+  if (!open) return { title: "No open thread.", text: "Every thread is resolved, so no reply is due." };
+  const title = "No thread waits for your reply.";
+  if (turns.includes("other")) return { title, text: "Each open thread waits for another person, or it has no message from you." };
+  return open === 1
+    ? { title, text: "Your message is the newest in the open thread. It waits for the other person." }
+    : { title, text: "Your message is the newest in each open thread. They wait for the other person." };
 }
 
 export const coverageRows = (c: Coverage): [string, string[]][] =>

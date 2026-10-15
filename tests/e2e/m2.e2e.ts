@@ -68,7 +68,7 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await expect(page.getByLabel("Your note")).toBeFocused();
   await page.getByLabel("Your note").fill(NOTE);
   await page.getByRole("radio", { name: /^Security/ }).check();
-  await expect(page.locator("#review-btn")).toHaveText(/Review · Security/);
+  await expect(page.getByRole("radio", { name: /^Security/ })).toBeChecked();
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(page.locator("#brief")).toHaveCount(0);
 

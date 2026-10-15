@@ -40,7 +40,8 @@ const card = (page: Page, id: number) => thread(page, id).locator("[data-reply-d
 const runline = (page: Page) => page.locator("#runline");
 // The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
 const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
-const repliesButton = (page: Page) => page.getByRole("button", { name: /^Draft replies · / });
+// The accessible name counts the threads where it is your turn (plan pr-view-v4 2.2).
+const repliesButton = (page: Page) => page.locator("#replies-btn");
 const confirmBox = (page: Page) => page.getByRole("dialog", { name: /^Post .* to PROJ1\/sample-repo-2 #1001\?$/ });
 const postButton = (box: Locator) => box.getByRole("button", { name: "Post", exact: true });
 
@@ -70,7 +71,7 @@ test("Draft replies: three your-turn threads get inline drafts, one needs no rep
   await connect(page);
   await control("state", { turns: 3 });
   const btn = repliesButton(page);
-  await expect(btn).toHaveAccessibleName("Draft replies · General, 3 threads");
+  await expect(btn).toHaveAccessibleName("Draft replies, 3 threads");
   await btn.click();
   await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runline(page)).toContainText("2 reply drafts, 1 thread needs no reply");
@@ -132,7 +133,6 @@ test("review drafts stay after a reply run (R14), and a per-thread draft replace
   // The newest review run still drives the drafts, the summary, and the brief.
   await expect(drafts(page)).toHaveCount(3);
   await expect(runRow(page)).toContainText("The lock moves into the loop.");
-  await expect(page.locator("#review-btn")).toHaveText(/Review · General/);
   await expect(card(page, 1000103)).toContainText("No reply needed");
   // Key 2 goes to the review drafts, then on to the reply drafts, then back.
   const focused = page.locator(":focus");
@@ -157,7 +157,7 @@ test("a stale draft says new messages arrived; Draft again answers the newest me
   await connect(page);
   await control("state", { reply: "new" });
   await expect(thread(page, ROOT)).toHaveAttribute("aria-label", /^Your turn\./);
-  await expect(repliesButton(page)).toHaveAccessibleName("Draft replies · General, 1 thread");
+  await expect(repliesButton(page)).toHaveAccessibleName("Draft replies, 1 thread");
   await repliesButton(page).click();
   await expect(card(page, ROOT)).toContainText(echo(1000010), { timeout: RUN_MS });
   await expect(card(page, ROOT)).not.toContainText("New messages since this draft.");
@@ -236,6 +236,7 @@ test("a reply confirm stays open while its thread moves from Waiting to Your tur
 test("the confirm shows the mark on an AI reply draft, and not after the settings switch is off", async ({ page }) => {
   await connect(page);
   await control("state", { turns: 1 });
+  await expect(repliesButton(page)).toHaveAccessibleName("Draft replies, 1 thread");
   await repliesButton(page).click();
   await expect(card(page, 1000101)).toContainText(echo(1000201), { timeout: RUN_MS });
   await card(page, 1000101).getByRole("button", { name: "Accept" }).click();

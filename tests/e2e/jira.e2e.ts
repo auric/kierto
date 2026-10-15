@@ -49,7 +49,8 @@ const fold = (page: Page, key: string) => page.locator(`details[data-task="${key
 const fetchBtn = (page: Page, key: string) => brief(page).getByRole("button", { name: `Fetch ${key} from Jira` });
 // The one live region of the detail.
 const status = (page: Page) => page.locator("p[role='status'].sr-only");
-const openSettings = (page: Page) => page.getByRole("button", { name: "Settings" }).click();
+// exact: a header task chip without a link names Settings too ("Opens Settings, Task IDs").
+const openSettings = (page: Page) => page.getByRole("button", { name: "Settings", exact: true }).click();
 const closeSettings = (page: Page) => page.getByRole("button", { name: "Close the settings" }).click();
 
 async function open(page: Page) {

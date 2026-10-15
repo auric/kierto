@@ -4,10 +4,12 @@ import { describe, expect, test } from "bun:test";
 import type { BriefDto, CommitDto, ProfileDto, PrRow, ReviewItemDto, RunDetail, RunDto, RunnerDefaults } from "../../src/shared/dto";
 import type { AnchoredFinding, Carried, Question, ReplyPayload } from "../../src/shared/review";
 import type { RunEvent } from "../../src/shared/run-log";
+import type { Turn } from "../../src/shared/turn";
 import {
   agentInfo,
   agentPath,
   anchorNote,
+  briefProfile,
   briefState,
   carriedNote,
   closedLabel,
@@ -289,14 +291,23 @@ describe("run line", () => {
 describe("brief state", () => {
   const brief = (o: Partial<BriefDto> = {}): BriefDto => ({ note: "", profile: "general", updatedAt: null, ...o });
 
-  test("the button names the stored profile; the hint says that r opens the brief, also with a stored brief", () => {
+  test("the state names the stored profile; the hint names no profile, because the brief holds the pick", () => {
     const s = briefState(brief({ profile: "security", note: "Check X", updatedAt: 5 }), null, 7, PROFILES);
     expect(s.name).toBe("Security");
-    expect(s.hint).toBe("Open the review brief with the Security profile and your note. Start the review there. Key: r.");
-    expect(briefState(brief(), null, 7, PROFILES).hint).toBe(
-      "Open the review brief with the General profile. Start the review there. Key: r.",
-    );
+    expect(s.hint).toBe("Open the review brief with your note. Pick the profile and start the review there. Key: r.");
+    expect(briefState(brief(), null, 7, PROFILES).hint).toBe("Open the review brief. Pick the profile and start the review there. Key: r.");
     expect(briefState(brief({ profile: "over" }), null, 7, PROFILES).name).toBe("General");
+  });
+
+  // Decision D2 (plan pr-view-v4): the stored brief of the PR wins, else the last profile used on any PR.
+  test("the brief preselects the stored profile, else the last used one, and marks it", () => {
+    expect(briefProfile(brief({ profile: "security", updatedAt: 5 }), "explain", PROFILES)).toEqual({ profile: "security", tag: "pr" });
+    // A stored brief with the default profile still wins over the last used one.
+    expect(briefProfile(brief({ updatedAt: 5 }), "security", PROFILES)).toEqual({ profile: "general", tag: "pr" });
+    expect(briefProfile(brief(), "security", PROFILES)).toEqual({ profile: "security", tag: "any" });
+    // Nothing used yet, or a last profile that the settings no longer list: the server default, without the mark.
+    expect(briefProfile(brief(), null, PROFILES)).toEqual({ profile: "general", tag: null });
+    expect(briefProfile(brief(), "removed", PROFILES)).toEqual({ profile: "general", tag: null });
   });
 
   test("busy names the PR of a running review", () => {
@@ -563,17 +574,34 @@ describe("reply drafts", () => {
     expect(replyCard(undefined, 105, false)).toBeNull();
   });
 
-  test("the Draft replies button: disabled at 0 and above the run cap, with the reason", () => {
-    expect(repliesButton(0, "General")).toEqual({ disabled: true, hint: "No thread waits for your reply." });
-    expect(repliesButton(1, "General")).toEqual({
-      disabled: false,
-      hint: "Draft a reply for the thread where it is your turn. Profile: General.",
+  test("the Draft replies button: a run for your-turn threads, else the popover reason (plan pr-view-v4 2.2)", () => {
+    const turns = (your: number, ...rest: Turn[]): Turn[] => [...Array<Turn>(your).fill("your"), ...rest];
+    expect(repliesButton(turns(1, "wait", "resolved"))).toEqual({
+      your: 1,
+      why: null,
+      hint: "Draft a reply for the thread where it is your turn.",
     });
-    expect(repliesButton(3, "Security").hint).toBe("Draft a reply for each of the 3 threads where it is your turn. Profile: Security.");
-    expect(repliesButton(25, "General").disabled).toBe(false);
-    expect(repliesButton(26, "General")).toEqual({
-      disabled: true,
-      hint: "26 threads wait for your reply. Draft at most 25 at a time: use Draft reply in each thread.",
+    expect(repliesButton(turns(3)).hint).toBe("Draft a reply for each of the 3 threads where it is your turn.");
+    expect(repliesButton(turns(25)).why).toBeNull();
+    expect(repliesButton(turns(26))).toEqual({
+      your: 26,
+      why: { title: "26 threads wait for your reply.", text: "Draft at most 25 at a time: use Draft reply in each thread." },
+      hint: "26 threads wait for your reply.",
+    });
+    const no = "No thread waits for your reply.";
+    expect(repliesButton(["wait", "wait", "resolved"]).why).toEqual({
+      title: no,
+      text: "Your message is the newest in each open thread. They wait for the other person.",
+    });
+    expect(repliesButton(["wait"]).why?.text).toBe("Your message is the newest in the open thread. It waits for the other person.");
+    // "other": a thread without your message. The plan text would be wrong there.
+    expect(repliesButton(["wait", "other"]).why).toEqual({
+      title: no,
+      text: "Each open thread waits for another person, or it has no message from you.",
+    });
+    expect(repliesButton(["resolved", "resolved"])).toMatchObject({
+      your: 0,
+      why: { title: "No open thread.", text: "Every thread is resolved, so no reply is due." },
     });
   });
 });

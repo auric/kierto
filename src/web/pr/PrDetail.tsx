@@ -91,7 +91,8 @@ function flash(el: HTMLElement) {
 }
 
 // onLeave: the shell moves the selection away before the PR leaves the list. onSettings: the brief links to the task ID rules.
-// onProfile: the Review menu opens the settings at one profile. onRestore: the Archive view brings the PR back.
+// onTaskIds: a header task chip without a link opens Settings, Task IDs. onProfile: "Edit <profile>" in the brief opens the
+// settings at one profile. onRestore: the Archive view brings the PR back.
 // at: the URL state to restore. file: the file path in the URL. onRoute: the current thread and the opened file go to the URL.
 export function PrDetail({
   pr: row,
@@ -101,6 +102,7 @@ export function PrDetail({
   onRoute,
   onLeave,
   onSettings,
+  onTaskIds,
   onProfile,
   onRestore,
   ref,
@@ -112,6 +114,7 @@ export function PrDetail({
   onRoute: (patch: DetailPatch) => void;
   onLeave: () => void;
   onSettings: () => void;
+  onTaskIds: () => void;
   onProfile: (id: string) => void;
   onRestore: (pr: PrRow) => void;
   ref: Ref<DetailApi | null>;
@@ -480,6 +483,7 @@ export function PrDetail({
         }
         onLeave={onLeave}
         onAsk={openAsk}
+        onTaskIds={onTaskIds}
         announce={announce}
         action={review.action}
         brief={review.brief}

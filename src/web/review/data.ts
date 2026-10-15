@@ -18,6 +18,22 @@ export async function putBrief(qc: QueryClient, pr: number, input: BriefInput) {
   return dto;
 }
 
+// Decision D2 (plan pr-view-v4): the profile of the last review start on any PR, per browser. It only sets the preselection of
+// a brief that is not stored yet, so a blocked or absent storage gives null and keeps nothing.
+const LAST_PROFILE = "rl:last-profile";
+export function loadLastProfile(): string | null {
+  try {
+    return localStorage.getItem(LAST_PROFILE);
+  } catch {
+    return null;
+  }
+}
+export function saveLastProfile(id: string) {
+  try {
+    localStorage.setItem(LAST_PROFILE, id);
+  } catch {}
+}
+
 export const usePrRuns = (pr: number) =>
   useQuery({ queryKey: ["runs", "pr", pr], queryFn: async () => read<RunDto[]>(await api.api.prs[":id"].runs.$get(param(pr))) });
 

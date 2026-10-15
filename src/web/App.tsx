@@ -412,8 +412,8 @@ function Shell({ stale }: { stale: boolean }) {
   onKey.current = (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement;
-    // An open menu takes its own keys: the arrows, the letters, and Esc.
-    if (t.closest('[role="menu"]')) return;
+    // An open menu or popover takes its own keys: the arrows, the letters, and Esc.
+    if (t.closest('[role="menu"], [data-slot="popover-content"]')) return;
     // A checkbox takes keys like a button, so the detail keys work after the thread filter.
     const box = t instanceof HTMLInputElement && (t.type === "checkbox" || t.type === "radio");
     // The arrow keys move between the profile radios of the review brief.
@@ -596,6 +596,7 @@ function Shell({ stale }: { stale: boolean }) {
                   file={own ? (detail.file?.path ?? null) : null}
                   onRoute={(patch) => shownKey && onDetailRoute(shownKey, patch)}
                   onSettings={() => openSettings()}
+                  onTaskIds={() => openSettings("task-ids")}
                   onProfile={(id) => openSettings("profiles", id)}
                   onLeave={() => {
                     const i = ids.indexOf(current.id);

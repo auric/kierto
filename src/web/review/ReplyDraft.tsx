@@ -12,49 +12,60 @@ import {
   Hourglass,
   LoaderCircle,
   type LucideIcon,
+  Reply,
   Wrench,
 } from "lucide-react";
 import { memo, type ReactNode, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { MetaDto } from "../../shared/dto";
 import type { Judgement } from "../../shared/review";
+import type { Turn } from "../../shared/turn";
 import { JUDGEMENT } from "../fix/model";
 import { CopyButton, Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
-import type { Hints } from "../shell/Hint";
+import { Hint, type Hints } from "../shell/Hint";
 import { AiAvatar, Inline } from "./Drafts";
 import { EVIDENCE, plural, type ReplyCard, repliesButton, replyOf } from "./model";
-import { RunSplit } from "./RunSplit";
 import { Acts, Editor, RestoreButton, type TriageCtx, type TriageMode } from "./Triage";
 
-// profile: the brief profile. onRun: a run with the brief profile, or with the given profile only.
-export function DraftRepliesButton(props: {
-  your: number;
-  meta: MetaDto;
-  profile: { id: string; name: string };
-  onRun: (profile?: string) => void;
-}) {
-  const s = repliesButton(props.your, props.profile.name);
-  return (
-    <RunSplit
+// Plan pr-view-v4 2.2: it shows when the PR has threads. turns: the turn of each thread. onRun: a run with the brief profile.
+// A click that starts no run opens a popover with the reason. The button is never disabled.
+export function DraftRepliesButton({ turns, onRun }: { turns: readonly Turn[]; onRun: () => void }) {
+  if (!turns.length) return null;
+  const s = repliesButton(turns);
+  const button = (
+    <Button
       id="replies-btn"
+      size="sm"
       variant="outline"
-      hint={s.hint}
-      disabled={s.disabled}
-      label={`Draft replies · ${props.profile.name}${s.disabled ? `. ${s.hint}` : `, ${plural(props.your, "thread")}`}`}
-      menu="Draft replies with another profile"
-      heading="Profile for these replies"
-      profiles={props.meta.profiles}
-      current={props.profile.id}
-      onRun={props.onRun}
+      aria-label={s.your ? `Draft replies, ${plural(s.your, "thread")}` : "Draft replies"}
+      onClick={s.why ? undefined : onRun}
     >
-      Draft replies
-      <span aria-hidden className="rounded-[4px] bg-sel px-1 text-xs font-semibold text-ink-2">
-        {props.your}
-      </span>
-    </RunSplit>
+      <Reply aria-hidden data-icon="inline-start" />
+      {/* A pane of 520 px or less gets the short word. */}
+      <span className="@max-[520px]/detail:hidden">Draft replies</span>
+      <span className="hidden @max-[520px]/detail:inline">Replies</span>
+      {s.your > 0 && (
+        <span aria-hidden className="rounded-[4px] bg-sel px-1 text-xs font-semibold text-ink-2">
+          {s.your}
+        </span>
+      )}
+    </Button>
+  );
+  if (!s.why) return <Hint label={s.hint}>{button}</Hint>;
+  return (
+    <Popover>
+      <PopoverTrigger render={button} />
+      <PopoverContent align="end" className="w-80">
+        <PopoverHeader>
+          <PopoverTitle>{s.why.title}</PopoverTitle>
+          <PopoverDescription>{s.why.text}</PopoverDescription>
+        </PopoverHeader>
+      </PopoverContent>
+    </Popover>
   );
 }
 

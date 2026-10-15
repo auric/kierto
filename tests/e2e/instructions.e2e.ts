@@ -105,7 +105,8 @@ test("Settings: tick a clone file, see the preview and the warning for a gone fi
   await page.keyboard.press("Escape");
   await page.locator("[data-row]", { hasText: TITLE }).first().click();
   await control("claude", { stream: "tree" });
-  await page.getByRole("button", { name: /^Draft replies · / }).click();
+  await expect(page.locator("#replies-btn")).toHaveAccessibleName(/^Draft replies, \d+ threads?$/);
+  await page.locator("#replies-btn").click();
   const reply = page.locator("#runline [data-run-kind='reply']");
   await expect(reply).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   const inputs = reply.locator("[data-run-instructions]");
@@ -157,7 +158,8 @@ test("Settings: the global switch adds the global file to every preview and to t
   await page.keyboard.press("Escape");
   await page.locator("[data-row]", { hasText: TITLE }).first().click();
   await control("claude", { stream: "tree" });
-  await page.getByRole("button", { name: /^Draft replies · / }).click();
+  await expect(page.locator("#replies-btn")).toHaveAccessibleName(/^Draft replies, \d+ threads?$/);
+  await page.locator("#replies-btn").click();
   const reply = page.locator("#runline [data-run-kind='reply']");
   await expect(reply).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   const inputs = reply.locator("[data-run-instructions]");

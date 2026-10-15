@@ -166,12 +166,15 @@ let sc: Scenario = { ...INITIAL };
 const T0 = Date.now() - 60 * 60_000;
 const ROOT = 1000003;
 const alex = S.secondUser();
+// The user page is on the fake server, so the header links the name (plan pr-view-v4 N2). Alex keeps the recorded link of
+// another host, so his name stays text.
 const person = (slug: string, displayName: string) => ({
   ...S.clone(alex),
   slug,
   name: slug,
   displayName,
   emailAddress: `${slug}@example.test`,
+  links: { self: [{ href: `${FAKE_URL}/users/${slug}` }] },
 });
 const maria = person("mlopez", "Maria Lopez");
 const kenji = person("kito", "Kenji Ito");
