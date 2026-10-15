@@ -153,7 +153,7 @@ export function rereviewCount(items: ReviewItemDto[]): string {
 // calls: null while the log loads.
 export type RunLineState =
   | { kind: "running"; agents: number; calls: number; startedAt: number }
-  | { kind: "done"; result: string; tokens: number | null; gaps: boolean }
+  | { kind: "done"; result: string; tokens: number | null }
   | { kind: "failed"; text: string; raw: boolean }
   | { kind: "limit"; text: string }
   | { kind: "cancelled"; calls: number | null };
@@ -196,8 +196,30 @@ export function runLine(r: RunDto, d: RunDetail | undefined, profiles: ProfileDt
       if (r.errorKind === "usage_limit") return { kind: "limit", text: r.errorText ?? "" };
       return { kind: "failed", text: r.errorText ?? "No reason was recorded.", raw: r.hasRaw };
     default:
-      return { kind: "done", result: doneText(r, d?.items, edits, profiles), tokens: tokenTotal(r.usage), gaps: r.status === "incomplete" };
+      return { kind: "done", result: doneText(r, d?.items, edits, profiles), tokens: tokenTotal(r.usage) };
   }
+}
+
+// Plan pr-view-v4 2.6. jobs.ts ended(): a skipped or an unavailable item makes the run incomplete, so n counts both.
+// lines: one plain line per gap. design: coverage.notChecked, what the run leaves out by design.
+export type NotChecked = { n: number; label: string; lines: string[]; design: string | null };
+
+const sentence = (s: string) => (/[.!?]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`);
+
+export function notChecked(c: Coverage): NotChecked {
+  const lines = [...c.skipped, ...c.unavailable];
+  return {
+    n: lines.length,
+    label: `Not checked: ${lines.length}`,
+    lines,
+    design: c.notChecked.length ? `Also not done, by design: ${c.notChecked.map(sentence).join(" ")}` : null,
+  };
+}
+
+// The open questions of a run in screen order, for the ledger of the review record. Discarded and posted ones do not count.
+export function questionJump(items: ReviewItemDto[]): { n: number; first: number } | null {
+  const qs = items.filter((i) => i.kind === "question" && i.status !== "posted" && i.status !== "discarded");
+  return qs[0] ? { n: qs.length, first: qs[0].id } : null;
 }
 
 // The words of each run kind (R14). running: the state of a running run in the run list.

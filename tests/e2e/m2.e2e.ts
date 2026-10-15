@@ -78,14 +78,28 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await expect(runLine(page).locator("[data-severity]")).toHaveText(["1 Blocker", "1 Minor", "1 Nit"]);
   await runLine(page).getByRole("button", { name: "1 Nit" }).click();
   await expect(page.getByRole("article", { name: /^Draft from Claude\. Nit\. README\.md:1\./ })).toBeFocused();
+  // Run setup opens in place with the inputs of the run.
+  const setup = runRow(page).getByRole("button", { name: "Run setup of the review run" });
+  await expect(page.getByText(`Your note: ${NOTE}`)).toBeHidden();
+  await setup.click();
+  await expect(setup).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText(`Your note: ${NOTE}`)).toBeVisible();
   // Exact, moved, and outside drafts. The finding on a file that the snapshot does not have is dropped.
   await expect(page.locator("[data-draft]")).toHaveCount(3);
   await expect(page.getByText("Moved from line 6: the quoted code is on line 5.")).toBeVisible();
   await expect(page.getByText("Outside the diff. Posts as a general comment with a link to README.md:1.")).toBeVisible();
-  // A review that ends while the page shows it opens the summary.
-  await expect(page.locator("#ai-sum")).toHaveAttribute("open", "");
+  // The record holds the summary. Nothing was skipped, so "Not checked: 0" starts closed and holds the dropped finding.
+  await expect(runRow(page)).toContainText("The lock moves into the loop. A reader can see a partly flushed batch.");
+  const gaps = runRow(page).getByRole("button", { name: "Not checked: 0" });
+  await expect(gaps).toHaveAttribute("aria-expanded", "false");
+  await gaps.click();
   await expect(page.getByText("1 finding dropped: its code reference did not match the snapshot.")).toBeVisible();
+  await expect(runRow(page)).toContainText("Also not done, by design: Tests did not run, because the review has read-only tools.");
+  await runRow(page).getByRole("button", { name: "Risk areas: 2" }).click();
+  await expect(runRow(page).getByText("Readers of the cache during a flush.")).toBeVisible();
+  // The ledger counts the question too. It goes to the question below the drafts.
+  await runLine(page).getByRole("button", { name: "1 question" }).click();
+  await expect(page.locator("#g-questions article").first()).toBeFocused();
   await expect(page.getByText("Must flush() stay atomic for readers?")).toBeVisible();
 
   // "from rl-reviewer" opens the log at that agent. Its calls nest under it by parent.

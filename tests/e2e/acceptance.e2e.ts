@@ -30,6 +30,7 @@ const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
 });
 
 const row = (page: Page) => page.locator("[data-row]", { hasText: TITLE }).first();
+// The run record: the newest run of each kind, the review first.
 const runLine = (page: Page) => page.locator("#runline");
 // The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
 const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
@@ -113,7 +114,10 @@ test("A11: an unreadable result shows no clean result, and nothing from it can p
   await expect(runLine(page)).toContainText("Failed. The result does not match the review schema.", { timeout: RUN_MS });
   await expect(runRow(page)).toHaveAttribute("data-run-state", "failed");
   await expect(drafts(page)).toHaveCount(0);
-  await expect(page.locator("#ai-sum")).toHaveCount(0);
+  // No result: no summary, no ledger, no coverage, and no questions.
+  await expect(runRow(page).getByRole("list", { name: "Open drafts" })).toHaveCount(0);
+  await expect(runRow(page).getByRole("button", { name: /^Not checked/ })).toHaveCount(0);
+  await expect(page.locator("#g-questions")).toHaveCount(0);
   await expect(page.locator("[data-postbar]")).toHaveCount(0);
   await page.keyboard.press("p");
   await expect(page.getByText("Nothing is accepted yet. Accept drafts, questions, or replies first.")).toBeVisible();
@@ -127,12 +131,28 @@ test("A11, A12: a cut read and a documentation server that did not connect are c
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runLine(page)).toContainText("No findings in what it read");
   await expect(page.getByText(/no issues/i)).toHaveCount(0);
-  await runLine(page).getByRole("button", { name: "Coverage gaps" }).click();
-  const sum = page.locator("#ai-sum");
-  await expect(sum).toHaveAttribute("open", "");
-  await expect(sum).toContainText("src/cache/flush.ts after line 4: the read stopped at the output limit.");
-  await expect(sum).toContainText("MCP server deepwiki: failed");
+  // Plan pr-view-v4 2.6: the skipped read and the unavailable server count as two. The list starts open the first time.
+  const gaps = runRow(page).getByRole("button", { name: "Not checked: 2" });
+  await expect(gaps).toHaveAttribute("aria-expanded", "true");
+  const reveal = page.locator(`[id="${await gaps.getAttribute("aria-controls")}"]`);
+  await expect(reveal.locator("li")).toHaveText([
+    "src/cache/flush.ts after line 4: the read stopped at the output limit.",
+    "MCP server deepwiki: failed",
+  ]);
+  await expect(reveal).toContainText("The Log shows each step.");
+  // It opens and closes in place. No log opens.
+  await gaps.click();
+  await expect(gaps).toHaveAttribute("aria-expanded", "false");
+  await expect(reveal).toBeHidden();
+  await gaps.click();
+  await expect(reveal).toBeVisible();
+  await expect(gaps).toBeFocused();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(drafts(page)).toHaveCount(0);
+  // The second time the run shows, the list starts closed.
+  await page.reload();
+  await expect(gaps).toHaveAttribute("aria-expanded", "false");
+  await expect(reveal).toBeHidden();
 
   await page.locator("#nav-runs").click();
   await expect(row(page)).toContainText("Coverage has gaps.");
@@ -172,9 +192,12 @@ test("A17: a comment that tells the AI to answer another thread is data; no draf
   await expect(card(page, 1000101)).toContainText(asked);
   await expect(card(page, ROOT)).toHaveCount(0);
   await expect(page.getByText(injected)).toHaveCount(0);
-  // The dropped answer is a coverage gap of the run.
-  await runLine(page).getByRole("button", { name: "Coverage gaps" }).click();
-  const log = page.getByRole("dialog", { name: "Reply drafts run log" });
-  await expect(log.locator("footer")).toContainText(`Reply for thread ${ROOT} dropped: the thread was not requested.`);
+  // The dropped answer is a coverage gap of the run. The reply row shows it in place, as the review row does.
+  const gaps = runRow(page, "reply").getByRole("button", { name: "Not checked: 1" });
+  await expect(gaps).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(`[id="${await gaps.getAttribute("aria-controls")}"] li`)).toHaveText(
+    `Reply for thread ${ROOT} dropped: the thread was not requested.`,
+  );
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(await posts()).toEqual([]);
 });

@@ -1,33 +1,23 @@
-// Run list (R14, prototype/v3 runLine): one row for the newest run of each kind, newest first. Each row has the same parts:
-// the kind, the state or the result, the time, and Log in its own column. Below them, the inputs of the run.
-// Failed, usage-limit, and cancelled runs are one row each. A re-review names its range (plan r2 UI-RR).
-import {
-  Bot,
-  Braces,
-  CircleAlert,
-  CircleStop,
-  Cpu,
-  FileText,
-  GitCommitHorizontal,
-  LoaderCircle,
-  ScrollText,
-  Sparkles,
-  Ticket,
-  User,
-} from "lucide-react";
-import type { ReactNode } from "react";
+// Run record (plan pr-view-v4 2.6, prototype/pr-view-v4 reviewRecord): the newest run of each kind in one block with an ink rule.
+// The review comes first: its result, the summary, a ledger of the open drafts, and what it read and did not check.
+// Every other kind is one line. Each row opens "Not checked" and "Run setup" in place. Only Log opens the run log.
+// Failed, usage-limit, and cancelled runs are one line each. A re-review names its range (plan r2 UI-RR).
+import { Braces, Check, ChevronRight, CircleAlert, CircleStop, LoaderCircle, ScrollText, TriangleAlert } from "lucide-react";
+import { Fragment, type ReactNode, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { MetaDto, RunDto } from "../../shared/dto";
 import { fullTime, useSettled } from "../pr/Thread";
 import { agoLong } from "../pr/threads";
 import { Hint } from "../shell/Hint";
 import { useNow } from "../shell/Sidebar";
+import { AiAvatar, Dropped, Inline } from "./Drafts";
 import {
   clockDur,
   instructionsText,
   type Jump,
   KIND_LABEL,
   limitText,
+  notChecked,
   plural,
   RUN_TEXT,
   type RunLineState,
@@ -38,12 +28,30 @@ import {
 } from "./model";
 
 const icon = "size-[15px] shrink-0";
-const jump = "inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium hover:underline";
-const linkish = `${jump} text-pen disabled:cursor-default disabled:opacity-60`;
+const linkish =
+  "inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-60";
 
 function Elapsed({ from }: { from: number }) {
   const now = useNow(true);
   return <span>{clockDur(Math.max(0, now - from) / 1000)}</span>;
+}
+
+// Parts of one line, joined by a dot that screen readers skip. The no-break space keeps each dot at the end of a line.
+// The parts must stay inline boxes: an inline-flex part lets the line break before its dot.
+function Joined({ parts }: { parts: ReactNode[] }) {
+  return parts.filter(Boolean).map((p, i) => (
+    // biome-ignore lint/suspicious/noArrayIndexKey: the parts keep their order.
+    <Fragment key={i}>
+      {i > 0 && (
+        <>
+          <span aria-hidden className="text-muted-foreground">
+            {" ·"}
+          </span>{" "}
+        </>
+      )}
+      {p}
+    </Fragment>
+  ));
 }
 
 const Hash = ({ h }: { h: string }) => (
@@ -73,31 +81,57 @@ export function RunStatus({ state, full, quiet, children }: { state: string; ful
   );
 }
 
-// The open drafts per severity. Each button goes to the first draft of its severity.
-export function SeverityJumps({ jumps, onJump }: { jumps: Jump[]; onJump: (draft: number) => void }) {
-  if (!jumps.length) return null;
+// The open drafts of the newest review run. Each count goes to the first draft of its kind.
+export function Ledger({
+  jumps,
+  questions,
+  onDraft,
+  onQuestion,
+}: {
+  jumps: Jump[];
+  questions: { n: number; first: number } | null;
+  onDraft: (draft: number) => void;
+  onQuestion: (question: number) => void;
+}) {
+  if (!jumps.length && !questions) return null;
+  const btn = "group inline-flex cursor-pointer items-baseline gap-1.5 rounded";
+  const big = "text-[18px] leading-none font-bold tracking-[-0.01em] text-foreground";
+  const word = "text-ink-2 underline-offset-3 group-hover:underline";
   return (
-    <span data-severity-jumps className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
+    <ul aria-label="Open drafts" className="m-0 flex list-none flex-wrap items-center gap-x-[18px] gap-y-1.5 p-0 text-sm">
       {jumps.map((j) => (
-        <Hint key={j.severity} label={`Go to the first ${SEVERITY[j.severity]} draft`}>
-          <button
-            type="button"
-            data-severity={j.severity}
-            // Hue rule: the error hue marks only errors and Blocker findings. The word carries the severity.
-            className={cn(jump, j.severity === "blocker" ? "text-destructive" : "text-pen")}
-            onClick={() => onJump(j.first)}
-          >
-            {j.severity === "blocker" && <CircleAlert aria-hidden className={icon} />}
-            {j.n} {SEVERITY[j.severity]}
-          </button>
-        </Hint>
+        <li key={j.severity}>
+          <Hint label={`Go to the first ${SEVERITY[j.severity]} draft`}>
+            <button type="button" data-severity={j.severity} className={btn} onClick={() => onDraft(j.first)}>
+              {/* Hue rule: the error hue marks only errors and Blocker findings. The icon and the word carry the severity. */}
+              <span className={cn(big, j.severity === "blocker" && "text-destructive")}>{j.n}</span>{" "}
+              {j.severity === "blocker" ? (
+                <span className={cn(word, "inline-flex items-center gap-1 self-center font-bold text-destructive")}>
+                  <CircleAlert aria-hidden className={icon} />
+                  {SEVERITY[j.severity]}
+                </span>
+              ) : (
+                <span className={word}>{SEVERITY[j.severity]}</span>
+              )}
+            </button>
+          </Hint>
+        </li>
       ))}
-    </span>
+      {questions && (
+        <li>
+          <Hint label="Go to the first question">
+            <button type="button" data-question className={btn} onClick={() => onQuestion(questions.first)}>
+              <span className={big}>{questions.n}</span> <span className={word}>{questions.n === 1 ? "question" : "questions"}</span>
+            </button>
+          </Hint>
+        </li>
+      )}
+    </ul>
   );
 }
 
-// stale: staleText of the run. jumps: the severity buttons of the newest review run.
-export type KindRun = { run: RunDto; state: RunLineState; stale: string | null; jumps: ReactNode };
+// stale: staleText of the run. ledger: the open drafts of the newest review run. context: the task text that the run read.
+export type KindRun = { run: RunDto; state: RunLineState; stale: string | null; ledger: ReactNode; context: string };
 
 type RowProps = {
   meta: MetaDto;
@@ -105,33 +139,115 @@ type RowProps = {
   cancelling: boolean;
   onLog: (run: number, raw?: boolean) => void;
   onCancel: (run: number) => void;
-  onGaps: (run: RunDto) => void;
 };
 
-// Three columns that all rows share: the kind, the state with its time, and Log. A narrow pane puts the state below the kind.
-export function RunLines({ rows, ...props }: RowProps & { rows: KindRun[] }) {
+export function RunRecord({ rows, ...props }: RowProps & { rows: KindRun[] }) {
   const steady = useSettled(rows[0]?.run.pr);
   if (!rows.length) return null;
+  const newest = rows[0]?.run.id;
+  // The review leads. The other kinds keep their order, newest first.
+  const shown = [...rows.filter((r) => r.run.kind === "review"), ...rows.filter((r) => r.run.kind !== "review")];
+  const title = shown[0]?.run.kind === "review" ? "Review" : rows.length > 1 ? "Last runs" : "Last run";
   return (
-    <ul
-      id="runline"
-      aria-label="Newest run of each kind"
-      data-mounting={!steady || undefined}
-      className="m-0 mt-0.5 grid list-none grid-cols-[6.5rem_minmax(0,1fr)_auto] gap-x-3 gap-y-2 p-0 text-sm text-ink-2 @max-[560px]/detail:grid-cols-[minmax(0,1fr)_auto]"
-    >
-      {rows.map((row, i) => (
-        <RunRow key={row.run.kind} row={row} first={i === 0} {...props} />
-      ))}
-    </ul>
+    <section id="s-review" aria-labelledby="h-review" className="max-w-[86ch] scroll-mt-3 pt-6">
+      <h2 id="h-review" className="m-0 mb-2 text-[15px] font-bold tracking-[-0.005em]">
+        {title}
+      </h2>
+      <ul
+        id="runline"
+        aria-label="Newest run of each kind"
+        data-mounting={!steady || undefined}
+        className="m-0 grid list-none gap-4 border-l-[3px] border-foreground py-1 pl-3.5 text-sm text-ink-2"
+      >
+        {shown.map((row) => (
+          <RunRow key={row.run.kind} row={row} first={row.run.id === newest} {...props} />
+        ))}
+      </ul>
+    </section>
   );
 }
 
+// "Not checked" starts open the first time a run with gaps shows (plan pr-view-v4 2.6). The store keeps the runs that showed it.
+// The key adds the start time, because a new data folder starts the run IDs again.
+const SEEN = "rl:gaps-seen";
+const decided = new Map<string, boolean>();
+function firstShow(key: string): boolean {
+  const known = decided.get(key);
+  if (known !== undefined) return known;
+  let first = true;
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(SEEN) ?? "[]");
+    const seen = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
+    first = !seen.includes(key);
+    if (first) localStorage.setItem(SEEN, JSON.stringify([...seen, key].slice(-200)));
+  } catch {
+    // Without the store, each page load counts as the first one.
+  }
+  decided.set(key, first);
+  return first;
+}
+
+function Disc({
+  on,
+  controls,
+  warn,
+  onClick,
+  children,
+}: {
+  on: boolean;
+  controls: string;
+  warn?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={on}
+      aria-controls={controls}
+      onClick={onClick}
+      className={cn(
+        "inline-flex cursor-pointer items-center gap-1 rounded text-sm underline-offset-3 hover:underline",
+        warn ? "font-semibold text-warn" : "font-medium text-foreground",
+      )}
+    >
+      <ChevronRight aria-hidden className={cn(icon, "rl-chev")} />
+      {children}
+    </button>
+  );
+}
+
+function Reveal({ id, on, children }: { id: string; on: boolean; children: ReactNode }) {
+  return (
+    <div id={id} hidden={!on} className="grid gap-1.5 rounded-md bg-sunken px-3 py-2 text-sm text-foreground">
+      {children}
+    </div>
+  );
+}
+
+const revealList = "m-0 grid list-none gap-1.5 p-0";
+const revealItem = "grid grid-cols-[16px_minmax(0,1fr)] gap-2 [overflow-wrap:anywhere]";
+
 // first: the newest run. Only it can run, so only its state is a live region. Key 3 opens its log.
-function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onGaps }: RowProps & { row: KindRun; first: boolean }) {
+function RunRow({ row, first, meta, now, cancelling, onLog, onCancel }: RowProps & { row: KindRun; first: boolean }) {
   const { run, state: s } = row;
+  const review = run.kind === "review";
+  const [open, setOpen] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const part = (name: string, start = false) => {
+    const key = `${run.id}:${name}`;
+    const on = open.get(key) ?? start;
+    return { on, id: `rv-${run.id}-${name}`, flip: () => setOpen((m) => new Map(m).set(key, !on)) };
+  };
+  const sum = s.kind === "done" ? run.summary : null;
+  const nc = sum ? notChecked(sum.coverage) : null;
+  const dropped = sum?.dropped.length ?? 0;
+  const gaps = part("nc", !!nc && nc.n > 0 && firstShow(`${run.id}:${run.startedAt}`));
+  const setup = part("setup");
+  const read = part("read");
+  const risk = part("risk");
   const state = `${run.id}:${s.kind}`;
   const at = run.finishedAt ?? run.startedAt;
-  // The log footer also shows the tokens. Here they stay in the hint, so the row keeps one line.
+  // The log footer also shows the tokens. Here they stay in the hint.
   const tokens =
     s.kind === "done" && s.tokens !== null ? `. ${s.tokens.toLocaleString()} tokens in ${plural(run.usage?.turns ?? 0, "turn")}` : "";
   const time = (
@@ -139,185 +255,253 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onGaps }: 
       <time dateTime={new Date(at).toISOString()}>{agoLong(at, now)}</time>
     </Hint>
   );
-  let parts: ReactNode;
+  const ncButton = nc && (nc.n > 0 || nc.design || dropped > 0) && (
+    <Disc on={gaps.on} controls={gaps.id} warn={nc.n > 0} onClick={gaps.flip}>
+      {nc.n > 0 && <TriangleAlert aria-hidden className={icon} />}
+      {nc.label}
+    </Disc>
+  );
+  let lead: ReactNode;
+  let rest: ReactNode = null;
   switch (s.kind) {
     case "running":
-      parts = (
-        <>
-          <RunStatus state={state} quiet={!first}>
-            <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
-            {run.phase === "indexing"
-              ? "Indexing for codegraph…"
-              : run.since
-                ? `Reviewing changes since ${shortHash(run.since.head)}…`
-                : RUN_TEXT[run.kind].running}
-          </RunStatus>
-          {s.agents > 0 && <span>{plural(s.agents, "agent")}</span>}
-          <span>{plural(s.calls, "tool call")}</span>
-          <Elapsed from={s.startedAt} />
-          <button type="button" className={linkish} disabled={cancelling} onClick={() => onCancel(run.id)}>
-            {cancelling ? "Cancelling…" : "Cancel"}
-          </button>
-        </>
+      lead = (
+        <RunStatus state={state} quiet={!first}>
+          <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
+          {run.phase === "indexing"
+            ? "Indexing for codegraph…"
+            : run.since
+              ? `Reviewing changes since ${shortHash(run.since.head)}…`
+              : RUN_TEXT[run.kind].running}
+        </RunStatus>
+      );
+      // The counters stay outside the live region, so a screen reader does not read each tick.
+      rest = (
+        <span>
+          <Joined
+            parts={[s.agents > 0 && plural(s.agents, "agent"), plural(s.calls, "tool call"), <Elapsed key="t" from={s.startedAt} />]}
+          />
+        </span>
       );
       break;
     case "done":
-      parts = (
-        <>
-          <RunStatus state={state} quiet={!first}>
-            {s.result || "Done"}
-          </RunStatus>
-          {row.jumps}
-          {s.gaps && (
-            <button type="button" className={linkish} onClick={() => onGaps(run)}>
-              Coverage gaps
-            </button>
-          )}
-          {time}
-        </>
+      lead = (
+        <RunStatus state={state} quiet={!first}>
+          <span className={review ? "font-semibold text-foreground" : undefined}>{s.result || "Done"}</span>
+        </RunStatus>
       );
+      rest = !review && ncButton;
       break;
     case "failed":
-      parts = (
-        <>
-          <RunStatus state={state} quiet={!first} full>
-            <Err>Failed. {s.text}</Err>
-          </RunStatus>
-          {s.raw && (
-            <button type="button" className={linkish} onClick={() => onLog(run.id, true)}>
-              <Braces aria-hidden className={icon} />
-              Show raw output
-            </button>
-          )}
-          {time}
-        </>
+      lead = (
+        <RunStatus state={state} quiet={!first} full>
+          <Err>Failed. {s.text}</Err>
+        </RunStatus>
+      );
+      rest = s.raw && (
+        <button type="button" className={linkish} onClick={() => onLog(run.id, true)}>
+          <Braces aria-hidden className={icon} />
+          Show raw output
+        </button>
       );
       break;
     case "limit":
-      parts = (
-        <>
-          <RunStatus state={state} quiet={!first} full>
-            <Err>{limitText(meta.runner.name, s.text)}</Err>
-          </RunStatus>
-          {time}
-        </>
+      lead = (
+        <RunStatus state={state} quiet={!first} full>
+          <Err>{limitText(meta.runner.name, s.text)}</Err>
+        </RunStatus>
       );
       break;
     default:
-      parts = (
-        <>
-          <RunStatus state={state} quiet={!first}>
-            <CircleStop aria-hidden className={icon} />
-            {s.calls === null ? "Cancelled" : `Cancelled after ${plural(s.calls, "tool call")}`}
-          </RunStatus>
-          {time}
-        </>
+      lead = (
+        <RunStatus state={state} quiet={!first}>
+          <CircleStop aria-hidden className={icon} />
+          {s.calls === null ? "Cancelled" : `Cancelled after ${plural(s.calls, "tool call")}`}
+        </RunStatus>
       );
   }
-  return (
-    <li data-run-kind={run.kind} data-run-state={s.kind} className="col-span-full grid grid-cols-subgrid items-baseline gap-y-0.5">
-      <span className="font-semibold text-foreground">{KIND_LABEL[run.kind]}</span>
-      <p className="rl-sum m-0 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 @max-[560px]/detail:col-span-2 @max-[560px]/detail:row-start-2">
-        {parts}
-      </p>
-      <Hint label="Key: 3" disabled={!first}>
-        <button
-          id={first ? "runline-log" : undefined}
-          type="button"
-          className={cn(linkish, "@max-[560px]/detail:col-start-2 @max-[560px]/detail:row-start-1")}
-          aria-keyshortcuts={first ? "3" : undefined}
-          onClick={() => onLog(run.id)}
-        >
-          <ScrollText aria-hidden className={icon} />
-          Log<span className="sr-only"> of the {KIND_LABEL[run.kind].toLowerCase()} run</span>
-        </button>
-      </Hint>
-      <Inputs run={run} stale={row.stale} meta={meta} />
-    </li>
-  );
-}
-
-// What the run read: the commit or the range, the profile, the model and the effort, the tasks of plan r3 Feature C, and your note as plain text.
-// A menu of a run button can pick another profile than the brief one, so the row names it.
-// The run records its tasks at its start. A run from before Release 3 has no record, so it shows no task.
-function Inputs({ run, stale, meta }: { run: RunDto; stale: string | null; meta: MetaDto }) {
+  const instructions = instructionsText(run);
+  const skills = skillsText(run);
   const tasks = run.tasks ?? [];
   const ids = tasks.map((t) => t.key).join(", ");
   const range = run.since?.incremental ? shortHash(run.since.head) : null;
-  const instructions = instructionsText(run);
-  const skills = skillsText(run);
-  const item = "inline-flex items-center gap-1.5";
+  const risks = sum?.risks ?? [];
+  const files = sum?.coverage.read ?? [];
   return (
-    <p className="col-span-2 col-start-2 m-0 flex min-w-0 flex-wrap items-center gap-x-3.5 gap-y-0.5 text-(length:--fs-s) text-muted-foreground @max-[560px]/detail:col-start-1">
-      <span className={item}>
-        <GitCommitHorizontal aria-hidden className={icon} />
-        <span>
-          <span className="sr-only">{range ? "Changes " : "Commit "}</span>
-          {range && (
-            <>
-              <Hash h={range} />
-              <span aria-hidden className="mx-1">
-                →
-              </span>
-              <span className="sr-only"> to </span>
-            </>
+    <li data-run-kind={run.kind} data-run-state={s.kind} className="grid gap-2.5">
+      <div className="flex items-baseline gap-x-3">
+        {/* Three groups: the state, its details, and what the run read. A long error takes its own line. */}
+        <p className="m-0 flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1 [&>.rl-full]:basis-full">
+          {!review && (
+            <b className="font-semibold text-foreground">
+              {KIND_LABEL[run.kind]}
+              {s.kind === "done" && " done"}
+            </b>
           )}
-          <Hash h={shortHash(run.sourceHead)} />
-        </span>
-      </span>
-      {run.since && !run.since.incremental && (
-        <span>
-          The run reviewed the full change, not only the commits since <Hash h={shortHash(run.since.head)} />
-        </span>
-      )}
-      {stale && <span>{stale}</span>}
-      <span className={item}>
-        <Bot aria-hidden className={icon} />
-        {run.profileName} profile
-      </span>
-      <span className={item} data-run-setup>
-        <Cpu aria-hidden className={icon} />
-        <span className="sr-only">Model and effort: </span>
-        {setupText(run, meta.runner.defaults)}
-      </span>
-      {tasks.length > 0 && (
-        <span className={item} title={`Task text that this run read: ${ids}`}>
-          <Ticket aria-hidden className={icon} />
-          <span className="sr-only">{tasks.length > 1 ? "Tasks" : "Task"}: </span>
-          <code translate="no" className="font-mono">
-            {ids}
-          </code>
-        </span>
-      )}
-      {instructions?.short && (
-        <span className={item} title={`Project instructions of this run:\n${instructions.long}`} data-run-instructions>
-          <FileText aria-hidden className={icon} />
-          <span className="sr-only">Project instructions: </span>
-          {instructions.short}
-        </span>
-      )}
-      {skills && (
-        <span className={item} data-run-skills>
-          <Sparkles aria-hidden className={icon} />
-          <span className="sr-only">Skills: </span>
-          {skills}
-        </span>
-      )}
-      {instructions?.notLoaded && (
-        <span className={cn(item, "text-destructive")} data-run-not-loaded>
-          <CircleAlert aria-hidden className={icon} />
-          {instructions.notLoaded}
-        </span>
-      )}
-      {run.note.trim() && (
-        // It fills the rest of the line and cuts the text. With less than 10rem left, it takes the next line.
-        <span className="flex min-w-40 flex-1 basis-0 items-center gap-1.5" title={run.note}>
-          <User aria-hidden className={icon} />
-          <span className="min-w-0 truncate">
-            <b className="font-semibold">Your note:</b> {run.note}
+          {lead}
+          {rest}
+          <span className="min-w-0">
+            <Joined
+              parts={[
+                `${run.profileName} profile`,
+                // What the run read: the commit or the range of a re-review.
+                <span key="head">
+                  <span className="sr-only">{range ? "Changes " : "Commit "}</span>
+                  {range && (
+                    <>
+                      <Hash h={range} />
+                      <span aria-hidden className="mx-1">
+                        →
+                      </span>
+                      <span className="sr-only"> to </span>
+                    </>
+                  )}
+                  <Hash h={shortHash(run.sourceHead)} />
+                </span>,
+                run.since && !run.since.incremental && (
+                  <span key="full">
+                    The run reviewed the full change, not only the commits since <Hash h={shortHash(run.since.head)} />
+                  </span>
+                ),
+                row.stale,
+                // Plan r3 Feature C: the run records its tasks at its start. A run from before Release 3 has no record.
+                tasks.length > 0 && (
+                  <span key="tasks" title={`Task text that this run read: ${ids}`}>
+                    <span className="sr-only">{tasks.length > 1 ? "Tasks" : "Task"}: </span>
+                    <code translate="no" className="font-mono text-foreground">
+                      {ids}
+                    </code>
+                  </span>
+                ),
+                s.kind !== "running" && time,
+              ]}
+            />
           </span>
+        </p>
+        <span className="flex shrink-0 items-center gap-3">
+          {s.kind === "running" && (
+            <button type="button" className={linkish} disabled={cancelling} onClick={() => onCancel(run.id)}>
+              {cancelling ? "Cancelling…" : "Cancel"}
+            </button>
+          )}
+          <button type="button" className={linkish} aria-expanded={setup.on} aria-controls={setup.id} onClick={setup.flip}>
+            Run setup<span className="sr-only"> of the {KIND_LABEL[run.kind].toLowerCase()} run</span>
+          </button>
+          {/* R3: no tooltip, so the focus after a start does not leave one open. The help sheet names the key. */}
+          <button
+            id={first ? "runline-log" : undefined}
+            type="button"
+            className={linkish}
+            aria-keyshortcuts={first ? "3" : undefined}
+            onClick={() => onLog(run.id)}
+          >
+            <ScrollText aria-hidden className={icon} />
+            Log<span className="sr-only"> of the {KIND_LABEL[run.kind].toLowerCase()} run</span>
+          </button>
         </span>
+      </div>
+      {instructions?.notLoaded && (
+        <p className="m-0 flex items-start gap-1.5 text-destructive" data-run-not-loaded>
+          <CircleAlert aria-hidden className={cn(icon, "mt-0.5")} />
+          {instructions.notLoaded}
+        </p>
       )}
-    </p>
+      {review && s.kind === "running" && (
+        <p className="m-0 text-muted-foreground">Drafts show when the review ends. You can read and reply meanwhile.</p>
+      )}
+      {review && sum && (
+        <>
+          <p className="m-0 flex max-w-[68ch] items-start gap-2 text-[15.5px] leading-[1.45] tracking-[-0.005em] text-foreground">
+            <AiAvatar meta={meta} />
+            <span className="min-w-0 [overflow-wrap:anywhere]">
+              <Inline text={sum.summary} />
+            </span>
+          </p>
+          {row.ledger}
+          <div className="flex flex-wrap items-center gap-x-[18px] gap-y-1">
+            {files.length > 0 && (
+              <Disc on={read.on} controls={read.id} onClick={read.flip}>
+                Read {plural(files.length, "file")}
+              </Disc>
+            )}
+            {ncButton}
+            {risks.length > 0 && (
+              <Disc on={risk.on} controls={risk.id} onClick={risk.flip}>
+                Risk areas: {risks.length}
+              </Disc>
+            )}
+          </div>
+          <Reveal id={read.id} on={read.on}>
+            <ul className={revealList}>
+              {files.map((f) => (
+                <li key={f} className={revealItem}>
+                  <Check aria-hidden className={cn(icon, "mt-0.5 text-muted-foreground")} />
+                  <span>
+                    <Inline text={f} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Reveal>
+        </>
+      )}
+      {nc && (
+        <Reveal id={gaps.id} on={gaps.on}>
+          {nc.lines.length > 0 && (
+            <ul className={revealList}>
+              {nc.lines.map((x, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: two gaps can have the same words.
+                <li key={i} className={revealItem}>
+                  <TriangleAlert aria-hidden className={cn(icon, "mt-0.5 text-warn")} />
+                  <span>
+                    <Inline text={x} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {dropped > 0 && (
+            <div>
+              <Dropped run={run} meta={meta} />
+            </div>
+          )}
+          <p className="m-0 text-xs text-muted-foreground">{nc.design ? `${nc.design} ` : ""}The Log shows each step.</p>
+        </Reveal>
+      )}
+      {review && risks.length > 0 && (
+        <Reveal id={risk.id} on={risk.on}>
+          <ul className="m-0 list-disc pl-[18px]">
+            {risks.map((r) => (
+              <li key={r}>
+                <Inline text={r} />
+              </li>
+            ))}
+          </ul>
+        </Reveal>
+      )}
+      <Reveal id={setup.id} on={setup.on}>
+        <ul className={revealList}>
+          <li data-run-setup>
+            <span className="text-muted-foreground">Model and effort:</span> {setupText(run, meta.runner.defaults)}
+          </li>
+          {instructions?.short && (
+            <li title={`Project instructions of this run:\n${instructions.long}`} data-run-instructions>
+              <span className="text-muted-foreground">Project instructions:</span> {instructions.short}
+            </li>
+          )}
+          {skills && (
+            <li data-run-skills>
+              <span className="text-muted-foreground">Skills:</span> {skills}
+            </li>
+          )}
+          <li>{row.context}</li>
+          {run.note.trim() && (
+            <li className="whitespace-pre-line [overflow-wrap:anywhere]">
+              <span className="text-muted-foreground">Your note:</span> {run.note}
+            </li>
+          )}
+        </ul>
+      </Reveal>
+    </li>
   );
 }

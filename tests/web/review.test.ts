@@ -19,7 +19,9 @@ import {
   limitText,
   logTree,
   newCommits,
+  notChecked,
   profileSetupText,
+  questionJump,
   RUN_TEXT,
   repliesButton,
   replyCard,
@@ -124,7 +126,7 @@ const finding = (id: number, o: Partial<ReviewItemDto> = {}, f: Partial<Anchored
     ...o,
   };
 };
-const question = (id: number): ReviewItemDto => ({
+const question = (id: number, o: Partial<ReviewItemDto> = {}): ReviewItemDto => ({
   id,
   run: 1,
   kind: "question",
@@ -134,6 +136,7 @@ const question = (id: number): ReviewItemDto => ({
   status: "new",
   revision: 0,
   edited: false,
+  ...o,
 });
 const detail = (r: RunDto, events: RunEvent[] = [], items: ReviewItemDto[] = []): RunDetail => ({ run: r, events, items });
 
@@ -208,7 +211,6 @@ describe("run line", () => {
       kind: "done",
       result: "2 findings, 1 question",
       tokens: 14034,
-      gaps: false,
     });
     expect(result(run({ profile: "explain" }), [question(1)])).toBe("Explained the change, 1 question");
     expect(result(run({ profile: "explain" }), [])).toBe("Explained the change");
@@ -218,9 +220,33 @@ describe("run line", () => {
   });
 
   test("incomplete never says no issues; complete without items says no findings", () => {
-    expect(line(run({ status: "incomplete" }), [])).toMatchObject({ result: "No findings in what it read", gaps: true });
-    expect(line(run(), [])).toMatchObject({ result: "No findings", gaps: false });
+    expect(line(run({ status: "incomplete" }), [])).toMatchObject({ result: "No findings in what it read" });
+    expect(line(run(), [])).toMatchObject({ result: "No findings" });
     expect(countText([question(1)], true)).toBe("No findings in what it read, 1 question");
+  });
+
+  test("Not checked counts skipped plus unavailable, the rule of jobs.ts ended(), with one plain line each", () => {
+    const c = {
+      read: ["src/cache/flush.ts"],
+      skipped: ["src/cache/flush.ts after line 4: the read stopped at the output limit."],
+      unavailable: ["MCP server deepwiki: failed"],
+      notChecked: ["Tests did not run, because the review has read-only tools", "No benchmark ran."],
+    };
+    expect(notChecked(c)).toEqual({
+      n: 2,
+      label: "Not checked: 2",
+      lines: ["src/cache/flush.ts after line 4: the read stopped at the output limit.", "MCP server deepwiki: failed"],
+      design: "Also not done, by design: Tests did not run, because the review has read-only tools. No benchmark ran.",
+    });
+    // notChecked alone does not make a run incomplete, so it adds no count.
+    expect(notChecked({ ...c, skipped: [], unavailable: [] })).toMatchObject({ n: 0, label: "Not checked: 0", lines: [] });
+    expect(notChecked({ read: [], skipped: [], unavailable: [], notChecked: [] }).design).toBeNull();
+  });
+
+  test("the question ledger counts open questions and points to the first one", () => {
+    const qs = [question(1, { status: "discarded" }), question(2), question(3, { status: "posted" }), question(4, { status: "accepted" })];
+    expect(questionJump(qs)).toEqual({ n: 2, first: 2 });
+    expect(questionJump([finding(1), question(2, { status: "discarded" })])).toBeNull();
   });
 
   test("stale: the commits since the reviewed head, else the target branch", () => {

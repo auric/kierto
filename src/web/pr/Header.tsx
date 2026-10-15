@@ -1,6 +1,6 @@
-// Detail header (prototype/v3 renderDetail .dh): key, branches, task IDs, title, the action bar, and the summary lines.
+// Detail header (prototype/v3 renderDetail .dh, pr-view-v4 2.3): key, branches, task IDs, title, the action bar, and the status strip.
 // The action bar sticks to the top of the pane. When the title leaves the view, the bar shows the key and the title.
-import { Archive, Check, Copy, ExternalLink, FileDiff, MessageCircleQuestionMark, Reply, Star } from "lucide-react";
+import { Archive, Check, Copy, ExternalLink, FileDiff, MessageCircleQuestionMark, MessageSquare, Reply, Star } from "lucide-react";
 import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
@@ -128,27 +128,92 @@ function ActionBar({
   );
 }
 
-// since: the last visit before this one. fresh: the new messages. sum: the counts of the summary line.
-// action, brief, run: the run buttons, the review brief under the title, and the run line (plan v3 WP11).
-// onAsk: the q key (plan r2 UI-ASK).
-export function Header(props: {
-  pr: PrRow;
+const jump = "inline-flex cursor-pointer items-center gap-1.5 rounded underline-offset-3 hover:text-foreground hover:underline";
+
+// Status strip (plan pr-view-v4 2.3): one line of jumps. Each part is a button. Only "No comments yet" is text.
+// since: the last visit before this one. fresh: the new messages. open: the threads that are not resolved.
+// files: the count of Files, null while no list is known.
+export function Strip(p: {
+  your: number;
+  fresh: number;
   since: number | null;
   now: number;
-  fresh: number;
-  sum: { your: number; unresolved: number; tasks: number };
-  // The Files link of the summary line. n: the count of Files, null while no list is known. null: the PR is not loaded.
-  files: { n: number | null; onOpen: () => void } | null;
-  onNextNew: () => void;
-  onNextYour: () => void;
+  threads: number;
+  open: number;
+  drafts: number;
+  files: number | null;
+  onYour: () => void;
+  onNew: () => void;
+  onThreads: () => void;
+  onDrafts: () => void;
+  onFiles: () => void;
+}) {
+  return (
+    <>
+      {p.your > 0 && (
+        <Hint label="Next thread where it is your turn. Key: y">
+          <button type="button" aria-keyshortcuts="y" onClick={p.onYour} className={cn(jump, "font-semibold text-turn hover:text-turn")}>
+            <Reply aria-hidden className="size-[15px]" />
+            Your turn in {p.your} {p.your === 1 ? "thread" : "threads"}
+          </button>
+        </Hint>
+      )}
+      {p.fresh > 0 && (
+        <Hint label="Next new message. Key: n">
+          <button type="button" aria-keyshortcuts="n" onClick={p.onNew} className={jump}>
+            <NewMark text={`${p.fresh} new`} />
+            {/* A flex box drops the space from the layout, but the name keeps it: "2 new since yesterday". */}
+            {p.since !== null && (
+              <>
+                {" "}
+                <span>since {visitText(p.since, p.now)}</span>
+              </>
+            )}
+          </button>
+        </Hint>
+      )}
+      {p.threads > 0 ? (
+        <Hint label={p.open ? "Go to the first open thread" : "Show the resolved threads"}>
+          <button type="button" onClick={p.onThreads} className={jump}>
+            <MessageSquare aria-hidden className="size-[15px]" />
+            {p.open ? `${p.open} open ${p.open === 1 ? "thread" : "threads"}` : "No open thread"}
+          </button>
+        </Hint>
+      ) : (
+        <span className="inline-flex items-center gap-1.5">
+          <MessageSquare aria-hidden className="size-[15px]" />
+          No comments yet
+        </span>
+      )}
+      {p.drafts > 0 && (
+        <Hint label="Go to the drafts. Key: 2">
+          <button type="button" aria-keyshortcuts="2" onClick={p.onDrafts} className={jump}>
+            {p.drafts} {p.drafts === 1 ? "draft" : "drafts"}
+          </button>
+        </Hint>
+      )}
+      <Hint label="Go to Files. Keys: g, then f">
+        <button type="button" onClick={p.onFiles} className={jump}>
+          <FileDiff aria-hidden className="size-[15px]" />
+          {p.files === null ? "Files" : `${p.files} ${p.files === 1 ? "file" : "files"}`}
+        </button>
+      </Hint>
+    </>
+  );
+}
+
+// action, brief: the run buttons and the review brief under the strip (plan v3 WP11). strip: the parts of the status strip, null
+// while the PR loads. onAsk: the q key (plan r2 UI-ASK).
+export function Header(props: {
+  pr: PrRow;
+  strip: ReactNode;
   onLeave: () => void;
   onAsk: () => void;
   announce: (text: string) => void;
   action: ReactNode;
   brief: ReactNode;
-  run: ReactNode;
 }) {
-  const { pr, sum, announce } = props;
+  const { pr, announce } = props;
   const follow = useFollow();
   const archive = useArchive();
   const meta = useMeta().data;
@@ -279,65 +344,14 @@ export function Header(props: {
         </Hint>
         {props.action}
       </ActionBar>
-      <div className={cn("grid gap-1.5 border-b pb-3.5", pad)}>
-        {props.brief}
-        {(sum.your > 0 || sum.unresolved > 0 || sum.tasks > 0 || props.files) && (
-          <p className="rl-sum m-0 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-2">
-            {sum.your > 0 && (
-              <Hint label="Key: y">
-                <button
-                  type="button"
-                  aria-keyshortcuts="y"
-                  onClick={props.onNextYour}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded font-semibold text-turn hover:underline"
-                >
-                  <Reply aria-hidden className="size-[15px]" />
-                  Your turn in {sum.your} {sum.your === 1 ? "thread" : "threads"}
-                </button>
-              </Hint>
-            )}
-            {sum.unresolved > 0 && <span>{sum.unresolved} unresolved</span>}
-            {sum.tasks > 0 && (
-              <span>
-                {sum.tasks} open {sum.tasks === 1 ? "task" : "tasks"}
-              </span>
-            )}
-            {props.files && (
-              // The span keeps the dot of the summary line outside the button.
-              <span className="inline-flex items-center">
-                <Hint label="Open Files and the first file">
-                  <button
-                    type="button"
-                    onClick={props.files.onOpen}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded font-medium text-pen hover:underline"
-                  >
-                    <FileDiff aria-hidden className="size-[15px]" />
-                    Files
-                    {/* The space keeps the name "Files 3". A flex box does not lay it out. */}
-                    {props.files.n !== null && (
-                      <>
-                        {" "}
-                        <span className="font-normal text-muted-foreground">{props.files.n}</span>
-                      </>
-                    )}
-                  </button>
-                </Hint>
-              </span>
-            )}
-          </p>
-        )}
-        {props.fresh > 0 && (
-          <p className="m-0 flex text-sm">
-            <Hint label="Key: n">
-              <button type="button" aria-keyshortcuts="n" onClick={props.onNextNew} className="cursor-pointer rounded hover:underline">
-                <NewMark text={`${props.fresh} new`} />
-                {props.since !== null && <span className="text-ink-2"> since {visitText(props.since, props.now)}</span>}
-              </button>
-            </Hint>
-          </p>
-        )}
-        {props.run}
-      </div>
+      <nav
+        aria-label="Pull request summary"
+        className={cn("flex min-h-[29px] flex-wrap items-center gap-x-4 gap-y-1 border-b pt-0.5 pb-3 text-sm text-ink-2", pad)}
+      >
+        {props.strip}
+      </nav>
+      {/* The panel slot. The task chips show here while the brief is closed. */}
+      <div className={cn("pt-3 empty:hidden", pad)}>{props.brief}</div>
     </>
   );
 }

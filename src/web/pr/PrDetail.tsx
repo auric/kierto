@@ -1,5 +1,5 @@
-// PR detail (plan v3 WP5, r2 UI-ASK, r2 UI-DIFF): header, then one column of Overview, Threads, Files, Commits, and Ask
-// (prototype/v3 renderDetail).
+// PR detail (plan v3 WP5, r2 UI-ASK, r2 UI-DIFF, pr-view-v4 section 2): header and status strip, then one column of the run record,
+// Description, Threads, Files, Commits, and Ask. The run record goes after the Description until a review exists (decision D3).
 import { useMutation } from "@tanstack/react-query";
 import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,9 +20,9 @@ import { ApiError, sendSeen, usePr } from "../shell/data";
 import { createHints, SharedHint } from "../shell/Hint";
 import { useMinute } from "../shell/ListPane";
 import { ArchiveNotice, Calm } from "../states";
-import { Header, webLink } from "./Header";
+import { Header, Strip, webLink } from "./Header";
 import type { ReplyTarget } from "./ReplyComposer";
-import { CommitsFold, Overview } from "./Sections";
+import { CommitsFold, Description } from "./Sections";
 import { type ThreadCtx, useSettled } from "./Thread";
 import { Threads } from "./ThreadList";
 import { buildThreads, mergeHighlights, newMessages, ordered, type Person, passes, reveal, shownThreads, summary } from "./threads";
@@ -378,6 +378,11 @@ export function PrDetail({
     if (id === undefined) toast.add({ title: "No thread waits on you." });
     else jump(id);
   };
+  // The threads part of the strip: the first open thread in screen order. With none open, the first resolved one.
+  const goThreads = () => {
+    const t = ordered(threads, false).find((x) => x.turn !== "resolved") ?? threads.find((x) => x.turn === "resolved");
+    if (t) jump(t.id);
+  };
 
   useImperativeHandle(ref, () => ({
     cause() {
@@ -449,29 +454,43 @@ export function PrDetail({
   const openSec = (id: string) => (on: boolean) => setSecs((s) => (on === s.has(id) ? s : toggled(s, id)));
   const fresh = comments.filter((c) => next.has(c.id) && !c.deleted).length;
   const notFound = q.error instanceof ApiError && q.error.status === 404;
+  const sum = summary(threads);
   return (
     <>
       <Header
         pr={pr}
-        since={since}
-        now={now}
-        fresh={fresh}
-        sum={summary(threads)}
-        files={data && diffCtx ? { n: files, onOpen: diff.first } : null}
-        onNextNew={() => nextNew(1)}
-        onNextYour={nextYour}
+        strip={
+          data && diffCtx ? (
+            <Strip
+              your={sum.your}
+              fresh={fresh}
+              since={since}
+              now={now}
+              threads={threads.length}
+              open={sum.unresolved}
+              drafts={review.draftCount}
+              files={files}
+              onYour={nextYour}
+              onNew={() => nextNew(1)}
+              onThreads={goThreads}
+              onDrafts={review.api.drafts}
+              onFiles={diff.firstRow}
+            />
+          ) : null
+        }
         onLeave={onLeave}
         onAsk={openAsk}
         announce={announce}
         action={review.action}
         brief={review.brief}
-        run={review.run}
       />
       <div ref={body} data-mounting={!steady || undefined} className="px-6 pb-16 max-[759px]:px-4">
         {archived(pr) && <ArchiveNotice pr={pr} now={now} onRestore={() => onRestore(pr)} />}
         {data ? (
           <>
-            <Overview detail={data} me={me} summary={review.summary} />
+            {review.reviewed && review.run}
+            <Description detail={data} me={me} />
+            {!review.reviewed && review.run}
             <Threads
               threads={threads}
               needMe={needMe}

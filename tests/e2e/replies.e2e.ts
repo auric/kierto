@@ -131,7 +131,7 @@ test("review drafts stay after a reply run (R14), and a per-thread draft replace
   await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   // The newest review run still drives the drafts, the summary, and the brief.
   await expect(drafts(page)).toHaveCount(3);
-  await expect(page.locator("#ai-sum-head")).toContainText("Claude's summary");
+  await expect(runRow(page)).toContainText("The lock moves into the loop.");
   await expect(page.locator("#review-btn")).toHaveText(/Review · General/);
   await expect(card(page, 1000103)).toContainText("No reply needed");
   // Key 2 goes to the review drafts, then on to the reply drafts, then back.

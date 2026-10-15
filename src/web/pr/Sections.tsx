@@ -1,5 +1,6 @@
-// Overview, Files, and Commits of the detail pane (prototype/v3 overview, filesSec, commitsSec).
+// Description, Files, and Commits of the detail pane (prototype/v3 overview, filesSec, commitsSec; pr-view-v4 2.5).
 import {
+  Check,
   ChevronRight,
   CircleAlert,
   Copy,
@@ -29,8 +30,8 @@ export const STATUS_TEXT: Record<string, string> = { APPROVED: "Approved", NEEDS
 const h2 = "m-0 flex items-baseline gap-2 text-[15px] font-bold tracking-[-0.005em]";
 const linkish = "inline-flex w-fit items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
 
-// summary: the runner's summary of the newest review (plan v3 WP11). The diff link moved to Files (plan r2 UI-DIFF).
-export function Overview({ detail, me, summary }: { detail: PrDetail; me: string | null; summary?: ReactNode }) {
+// Plan pr-view-v4 2.5: the author's text, the reviewers, and the notices. The runner's summary is in the run record.
+export function Description({ detail, me }: { detail: PrDetail; me: string | null }) {
   const { pr, description } = detail;
   const [more, setMore] = useState(false);
   const text = description?.trim() ?? "";
@@ -38,17 +39,16 @@ export function Overview({ detail, me, summary }: { detail: PrDetail; me: string
   const long = blocks.length > 1;
   const opener = pr.role === "AUTHOR" ? "you" : (pr.authorName ?? pr.authorSlug);
   return (
-    // minmax(0, 1fr): a one-line summary must not widen the column past the pane.
+    // minmax(0, 1fr): a long word must not widen the column past the pane.
     <section
       id="s-overview"
-      aria-labelledby="h-overview"
+      aria-labelledby="h-desc"
       className="grid max-w-[86ch] scroll-mt-3 grid-cols-[minmax(0,1fr)] justify-items-start gap-2.5 pt-6"
     >
-      <h2 id="h-overview" className={`${h2} w-full flex-wrap gap-y-0.5`}>
-        Overview
+      <h2 id="h-desc" className={`${h2} w-full flex-wrap gap-y-0.5`}>
+        Description
         {opener && <span className="ml-auto text-xs font-normal text-muted-foreground">Opened by {opener}</span>}
       </h2>
-      {summary}
       {!pr.followed && (
         <p className="m-0 text-muted-foreground">Not followed. Review Loop does not check this pull request for new comments.</p>
       )}
@@ -74,7 +74,14 @@ export function Overview({ detail, me, summary }: { detail: PrDetail; me: string
             {pr.reviewers.map((r) => (
               <span key={r.slug} className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
                 {isMe(r, me) ? "You" : r.name}
-                <span className="text-sm text-muted-foreground">{STATUS_TEXT[r.status] ?? r.status}</span>
+                {r.status === "APPROVED" ? (
+                  <span className="inline-flex items-center gap-1 self-center text-sm text-ok">
+                    <Check aria-hidden className="size-[14px]" />
+                    {STATUS_TEXT[r.status]}
+                  </span>
+                ) : (
+                  <span className="text-sm text-muted-foreground">{STATUS_TEXT[r.status] ?? r.status}</span>
+                )}
               </span>
             ))}
           </dd>

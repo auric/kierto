@@ -1,5 +1,5 @@
-// The review half of the detail (plan v3 WP11, replies.md WP18): buttons, brief, run line, summary, drafts, reply drafts,
-// and run log for one PR.
+// The review half of the detail (plan v3 WP11, replies.md WP18, pr-view-v4 2.6): buttons, brief, run record, drafts, questions,
+// reply drafts, and run log for one PR.
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { planKey } from "../publish/data";
 import { Hint, type Hints } from "../shell/Hint";
 import { prKey } from "../shell/model";
 import { BriefComposer, type BriefMode, ReviewButton } from "./Brief";
-import { AiSummary, type DraftCtx, Drafts, modeOf, type TriageState } from "./Drafts";
+import { type DraftCtx, Drafts, modeOf, Questions, type TriageState } from "./Drafts";
 import {
   replyKey,
   sendItem,
@@ -37,7 +37,7 @@ import {
   latestReview,
   newCommits,
   plural,
-  questions,
+  questionJump,
   replyCard,
   replyMap,
   replyOf,
@@ -49,10 +49,11 @@ import {
   triageText,
 } from "./model";
 import { DraftRepliesButton, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft";
-import { RunLines, SeverityJumps } from "./RunLine";
+import { Ledger, RunRecord } from "./RunLine";
 import { type LogTarget, RunLog } from "./RunLog";
-import { TaskChips } from "./TaskChips";
+import { TaskChips, useTaskContext } from "./TaskChips";
 import type { TriageAction, TriageCtx } from "./Triage";
+import { contextLines, trackerOf } from "./tasks";
 
 export type Focus = { id: string; block: ScrollLogicalPosition; flash: boolean };
 
@@ -81,7 +82,10 @@ export type ReviewUi = {
   action: ReactNode;
   brief: ReactNode;
   run: ReactNode;
-  summary: ReactNode;
+  // A review run exists, so the run record goes before the Description (plan pr-view-v4 decision D3).
+  reviewed: boolean;
+  // The open drafts and questions of the newest review run, for the status strip.
+  draftCount: number;
   drafts: ReactNode;
   // The reply draft card of each thread, keyed by thread ID.
   cards: ReadonlyMap<number, ReactNode>;
@@ -161,13 +165,7 @@ export function useReview(
   // of: "line" follows the run of the run line. "review" stays on the newest review run, for its drafts. A number is a run ID.
   const [log, setLog] = useState<(LogTarget & { of: "line" | "review" | number }) | null>(null);
   const pinned = useRun(typeof log?.of === "number" ? log.of : null);
-  const [sumOpen, setSumOpen] = useState(false);
-  // A review run that ends while the page shows it opens the summary.
-  const [watched, setWatched] = useState<{ id: number; running: boolean } | null>(null);
-  if (latest && (watched?.id !== latest.id || watched.running !== (latest.status === "running"))) {
-    setWatched({ id: latest.id, running: latest.status === "running" });
-    if (watched?.id === latest.id && watched.running) setSumOpen(true);
-  }
+  const fetched = useTaskContext(pr.id).data;
   const [openDrafts, setOpenDrafts] = useState<ReadonlyMap<number, boolean>>(new Map());
   const [triage, setTriage] = useState<TriageState>({ open: null, busy: new Set() });
   // The threads of the reply run that this page started. They show a pending card while it runs.
@@ -269,11 +267,6 @@ export function useReview(
     back?.focus({ preventScroll: true });
   };
 
-  const openSummary = (id = "ai-sum-head") => {
-    setSumOpen(true);
-    focusAfter({ id, block: "start", flash: false });
-  };
-
   // Stable while the items stay, so the diff renders again only when they change.
   const ds = useMemo(() => (items.length ? drafts(items) : NO_ITEMS), [items]);
   const all = [...items, ...replyItems];
@@ -352,7 +345,6 @@ export function useReview(
     const was = triage.open;
     setTriage((s) => ({ ...s, open: it && { id: it.id, mode } }));
     if (it) {
-      if (it.kind === "question") setSumOpen(true);
       setOpenDrafts((m) => new Map(m).set(it.id, true));
       return;
     }
@@ -472,24 +464,23 @@ export function useReview(
     rereview,
     brief: () => openBrief(),
     drafts() {
-      // prototype/v3 goDrafts: the first draft, else the summary with the questions.
+      // prototype/v3 goDrafts: the first draft, else the first question.
       // The reply drafts come next, in screen order. A press in the review drafts goes on to them.
       const first = ds.find((i) => i.status !== "discarded") ?? ds[0];
-      const sum = !!detail?.run.summary || questions(items).length > 0;
+      const q = questionJump(items);
       const rs = ordered(o.threads, false).flatMap((t) => {
         const it = byThread.get(t.id);
         return it ? [{ thread: t.id, it }] : [];
       });
       const reply = rs.find((r) => r.it.status !== "discarded") ?? rs[0];
-      const at = document.activeElement;
-      const inReview = !!at?.closest("#g-drafts") || at?.id === "ai-sum-head";
-      if (reply && (inReview || (!first && !sum))) {
+      const inReview = !!document.activeElement?.closest("#g-drafts, #g-questions");
+      if (reply && (inReview || (!first && !q))) {
         o.reveal(reply.thread);
         focusAfter({ id: `rd-${reply.it.id}`, block: "start", flash: true });
       } else if (first) {
         setOpenDrafts((m) => new Map(m).set(first.id, true));
         focusAfter({ id: `d-${first.id}`, block: "start", flash: true });
-      } else if (sum) openSummary();
+      } else if (q) focusAfter({ id: `q-${q.first}`, block: "start", flash: true });
       else toast.add({ title: `No drafts. Press r to start a review with ${meta.runner.name}.` });
     },
     log: () => openLog(null),
@@ -524,6 +515,14 @@ export function useReview(
   const head = latest?.sourceHead ?? null;
   const forDiff = useMemo(() => ({ drafts: ds, head, replies: byThread }), [ds, head, byThread]);
   const details = [run.data, reviewRun.data, replyRun.data, fixRun.data, askRun.data, pinned.data];
+  const tracker = trackerOf(meta);
+  // The task text that a run read, as the run setup names it.
+  const taskText = (r: RunDto) => {
+    const lines = tracker ? contextLines(fetched ?? [], r, tracker.name, o.now) : [];
+    if (lines.length) return `Task text: ${lines.join("; ")}`;
+    return tracker?.configured ? "No task text fetched." : "No context source is set up.";
+  };
+  const qJump = questionJump(items);
   const rows = kinds.map((r) => {
     const d = details.find((x) => x?.run.id === r.id);
     const shown = d ? { ...d.run, stale: r.stale } : r;
@@ -531,8 +530,17 @@ export function useReview(
       run: shown,
       state: runLine(shown, d, meta.profiles, fix.fixes?.find((f) => f.run.id === r.id)?.edits.length),
       stale: staleText(shown, o.commits),
-      // The severity buttons follow the drafts of latestReview, also when the review row shows a newer cancelled or failed run.
-      jumps: r.kind === "review" ? <SeverityJumps jumps={severityJumps(ds)} onJump={openDraft} /> : null,
+      // The ledger follows the drafts of latestReview. The record shows it only for a done run.
+      ledger:
+        r.kind === "review" ? (
+          <Ledger
+            jumps={severityJumps(ds)}
+            questions={qJump}
+            onDraft={openDraft}
+            onQuestion={(id) => focusAfter({ id: `q-${id}`, block: "start", flash: true })}
+          />
+        ) : null,
+      context: taskText(shown),
     };
   });
   const logRun = typeof log?.of === "number" ? log.of : (log?.of === "review" ? latest : newest)?.id;
@@ -592,21 +600,23 @@ export function useReview(
       />
     ),
     run: (
-      <RunLines
+      <RunRecord
         rows={rows}
         meta={meta}
         now={o.now}
         cancelling={cancel.isPending}
         onLog={(id, raw) => openLog(null, raw, id)}
         onCancel={(id) => cancel.mutate(id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
-        // Only a review run has a summary section. The log of another run kind lists the gaps.
-        onGaps={(r) => (r.kind === "review" ? openSummary() : openLog(null, false, r.id))}
       />
     ),
-    summary: detail?.run.summary && (
-      <AiSummary run={detail.run} items={items} pr={pr} meta={meta} open={sumOpen} onOpen={setSumOpen} triage={triage} ctx={triageCtx} />
+    reviewed: latest !== null,
+    draftCount: ds.filter((d) => d.status !== "discarded").length + (qJump?.n ?? 0),
+    drafts: (
+      <>
+        <Drafts items={ds} isOpen={isDraftOpen} triage={triage} ctx={draftCtx} />
+        <Questions items={items} pr={pr} meta={meta} triage={triage} ctx={triageCtx} />
+      </>
     ),
-    drafts: <Drafts items={ds} isOpen={isDraftOpen} triage={triage} ctx={draftCtx} />,
     cards,
     sheet: log && (
       <RunLog
