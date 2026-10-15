@@ -282,19 +282,21 @@ test("the run buttons and the Ask section share the task chips of the brief, and
   await expect(page.locator("#run-log").getByTitle(`Task text that this run read: ${JIRA_ISSUE}`)).toBeVisible();
   await page.getByRole("button", { name: "Close the run log" }).click();
 
-  // The Ask section shares the query: a fetch there shows next to the run buttons too.
+  // Ask takes the place of the chip row in the panel slot. It shares the query: a fetch there shows in the row after Ask closes.
   await page.keyboard.press("q");
   const ask = askChips(page);
+  await expect(runs).toHaveCount(0);
   await expect(ask).toContainText(`${JIRA_ISSUE} · not fetched`);
   await ask.getByRole("button", { name: `Fetch ${MISSING} from Jira` }).click();
   await expect(ask.getByText(`${MISSING}: Jira has no such issue, or the token may not see it.`)).toBeVisible();
   await ask.getByRole("button", { name: `Fetch ${JIRA_ISSUE} from Jira` }).click();
-  await expect(runs).toContainText(`${JIRA_ISSUE} · fetched today`);
   await expect(ask).toContainText(`${JIRA_ISSUE} · fetched today`);
   await page.getByLabel("Your question").fill("Which callers of the flush need the lock?");
   await page.getByLabel("Your question").press("Control+Enter");
   await expect(runRow(page, "ask")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runTasks(page, JIRA_ISSUE, "ask")).toBeVisible();
+  await page.getByLabel("Your question").press("Escape");
+  await expect(runs).toContainText(`${JIRA_ISSUE} · fetched today`);
 });
 
 test("attachments: download all, the inline image, save, include after the policy confirm, a run gets the image, open folder, delete", async ({

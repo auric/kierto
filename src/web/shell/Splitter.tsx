@@ -1,12 +1,13 @@
 // The separator between the list and the detail (plan pr-view-v4 4.3). The keys work only while it has focus.
 import { type KeyboardEvent, type PointerEvent, useRef, useState } from "react";
-import { clampList, LIST_MAX, LIST_MIN } from "./layout";
+import { clampList, LIST_MIN } from "./layout";
 
 const STEP = 16;
 const BIG_STEP = 64;
 
-// width: the current list width in px. onWidth: a new width to keep. onReset: back to the default width.
-export function Splitter(props: { width: number; onWidth: (w: number) => void; onReset: () => void }) {
+// width: the current list width in px. max: the widest list for this window (listCap). onWidth: a new width to keep.
+// onReset: back to the default width.
+export function Splitter(props: { width: number; max: number; onWidth: (w: number) => void; onReset: () => void }) {
   // A drag sets --list-w on the app element on each move and keeps the width only at the end, so the shell renders once.
   const drag = useRef<{ x: number; w0: number; w: number; app: HTMLElement } | null>(null);
   const [live, setLive] = useState<number | null>(null);
@@ -22,7 +23,7 @@ export function Splitter(props: { width: number; onWidth: (w: number) => void; o
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d) return;
-    d.w = clampList(d.w0 + e.clientX - d.x);
+    d.w = Math.min(props.max, clampList(d.w0 + e.clientX - d.x));
     d.app.style.setProperty("--list-w", `${d.w}px`);
     setLive(d.w);
   };
@@ -34,7 +35,7 @@ export function Splitter(props: { width: number; onWidth: (w: number) => void; o
     if (d && d.w !== d.w0) props.onWidth(d.w);
   };
   const set = (w: number) => {
-    const v = clampList(w);
+    const v = Math.min(props.max, clampList(w));
     props.onWidth(v);
     setSaid(`List width ${v} pixels.`);
   };
@@ -46,7 +47,7 @@ export function Splitter(props: { width: number; onWidth: (w: number) => void; o
     ArrowLeft: (big) => set(width - (big ? BIG_STEP : STEP)),
     ArrowRight: (big) => set(width + (big ? BIG_STEP : STEP)),
     Home: () => set(LIST_MIN),
-    End: () => set(LIST_MAX),
+    End: () => set(props.max),
     Enter: reset,
   };
   // The shell key handler never sees these keys.
@@ -68,7 +69,7 @@ export function Splitter(props: { width: number; onWidth: (w: number) => void; o
         aria-controls="rows"
         aria-label="List width. Arrow keys resize. Enter resets."
         aria-valuemin={LIST_MIN}
-        aria-valuemax={LIST_MAX}
+        aria-valuemax={props.max}
         aria-valuenow={width}
         title="Drag to resize. Double-click resets."
         className="rl-split"

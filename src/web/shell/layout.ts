@@ -7,6 +7,17 @@ export const LIST_MAX = 560;
 export const listDefault = (rail: boolean) => (rail ? 320 : 368);
 export const clampList = (w: number) => Math.round(Math.min(LIST_MAX, Math.max(LIST_MIN, w)));
 
+// A saved wide list must not squeeze the detail. 560 px is the breakpoint of the narrow detail layout
+// (index.css "@container detail (max-width: 559px)", the @560px/detail classes), so the detail keeps its wide layout.
+export const DETAIL_MIN = 560;
+// The --side-w values of index.css.
+const sideWidth = (rail: boolean) => (rail ? 60 : 228);
+// The widest list that leaves DETAIL_MIN to the detail in a window of win px. A small window gets LIST_MIN.
+export const listCap = (win: number, rail: boolean) =>
+  Math.max(LIST_MIN, Math.min(LIST_MAX, Math.floor(win - sideWidth(rail) - DETAIL_MIN)));
+// The width to render. The stored width stays, so a wider window shows it again.
+export const fitList = (w: number, cap: number) => Math.min(clampList(w), cap);
+
 // "auto": the rail below 1440 px (decision D4). "rail" and "full": the choice of the viewer, at every wide window.
 export type SidePref = "auto" | "rail" | "full";
 export const railOn = (pref: SidePref, wide: boolean) => pref === "rail" || (pref === "auto" && !wide);

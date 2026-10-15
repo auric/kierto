@@ -51,7 +51,7 @@ import {
 } from "./shell/data";
 import { HelpSheet } from "./shell/HelpSheet";
 import { ListPane } from "./shell/ListPane";
-import { listDefault, railOn, readListWidth, readSide, type SidePref, writeListWidth, writeSide } from "./shell/layout";
+import { fitList, listCap, listDefault, railOn, readListWidth, readSide, type SidePref, writeListWidth, writeSide } from "./shell/layout";
 import {
   filterRows,
   followCandidate,
@@ -110,6 +110,10 @@ function media(query: string) {
 const narrowMedia = media("(max-width: 759px)");
 // Decision D4: the sidebar choice "auto" gives the rail below 1440 px.
 const wideMedia = media("(min-width: 1440px)");
+const onResize = (fn: () => void) => {
+  addEventListener("resize", fn);
+  return () => removeEventListener("resize", fn);
+};
 
 const prRef = (p: PrRow): PrRef => ({ project: p.project, repo: p.repo, id: p.prId });
 const findRef = (list: PrRow[] | undefined, r: PrRef) => list?.find((p) => p.prId === r.id && p.project === r.project && p.repo === r.repo);
@@ -267,6 +271,9 @@ function Shell({ stale }: { stale: boolean }) {
       };
   // The narrow layout has no rail and no full width. Full width needs a PR in the detail.
   const rail = !narrow && railOn(side, wide);
+  // The shell renders again only when the cap changes, not on each resize event.
+  const cap = useSyncExternalStore(onResize, () => listCap(document.documentElement.clientWidth, rail));
+  const listWidth = fitList(listW ?? listDefault(rail), cap);
   const fullOn = !narrow && route.kind === "list" && route.pr !== null && route.full;
   // A locked app shows Settings over any URL. The URL stays, so the PR of a link shows after the token is saved.
   const urlReady = !!settings.data && !!prs.data && !!meta.data && !locked;
@@ -495,7 +502,6 @@ function Shell({ stale }: { stale: boolean }) {
   // Every product name comes from meta. It is one local request, sent together with the others.
   if (!meta.data) return null;
 
-  const listWidth = listW ?? listDefault(rail);
   return (
     <div
       className="rl-app"
@@ -597,6 +603,7 @@ function Shell({ stale }: { stale: boolean }) {
         />
         <Splitter
           width={listWidth}
+          max={cap}
           onWidth={(w) => {
             setListW(w);
             writeListWidth(w);
@@ -643,6 +650,8 @@ function Shell({ stale }: { stale: boolean }) {
                   me={s?.user ?? null}
                   at={at?.key === shownKey ? at : null}
                   file={own ? (detail.file?.path ?? null) : null}
+                  full={fullOn}
+                  onFull={() => setFull(!fullOn)}
                   onRoute={(patch) => shownKey && onDetailRoute(shownKey, patch)}
                   onSettings={() => openSettings()}
                   onTaskIds={() => openSettings("task-ids")}

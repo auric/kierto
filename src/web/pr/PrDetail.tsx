@@ -1,5 +1,6 @@
-// PR detail (plan v3 WP5, r2 UI-ASK, r2 UI-DIFF, pr-view-v4 section 2): header and status strip, then one column of the run record,
-// Description, Drafts, Threads, Files, Commits, and Ask. The run record goes after the Description until a review exists (decision D3).
+// PR detail (plan v3 WP5, r2 UI-ASK, r2 UI-DIFF, pr-view-v4 section 2): header, status strip, and the panel slot (the brief or Ask),
+// then one column of the run record, Description, Drafts, Threads, Files, and Commits. The run record goes after the Description
+// until a review exists (decision D3).
 import { useMutation } from "@tanstack/react-query";
 import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -7,6 +8,7 @@ import { toast } from "@/components/ui/toast";
 import type { CommentDto, PrRow } from "../../shared/dto";
 import { archived } from "../../shared/views";
 import { AskPanel } from "../ask/AskPanel";
+import { useAsks } from "../ask/data";
 import { fileCount, useDiffIndex } from "../diff/data";
 import { type DiffCtx, DiffSection, useDiffView } from "../diff/FileDiff";
 import type { Card } from "../diff/model";
@@ -39,7 +41,7 @@ export type DetailApi = {
   section(id: "files" | "commits"): void;
   // Plan r2 UI-DIFF: g d focuses the line of the focused inline thread or draft in the diff.
   showInDiff(): void;
-  // Plan r2 UI-ASK: q opens the Ask section with the focus in its box.
+  // Plan pr-view-v4 2.4: q opens Ask in the panel slot with the focus in its box.
   ask(): void;
   // Plan v3 WP11: r, Shift+R, 2, 3, and the Esc layers of the review. Plan r2 UI-RR: c.
   rerun(): void;
@@ -93,6 +95,7 @@ function flash(el: HTMLElement) {
   });
 }
 
+// full, onFull: full width (plan pr-view-v4 4.3), for the action bar button.
 // onLeave: the shell moves the selection away before the PR leaves the list. onSettings: the brief links to the task ID rules.
 // onTaskIds: a header task chip without a link opens Settings, Task IDs. onProfile: "Edit <profile>" in the brief opens the
 // settings at one profile. onRestore: the Archive view brings the PR back.
@@ -102,6 +105,8 @@ export function PrDetail({
   me,
   at,
   file,
+  full,
+  onFull,
   onRoute,
   onLeave,
   onSettings,
@@ -114,6 +119,8 @@ export function PrDetail({
   me: string | null;
   at: DetailAt | null;
   file: string | null;
+  full: boolean;
+  onFull: () => void;
   onRoute: (patch: DetailPatch) => void;
   onLeave: () => void;
   onSettings: () => void;
@@ -158,6 +165,8 @@ export function PrDetail({
   const [cur, setCur] = useState<number | null>(null);
   const [secs, setSecs] = useState<ReadonlySet<string>>(new Set());
   const [targets, setTargets] = useState<ReadonlyMap<number, ReplyTarget>>(new Map());
+  // The panel slot holds the brief or Ask. The review hook owns the brief state, so this holds only Ask.
+  const [askOpen, setAskOpen] = useState(false);
   // n gives each text a new node, so a screen reader reads the same text again.
   const [said, setSaid] = useState({ text: "", n: 0 });
 
@@ -267,6 +276,10 @@ export function PrDetail({
     showInDiff: (id) => showDiff.current({ kind: "draft", id }),
   });
   draftReply.current = review.api.draftReply;
+  // One slot: a brief that opens closes Ask.
+  const briefOpen = review.api.layer(null) === "brief";
+  if (briefOpen && askOpen) setAskOpen(false);
+  const answering = useAsks(row.id).data?.some((a) => a.run.status === "running") ?? false;
   const openFiles = useCallback(() => setSecs((s) => (s.has("files") ? s : new Set(s).add("files"))), []);
   const diff = useDiffView(row.id, { ...review.diff, threads, forge, openFold: openFiles, focusAfter });
   // The same query as Files, so the summary line and the head of Files show the same count.
@@ -315,6 +328,7 @@ export function PrDetail({
     if (bar.api.isOpen) bar.api.close();
     const l = review.api.layer(null);
     if (l) review.api.close(l);
+    setAskOpen(false);
     // Without a saved scroll position, as in a new tab, the file or else the thread gets the focus.
     const fresh = a.scroll === null;
     if (a.thread !== null) jump(a.thread, undefined, fresh && !a.file);
@@ -368,14 +382,19 @@ export function PrDetail({
     const hit = list[i < 0 ? (d > 0 ? 0 : list.length - 1) : (i + d + list.length) % list.length];
     if (hit) jump(hit[0], hit[1]);
   };
-  // The q key and the Ask button.
+  // The q key, the Ask button, and "Answering…" in the strip. The focus that closeBrief sets gives way to the box.
   const openAsk = () => {
     if (!data) {
       toast.add({ title: "The pull request is still loading." });
       return;
     }
-    setSecs((s) => new Set(s).add("ask"));
-    focusAfter({ id: "ask-q", block: "center", flash: false });
+    if (briefOpen) review.api.close("brief");
+    setAskOpen(true);
+    focusAfter({ id: "ask-q", block: "nearest", flash: false });
+  };
+  const closeAsk = () => {
+    setAskOpen(false);
+    focusAfter({ id: "ask-btn", block: "nearest", flash: false });
   };
   const nextYour = () => {
     const ids = ordered(threads, needMe)
@@ -459,13 +478,17 @@ export function PrDetail({
     },
     ask: openAsk,
     ...review.api,
-    // prototype/v3 Esc order: an edit, the brief, the post confirm, the run log.
+    // prototype/v3 Esc order: an edit, the brief, the post confirm, the run log. Ask comes after the dialogs (plan pr-view-v4 4.4).
+    // Ask uses the "brief" layer of keys.ts: both are the panel slot, and only one is open.
     layer(target) {
       const l = review.api.layer(target);
-      return l === "brief" ? l : bar.api.isOpen ? "confirm" : l;
+      if (l === "brief") return l;
+      if (bar.api.isOpen) return "confirm";
+      return l ?? (askOpen ? "brief" : null);
     },
     close(layer) {
       if (layer === "confirm") bar.api.close();
+      else if (layer === "brief" && askOpen) closeAsk();
       else review.api.close(layer);
     },
   }));
@@ -489,20 +512,31 @@ export function PrDetail({
               open={sum.unresolved}
               drafts={review.draftCount}
               files={files}
+              answering={answering && !askOpen}
               onYour={nextYour}
               onNew={() => nextNew(1)}
               onThreads={goThreads}
               onDrafts={review.api.drafts}
               onFiles={diff.firstRow}
+              onAnswering={openAsk}
             />
           ) : null
         }
         onLeave={onLeave}
-        onAsk={openAsk}
+        askOpen={askOpen}
+        onAsk={() => (askOpen ? closeAsk() : openAsk())}
+        full={full}
+        onFull={onFull}
         onTaskIds={onTaskIds}
         announce={announce}
         action={review.action}
-        brief={review.brief}
+        slot={
+          askOpen && meta ? (
+            <AskPanel pr={pr} meta={meta} now={now} onClose={closeAsk} onLog={review.api.openRunLog} announce={announce} />
+          ) : (
+            review.brief
+          )
+        }
       />
       <div ref={body} data-mounting={!steady || undefined} className="px-6 pb-16 max-[759px]:px-4">
         {archived(pr) && <ArchiveNotice pr={pr} now={now} onRestore={() => onRestore(pr)} />}
@@ -555,17 +589,6 @@ export function PrDetail({
                 hints={hints}
               />
             ) : null}
-            {meta && (
-              <AskPanel
-                pr={pr}
-                meta={meta}
-                now={now}
-                open={secs.has("ask")}
-                onOpen={openSec("ask")}
-                onLog={review.api.openRunLog}
-                announce={announce}
-              />
-            )}
           </>
         ) : q.error ? (
           <Calm title={notFound ? "Cannot find this pull request" : "Cannot load this pull request"}>

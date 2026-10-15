@@ -1,4 +1,4 @@
-// Ask section of the detail (plan r2 UI-ASK): one-shot questions about the PR and their answers, newest first.
+// Ask in the panel slot of the detail (plan r2 UI-ASK, pr-view-v4 2.4): one-shot questions about the PR and their answers, newest first.
 // An answer is text only. It never becomes a draft, so nothing of it can post (BRIEF section 2).
 import { useQueryClient } from "@tanstack/react-query";
 import { Braces, CircleAlert, CircleStop, Copy, LoaderCircle, ScrollText, User } from "lucide-react";
@@ -11,7 +11,6 @@ import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { AskDto, MetaDto, PrRow, RunKind } from "../../shared/dto";
 import { MAX_QUESTION } from "../../shared/review";
-import { Fold, FoldHead } from "../pr/Sections";
 import { fullTime, Text, useSettled } from "../pr/Thread";
 import { agoLong } from "../pr/threads";
 import { AiAvatar } from "../review/Drafts";
@@ -23,7 +22,7 @@ import { Hint } from "../shell/Hint";
 import { prKey } from "../shell/model";
 import { useNow } from "../shell/Sidebar";
 import { loadDraft, saveDraft, useAsks, useStartAsk } from "./data";
-import { askCount, askView, busyText } from "./model";
+import { askView, busyText } from "./model";
 
 const icon = "size-[15px] shrink-0";
 const linkish =
@@ -60,12 +59,12 @@ function copyAnswer(id: number, text: string) {
   });
 }
 
+// Ask in the panel slot (plan pr-view-v4 2.4): the box, then all answers of this PR. It mounts open and closes with onClose.
 export function AskPanel(props: {
   pr: PrRow;
   meta: MetaDto;
   now: number;
-  open: boolean;
-  onOpen: (open: boolean) => void;
+  onClose: () => void;
   // The run log sheet of one run. raw: show its raw output.
   onLog: (run: number, raw?: boolean) => void;
   announce: (text: string) => void;
@@ -80,10 +79,8 @@ export function AskPanel(props: {
   const cancel = useCancelRun();
   const [text, setText] = useState(() => loadDraft(pr.id));
   const list = asks.data ?? [];
-  // An entry transition that starts in a closed section plays when the section opens, also before onOpen runs.
-  // So the answers stay in [data-mounting] while the section is closed or loading, and for one frame after they show.
-  const shown = props.open && !!asks.data;
-  const steady = useSettled(shown);
+  // The answers that show when the slot opens stay in [data-mounting] for one frame, so only a new answer plays its entry.
+  const steady = useSettled(!!asks.data);
 
   const where = (id: number) => {
     if (id === pr.id) return "this pull request";
@@ -91,8 +88,7 @@ export function AskPanel(props: {
     return other ? prKey(other) : "another pull request";
   };
   const active = runs?.find((r) => r.status === "running") ?? null;
-  // Only an open section shows the note.
-  const busy = props.open && active ? busyText(runner, active.kind, where(active.pr)) : null;
+  const busy = active ? busyText(runner, active.kind, where(active.pr)) : null;
 
   const change = (v: string) => {
     setText(v);
@@ -127,7 +123,14 @@ export function AskPanel(props: {
   };
 
   return (
-    <Fold id="ask" open={props.open} onOpen={props.onOpen} head={<FoldHead label={`Ask ${runner}`} n={askCount(list)} />}>
+    <section
+      id="ask"
+      aria-labelledby="ask-title"
+      className="mt-1.5 mb-0.5 grid max-w-[86ch] gap-3.5 rounded-lg border border-rule-strong px-4 pt-3.5 pb-4"
+    >
+      <h2 id="ask-title" className="m-0 text-[15px] font-bold">
+        Ask {runner}
+      </h2>
       <form
         className="grid max-w-[72ch] gap-2"
         onSubmit={(e) => {
@@ -163,16 +166,19 @@ export function AskPanel(props: {
             {start.isPending && <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin" />}
             Ask
           </Button>
-          <span className="ml-1.5 text-xs text-muted-foreground">{busy ?? "Ctrl+Enter asks."}</span>
+          <Button type="button" size="sm" variant="outline" title="Key: Esc" onClick={props.onClose}>
+            Close
+          </Button>
+          <span className="ml-1.5 text-xs text-muted-foreground">{busy ?? "Ctrl+Enter asks. Esc closes Ask."}</span>
         </div>
       </form>
       {asks.error && (
-        <p className="m-0 mt-3 text-sm">
+        <p className="m-0 text-sm">
           <Err>Cannot load the answers. {asks.error.message}</Err>
         </p>
       )}
       {list.length > 0 && (
-        <ol aria-label="Answers" data-mounting={!(shown && steady) || undefined} className="m-0 mt-4 mb-2.5 list-none p-0">
+        <ol aria-label="Answers" data-mounting={!steady || undefined} className="m-0 list-none p-0">
           {list.map((a) => (
             <Answer
               key={a.run.id}
@@ -186,7 +192,7 @@ export function AskPanel(props: {
           ))}
         </ol>
       )}
-    </Fold>
+    </section>
   );
 }
 

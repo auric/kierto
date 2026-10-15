@@ -2,8 +2,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   clampList,
+  DETAIL_MIN,
+  fitList,
   LIST_MAX,
   LIST_MIN,
+  listCap,
   listDefault,
   railOn,
   readListWidth,
@@ -88,6 +91,32 @@ describe("list width", () => {
     } finally {
       Reflect.deleteProperty(globalThis, "localStorage");
     }
+  });
+});
+
+describe("detail guard", () => {
+  test("the cap leaves the detail 560 px next to the rail (60 px) or the full sidebar (228 px)", () => {
+    expect(DETAIL_MIN).toBe(560);
+    expect(listCap(1100, true)).toBe(1100 - 60 - 560);
+    expect(listCap(1300, false)).toBe(1300 - 228 - 560);
+    expect(listCap(1100.5, true)).toBe(480);
+  });
+
+  test("a wide window caps at 560 px; a small window keeps 280 px also when the detail gets less", () => {
+    expect(listCap(1440, false)).toBe(LIST_MAX);
+    expect(listCap(1280, true)).toBe(LIST_MAX);
+    expect(listCap(900, true)).toBe(LIST_MIN);
+    expect(listCap(760, true)).toBe(LIST_MIN);
+    expect(listCap(0, false)).toBe(LIST_MIN);
+  });
+
+  test("a saved wide list renders at the cap; a width under the cap stays", () => {
+    expect(fitList(560, listCap(1100, true))).toBe(480);
+    expect(fitList(560, listCap(1440, false))).toBe(560);
+    expect(fitList(368, listCap(1100, true))).toBe(368);
+    expect(fitList(320, listCap(900, true))).toBe(280);
+    expect(fitList(9999, LIST_MAX)).toBe(LIST_MAX);
+    expect(fitList(100, LIST_MAX)).toBe(LIST_MIN);
   });
 });
 

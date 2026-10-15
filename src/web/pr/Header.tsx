@@ -11,8 +11,11 @@ import {
   ExternalLink,
   FileDiff,
   Link,
+  LoaderCircle,
+  Maximize2,
   MessageCircleQuestionMark,
   MessageSquare,
+  Minimize2,
   Reply,
   Star,
 } from "lucide-react";
@@ -292,7 +295,7 @@ const jump = "inline-flex cursor-pointer items-center gap-1.5 rounded underline-
 
 // Status strip (plan pr-view-v4 2.3): one line of jumps. Each part is a button. Only "No comments yet" is text.
 // since: the last visit before this one. fresh: the new messages. open: the threads that are not resolved.
-// files: the count of Files, null while no list is known.
+// files: the count of Files, null while no list is known. answering: a question runs while Ask is closed (plan 2.4).
 export function Strip(p: {
   your: number;
   fresh: number;
@@ -302,11 +305,13 @@ export function Strip(p: {
   open: number;
   drafts: number;
   files: number | null;
+  answering: boolean;
   onYour: () => void;
   onNew: () => void;
   onThreads: () => void;
   onDrafts: () => void;
   onFiles: () => void;
+  onAnswering: () => void;
 }) {
   return (
     <>
@@ -358,21 +363,34 @@ export function Strip(p: {
           {p.files === null ? "Files" : `${p.files} ${p.files === 1 ? "file" : "files"}`}
         </button>
       </Hint>
+      {/* Last, so the other parts keep their place when it shows and goes. */}
+      {p.answering && (
+        <Hint label="Open Ask. The answer shows there. Key: q">
+          <button type="button" aria-keyshortcuts="q" onClick={p.onAnswering} className={jump}>
+            <LoaderCircle aria-hidden className="size-[15px] animate-spin motion-reduce:animate-none" />
+            Answering…
+          </button>
+        </Hint>
+      )}
     </>
   );
 }
 
-// action, brief: the run buttons and the review brief under the strip (plan v3 WP11). strip: the parts of the status strip, null
-// while the PR loads. onAsk: the q key (plan r2 UI-ASK). onTaskIds: opens Settings, Task IDs.
+// action: the run buttons (plan v3 WP11). slot: the panel slot under the strip, the brief or Ask (plan pr-view-v4 2.4).
+// strip: the parts of the status strip, null while the PR loads. askOpen, onAsk: Ask in the slot. full, onFull: full width
+// (plan 4.3, the z key). onTaskIds: opens Settings, Task IDs.
 export function Header(props: {
   pr: PrRow;
   strip: ReactNode;
   onLeave: () => void;
+  askOpen: boolean;
   onAsk: () => void;
+  full: boolean;
+  onFull: () => void;
   onTaskIds: () => void;
   announce: (text: string) => void;
   action: ReactNode;
-  brief: ReactNode;
+  slot: ReactNode;
 }) {
   const { pr, announce } = props;
   const follow = useFollow();
@@ -483,12 +501,35 @@ export function Header(props: {
       </header>
       <ActionBar top={top} label={key} title={title}>
         <Hint label={`Ask ${runner} a question about this pull request. Key: q`}>
-          <Button id="ask-btn" size="sm" variant="outline" aria-label={`Ask ${runner}`} aria-keyshortcuts="q" onClick={props.onAsk}>
+          <Button
+            id="ask-btn"
+            size="sm"
+            variant="outline"
+            aria-label={`Ask ${runner}`}
+            aria-keyshortcuts="q"
+            aria-expanded={props.askOpen}
+            onClick={props.onAsk}
+          >
             <MessageCircleQuestionMark aria-hidden data-icon="inline-start" />
             Ask
           </Button>
         </Hint>
         {props.action}
+        {/* The one pane layout has no full width. */}
+        <Hint label={props.full ? "Back to three panes. Keys: z or Esc" : "Full width. Key: z"}>
+          <Button
+            id="full-btn"
+            variant="ghost"
+            size="icon-sm"
+            className={cn(iconBtn, "rl-wide-only")}
+            aria-label="Full width"
+            aria-pressed={props.full}
+            aria-keyshortcuts="z"
+            onClick={props.onFull}
+          >
+            {props.full ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
+          </Button>
+        </Hint>
         <MoreMenu pr={pr} forge={forge} announce={announce} />
       </ActionBar>
       <nav
@@ -497,8 +538,8 @@ export function Header(props: {
       >
         {props.strip}
       </nav>
-      {/* The panel slot. The task chips show here while the brief is closed. */}
-      <div className={cn("pt-3 empty:hidden", pad)}>{props.brief}</div>
+      {/* The panel slot: the brief or Ask, one at a time. The task chips show here while both are closed. */}
+      <div className={cn("pt-3 empty:hidden", pad)}>{props.slot}</div>
     </>
   );
 }

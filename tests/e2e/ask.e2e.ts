@@ -1,4 +1,5 @@
-// Plan r2 UI-ASK in the browser: q opens the Ask section, Ctrl+Enter asks, and the answer shows as safe Markdown.
+// Plan r2 UI-ASK and pr-view-v4 2.4 in the browser: q opens Ask in the panel slot, Ctrl+Enter asks, and the answer shows as safe
+// Markdown. The slot holds the brief or Ask, one at a time.
 // The answer is text only: no draft, no post, and no write request to the forge.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { test as base, expect, type Page } from "@playwright/test";
@@ -9,6 +10,7 @@ const TITLE = "Batch cache writes in the sync worker";
 // A run passes the git workspace, the fake CLI, and the result check.
 const RUN_MS = 60_000;
 const QUESTION = "Which callers of flush() are not updated?";
+const SECOND = "Does the worker drop writes on shutdown?";
 const COVERAGE = { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] };
 // Raw HTML and a remote image must not render. The fixture check fails on any request outside the app.
 const ANSWER =
@@ -40,6 +42,9 @@ const runLine = (page: Page) => page.locator("#runline");
 const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
 const box = (page: Page) => page.getByLabel("Your question");
 const answers = (page: Page) => page.locator("[data-ask]");
+const slot = (page: Page) => page.locator("#ask");
+const strip = (page: Page) => page.locator("nav[aria-label='Pull request summary']");
+const askBtn = (page: Page) => page.locator("#ask-btn");
 const runLog = (page: Page) => page.getByRole("dialog", { name: "Ask run log" });
 
 async function connect(page: Page) {
@@ -51,24 +56,34 @@ async function connect(page: Page) {
   await control("state", {});
   await page.locator("[data-row]", { hasText: TITLE }).first().click();
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(TITLE);
-  // The Ask section shows once the pull request data loads.
-  await expect(page.locator("#s-ask-sum")).toBeVisible();
+  // The strip shows once the pull request data loads. Ask stays closed until q or the Ask button.
+  await expect(strip(page).getByRole("button", { name: /file/i })).toBeVisible();
+  await expect(slot(page)).toHaveCount(0);
 }
 
-test("q opens Ask, Ctrl+Enter asks, the answer is safe Markdown, and Log opens the log of that run", async ({ page }) => {
+test("q opens Ask in the slot, Ctrl+Enter asks, the answer is safe Markdown, and Log opens the log of that run", async ({ page }) => {
   await control("claude", { stream: "tree", answer: { answer: ANSWER, coverage: COVERAGE } });
   await connect(page);
+  // The bottom Ask fold is gone.
+  await expect(page.locator("#s-ask")).toHaveCount(0);
+  await expect(askBtn(page)).toHaveAttribute("aria-expanded", "false");
   await page.keyboard.press("q");
-  await expect(page.locator("#s-ask")).toHaveAttribute("open", "");
+  await expect(slot(page)).toBeVisible();
   await expect(box(page)).toBeFocused();
-  await expect(page.locator("#s-ask-sum")).toHaveText("Ask Claude");
+  await expect(page.getByRole("region", { name: "Ask Claude" })).toBeVisible();
+  await expect(askBtn(page)).toHaveAttribute("aria-expanded", "true");
+  // The slot sits under the strip, above the run record and the Description.
+  const [s, b] = [await strip(page).boundingBox(), await slot(page).boundingBox()];
+  expect((b?.y ?? 0) >= (s?.y ?? 0) + (s?.height ?? 0)).toBe(true);
+  // Ask takes the place of the task chip row, as the brief does.
+  await expect(page.locator("[data-task-chips='tk-runs']")).toHaveCount(0);
 
   await box(page).fill(QUESTION);
   await box(page).press("Control+Enter");
   await expect(box(page)).toHaveValue("");
   await expect(runRow(page, "ask")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runRow(page, "ask")).toContainText("Answered");
-  await expect(page.locator("#s-ask-sum")).toHaveText("Ask Claude1");
+  await expect(answers(page)).toHaveCount(1);
 
   const a = answers(page).first();
   await expect(a).toContainText(QUESTION);
@@ -87,6 +102,42 @@ test("q opens Ask, Ctrl+Enter asks, the answer is safe Markdown, and Log opens t
   await page.keyboard.press("Escape");
   await expect(runLog(page)).toHaveCount(0);
   await expect(a.getByRole("button", { name: "Log", exact: true })).toBeFocused();
+
+  // The list shows all answers of this pull request, newest first.
+  await box(page).fill(SECOND);
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(answers(page)).toHaveCount(2);
+  await expect(answers(page).first()).toContainText(SECOND);
+  await expect(answers(page).nth(1)).toContainText(QUESTION);
+  await expect(answers(page).first().getByRole("status")).toContainText(/Claude answered on/, { timeout: RUN_MS });
+
+  // Esc closes the slot and gives the focus back to the Ask button. Nothing says "Answering…" when no question runs.
+  await box(page).focus();
+  await page.keyboard.press("Escape");
+  await expect(slot(page)).toHaveCount(0);
+  await expect(askBtn(page)).toBeFocused();
+  await expect(askBtn(page)).toHaveAttribute("aria-expanded", "false");
+  await expect(strip(page).getByRole("button", { name: "Answering…" })).toHaveCount(0);
+  // The Ask button opens and closes the slot. Close does what Esc does.
+  await askBtn(page).click();
+  await expect(box(page)).toBeFocused();
+  await askBtn(page).click();
+  await expect(slot(page)).toHaveCount(0);
+  await page.keyboard.press("q");
+  await slot(page).getByRole("button", { name: "Close", exact: true }).click();
+  await expect(slot(page)).toHaveCount(0);
+  await expect(askBtn(page)).toBeFocused();
+
+  // One slot: Ask closes the brief, and the brief closes Ask.
+  await page.keyboard.press("Shift+R");
+  await expect(page.getByLabel("Your note")).toBeFocused();
+  await page.locator("#review-btn").focus();
+  await page.keyboard.press("q");
+  await expect(box(page)).toBeFocused();
+  await expect(page.locator("#brief")).toHaveCount(0);
+  await page.locator("#review-btn").click();
+  await expect(page.locator("#brief")).toBeVisible();
+  await expect(slot(page)).toHaveCount(0);
 });
 
 test("a 409 keeps the typed question, also after a reload, and a running answer can be cancelled", async ({ page }) => {
@@ -98,7 +149,7 @@ test("a 409 keeps the typed question, also after a reload, and a running answer 
   await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
 
   await page.keyboard.press("q");
-  await expect(page.locator("#s-ask")).toContainText("Claude is reviewing this pull request. One review runs at a time.");
+  await expect(slot(page)).toContainText("Claude is reviewing this pull request. One review runs at a time.");
   await box(page).fill(QUESTION);
   await page.getByRole("button", { name: "Ask", exact: true }).click();
   await expect(page.getByText("The question was not sent")).toBeVisible();
@@ -107,7 +158,7 @@ test("a 409 keeps the typed question, also after a reload, and a running answer 
   // The unsent question stays in this browser.
   await page.reload();
   await page.locator("[data-row]", { hasText: TITLE }).first().click();
-  await expect(page.locator("#s-ask-sum")).toBeVisible();
+  await expect(strip(page).getByRole("button", { name: /file/i })).toBeVisible();
   await page.keyboard.press("q");
   await expect(box(page)).toHaveValue(QUESTION);
 
@@ -117,10 +168,22 @@ test("a 409 keeps the typed question, also after a reload, and a running answer 
   await expect(runLine(page)).toContainText("Answering…", { timeout: RUN_MS });
   const a = answers(page).first();
   await expect(a.getByRole("status")).toContainText("Answering…");
-  await expect(page.locator("#s-ask-sum")).toHaveText("Ask Claude1, 1 running");
+  // While Ask is open, the strip does not repeat it. A closed slot leaves "Answering…" in the strip, and it opens Ask again.
+  const answering = strip(page).getByRole("button", { name: "Answering…" });
+  await expect(answering).toHaveCount(0);
+  await box(page).press("Escape");
+  await expect(slot(page)).toHaveCount(0);
+  await expect(answering).toBeVisible();
+  await expect(answering).toHaveAttribute("aria-keyshortcuts", "q");
+  await answering.click();
+  await expect(box(page)).toBeFocused();
+  await expect(answering).toHaveCount(0);
   await a.getByRole("button", { name: "Cancel" }).click();
   await expect(a.getByRole("status")).toContainText("You cancelled the question.", { timeout: RUN_MS });
   await expect(runRow(page, "ask")).toContainText(/Cancelled after \d+ tool calls?/);
+  await page.keyboard.press("Escape");
+  await expect(slot(page)).toHaveCount(0);
+  await expect(strip(page).getByRole("button", { name: "Answering…" })).toHaveCount(0);
 });
 
 test("a failed answer shows the reason and its raw output", async ({ page }) => {

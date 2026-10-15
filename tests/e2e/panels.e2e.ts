@@ -27,6 +27,8 @@ const split = (page: Page) => page.getByRole("separator", { name: /^List width/ 
 const row = (page: Page, title: string) => page.locator("[data-row]", { hasText: title }).first();
 const width = async (box: ReturnType<typeof side>) => Math.round((await box.boundingBox())?.width ?? -1);
 const search = (page: Page) => new URL(page.url()).search;
+const fullBtn = (page: Page) => page.locator("#full-btn");
+const tip = (page: Page) => page.locator("[data-slot='tooltip-content']");
 
 async function connect(page: Page, w: number) {
   await page.setViewportSize({ width: w, height: 800 });
@@ -96,6 +98,50 @@ test("the splitter resizes the list with the keys, resets on Enter and double-cl
   await expect(split(page)).toHaveAttribute("aria-valuenow", "368");
   // Widths are viewer preferences, never part of the URL.
   expect(search(page)).toBe("");
+});
+
+test("a saved wide list leaves the detail 560 px in a smaller window and comes back in a wide one", async ({ page }) => {
+  await connect(page, 1440);
+  const sep = split(page);
+  await sep.focus();
+  await page.keyboard.press("End");
+  await expect(sep).toHaveAttribute("aria-valuenow", "560");
+  expect(await width(list(page))).toBe(560);
+
+  // 1100 px gives the rail: 1100 - 60 - 560 leaves 480 px to the list.
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await expect(sep).toHaveAttribute("aria-valuenow", "480");
+  await expect(sep).toHaveAttribute("aria-valuemax", "480");
+  expect(await width(list(page))).toBe(480);
+  expect(await width(detail(page))).toBe(560);
+
+  // A small window keeps the list at 280 px. The detail gets the rest.
+  await page.setViewportSize({ width: 800, height: 800 });
+  await expect(sep).toHaveAttribute("aria-valuenow", "280");
+  expect(await width(detail(page))).toBe(800 - 60 - 280);
+
+  // The guard changes only what renders. The saved width stays, so a wide window shows it again.
+  await page.setViewportSize({ width: 1440, height: 800 });
+  await expect(sep).toHaveAttribute("aria-valuenow", "560");
+  await expect(sep).toHaveAttribute("aria-valuemax", "560");
+  expect(await width(list(page))).toBe(560);
+
+  // The keys and the drag stop at the cap. The resize renders the cap before the key.
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await expect(sep).toHaveAttribute("aria-valuemax", "480");
+  await sep.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(sep).toHaveAttribute("aria-valuenow", "480");
+  await expect(page.getByRole("status").filter({ hasText: "List width 480 pixels." })).toHaveCount(1);
+  const box = await sep.boundingBox();
+  if (!box) throw new Error("no splitter box");
+  await page.mouse.move(box.x + box.width / 2, 300);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 120, 300, { steps: 4 });
+  expect(await width(detail(page))).toBe(560);
+  await page.mouse.up();
+  await expect(sep).toHaveAttribute("aria-valuenow", "480");
+  expect(await width(detail(page))).toBe(560);
 });
 
 test("below 1440 px the sidebar is a rail; the choice to expand or collapse stays after a reload", async ({ page }) => {
@@ -203,7 +249,60 @@ test("z hides the sidebar and the list; Esc, Back, and ← go back to three pane
   await expect(page.locator("[data-row][aria-current='true']")).toBeFocused();
 });
 
-test("the narrow layout ignores z and shows one pane", async ({ page }) => {
+test("the Full width button in the action bar is pressed in full width, toggles it like z, and Back leaves it", async ({ page }) => {
+  await connect(page, 1440);
+  await row(page, A).click();
+  await expect(detail(page).locator("h1")).toHaveText(A);
+  const btn = fullBtn(page);
+  await expect(btn).toHaveAccessibleName("Full width");
+  await expect(btn).toHaveAttribute("aria-pressed", "false");
+  await expect(btn).toHaveAttribute("aria-keyshortcuts", "z");
+  await btn.hover();
+  await expect(tip(page)).toHaveText("Full width. Key: z");
+  // It sits between Review and More.
+  const [review, full, more] = [
+    await page.locator("#review-btn").boundingBox(),
+    await btn.boundingBox(),
+    await page.locator("#more-btn").boundingBox(),
+  ];
+  expect((review?.x ?? 0) < (full?.x ?? 0) && (full?.x ?? 0) < (more?.x ?? 0)).toBe(true);
+
+  // A click pushes an entry, like z. The button keeps the focus and shows the pressed state.
+  const depth = await page.evaluate(() => history.length);
+  await btn.click();
+  await expect.poll(() => search(page)).toBe("?full=1");
+  expect(await page.evaluate(() => history.length)).toBe(depth + 1);
+  await expect(btn).toHaveAttribute("aria-pressed", "true");
+  await expect(btn).toBeFocused();
+  await expect(list(page)).toBeHidden();
+  expect(await width(detail(page))).toBe(1440);
+  await expect(tip(page)).toHaveText("Back to three panes. Keys: z or Esc");
+
+  // A second click leaves full width. z turns it on again, and the button follows.
+  await btn.click();
+  await expect.poll(() => search(page)).toBe("");
+  await expect(btn).toHaveAttribute("aria-pressed", "false");
+  await expect(list(page)).toBeVisible();
+  await page.keyboard.press("z");
+  await expect.poll(() => search(page)).toBe("?full=1");
+  await expect(btn).toHaveAttribute("aria-pressed", "true");
+
+  // Back leaves full width (decision D5). Forward brings it back.
+  await page.goBack();
+  await expect.poll(() => search(page)).toBe("");
+  await expect(btn).toHaveAttribute("aria-pressed", "false");
+  await expect(list(page)).toBeVisible();
+  await page.goForward();
+  await expect.poll(() => search(page)).toBe("?full=1");
+  await expect(btn).toHaveAttribute("aria-pressed", "true");
+  await btn.click();
+  await expect.poll(() => search(page)).toBe("");
+  await page.goBack();
+  await expect.poll(() => search(page)).toBe("?full=1");
+  await expect(btn).toHaveAttribute("aria-pressed", "true");
+});
+
+test("the narrow layout ignores z, shows one pane, and has no Full width button", async ({ page }) => {
   await connect(page, 400);
   await row(page, A).click();
   await expect(detail(page).locator("h1")).toHaveText(A);
@@ -211,4 +310,5 @@ test("the narrow layout ignores z and shows one pane", async ({ page }) => {
   await expect(detail(page)).toBeVisible();
   expect(search(page)).toBe("");
   await expect(split(page)).toBeHidden();
+  await expect(fullBtn(page)).toBeHidden();
 });
