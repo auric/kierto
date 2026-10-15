@@ -1,6 +1,6 @@
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Archive, ArrowLeft, Send, Terminal } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -51,6 +51,7 @@ import {
 } from "./shell/data";
 import { HelpSheet } from "./shell/HelpSheet";
 import { ListPane } from "./shell/ListPane";
+import { listDefault, railOn, readListWidth, readSide, type SidePref, writeListWidth, writeSide } from "./shell/layout";
 import {
   filterRows,
   followCandidate,
@@ -68,6 +69,7 @@ import {
   viewCounts,
 } from "./shell/model";
 import { Sidebar, useNow } from "./shell/Sidebar";
+import { Splitter } from "./shell/Splitter";
 import { Calm } from "./states";
 
 export function App() {
@@ -96,13 +98,18 @@ export function App() {
 
 const INITIAL: KeyState = { focus: "list", mobile: "list", selected: null, help: false, settings: false, chord: null };
 
+function media(query: string) {
+  const q = window.matchMedia(query);
+  const subscribe = (fn: () => void) => {
+    q.addEventListener("change", fn);
+    return () => q.removeEventListener("change", fn);
+  };
+  return { q, use: () => useSyncExternalStore(subscribe, () => q.matches) };
+}
 // One pane at a time below 760 px (index.css). The URL then names a PR only while the detail shows it, so Back returns to the list.
-const narrowQuery = window.matchMedia("(max-width: 759px)");
-const onNarrow = (fn: () => void) => {
-  narrowQuery.addEventListener("change", fn);
-  return () => narrowQuery.removeEventListener("change", fn);
-};
-const useNarrow = () => useSyncExternalStore(onNarrow, () => narrowQuery.matches);
+const narrowMedia = media("(max-width: 759px)");
+// Decision D4: the sidebar choice "auto" gives the rail below 1440 px.
+const wideMedia = media("(min-width: 1440px)");
 
 const prRef = (p: PrRow): PrRef => ({ project: p.project, repo: p.repo, id: p.prId });
 const findRef = (list: PrRow[] | undefined, r: PrRef) => list?.find((p) => p.prId === r.id && p.project === r.project && p.repo === r.repo);
@@ -129,7 +136,8 @@ function Shell({ stale }: { stale: boolean }) {
   const checkNow = useCheckNow();
   const follow = useFollowUrl();
   const restore = useRestore();
-  const narrow = useNarrow();
+  const narrow = narrowMedia.use();
+  const wide = wideMedia.use();
   // The URL at start: a reload or a link opened in a new tab shows the same place.
   const [start] = useState(() => ({ route: parseRoute(location.pathname, location.search), scroll: enterEntry() }));
   const r0 = start.route.kind === "list" ? start.route : null;
@@ -145,7 +153,7 @@ function Shell({ stale }: { stale: boolean }) {
       ...INITIAL,
       settings: start.route.kind === "settings",
       mobile: detail ? "detail" : "list",
-      focus: detail && narrowQuery.matches ? "detail" : "list",
+      focus: detail && narrowMedia.q.matches ? "detail" : "list",
     };
   });
   const [frozen, setFrozen] = useState<{ scope: string; slots: Slot[] }>({ scope: "", slots: [] });
@@ -162,8 +170,11 @@ function Shell({ stale }: { stale: boolean }) {
   const [at, setAt] = useState<DetailAt | null>(() =>
     r0?.pr ? { key: prKeyOf(r0.pr), thread: r0.thread, file: r0.file, close: null, scroll: start.scroll, n: 0 } : null,
   );
-  // Plan pr-view-v4 decision D5 reserves "full=1". Package P2 adds the full width layout.
+  // Full width (plan pr-view-v4 4.3, decision D5): "full=1" in the URL, so Back leaves it.
   const [full, setFull] = useState(r0?.full ?? false);
+  // Viewer preferences in localStorage, never in the URL (plan pr-view-v4 4.4). listW null: the default width.
+  const [side, setSide] = useState<SidePref>(readSide);
+  const [listW, setListW] = useState<number | null>(readListWidth);
   const [settingsRoute, setSettingsRoute] = useState<SettingsPlace>(s0);
   // The section or the profile that Settings jumps to. It changes only when Settings opens or on Back and Forward.
   const [settingsAt, setSettingsAt] = useState<SettingsAt>({ ...s0, n: 0 });
@@ -254,6 +265,9 @@ function Shell({ stale }: { stale: boolean }) {
         repo,
         q: query,
       };
+  // The narrow layout has no rail and no full width. Full width needs a PR in the detail.
+  const rail = !narrow && railOn(side, wide);
+  const fullOn = !narrow && route.kind === "list" && route.pr !== null && route.full;
   // A locked app shows Settings over any URL. The URL stays, so the PR of a link shows after the token is saved.
   const urlReady = !!settings.data && !!prs.data && !!meta.data && !locked;
   useLayoutEffect(() => {
@@ -370,6 +384,11 @@ function Shell({ stale }: { stale: boolean }) {
   // Runs the focus effect of the last key after the new state renders.
   useLayoutEffect(() => {
     const effect = pending.current;
+    // Full width hides the list. An effect that goes to the list shows it first and runs after that render.
+    if (fullOn && (effect === "focus-list" || effect === "focus-filter")) {
+      setFull(false);
+      return;
+    }
     pending.current = null;
     // After Back or Forward, focus that the change removed goes to the detail.
     if (refocus.current) {
@@ -421,11 +440,13 @@ function Shell({ stale }: { stale: boolean }) {
     const typing = (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !box) || t.isContentEditable;
     const onButton = (t.tagName === "BUTTON" && !t.hasAttribute("data-row")) || t.tagName === "A" || t.tagName === "SUMMARY" || box;
     const layer = detailApi.current?.layer(e.target) ?? null;
-    const r = reduceKey(state, e.key, { ids, typing, onButton, settingsLocked: locked, now: Date.now(), layer, narrow });
+    const r = reduceKey(state, e.key, { ids, typing, onButton, settingsLocked: locked, now: Date.now(), layer, narrow, full: fullOn });
     if (!r.handled) return;
     e.preventDefault();
-    if (e.key === "Escape" && typing) t.blur();
+    // Esc leaves full width first. The text field keeps the focus, as in the prototype.
+    if (e.key === "Escape" && typing && r.effect !== "full-off") t.blur();
     if (r.effect === "back") return goBack();
+    if (r.effect === "full-on" || r.effect === "full-off") setFull(r.effect === "full-on");
     if (r.effect === "open-cause") opened.current = true;
     pending.current = r.effect;
     setKs(r.state);
@@ -474,16 +495,25 @@ function Shell({ stale }: { stale: boolean }) {
   // Every product name comes from meta. It is one local request, sent together with the others.
   if (!meta.data) return null;
 
+  const listWidth = listW ?? listDefault(rail);
   return (
-    <div className="rl-app" data-m={mobile}>
-      {/* A button, not a "#rows" link: a hash change pushes a history entry with no state. */}
-      <button
-        type="button"
-        className="sr-only cursor-pointer rounded-md bg-pane text-pen focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1.5"
-        onClick={() => document.getElementById("rows")?.focus()}
-      >
-        Skip to the list
-      </button>
+    <div
+      className="rl-app"
+      data-m={mobile}
+      data-rail={rail ? "" : undefined}
+      data-full={fullOn ? "" : undefined}
+      style={{ "--list-w": `${listWidth}px` } as CSSProperties}
+    >
+      {/* A button, not a "#rows" link: a hash change pushes a history entry with no state. Full width hides the list. */}
+      {!fullOn && (
+        <button
+          type="button"
+          className="sr-only cursor-pointer rounded-md bg-pane text-pen focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1.5"
+          onClick={() => document.getElementById("rows")?.focus()}
+        >
+          Skip to the list
+        </button>
+      )}
       <Sidebar
         view={showSettings || repo ? null : view}
         counts={viewCounts(all)}
@@ -505,6 +535,12 @@ function Shell({ stale }: { stale: boolean }) {
         onCheck={() => checkNow.mutate()}
         onSettings={() => (ks.settings && !locked ? go({ settings: false, mobile: "detail", focus: "detail" }) : openSettings())}
         settingsOpen={showSettings}
+        rail={rail}
+        onRail={() => {
+          const next = rail ? "full" : "rail";
+          setSide(next);
+          writeSide(next);
+        }}
       />
       <main className="contents">
         <ListPane
@@ -558,6 +594,17 @@ function Shell({ stale }: { stale: boolean }) {
           }
           onMenu={() => go({ mobile: "side" })}
           onFocus={() => ks.focus !== "list" && setKs((k) => ({ ...k, focus: "list" }))}
+        />
+        <Splitter
+          width={listWidth}
+          onWidth={(w) => {
+            setListW(w);
+            writeListWidth(w);
+          }}
+          onReset={() => {
+            setListW(null);
+            writeListWidth(null);
+          }}
         />
         <section
           ref={detailRef}

@@ -12,6 +12,8 @@ import {
   type LucideIcon,
   Monitor,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Rows3,
   Rows4,
@@ -21,7 +23,7 @@ import {
   Sun,
   Terminal,
 } from "lucide-react";
-import { Fragment, type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { VIEW_LABEL, type View } from "../../shared/views";
 import { cycleTheme, NEXT_THEME, type Theme, toggleDensity, useCompact, useTheme } from "../theme";
@@ -39,14 +41,6 @@ const STATUS_ICON: Record<StatusInfo["tone"], { icon: LucideIcon; className?: st
 };
 
 const THEME_ICON: Record<Theme, LucideIcon> = { system: Monitor, light: Sun, dark: Moon };
-
-// The rail layout (760 to 1279 px, index.css) hides the words, so only then the tooltips show them.
-const railQuery = window.matchMedia("(min-width: 760px) and (max-width: 1279px)");
-const onRail = (fn: () => void) => {
-  railQuery.addEventListener("change", fn);
-  return () => railQuery.removeEventListener("change", fn);
-};
-const useRail = () => useSyncExternalStore(onRail, () => railQuery.matches);
 
 // The count on the rail. The button name holds the count, so a screen reader skips the badge.
 const Badge = ({ n }: { n: number }) =>
@@ -78,8 +72,11 @@ export function Sidebar(props: {
   onCheck: () => void;
   onSettings: () => void;
   settingsOpen: boolean;
+  // The rail hides the words, so only then the tooltips show them. onRail: collapse to the rail or expand (plan pr-view-v4 4.3).
+  rail: boolean;
+  onRail: () => void;
 }) {
-  const rail = useRail();
+  const { rail } = props;
   return (
     <nav
       aria-label="Views"
@@ -231,6 +228,7 @@ export function Sidebar(props: {
           <ThemeButton rail={rail} />
           <DensityButton rail={rail} />
         </div>
+        <RailButton rail={rail} onClick={props.onRail} />
       </div>
     </nav>
   );
@@ -254,6 +252,26 @@ function RunsItem(props: { count: number; running: boolean; rail: boolean; curre
         <span className="rl-lbl truncate">Review runs</span>
         <span className="rl-lbl ml-auto text-xs font-medium text-muted-foreground">{props.count || ""}</span>
         <Badge n={props.count} />
+      </button>
+    </Hint>
+  );
+}
+
+// The one pane layout below 760 px has no rail, so the button hides there.
+function RailButton({ rail, onClick }: { rail: boolean; onClick: () => void }) {
+  const label = rail ? "Expand sidebar" : "Collapse sidebar";
+  const Icon = rail ? PanelLeftOpen : PanelLeftClose;
+  return (
+    <Hint label={label} disabled={!rail} side="right">
+      <button
+        type="button"
+        id="nav-rail"
+        className={cn(navItem, "rl-wide-only -mx-1 w-auto text-base")}
+        aria-label={label}
+        onClick={onClick}
+      >
+        <Icon aria-hidden className="size-[15px] shrink-0" />
+        <span className="rl-lbl truncate">{label}</span>
       </button>
     </Hint>
   );

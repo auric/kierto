@@ -198,6 +198,55 @@ describe("triage and post keys", () => {
   });
 });
 
+// Plan pr-view-v4 4.3, 4.4, and section 6: z turns full width on or off. Esc order: dialog, panel slot, full width, then the list.
+describe("full width", () => {
+  const pr = { ...S, selected: 20 };
+  const detail = { ...pr, focus: "detail" as const, mobile: "detail" as const };
+
+  test("z turns full width on from the list or the detail and moves focus to the detail", () => {
+    expect(reduceKey(pr, "z", C)).toMatchObject({ effect: "full-on", state: { focus: "detail", mobile: "detail" } });
+    expect(reduceKey(detail, "z", C).effect).toBe("full-on");
+    expect(reduceKey(detail, "z", { ...C, full: true })).toMatchObject({ effect: "full-off", state: { focus: "detail" } });
+  });
+
+  test("z does nothing without a PR, while typing, in help, in the narrow layout, or over required settings", () => {
+    expect(reduceKey(S, "z", C).handled).toBe(false);
+    expect(reduceKey(pr, "z", { ...C, typing: true }).handled).toBe(false);
+    expect(reduceKey({ ...pr, help: true }, "z", C).handled).toBe(false);
+    expect(reduceKey(pr, "z", { ...C, narrow: true }).handled).toBe(false);
+    expect(reduceKey({ ...pr, settings: true }, "z", { ...C, settingsLocked: true }).handled).toBe(false);
+  });
+
+  test("z over open settings closes them, as the other detail keys do", () => {
+    expect(reduceKey({ ...pr, settings: true }, "z", C)).toMatchObject({ effect: "full-on", state: { settings: false } });
+  });
+
+  test("Esc closes the help, then the panel slot, then leaves full width, then goes to the list", () => {
+    const full = { ...C, full: true };
+    expect(reduceKey({ ...detail, help: true }, "Escape", { ...full, layer: "brief" })).toMatchObject({
+      effect: null,
+      state: { help: false },
+    });
+    expect(reduceKey(detail, "Escape", { ...full, layer: "brief" }).effect).toBe("close-brief");
+    expect(reduceKey(detail, "Escape", { ...full, layer: "confirm" }).effect).toBe("close-confirm");
+    expect(reduceKey(detail, "Escape", full)).toMatchObject({ effect: "full-off", state: { focus: "detail", mobile: "detail" } });
+    expect(reduceKey(detail, "Escape", C).effect).toBe("focus-list");
+  });
+
+  test("Esc in a text field leaves full width before it leaves the field", () => {
+    expect(reduceKey(detail, "Escape", { ...C, full: true, typing: true }).effect).toBe("full-off");
+    expect(reduceKey(detail, "Escape", { ...C, typing: true }).effect).toBe("focus-list");
+  });
+
+  test("the help names z and the Esc step of full width", () => {
+    const keys = HELP_KEYS.flatMap((g) => g.keys);
+    expect(keys.find((x) => x.keys[0] === "z")?.text).toBe("Full width on or off: hide the views and the list");
+    expect(keys.find((x) => x.keys[0] === "Esc" && x.keys[1] === "←")?.text).toContain(
+      "In full width, Esc first goes back to three panes.",
+    );
+  });
+});
+
 // Plan pr-view-v4 section 6 and 2.7: j and k in the detail move over the Drafts rows, the threads, and the file rows.
 describe("j and k over the items of the detail", () => {
   test("they move one item and stop at the ends", () => {

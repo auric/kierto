@@ -498,6 +498,8 @@ const outside = (pane: Locator, parts = "*") =>
   }, parts);
 
 test("long repository and branch names stay inside their panes", async ({ page }) => {
+  // The repository list shows only next to the full sidebar: 1440 px and wider (plan pr-view-v4 decision D4).
+  await page.setViewportSize({ width: 1440, height: 800 });
   await connect(page, false);
   const side = page.locator("nav[aria-label='Views']");
   const list = page.locator("section[aria-labelledby='view-name']");
@@ -507,7 +509,7 @@ test("long repository and branch names stay inside their panes", async ({ page }
   await row(page, TITLE.b).click();
   await expect(detailTitle(page)).toHaveText(TITLE.b);
   // Wide and rail layouts give the list 368 px and 320 px.
-  for (const width of [1280, 900]) {
+  for (const width of [1440, 900]) {
     await page.setViewportSize({ width, height: 800 });
     expect(await outside(list)).toEqual([]);
     expect(await outside(side)).toEqual([]);

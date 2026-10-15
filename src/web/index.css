@@ -223,12 +223,16 @@ details[open] > summary .rl-chev {
   transform: rotate(90deg);
 }
 
-/* App grid (prototype/v3:86-88): sidebar | list | detail. A rail from 760 to 1279 px, so a 1100 px window keeps 720 px for the detail.
-   One pane below 760 px. Unlayered, so these display rules win over the Tailwind utilities on the same elements. */
+/* App grid (prototype/pr-view-v4:72-76): sidebar | list | detail. The shell sets data-rail (decision D4: auto below 1440 px),
+   data-full (full width), and --list-w (the splitter). One pane below 760 px.
+   Unlayered, so these display rules win over the Tailwind utilities on the same elements. */
 .rl-app {
+  --side-w: 228px;
+  --list-w: 368px;
+  position: relative;
   height: 100%;
   display: grid;
-  grid-template-columns: 228px 368px minmax(0, 1fr);
+  grid-template-columns: var(--side-w) var(--list-w) minmax(0, 1fr);
 }
 .rl-app > *,
 .rl-app > main > * {
@@ -245,15 +249,56 @@ details[open] > summary .rl-chev {
 .rl-badge {
   display: none;
 }
-@media (min-width: 760px) and (max-width: 1279px) {
-  .rl-app {
-    grid-template-columns: 60px 320px minmax(0, 1fr);
+/* The splitter sits on the right edge of the list column. */
+.rl-split {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--side-w) + var(--list-w) - 4px);
+  z-index: 5;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.rl-split::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  transition: background-color 120ms ease;
+}
+.rl-split:hover::after,
+.rl-split:focus-visible::after,
+.rl-split[data-drag]::after {
+  left: 3.5px;
+  width: 2px;
+  background: var(--pen);
+}
+.rl-split:focus-visible {
+  outline: none;
+}
+@media (min-width: 760px) {
+  /* Full width: the list and the sidebar keep their state and scroll position, out of view and out of the focus order. */
+  .rl-app[data-full] {
+    grid-template-columns: 0 0 minmax(0, 1fr);
   }
-  .rl-side .rl-lbl,
-  .rl-side .rl-repos {
+  .rl-app[data-full] > .rl-side,
+  .rl-app[data-full] .rl-list {
+    visibility: hidden;
+  }
+  .rl-app[data-full] .rl-split {
     display: none;
   }
-  .rl-side .rl-badge {
+  .rl-app[data-rail] {
+    --side-w: 60px;
+  }
+  .rl-app[data-rail] .rl-side .rl-lbl,
+  .rl-app[data-rail] .rl-side .rl-repos {
+    display: none;
+  }
+  .rl-app[data-rail] .rl-side .rl-badge {
     display: block;
     position: absolute;
     top: 1px;
@@ -270,7 +315,7 @@ details[open] > summary .rl-chev {
     text-align: center;
     font-variant-numeric: tabular-nums;
   }
-  .rl-side .rl-lbl-sr {
+  .rl-app[data-rail] .rl-side .rl-lbl-sr {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -278,17 +323,17 @@ details[open] > summary .rl-chev {
     clip: rect(0 0 0 0);
     white-space: nowrap;
   }
-  .rl-side .rl-center {
+  .rl-app[data-rail] .rl-side .rl-center {
     justify-content: center;
   }
-  .rl-side .rl-stack {
+  .rl-app[data-rail] .rl-side .rl-stack {
     flex-direction: column;
     align-items: center;
   }
-  .rl-side .rl-stack > .rl-grow {
+  .rl-app[data-rail] .rl-side .rl-stack > .rl-grow {
     display: none;
   }
-  .rl-side .rl-check {
+  .rl-app[data-rail] .rl-side .rl-check {
     width: 32px;
     padding: 0;
     margin: 0 0 4px;
@@ -298,6 +343,9 @@ details[open] > summary .rl-chev {
 @media (max-width: 759px) {
   .rl-app {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .rl-split {
+    display: none;
   }
   .rl-app .rl-pane {
     display: none;

@@ -29,7 +29,10 @@ export type KeyContext = {
   // A triage edit, a line field, and a reply box close themselves on Esc.
   layer?: Layer;
   // One pane at a time (below 760 px). Esc and ← in the detail then go back in the browser history (plan pr-view-v4 section 5).
+  // The narrow layout has no full width.
   narrow?: boolean;
+  // Full width is on: the detail hides the sidebar and the list (plan pr-view-v4 4.3).
+  full?: boolean;
 };
 
 export type Layer = "brief" | "confirm" | "log" | null;
@@ -63,6 +66,8 @@ export type Effect =
   | "close-log"
   // The shell goes back in the browser history. Without an earlier entry of the app, it shows the list.
   | "back"
+  | "full-on"
+  | "full-off"
   | null;
 
 export type KeyResult = { state: KeyState; effect: Effect; handled: boolean };
@@ -107,9 +112,11 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
   const hasPr = s.selected !== null && ctx.ids.includes(s.selected) && !(s.settings && ctx.settingsLocked);
   const inDetail = { ...s, focus: "detail" as const, mobile: "detail" as const, settings: false };
 
+  // Plan pr-view-v4 section 6. An open menu or popover and the other dialogs keep Esc, so the shell never sees it.
   if (key === "Escape") {
     if (s.help) return done({ ...s, help: false });
     if (ctx.layer) return done(s, `close-${ctx.layer}`);
+    if (ctx.full) return done({ ...s, focus: "detail" }, "full-off");
     if (ctx.typing) return done({ ...s, focus: "list" }, "focus-list");
     if (s.mobile === "side") return done({ ...s, mobile: "list", focus: "list" }, "focus-list");
     return back(s, ctx);
@@ -143,6 +150,8 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
       return back(s, ctx);
     case "g":
       return hasPr ? done({ ...s, chord: ctx.now }) : ignore(s);
+    case "z":
+      return hasPr && !ctx.narrow ? done(inDetail, ctx.full ? "full-off" : "full-on") : ignore(s);
     default: {
       const effect = DETAIL[key];
       return effect && hasPr ? done(inDetail, effect) : ignore(s);
@@ -166,7 +175,8 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
     keys: [
       { keys: ["j", "k"], text: "Next or previous pull request in the list, or draft, thread, or file in the detail" },
       { keys: ["Enter", "→"], text: "Open the pull request at the thread that put it in the inbox" },
-      { keys: ["Esc", "←"], text: "Back to the list" },
+      { keys: ["Esc", "←"], text: "Back to the list. In full width, Esc first goes back to three panes." },
+      { keys: ["z"], text: "Full width on or off: hide the views and the list" },
       { keys: ["/"], text: "Filter the list" },
     ],
   },
