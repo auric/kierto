@@ -75,6 +75,8 @@ export type ReviewApi = {
   draftReply(thread: number): void;
   // Keys f and F (plan pr-view-v4 section 6): the Fix list. thread absent: the default ticks. null: no current thread.
   fix(thread?: number | null): void;
+  // Key f on a finding draft: the Fix list with only that finding ticked.
+  fixFinding(id: number): void;
   // Plan r2 UI-DIFF: opens a draft and focuses it, for "Go to draft" in the diff.
   openDraft(id: number): void;
   // The layer that Esc closes first, for focus at target.
@@ -299,6 +301,19 @@ export function useReview(
   onDraft.current = draftReplies;
   const onShow = useRef(o.showInDiff);
   onShow.current = o.showInDiff;
+  const author = pr.role === "AUTHOR";
+  // useFix comes after the drafts context, so the Fix action of a draft reads it through this ref.
+  const onFix = useRef((_: number) => {});
+  // Opens finding drafts without a focus change, so their fix cards mount.
+  const showFindings = useCallback(
+    (ids: number[]) =>
+      setOpenDrafts((m) => {
+        const out = new Map(m);
+        for (const id of ids) out.set(id, true);
+        return out;
+      }),
+    [],
+  );
   // Opens a draft or a question and focuses it: "Go to draft" in the diff, the ledger, and key 2.
   const openDraft = useCallback(
     (id: number) => {
@@ -415,9 +430,10 @@ export function useReview(
       onToggle: (id) => setOpenDrafts((m) => new Map(m).set(id, !(m.get(id) ?? id === latestList.current.firstNew))),
       onFrom: (agent) => onLog.current(agent, false, "review"),
       onShowInDiff: (id) => onShow.current(id),
+      onFix: author ? (id) => onFix.current(id) : null,
       triage: triageCtx,
     }),
-    [meta, asker, triageCtx],
+    [meta, asker, triageCtx, author],
   );
 
   // ---------- Fix it (plan r3 UI-FIX) ----------
@@ -426,6 +442,7 @@ export function useReview(
     hints: o.hints,
     threads: o.threads,
     replies: replies.data,
+    findings: ds,
     profile: { name: state.name, explain: meta.profiles.find((p) => p.id === state.profile)?.explain ?? false },
     busy,
     synced: pr.synced,
@@ -434,8 +451,9 @@ export function useReview(
     onLog: (id) => openLog(null, false, id),
     slotTaken,
     show: o.show,
+    showFindings,
   });
-  const author = pr.role === "AUTHOR";
+  onFix.current = fix.openFinding;
 
   // ---------- Reply drafts (replies.md step 6) ----------
   const replyCtx = useMemo<ReplyCtx>(
@@ -527,6 +545,7 @@ export function useReview(
     },
     draftReply: (thread) => draftReplies([thread]),
     fix: (thread) => fix.open(thread),
+    fixFinding: (id) => fix.openFinding(id),
     openDraft,
     layer(target) {
       const inSheet = target instanceof Node && !!document.getElementById("run-log")?.contains(target);
@@ -621,7 +640,7 @@ export function useReview(
     ),
     reviewed: latest !== null,
     draftCount: ds.filter((d) => d.status !== "discarded").length + (qJump?.n ?? 0),
-    drafts: <Drafts items={list} isOpen={isDraftOpen} triage={triage} ctx={draftCtx} />,
+    drafts: <Drafts items={list} isOpen={isDraftOpen} triage={triage} cards={fix.findingCards} ctx={draftCtx} />,
     cards,
     drafted,
     sheet: log && (

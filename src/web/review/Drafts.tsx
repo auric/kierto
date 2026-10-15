@@ -1,13 +1,15 @@
 // Drafts section (plan pr-view-v4 2.7, prototype pr-view-v4 drafts()): the findings and questions of the newest review run in one
-// list of rows, with triage (WP14a). Only you see drafts until you post them.
-import { Check, ChevronRight, CircleAlert, FileCode, MessageCircleQuestionMark } from "lucide-react";
-import { memo } from "react";
+// list of rows, with triage (WP14a). Only you see drafts until you post them. On your own PR, an open finding has Fix and its fix
+// card (docs/plans/fix-ux.md phase 2).
+import { Check, ChevronRight, CircleAlert, FileCode, GitCommitHorizontal, MessageCircleQuestionMark, Wrench } from "lucide-react";
+import { memo, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { MetaDto, ReviewItemDto, RunDto } from "../../shared/dto";
 import type { AnchoredFinding, Question } from "../../shared/review";
 import { Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
-import { anchorNote, carriedNote, closedLabel, DROP_REASON, draftExcerpt, EVIDENCE, lineText, SEVERITY } from "./model";
+import { anchorNote, carriedNote, closedLabel, DROP_REASON, draftExcerpt, EVIDENCE, fixedNote, lineText, SEVERITY } from "./model";
 import { Acts, Editor, Mover, type TriageCtx, type TriageMode } from "./Triage";
 
 const icon = "size-[15px] shrink-0";
@@ -67,6 +69,8 @@ export type DraftCtx = {
   onFrom: (agent: string) => void;
   // Plan r2 UI-DIFF: focuses the line of the draft in the diff.
   onShowInDiff: (id: number) => void;
+  // Your own PR: opens the Fix list with only this finding ticked. null: a PR of another author.
+  onFix: ((id: number) => void) | null;
   triage: TriageCtx;
 };
 
@@ -74,18 +78,20 @@ export type DraftCtx = {
 export const draftDomId = (it: ReviewItemDto) => (it.kind === "question" ? `q-${it.id}` : `d-${it.id}`);
 
 // One row: kind, title, place, and state. Enter, o, or a click opens the body with the triage actions (plan pr-view-v4 2.7).
-// mode: the open editor or line field of this draft. busy: a triage request of this draft is out.
+// mode: the open editor or line field of this draft. busy: a triage request of this draft is out. fix: the fix card of the finding.
 export const Draft = memo(function Draft({
   it,
   open,
   mode,
   busy,
+  fix,
   ctx,
 }: {
   it: ReviewItemDto;
   open: boolean;
   mode: TriageMode;
   busy: boolean;
+  fix?: ReactNode;
   ctx: DraftCtx;
 }) {
   const short = ctx.meta.runner.short;
@@ -98,6 +104,7 @@ export const Draft = memo(function Draft({
   const closed = it.status === "discarded" ? closedLabel(it) : null;
   const accepted = it.status === "accepted";
   const carried = carriedNote(it);
+  const restored = fixedNote(it);
   const label = !f
     ? closed
       ? "Discarded question"
@@ -106,7 +113,7 @@ export const Draft = memo(function Draft({
       ? closed === "Discarded"
         ? `Discarded draft. ${where}.`
         : `Draft, ${closed.toLowerCase()}. ${where}.`
-      : `Draft from ${short}. ${SEVERITY[f.severity]}. ${where}.${accepted ? " Accepted." : ""}${carried ? ` ${carried}` : ""}`;
+      : `Draft from ${short}. ${SEVERITY[f.severity]}. ${where}.${accepted ? " Accepted." : ""}${carried ? ` ${carried}` : ""}${restored ? ` ${restored}` : ""}`;
   const cut = path ? path.lastIndexOf("/") + 1 : 0;
   return (
     <article
@@ -147,7 +154,15 @@ export const Draft = memo(function Draft({
             </span>
           )}
         </span>
-        {closed ? (
+        {it.status === "discarded" && it.payload.fixed ? (
+          <span className="inline-flex items-center gap-1 text-xs whitespace-nowrap text-muted-foreground">
+            <GitCommitHorizontal aria-hidden className="size-[13px] shrink-0" />
+            Fixed in{" "}
+            <code translate="no" className="font-mono">
+              {it.payload.fixed.short}
+            </code>
+          </span>
+        ) : closed ? (
           <span className="text-xs whitespace-nowrap text-muted-foreground">{closed}</span>
         ) : accepted ? (
           <span className="rl-fade inline-flex items-center gap-1 text-xs font-semibold whitespace-nowrap text-ink-2">
@@ -158,7 +173,11 @@ export const Draft = memo(function Draft({
       </button>
       <div id={`db-${it.id}`} hidden={!open}>
         {open &&
-          (f ? <FindingBody it={it} mode={mode} busy={busy} ctx={ctx} /> : <QuestionBody it={it} mode={mode} busy={busy} ctx={ctx} />)}
+          (f ? (
+            <FindingBody it={it} mode={mode} busy={busy} fix={fix} ctx={ctx} />
+          ) : (
+            <QuestionBody it={it} mode={mode} busy={busy} ctx={ctx} />
+          ))}
       </div>
     </article>
   );
@@ -168,12 +187,21 @@ export const Draft = memo(function Draft({
 const body = "pt-1 pr-1.5 pb-4 pl-[30px]";
 const note = "m-0 mt-1.5 max-w-[72ch] text-xs text-muted-foreground [overflow-wrap:anywhere]";
 
-function FindingBody({ it, mode, busy, ctx }: { it: ReviewItemDto; mode: TriageMode; busy: boolean; ctx: DraftCtx }) {
+function FindingBody({ it, mode, busy, fix, ctx }: { it: ReviewItemDto; mode: TriageMode; busy: boolean; fix: ReactNode; ctx: DraftCtx }) {
   const f = it.payload as AnchoredFinding;
   const a = it.anchor;
   const lines = a ? draftExcerpt(a) : [];
   const anchored = anchorNote(it);
   const carried = carriedNote(it);
+  const restored = fixedNote(it);
+  const onFix = ctx.onFix;
+  // Acts shows lead only for a draft that is not discarded. jobs.ts fixFindings also needs the anchor.
+  const toFix = onFix && a && (
+    <Button size="sm" variant="outline" disabled={busy} title="Key: f" aria-keyshortcuts="f" onClick={() => onFix(it.id)}>
+      <Wrench aria-hidden data-icon="inline-start" />
+      Fix
+    </Button>
+  );
   const at = a ? `${a.path} line ${lineText(a)}` : f.path;
   const toDiff = a && (
     <button
@@ -224,16 +252,18 @@ function FindingBody({ it, mode, busy, ctx }: { it: ReviewItemDto; mode: TriageM
             {it.edited && <span>Edited by you</span>}
           </p>
           {carried && <p className={note}>{carried}</p>}
+          {restored && <p className={note}>{restored}</p>}
           {anchored && <p className={note}>{anchored}</p>}
           {mode === "move" ? (
             <Mover it={it} busy={busy} ctx={ctx.triage} />
           ) : (
-            <Acts it={it} busy={busy} flush ctx={ctx.triage}>
+            <Acts it={it} busy={busy} flush ctx={ctx.triage} lead={toFix}>
               {toDiff}
             </Acts>
           )}
         </>
       )}
+      {fix}
     </div>
   );
 }
@@ -271,15 +301,18 @@ export type TriageState = {
 export const modeOf = (s: TriageState, id: number): TriageMode => (s.open?.id === id ? s.open.mode : null);
 
 // items: the findings, then the questions, of the newest review run. The count leaves out the discarded ones.
+// cards: the fix card of each finding, keyed by item ID.
 export function Drafts({
   items,
   isOpen,
   triage,
+  cards,
   ctx,
 }: {
   items: ReviewItemDto[];
   isOpen: (it: ReviewItemDto) => boolean;
   triage: TriageState;
+  cards: ReadonlyMap<number, ReactNode>;
   ctx: DraftCtx;
 }) {
   if (!items.length) return null;
@@ -297,7 +330,14 @@ export function Drafts({
           const mode = modeOf(triage, it.id);
           return (
             <li key={it.id}>
-              <Draft it={it} open={isOpen(it) || mode !== null} mode={mode} busy={triage.busy.has(it.id)} ctx={ctx} />
+              <Draft
+                it={it}
+                open={isOpen(it) || mode !== null}
+                mode={mode}
+                busy={triage.busy.has(it.id)}
+                fix={cards.get(it.id)}
+                ctx={ctx}
+              />
             </li>
           );
         })}

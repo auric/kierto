@@ -14,12 +14,12 @@ import { shortHash } from "../review/model";
 import { CloneDialog, CloneFolder, dialogKeys } from "./CloneDialog";
 import { commitFix } from "./data";
 import { FetchCommands, type FixCtx } from "./FixCard";
-import { applyText, appRefPrefix, commitText, defaultMessage } from "./model";
+import { applyText, appRefPrefix, commitText, defaultMessage, type FixTarget } from "./model";
 
 const icon = "size-[15px] shrink-0";
 
-// edits, threads: the selection when the dialog opened.
-export type ApplyTarget = { run: number; edits: number[]; threads: number[] };
+// The selection when the dialog opened (model.ts selection).
+export type ApplyTarget = { run: number; edits: number[]; threads: number[]; findings: number[]; first: FixTarget | null };
 
 type Failure = { status: 409 | 502; error: string; problems: CloneDto["problems"]; mode: FixMode };
 
@@ -30,11 +30,13 @@ export function ApplyDialog(props: {
   prNumber: number;
   repo: string;
   fixes: FixDto[];
+  // path:line of each finding of the newest review run, for the commit message.
+  places: ReadonlyMap<number, string>;
   clone: { data: CloneDto | undefined; error: Error | null; refetch: () => void };
   // A commit row came back. The caller closes the dialog in clone mode. In cache mode the dialog stays for the fetch commands.
-  onCommitted: (c: FixCommitDto, threads: number[]) => void;
+  onCommitted: (c: FixCommitDto, target: ApplyTarget) => void;
   // A refusal came back. The fix runs and the clone state change, so the caller reads them again.
-  onRefused: (threads: number[]) => void;
+  onRefused: (target: ApplyTarget) => void;
   onClose: () => void;
   ctx: FixCtx;
   // The ID of the element that takes the focus after the dialog closes. null: the element that opened it.
@@ -70,7 +72,14 @@ export function ApplyDialog(props: {
 function ApplyBody(props: Parameters<typeof ApplyDialog>[0] & { target: ApplyTarget }) {
   const { target, clone, ctx } = props;
   const fix = props.fixes.find((f) => f.run.id === target.run);
-  const [message, setMessage] = useState(() => defaultMessage(props.prNumber, target.threads, fix?.threads ?? []));
+  const [message, setMessage] = useState(() =>
+    defaultMessage(
+      props.prNumber,
+      target.threads,
+      fix?.threads ?? [],
+      target.findings.map((id) => ({ id, place: props.places.get(id) ?? null })),
+    ),
+  );
   const [pending, setPending] = useState<FixMode | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [made, setMade] = useState<FixCommitDto | null>(null);
@@ -85,7 +94,7 @@ function ApplyBody(props: Parameters<typeof ApplyDialog>[0] & { target: ApplyTar
     fix?.commits.find(
       (x) => x.state === "staged" && x.edits.length === target.edits.length && x.edits.every((id) => target.edits.includes(id)),
     ) ?? null;
-  const title = applyText(target.edits.length, target.threads.length);
+  const title = applyText(target.edits.length, target.threads.length, target.findings.length);
 
   const commit = async (mode: FixMode) => {
     if (pending) return;
@@ -95,11 +104,11 @@ function ApplyBody(props: Parameters<typeof ApplyDialog>[0] & { target: ApplyTar
       const r = await commitFix(target.run, { edits: target.edits, message, mode });
       if ("ok" in r) {
         if (mode === "cache") setMade(r.ok);
-        props.onCommitted(r.ok, target.threads);
+        props.onCommitted(r.ok, target);
         return;
       }
       setFailure({ ...r, mode });
-      props.onRefused(target.threads);
+      props.onRefused(target);
     } catch (e) {
       setFailure({ status: 409, error: (e as Error).message, problems: [], mode });
     } finally {

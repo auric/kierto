@@ -67,8 +67,9 @@ function onEscape(e: KeyboardEvent, close: () => void) {
 }
 
 // prototype/v3 acts(), pr-view-v4 drafts(). Each button names its key in the tooltip.
-// flush: no indent under an avatar, as in the open rows of the Drafts section.
-export function Acts(props: { it: ReviewItemDto; busy: boolean; flush?: boolean; ctx: TriageCtx; children?: ReactNode }) {
+// flush: no indent under an avatar, as in the open rows of the Drafts section. lead: a button after the triage buttons, before Move.
+// lead and children show only on an item that is not discarded.
+export function Acts(props: { it: ReviewItemDto; busy: boolean; flush?: boolean; ctx: TriageCtx; lead?: ReactNode; children?: ReactNode }) {
   const { it, busy, ctx } = props;
   const row = cn("mt-2.5 flex flex-wrap items-center gap-1.5", !props.flush && "rl-indent");
   if (it.status === "discarded") {
@@ -125,6 +126,7 @@ export function Acts(props: { it: ReviewItemDto; busy: boolean; flush?: boolean;
           </Button>
         </>
       )}
+      {props.lead}
       {move}
       {props.children}
     </div>

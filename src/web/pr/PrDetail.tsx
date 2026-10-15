@@ -43,7 +43,7 @@ export type DetailApi = {
   showInDiff(): void;
   // Plan pr-view-v4 2.4: q opens Ask in the panel slot with the focus in its box.
   ask(): void;
-  // Plan pr-view-v4 section 6: f opens the Fix list with the current thread ticked. F opens it with the default ticks.
+  // Plan pr-view-v4 section 6: f opens the Fix list with the current thread or finding ticked. F opens it with the default ticks.
   fix(list: boolean): void;
   // Plan v3 WP11: r, Shift+R, 2, 3, and the Esc layers of the review. Plan r2 UI-RR: c.
   rerun(): void;
@@ -501,8 +501,15 @@ export function PrDetail({
     ...review.api,
     fix(list) {
       if (list) return review.api.fix();
-      const at = document.activeElement?.closest("[data-thread]")?.getAttribute("data-thread");
-      review.api.fix(at ? Number(at) : cur);
+      const at = document.activeElement;
+      const d = at?.closest("[data-draft]")?.getAttribute("data-draft");
+      if (d) return review.api.fixFinding(Number(d));
+      if (role === "AUTHOR" && at?.closest("[data-draft-question]")) {
+        toast.add({ title: "A question has no code to fix. Fix works on threads and findings." });
+        return;
+      }
+      const t = at?.closest("[data-thread]")?.getAttribute("data-thread");
+      review.api.fix(t ? Number(t) : cur);
     },
     // prototype/v3 Esc order: an edit, the brief, the post confirm, the run log. Ask comes after the dialogs (plan pr-view-v4 4.4).
     // Ask uses the "brief" layer of keys.ts: both are the panel slot, and only one is open.

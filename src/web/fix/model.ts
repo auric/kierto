@@ -1,6 +1,6 @@
 // Pure Fix it rules (plan r3 UI-FIX, docs/plans/fix-ux.md). No DOM access, so bun test runs them directly.
 import type { CommitDto, FixCommitDto, FixDto, FixEditDto, ReviewItemDto, RunDto } from "../../shared/dto";
-import { type Judgement, MAX_REPLY_THREADS, type ReplyPayload } from "../../shared/review";
+import { type AnchoredFinding, type Judgement, MAX_REPLY_THREADS, type ReplyPayload } from "../../shared/review";
 import { ordered, snippet, type ThreadModel } from "../pr/threads";
 import { lineText, plural, shortHash } from "../review/model";
 
@@ -28,8 +28,47 @@ export type FixRow = {
   tick: boolean;
 };
 
-// resolved, deleted: the threads that the list leaves out. A deleted thread has no live message.
-export type FixTargets = { rows: FixRow[]; resolved: number; deleted: number };
+// One open review finding that is not posted (docs/plans/fix-ux.md phase 2). place: path:line of the current anchor.
+// fixed: the short hash of the fix commit that marked it, when you restored it. tick: the tick at the start.
+export type FixFindingRow = {
+  finding: number;
+  severity: AnchoredFinding["severity"];
+  place: string;
+  accepted: boolean;
+  fixed: string | null;
+  text: string;
+  tick: boolean;
+};
+
+// rows: the threads. findings: the findings. resolved, deleted: the threads that the list leaves out. A deleted thread has no live message.
+export type FixTargets = { rows: FixRow[]; findings: FixFindingRow[]; resolved: number; deleted: number };
+
+// A point that a fix run can take: a thread, or a review finding that is not posted.
+export type FixTarget = { kind: "thread" | "finding"; id: number };
+// The key of a target in the Fix list and in the IDs of its fix card. A thread keeps its number. A finding gets "f" before its ID.
+export const cardKey = (t: FixTarget) => (t.kind === "thread" ? String(t.id) : `f${t.id}`);
+// FixDto notes and edits name exactly one of thread and finding.
+const names = (x: { thread?: number; finding?: number }, t: FixTarget) => (t.kind === "thread" ? x.thread === t.id : x.finding === t.id);
+const targetOf = (e: FixEditDto): FixTarget =>
+  e.thread !== undefined ? { kind: "thread", id: e.thread } : { kind: "finding", id: e.finding as number };
+
+// jobs.ts fixFindings: a fix run takes a finding with status new or accepted and a place in the code.
+export const fixable = (it: ReviewItemDto) =>
+  it.kind === "finding" && (it.status === "new" || it.status === "accepted") && it.anchor !== null;
+
+// The f key and the Fix action on one finding. null: the Fix list can tick it. Else the reason, as a toast.
+export function findingFixWhy(it: ReviewItemDto | undefined): string | null {
+  if (it?.kind !== "finding") return "Move to a finding first. F opens the Fix list.";
+  if (it.status === "posted") return "This finding is posted. Fix its thread instead.";
+  if (it.status === "discarded") {
+    const f = it.payload.fixed;
+    return f
+      ? `This finding is fixed in ${f.short}. Restore it to fix it again.`
+      : "This finding is discarded. Fix works only on open findings.";
+  }
+  if (!it.anchor) return "This finding has no place in the code. Fix needs one.";
+  return null;
+}
 
 const placeText = (t: ThreadModel) => {
   const a = t.anchor;
@@ -38,8 +77,15 @@ const placeText = (t: ThreadModel) => {
 };
 
 // threads: in any order; the rows come in screen order. replies: GET /api/prs/:id/reply-drafts. fixes: GET /api/prs/:id/fixes.
+// findings: the finding drafts of the newest review run, in screen order.
 // Decision D6: your own comments and posted findings start unticked. Valid and partly valid start ticked, unless a commit fixed them.
-export function fixTargets(threads: ThreadModel[], replies: ReviewItemDto[] | undefined, fixes: FixDto[] | undefined): FixTargets {
+// The plans give no default tick for a finding. Accepted findings start ticked, new ones do not, and a fixed one does not.
+export function fixTargets(
+  threads: ThreadModel[],
+  replies: ReviewItemDto[] | undefined,
+  fixes: FixDto[] | undefined,
+  findings: ReviewItemDto[] = [],
+): FixTargets {
   const judged = new Map<number, Judgement | null>();
   for (const it of replies ?? [])
     if (it.kind === "reply") judged.set((it.payload as ReplyPayload).thread, (it.payload as ReplyPayload).judgement ?? null);
@@ -51,7 +97,21 @@ export function fixTargets(threads: ThreadModel[], replies: ReviewItemDto[] | un
         if (e.thread !== undefined && c.edits.includes(e.id) && !fixedIn.has(e.thread))
           fixedIn.set(e.thread, c.short ?? shortHash(c.commit ?? ""));
     }
-  const out: FixTargets = { rows: [], resolved: 0, deleted: 0 };
+  const out: FixTargets = { rows: [], findings: [], resolved: 0, deleted: 0 };
+  for (const it of findings) {
+    if (!fixable(it) || !it.anchor) continue;
+    const accepted = it.status === "accepted";
+    const fixed = it.payload.fixed?.short ?? null;
+    out.findings.push({
+      finding: it.id,
+      severity: (it.payload as AnchoredFinding).severity,
+      place: `${it.anchor.path}:${lineText(it.anchor)}`,
+      accepted,
+      fixed,
+      text: snippet(it.body, 160),
+      tick: accepted && fixed === null,
+    });
+  }
   for (const t of ordered(threads, false)) {
     if (!t.last) {
       out.deleted++;
@@ -90,7 +150,8 @@ export function threadFixWhy(t: ThreadModel | undefined): string | null {
 export const NOTHING_TO_FIX = { title: "Nothing to fix.", text: "No open thread and no open finding. Press r to review." };
 
 // The text under the buttons of the Fix list. Only "ok" lets Propose start a run.
-// rows: the row count. ticked: the ticked rows. synced: the server has both heads (jobs.ts fix). busy: busyText of the active run.
+// rows: the thread and finding rows. ticked: the ticked rows. fixRunInput caps threads and findings together.
+// synced: the server has both heads (jobs.ts fix). busy: busyText of the active run.
 export type FixReason = { kind: "nothing" | "sync" | "explain" | "busy" | "none" | "many" | "ok"; text: string };
 export function fixReason(o: {
   rows: number;
@@ -107,9 +168,9 @@ export function fixReason(o: {
       text: `The brief uses the ${o.profile.name} profile, which proposes no fixes. Press r and pick a review profile.`,
     };
   if (o.busy) return { kind: "busy", text: `${o.busy} Propose fixes when it ends.` };
-  if (!o.ticked) return { kind: "none", text: "Tick at least one thread." };
+  if (!o.ticked) return { kind: "none", text: "Tick at least one thread or finding." };
   if (o.ticked > MAX_REPLY_THREADS)
-    return { kind: "many", text: `Tick at most ${MAX_REPLY_THREADS} threads for one run. Now ${o.ticked} are ticked.` };
+    return { kind: "many", text: `Tick at most ${MAX_REPLY_THREADS} threads and findings for one run. Now ${o.ticked} are ticked.` };
   return {
     kind: "ok",
     text: `A read-only run checks each point first, then proposes exact edits. You review each edit before Apply. Nothing posts. Profile: ${o.profile.name}.`,
@@ -133,30 +194,53 @@ export function freeEdits(f: FixDto): FixEditDto[] {
 }
 
 // ticks: the choice of the user per edit ID. Without a choice, the edits of the newest run are ticked and older ones are not.
+// first: the target of the first ticked edit. Review edits and the focus after a commit go to its card.
 export function selection(f: FixDto, newest: boolean, ticks: ReadonlyMap<number, boolean>) {
   const edits = freeEdits(f).filter((e) => ticks.get(e.id) ?? newest);
-  return { edits: edits.map((e) => e.id), threads: [...new Set(edits.flatMap((e) => (e.thread === undefined ? [] : [e.thread])))] };
+  const ids = (k: "thread" | "finding") => [...new Set(edits.flatMap((e) => (e[k] === undefined ? [] : [e[k]])))];
+  const first = edits[0];
+  return { edits: edits.map((e) => e.id), threads: ids("thread"), findings: ids("finding"), first: first ? targetOf(first) : null };
 }
 
-export const applyText = (edits: number, threads: number) => `Apply ${plural(edits, "edit")} from ${plural(threads, "comment")}`;
+export const applyText = (edits: number, threads: number, findings = 0) => {
+  const from = [threads && plural(threads, "comment"), findings && plural(findings, "finding")].filter(Boolean).join(" and ");
+  return `Apply ${plural(edits, "edit")} from ${from || plural(threads, "comment")}`;
+};
 
-// Plan r3: the default first line names the comment or the comment count. The body has one line per thread with its reason,
-// cut at 200 characters. White space becomes one space, and control characters go.
-export function defaultMessage(prId: number, threads: number[], notes: FixDto["threads"]): string {
+// White space becomes one space, control characters go, and the text is cut at 200 characters.
+const clean = (raw: string) =>
+  [
+    ...raw
+      .replace(/\s+/gu, " ")
+      .replace(/\p{Cc}/gu, "")
+      .trim(),
+  ]
+    .slice(0, 200)
+    .join("");
+
+// Plan r3: the default first line names the comment or the comment count. The body has one line per thread with its reason.
+// findings: each finding with its place, path:line. A finding ID is local to the app, so the message names the place.
+export function defaultMessage(
+  prId: number,
+  threads: number[],
+  notes: FixDto["threads"],
+  findings: { id: number; place: string | null }[] = [],
+): string {
+  const reason = (t: FixTarget) => clean(notes.find((n) => names(n, t))?.reason ?? "");
+  const line = (label: string, why: string) => (why ? `- ${label}: ${why}` : `- ${label}`);
+  const at = (f: { id: number; place: string | null }) => (f.place ? `at ${clean(f.place)}` : String(f.id));
+  const [one] = findings;
+  const counts = [threads.length && plural(threads.length, "review comment"), findings.length && plural(findings.length, "review finding")];
   const head =
-    threads.length === 1 ? `Fix review comment ${threads[0]} on PR ${prId}` : `Fix ${threads.length} review comments on PR ${prId}`;
-  const body = threads.map((t) => {
-    const raw = notes.find((n) => n.thread === t)?.reason ?? "";
-    const reason = [
-      ...raw
-        .replace(/\s+/gu, " ")
-        .replace(/\p{Cc}/gu, "")
-        .trim(),
-    ]
-      .slice(0, 200)
-      .join("");
-    return reason ? `- Comment ${t}: ${reason}` : `- Comment ${t}`;
-  });
+    threads.length === 1 && !one
+      ? `Fix review comment ${threads[0]} on PR ${prId}`
+      : one && findings.length === 1 && !threads.length
+        ? `Fix review finding ${at(one)} on PR ${prId}`
+        : `Fix ${counts.filter(Boolean).join(" and ") || plural(0, "review comment")} on PR ${prId}`;
+  const body = [
+    ...threads.map((t) => line(`Comment ${t}`, reason({ kind: "thread", id: t }))),
+    ...findings.map((f) => line(`Finding ${at(f)}`, reason({ kind: "finding", id: f.id }))),
+  ];
   return [head, "", ...body].join("\n");
 }
 
@@ -176,24 +260,27 @@ export function commitText(c: FixCommitDto): string {
     : `Committed ${short} to an app branch. Run these commands in your clone:`;
 }
 
-// ---------- One thread ----------
+// ---------- One thread or finding ----------
 
 export type FixNote = FixDto["threads"][number];
 
-// running: a fix run that this page started for the thread runs now. failed: that run failed or was cancelled.
-// none: that run ended without a note or an edit for the thread. done: the newest run with a note or an edit for the thread.
-// commit: the newest commit of that run that holds an edit of the thread and is not undone.
+// The fix run that this page started, with its threads and findings.
+export type Asked = { run: number; threads: number[]; findings: number[] };
+
+// running: a fix run that this page started for the target runs now. failed: that run failed or was cancelled.
+// none: that run ended without a note or an edit for the target. done: the newest run with a note or an edit for the target.
+// commit: the newest commit of that run that holds an edit of the target and is not undone.
 export type FixState =
   | { kind: "running" }
   | { kind: "failed"; run: RunDto }
   | { kind: "none"; run: RunDto }
   | { kind: "done"; fix: FixDto; newest: boolean; note: FixNote | null; edits: FixEditDto[]; commit: FixCommitDto | null };
 
-// fixes: GET /api/prs/:id/fixes, newest first. asked: the run that this page started, with its threads.
-export function fixState(fixes: FixDto[] | undefined, thread: number, asked: { run: number; threads: number[] } | null): FixState | null {
+// fixes: GET /api/prs/:id/fixes, newest first.
+export function fixState(fixes: FixDto[] | undefined, target: FixTarget, asked: Asked | null): FixState | null {
   const list = fixes ?? [];
-  const touches = (f: FixDto) => f.threads.some((n) => n.thread === thread) || f.edits.some((e) => e.thread === thread);
-  if (asked?.threads.includes(thread)) {
+  const touches = (f: FixDto) => f.threads.some((n) => names(n, target)) || f.edits.some((e) => names(e, target));
+  if (asked && (target.kind === "thread" ? asked.threads : asked.findings).includes(target.id)) {
     const own = list.find((f) => f.run.id === asked.run);
     if (!own || own.run.status === "running") return { kind: "running" };
     if (own.run.status === "failed" || own.run.status === "cancelled") return { kind: "failed", run: own.run };
@@ -202,10 +289,10 @@ export function fixState(fixes: FixDto[] | undefined, thread: number, asked: { r
   const i = list.findIndex(touches);
   const fix = list[i];
   if (!fix) return null;
-  const edits = fix.edits.filter((e) => e.thread === thread);
+  const edits = fix.edits.filter((e) => names(e, target));
   const ids = new Set(edits.map((e) => e.id));
   const commit = fix.commits.find((c) => c.state !== "undone" && c.edits.some((id) => ids.has(id))) ?? null;
-  return { kind: "done", fix, newest: i === 0, note: fix.threads.find((n) => n.thread === thread) ?? null, edits, commit };
+  return { kind: "done", fix, newest: i === 0, note: fix.threads.find((n) => names(n, target)) ?? null, edits, commit };
 }
 
 // The "Fixed in" reply posts only when the PR commits hold its commit (outbox.ts fixCheck). Returns the short hash to wait for.

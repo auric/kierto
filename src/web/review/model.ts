@@ -23,6 +23,7 @@ import {
   MAX_REPLY_THREADS,
   type ReplyPayload,
   type Side,
+  type Verdict,
 } from "../../shared/review";
 import type { RunEvent } from "../../shared/run-log";
 import type { Turn } from "../../shared/turn";
@@ -441,17 +442,26 @@ export function anchorNote(it: ReviewItemDto): string | null {
   return null;
 }
 
-// Plan r2 UI-RR: a re-review discards the carried drafts that it finds fixed or outdated. Other closed drafts are discards by you.
+const carriedLabel = (v: Verdict | undefined) => (v === "fixed" ? "Fixed in the new commits" : v === "outdated" ? "Outdated" : "Discarded");
+
+// Plan r2 UI-RR: a re-review discards the carried drafts that it finds fixed or outdated. docs/plans/fix-ux.md decision 3: a fix
+// commit discards the open findings that it covers. Other closed drafts are discards by you.
 export function closedLabel(it: ReviewItemDto): string {
-  const v = it.payload.carried?.verdict;
-  return v === "fixed" ? "Fixed in the new commits" : v === "outdated" ? "Outdated" : "Discarded";
+  const f = it.payload.fixed;
+  return f ? `Fixed in ${f.short}` : carriedLabel(it.payload.carried?.verdict);
 }
 
 // A draft that a re-review carried. A fixed or outdated draft that is not discarded is one that you restored.
 export function carriedNote(it: ReviewItemDto): string | null {
   const v = it.payload.carried?.verdict;
   if (!v) return null;
-  return v === "open" ? "Still open after the new commits." : `${closedLabel(it)}. You restored it.`;
+  return v === "open" ? "Still open after the new commits." : `${carriedLabel(v)}. You restored it.`;
+}
+
+// A restore keeps the mark of the fix commit, so a fixed finding that is not discarded is one that you restored.
+export function fixedNote(it: ReviewItemDto): string | null {
+  const f = it.payload.fixed;
+  return f && it.status !== "discarded" ? `Fixed in ${f.short}. You restored it.` : null;
 }
 
 // The live-region text after a triage action (WP15). The focus moves on to the next item, so the page says what happened.

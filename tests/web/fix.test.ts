@@ -1,17 +1,20 @@
-// Plan r3 UI-FIX and docs/plans/fix-ux.md: the pure Fix it rules. The Fix list rows, ticks, and reasons, the selection per run,
-// the default commit message, the judgement labels, the card state of a thread, the "Fixed in" wait, and the runner prompt with the
-// comment as an indented block.
+// Plan r3 UI-FIX and docs/plans/fix-ux.md: the pure Fix it rules. The Fix list rows, ticks, and reasons for threads and findings,
+// the selection per run, the default commit message, the judgement labels, the card state of a thread or a finding, the fixed mark
+// of a finding, the "Fixed in" wait, and the runner prompt with the comment as an indented block.
 import { describe, expect, test } from "bun:test";
 import { fixRef } from "../../src/server/review/clone";
 import type { CommentDto, CommitDto, FixCommitDto, FixDto, FixEditDto, ReviewItemDto, RunDto } from "../../src/shared/dto";
-import type { ReplyPayload } from "../../src/shared/review";
+import type { AnchoredFinding, ReplyPayload } from "../../src/shared/review";
 import { HANDOFF_RULE, handoffText, indentBlock } from "../../src/web/fix/handoff";
 import {
   applyText,
   appRefPrefix,
+  cardKey,
   commitText,
   defaultMessage,
   fetchCommands,
+  findingFixWhy,
+  fixable,
   fixReason,
   fixState,
   fixTargets,
@@ -23,6 +26,7 @@ import {
   threadFixWhy,
 } from "../../src/web/fix/model";
 import { buildThreads } from "../../src/web/pr/threads";
+import { closedLabel, fixedNote } from "../../src/web/review/model";
 
 const run = (id: number, o: Partial<RunDto> = {}): RunDto => ({
   id,
@@ -57,6 +61,41 @@ const run = (id: number, o: Partial<RunDto> = {}): RunDto => ({
   ...o,
 });
 const edit = (id: number, thread: number): FixEditDto => ({ id, thread, path: `src/${id}.ts`, added: 1, removed: 1, rows: [] });
+const findingEdit = (id: number, finding: number): FixEditDto => ({ id, finding, path: `src/${id}.ts`, added: 1, removed: 1, rows: [] });
+const thread = (id: number) => ({ kind: "thread" as const, id });
+const found = (id: number) => ({ kind: "finding" as const, id });
+const anchor = { state: "exact" as const, path: "src/cache/flush.ts", oldPath: null, line: 6, lineEnd: 6, excerpt: [] };
+const finding = (id: number, o: Partial<ReviewItemDto> = {}, f: Partial<AnchoredFinding> = {}): ReviewItemDto => {
+  const payload: AnchoredFinding = {
+    path: "src/cache/flush.ts",
+    side: "new",
+    line: 6,
+    lineEnd: null,
+    anchorText: "lock.release();",
+    severity: "minor",
+    category: "Error handling",
+    body: `Finding ${id}.`,
+    evidence: "",
+    evidenceStatus: "code",
+    confidence: "high",
+    agent: null,
+    anchor,
+    ...f,
+  };
+  return {
+    id,
+    run: 1,
+    kind: "finding",
+    body: payload.body,
+    payload,
+    anchor: { ...payload.anchor, side: payload.side },
+    status: "new",
+    revision: 0,
+    edited: false,
+    ...o,
+  };
+};
+const mark = { id: 9, commit: "f".repeat(40), short: "fffffff", was: "accepted" as const };
 const commit = (id: number, edits: number[], o: Partial<FixCommitDto> = {}): FixCommitDto => ({
   id,
   run: 1,
@@ -200,15 +239,73 @@ describe("Fix list", () => {
       kind: "busy",
       text: "Claude is reviewing PROJ/repo #7. One review runs at a time. Propose fixes when it ends.",
     });
-    expect(fixReason({ ...base, ticked: 0 })).toEqual({ kind: "none", text: "Tick at least one thread." });
+    expect(fixReason({ ...base, ticked: 0 })).toEqual({ kind: "none", text: "Tick at least one thread or finding." });
     expect(fixReason({ ...base, rows: 30, ticked: 25 }).kind).toBe("ok");
     expect(fixReason({ ...base, rows: 30, ticked: 26 })).toEqual({
       kind: "many",
-      text: "Tick at most 25 threads for one run. Now 26 are ticked.",
+      text: "Tick at most 25 threads and findings for one run. Now 26 are ticked.",
     });
     expect(fixReason(base)).toEqual({
       kind: "ok",
       text: "A read-only run checks each point first, then proposes exact edits. You review each edit before Apply. Nothing posts. Profile: General.",
+    });
+  });
+
+  // docs/plans/fix-ux.md phase 2. The plans give no default tick for a finding: accepted starts ticked, new does not.
+  const findings = [
+    finding(1, { status: "accepted" }, { severity: "blocker" }),
+    finding(2),
+    finding(3, { status: "accepted", anchor: { ...anchor, line: 8, lineEnd: 9, side: "new" } }),
+    // A finding that a commit fixed and that you restored keeps the mark.
+    finding(4, { status: "accepted", payload: { ...finding(4).payload, fixed: mark } }),
+    // Not open: discarded, fixed and still discarded, posted, and a finding whose code is gone.
+    finding(5, { status: "discarded" }),
+    finding(6, { status: "discarded", payload: { ...finding(6).payload, fixed: mark } }),
+    finding(7, { status: "posted" }),
+    finding(8, { anchor: null }),
+  ];
+
+  test("finding rows: each open finding with a place in the code, in screen order; accepted ones start ticked", () => {
+    const t = fixTargets(threads, replies, [fixed], findings);
+    expect(t.findings.map((r) => r.finding)).toEqual([1, 2, 3, 4]);
+    expect(t.findings[0]).toEqual({
+      finding: 1,
+      severity: "blocker",
+      place: "src/cache/flush.ts:6",
+      accepted: true,
+      fixed: null,
+      text: "Finding 1.",
+      tick: true,
+    });
+    expect(t.findings[1]).toMatchObject({ finding: 2, accepted: false, tick: false });
+    expect(t.findings[2]?.place).toBe("src/cache/flush.ts:8–9");
+    expect(t.findings[3]).toMatchObject({ finding: 4, accepted: true, fixed: "fffffff", tick: false });
+    // The thread rows stay as they were.
+    expect(t.rows).toEqual(fixTargets(threads, replies, [fixed]).rows);
+    expect(fixTargets(threads, replies, [fixed]).findings).toEqual([]);
+    expect(findings.map(fixable)).toEqual([true, true, true, true, false, false, false, false]);
+  });
+
+  test("the f key and Fix on a finding: an open finding with a place in the code, else the reason", () => {
+    expect(findings.slice(0, 4).map(findingFixWhy)).toEqual([null, null, null, null]);
+    expect(findingFixWhy(findings[4])).toBe("This finding is discarded. Fix works only on open findings.");
+    expect(findingFixWhy(findings[5])).toBe("This finding is fixed in fffffff. Restore it to fix it again.");
+    expect(findingFixWhy(findings[6])).toBe("This finding is posted. Fix its thread instead.");
+    expect(findingFixWhy(findings[7])).toBe("This finding has no place in the code. Fix needs one.");
+    expect(findingFixWhy(undefined)).toBe("Move to a finding first. F opens the Fix list.");
+    expect(findingFixWhy(reply(10))).toBe("Move to a finding first. F opens the Fix list.");
+  });
+
+  test("the card keys of threads and findings never collide", () => {
+    expect(cardKey(thread(5000001))).toBe("5000001");
+    expect(cardKey(found(12))).toBe("f12");
+  });
+
+  test("reasons count threads and findings together: one run takes at most 25", () => {
+    expect(fixReason({ ...base, rows: 20 + 10, ticked: 20 + 5 }).kind).toBe("ok");
+    expect(fixReason({ ...base, rows: 20 + 10, ticked: 20 + 6 })).toEqual({
+      kind: "many",
+      text: "Tick at most 25 threads and findings for one run. Now 26 are ticked.",
     });
   });
 
@@ -226,19 +323,25 @@ describe("selection per run", () => {
   const f = fix(1, { edits: [edit(1, 100), edit(2, 100), edit(3, 200)] });
 
   test("the newest run starts ticked, an older run starts unticked", () => {
-    expect(selection(f, true, new Map())).toEqual({ edits: [1, 2, 3], threads: [100, 200] });
-    expect(selection(f, false, new Map())).toEqual({ edits: [], threads: [] });
+    expect(selection(f, true, new Map())).toEqual({ edits: [1, 2, 3], threads: [100, 200], findings: [], first: thread(100) });
+    expect(selection(f, false, new Map())).toEqual({ edits: [], threads: [], findings: [], first: null });
   });
 
   test("an untick removes the edit; the comment count follows the ticked edits", () => {
-    expect(selection(f, true, new Map([[3, false]]))).toEqual({ edits: [1, 2], threads: [100] });
-    expect(selection(f, false, new Map([[3, true]]))).toEqual({ edits: [3], threads: [200] });
+    expect(selection(f, true, new Map([[3, false]]))).toEqual({ edits: [1, 2], threads: [100], findings: [], first: thread(100) });
+    expect(selection(f, false, new Map([[3, true]]))).toEqual({ edits: [3], threads: [200], findings: [], first: thread(200) });
+  });
+
+  test("threads and findings in one run: each kind counts apart, and first is the target of the first ticked edit", () => {
+    const mixed = fix(1, { edits: [findingEdit(1, 12), edit(2, 100), findingEdit(3, 12), findingEdit(4, 13)] });
+    expect(selection(mixed, true, new Map())).toEqual({ edits: [1, 2, 3, 4], threads: [100], findings: [12, 13], first: found(12) });
+    expect(selection(mixed, true, new Map([[1, false]])).first).toEqual(thread(100));
   });
 
   test("a committed or staged edit leaves the selection; an undone commit frees it", () => {
     const held = { ...f, commits: [commit(1, [1]), commit(2, [3], { state: "staged" })] };
     expect(freeEdits(held).map((e) => e.id)).toEqual([2]);
-    expect(selection(held, true, new Map())).toEqual({ edits: [2], threads: [100] });
+    expect(selection(held, true, new Map())).toEqual({ edits: [2], threads: [100], findings: [], first: thread(100) });
     const undone = { ...f, commits: [commit(1, [1, 2, 3], { state: "undone" })] };
     expect(selection(undone, true, new Map()).edits).toEqual([1, 2, 3]);
   });
@@ -246,6 +349,8 @@ describe("selection per run", () => {
   test("the bar text", () => {
     expect(applyText(1, 1)).toBe("Apply 1 edit from 1 comment");
     expect(applyText(3, 2)).toBe("Apply 3 edits from 2 comments");
+    expect(applyText(1, 0, 1)).toBe("Apply 1 edit from 1 finding");
+    expect(applyText(4, 2, 2)).toBe("Apply 4 edits from 2 comments and 2 findings");
   });
 });
 
@@ -266,6 +371,28 @@ describe("default commit message", () => {
     expect(m[3]).toBe(`- Comment 102: ${"x".repeat(200)}`);
     expect(m[4]).toBe("- Comment 103");
     expect(m).toHaveLength(5);
+  });
+
+  const findingNotes = [...notes, { finding: 12, fixed: true, reason: "Release the lock\nin finally." }];
+
+  test("one finding: the message names its place, because a finding ID is local to the app", () => {
+    expect(defaultMessage(1004, [], findingNotes, [{ id: 12, place: "src/cache/flush.ts:6" }])).toBe(
+      "Fix review finding at src/cache/flush.ts:6 on PR 1004\n\n- Finding at src/cache/flush.ts:6: Release the lock in finally.",
+    );
+    expect(defaultMessage(1004, [], [], [{ id: 12, place: null }])).toBe("Fix review finding 12 on PR 1004\n\n- Finding 12");
+  });
+
+  test("threads and findings: both counts in the first line, then the comments, then the findings", () => {
+    const m = defaultMessage(1004, [101, 102], findingNotes, [
+      { id: 12, place: "src/cache/flush.ts:6" },
+      { id: 13, place: "README.md:1" },
+    ]).split("\n");
+    expect(m[0]).toBe("Fix 2 review comments and 2 review findings on PR 1004");
+    expect(m.slice(2, 4).map((l) => l.slice(0, 15))).toEqual(["- Comment 101: ", "- Comment 102: "]);
+    expect(m.slice(4)).toEqual(["- Finding at src/cache/flush.ts:6: Release the lock in finally.", "- Finding at README.md:1"]);
+    expect(defaultMessage(1004, [101], findingNotes, [{ id: 12, place: "a.ts:1" }]).split("\n")[0]).toBe(
+      "Fix 1 review comment and 1 review finding on PR 1004",
+    );
   });
 
   test("control characters go, and a cut never splits a surrogate pair", () => {
@@ -300,17 +427,43 @@ describe("commit state", () => {
   });
 });
 
-describe("fix card of a thread", () => {
+describe("fix card of a thread or a finding", () => {
   test("a run that this page started shows running, then its end", () => {
-    const asked = { run: 2, threads: [100] };
-    expect(fixState([], 100, asked)).toEqual({ kind: "running" });
-    expect(fixState([fix(2, { run: run(2, { status: "running" }) })], 100, asked)).toEqual({ kind: "running" });
-    expect(fixState([fix(2, { run: run(2, { status: "failed", errorText: "x" }) })], 100, asked)?.kind).toBe("failed");
-    expect(fixState([fix(2, { run: run(2, { status: "cancelled" }) })], 100, asked)?.kind).toBe("failed");
+    const asked = { run: 2, threads: [100], findings: [] };
+    expect(fixState([], thread(100), asked)).toEqual({ kind: "running" });
+    expect(fixState([fix(2, { run: run(2, { status: "running" }) })], thread(100), asked)).toEqual({ kind: "running" });
+    expect(fixState([fix(2, { run: run(2, { status: "failed", errorText: "x" }) })], thread(100), asked)?.kind).toBe("failed");
+    expect(fixState([fix(2, { run: run(2, { status: "cancelled" }) })], thread(100), asked)?.kind).toBe("failed");
     // An older run with a note does not hide that the new run has none.
     const old = fix(1, { threads: [{ thread: 100, fixed: false, reason: "Old" }] });
-    expect(fixState([fix(2), old], 100, asked)?.kind).toBe("none");
-    expect(fixState([fix(2), old], 200, asked)).toBeNull();
+    expect(fixState([fix(2), old], thread(100), asked)?.kind).toBe("none");
+    expect(fixState([fix(2), old], thread(200), asked)).toBeNull();
+  });
+
+  test("a finding has its own card: its note, its edits, and its commit; a thread with the same number does not take them", () => {
+    const asked = { run: 3, threads: [12], findings: [12] };
+    expect(fixState([], found(12), asked)).toEqual({ kind: "running" });
+    expect(fixState([], found(13), asked)).toBeNull();
+    const f = fix(3, {
+      threads: [
+        { thread: 12, fixed: false, reason: "Thread twelve" },
+        { finding: 12, fixed: true, reason: "Finding twelve" },
+      ],
+      edits: [edit(5, 12), findingEdit(6, 12)],
+      commits: [commit(10, [6])],
+    });
+    expect(fixState([f], found(12), asked)).toMatchObject({
+      kind: "done",
+      note: { reason: "Finding twelve" },
+      edits: [{ id: 6 }],
+      commit: { id: 10 },
+    });
+    expect(fixState([f], thread(12), asked)).toMatchObject({
+      kind: "done",
+      note: { reason: "Thread twelve" },
+      edits: [{ id: 5 }],
+      commit: null,
+    });
   });
 
   test("the newest run with a note or an edit for the thread, its edits, and its commit", () => {
@@ -323,11 +476,21 @@ describe("fix card of a thread", () => {
       edits: [edit(5, 100), edit(6, 200)],
       commits: [commit(9, [5], { state: "undone" }), commit(10, [5, 6])],
     });
-    const a = fixState([newer, older], 100, null);
+    const a = fixState([newer, older], thread(100), null);
     expect(a).toMatchObject({ kind: "done", newest: false, note: { reason: "A" }, edits: [{ id: 5 }], commit: { id: 10 } });
-    const b = fixState([newer, older], 200, null);
+    const b = fixState([newer, older], thread(200), null);
     expect(b).toMatchObject({ kind: "done", newest: true, edits: [{ id: 7 }], commit: null });
-    expect(fixState([newer, older], 300, null)).toBeNull();
+    expect(fixState([newer, older], thread(300), null)).toBeNull();
+  });
+
+  test("a fixed finding: the row says Fixed in its commit; after a restore the note says so", () => {
+    const closed = finding(1, { status: "discarded", payload: { ...finding(1).payload, fixed: mark } });
+    expect(closedLabel(closed)).toBe("Fixed in fffffff");
+    expect(fixedNote(closed)).toBeNull();
+    const restored = { ...closed, status: "new" as const };
+    expect(fixedNote(restored)).toBe("Fixed in fffffff. You restored it.");
+    expect(fixedNote(finding(2))).toBeNull();
+    expect(closedLabel(finding(2, { status: "discarded" }))).toBe("Discarded");
   });
 
   test("the Fixed in draft waits until the PR commits list its commit", () => {

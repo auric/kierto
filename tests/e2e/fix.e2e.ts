@@ -1,6 +1,7 @@
-// Fix it (plan r3 UI-FIX, pr-view-v4 2.8 to 2.12, docs/plans/fix-ux.md): judgement chips, the Fix list and its default ticks, Fix in
+// Fix it (plan r3 UI-FIX, pr-view-v4 2.7 to 2.12, docs/plans/fix-ux.md): judgement chips, the Fix list and its default ticks, Fix in
 // the thread footer, the proposed edits with their checkboxes, the clone, Apply and commit with the user's git, the "Fixed in" reply
-// and its post rule, a dirty clone, Undo, the runner prompt, Fix on your own comment, and no Fix on a reviewer PR.
+// and its post rule, a dirty clone, Undo, the runner prompt, Fix on your own comment, Fix on a review finding that is not posted,
+// one run for threads and findings, and no Fix on a reviewer PR.
 // Runs against serve.ts only: the fake Bitbucket with the author PR 1004, a temp git remote with temp clones, and the fake CLI.
 // The CLI echoes the reply judgements valid, partly, invalid, question, null per thread (tests/support/fake-claude.ts echoReplies).
 import { execFileSync } from "node:child_process";
@@ -69,10 +70,15 @@ const draft = (page: Page, id: number) => thread(page, id).locator("[data-reply-
 const fixCard = (page: Page, id: number) => thread(page, id).locator("[data-fix]");
 // The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
 const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
-const applyDialog = (page: Page) => page.getByRole("dialog", { name: /^Apply \d+ edits? from \d+ comments?$/ });
+const applyDialog = (page: Page) => page.getByRole("dialog", { name: /^Apply \d+ edits? from \d+ (comments?|findings?)$/ });
 const fixList = (page: Page) => page.getByRole("dialog", { name: "Fix comments on your pull request" });
 // One row of the Fix list, found by the text of its comment.
 const pickRow = (page: Page, text: string) => fixList(page).getByRole("listitem").filter({ hasText: text });
+// One finding row of the Fix list, found by the text of its finding.
+const pickFinding = (page: Page, text: string) =>
+  fixList(page).getByRole("list", { name: "Review findings that you did not post" }).getByRole("listitem").filter({ hasText: text });
+// The minor finding of the fake review: lock.release() does not run when write() throws.
+const RELEASE = "does not run when";
 const toast = (page: Page) => page.locator("[data-slot='toast']");
 // The user's own git, as the app runs it in the clone. The control state uses an empty git config, so its status can differ when
 // the user config sets core.autocrlf.
@@ -109,6 +115,42 @@ async function draftReplies(page: Page) {
   await expect(draft(page, LOOP).locator("[data-judgement]")).toHaveText("Partly valid");
   await expect(draft(page, LOCK)).toHaveAccessibleName("Reply draft from Claude to Alex Smith. Valid.");
 }
+
+// Shift+R opens the brief. Ctrl+Enter starts the review. On PR 1004 the fake CLI gives 3 finding drafts and 1 question.
+async function review(page: Page) {
+  await page.keyboard.press("Shift+R");
+  await page.getByLabel("Your note").press("Control+Enter");
+  await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  await expect(page.locator("#s-drafts [data-draft]")).toHaveCount(3);
+}
+
+// The review item ID of the finding draft with this text.
+const findingId = async (page: Page, text: string) =>
+  Number(await page.locator("#s-drafts [data-draft]").filter({ hasText: text }).getAttribute("data-draft"));
+
+// Opens a draft row. The first new draft starts open, and a triage action moves on to the next one.
+async function openDraft(page: Page, id: number) {
+  const head = page.locator(`#dh-${id}`);
+  await expect(async () => {
+    if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+    await expect(head).toHaveAttribute("aria-expanded", "true", { timeout: 1000 });
+  }).toPass();
+}
+
+// The fix result for one finding: the same edit as for thread LOCK.
+const fixFinding = (finding: number) => ({
+  summary: "One fix.",
+  threads: [{ finding, fixed: true, reason: "Release the lock in a `finally` block." }],
+  edits: [
+    {
+      finding,
+      path: "src/cache/flush.ts",
+      old: "    write(entry);\n    lock.release();\n",
+      new: "    try {\n      write(entry);\n    } finally {\n      lock.release();\n    }\n",
+    },
+  ],
+  coverage: { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] },
+});
 
 // Fix in the thread footer opens the Fix list with only that thread ticked. Propose starts the run.
 async function fixOne(page: Page, id: number) {
@@ -536,7 +578,7 @@ test("the Fix list: three rows, my own comment unticked; F opens it, the reasons
   const propose = list.getByRole("button", { name: /^Propose fixes for \d+$/ });
   await expect(propose).toHaveText("Propose fixes for 0");
   await expect(propose).toHaveAttribute("aria-disabled", "true");
-  await expect(list.locator("#fix-why")).toHaveText("Tick at least one thread.");
+  await expect(list.locator("#fix-why")).toHaveText("Tick at least one thread or finding.");
   await pickRow(page, "Release the lock").getByRole("checkbox").check();
   await pickRow(page, "Take the lock once").getByRole("checkbox").check();
   await expect(propose).toHaveText("Propose fixes for 2");
@@ -555,6 +597,148 @@ test("the Fix list: three rows, my own comment unticked; F opens it, the reasons
   await expect(list.getByRole("button", { name: /^Propose fixes for/ })).toHaveAttribute("aria-disabled", "true");
   await page.keyboard.press("Escape");
   await expect(list).toBeHidden();
+  await page.locator("#runline").getByRole("button", { name: "Cancel" }).click();
+  await expect(runRow(page, "fix")).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
+  expect(await writes()).toEqual([]);
+});
+
+test("Fix on an accepted finding: its edit shows under it, Apply commits it, it shows Fixed in and leaves Ready to post, and Undo brings it back", async ({
+  page,
+}) => {
+  await connect(page);
+  await review(page);
+  const id = await findingId(page, RELEASE);
+  const row = page.locator(`#d-${id}`);
+  const head = page.locator(`#dh-${id}`);
+  const post = page.locator("[data-post-part]");
+  await openDraft(page, id);
+  await row.getByRole("button", { name: "Accept" }).click();
+  await expect(head).toContainText("Accepted");
+  await expect(post).toContainText("Ready to post: 1 inline comment");
+  await control("claude", { stream: "tree", fix: fixFinding(id) });
+
+  // Fix on the row opens the Fix list with only this finding ticked.
+  await openDraft(page, id);
+  await row.getByRole("button", { name: "Fix", exact: true }).click();
+  const list = fixList(page);
+  await expect(list.getByRole("checkbox", { checked: true })).toHaveCount(1);
+  const pick = pickFinding(page, RELEASE);
+  await expect(pick).toContainText("Minor");
+  await expect(pick).toContainText("src/cache/flush.ts:5");
+  await expect(pick).toContainText("Accepted");
+  await expect(pick.getByRole("checkbox")).toBeChecked();
+  await list.getByRole("button", { name: "Propose fixes for 1" }).click();
+  await expect(list).toBeHidden();
+  await expect(runRow(page, "fix")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  const stdin = await runStdin();
+  expect(stdin).toContain(`\nFix findings: ${id}\n`);
+  expect(stdin).not.toContain("Fix threads:");
+
+  // The edit shows under the finding, not under a thread.
+  const card = row.locator("[data-fix]");
+  await expect(card).toContainText("Proposed fix, 1 edit");
+  await expect(card).toContainText("Release the lock in a finally block.");
+  await expect(card.getByRole("figure", { name: "Proposed change in src/cache/flush.ts" })).toContainText("} finally {");
+  await expect(page.locator("#s-threads [data-fix]")).toHaveCount(0);
+  const bar = page.locator("[data-fixbar]");
+  const apply = bar.getByRole("button", { name: /^Apply / });
+  await expect(apply).toHaveText("Apply 1 edit from 1 finding");
+  await bar.getByRole("button", { name: "Review edits" }).click();
+  await expect(page.locator(`#fx-f${id}`)).toBeFocused();
+
+  const path = await makeClone(1004);
+  const before = (await cloneState(path)).head;
+  await apply.click();
+  const box = applyDialog(page);
+  await expect(box).toHaveAccessibleName("Apply 1 edit from 1 finding");
+  await expect(box.getByLabel("Commit message")).toHaveValue(
+    "Fix review finding at src/cache/flush.ts:5 on PR 1004\n\n- Finding at src/cache/flush.ts:5: Release the lock in a `finally` block.",
+  );
+  await setClone(page, path);
+  await box.getByRole("button", { name: "Apply and commit" }).click();
+  await expect(box).toBeHidden();
+  expect(git(path, ["rev-parse", "HEAD^"])).toBe(before);
+  expect(git(path, ["diff", "--name-only", "HEAD^", "HEAD"])).toBe("src/cache/flush.ts");
+  const short = git(path, ["rev-parse", "--short", "HEAD"]);
+  await expect(card).toContainText(`Committed ${short} on fix/flush-lock in your clone.`);
+  await expect(page.locator(`#fxc-f${id}`)).toBeFocused();
+
+  // The finding shows Fixed in, struck through, and leaves Ready to post. A finding has no thread, so no "Fixed in" reply appears.
+  await expect(head).toContainText(`Fixed in ${short}`);
+  await expect(head.locator(".line-through")).toHaveCount(1);
+  await expect(row).toHaveAccessibleName(`Draft, fixed in ${short}. flush.ts:5.`);
+  await expect(post).toHaveCount(0);
+  await expect(page.locator("[data-reply-draft]")).toHaveCount(0);
+  await expect(page.locator("#fix-btn")).toHaveAccessibleName("Fix, 2 open threads, 2 open findings");
+
+  // Undo: the clone goes back, and the finding is accepted again.
+  await card.getByRole("button", { name: "Undo" }).click();
+  await expect(page.locator("p[role='status'].sr-only")).toContainText(`Undone. Your clone is back at ${before.slice(0, 7)}.`);
+  expect((await cloneState(path)).head).toBe(before);
+  await expect(head).toContainText("Accepted");
+  await expect(head).not.toContainText("Fixed in");
+  await expect(post).toContainText("Ready to post: 1 inline comment");
+
+  // A second commit, then Restore: the finding is new again and keeps the mark, so it starts unticked in the Fix list.
+  await expect(apply).toHaveText("Apply 1 edit from 1 finding");
+  await apply.click();
+  const commitBtn = box.getByRole("button", { name: "Apply and commit" });
+  await expect(commitBtn).not.toHaveAttribute("aria-disabled", "true");
+  await commitBtn.click();
+  await expect(box).toBeHidden();
+  const again = git(path, ["rev-parse", "--short", "HEAD"]);
+  await expect(head).toContainText(`Fixed in ${again}`);
+  await row.getByRole("button", { name: "Restore" }).click();
+  await expect(row).toContainText(`Fixed in ${again}. You restored it.`);
+  await expect(head.locator(".line-through")).toHaveCount(0);
+  await expect(post).toHaveCount(0);
+  await page.locator("#fix-btn").click();
+  await expect(pickFinding(page, RELEASE)).toContainText(`Fixed in ${again}`);
+  await expect(pickFinding(page, RELEASE).getByRole("checkbox")).not.toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(fixList(page)).toBeHidden();
+  expect(await writes()).toEqual([]);
+});
+
+test("one run takes threads and findings: f on a finding ticks only it; F ticks the valid threads and the accepted finding", async ({
+  page,
+}) => {
+  await connect(page);
+  await draftReplies(page);
+  await review(page);
+  const id = await findingId(page, RELEASE);
+  await openDraft(page, id);
+  await page.locator(`#d-${id}`).getByRole("button", { name: "Accept" }).click();
+  await expect(page.locator(`#dh-${id}`)).toContainText("Accepted");
+
+  // f on the focused finding opens the list with only that finding ticked.
+  await page.locator(`#dh-${id}`).focus();
+  await page.keyboard.press("f");
+  const list = fixList(page);
+  await expect(list.getByRole("checkbox", { checked: true })).toHaveCount(1);
+  await expect(pickFinding(page, RELEASE).getByRole("checkbox")).toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(list).toBeHidden();
+
+  // F: the valid and partly valid threads and the accepted finding start ticked. The new findings do not.
+  await control("claude", { stream: "tree", hang: true });
+  await page.locator("#fix-btn").click();
+  await expect(list.getByRole("checkbox")).toHaveCount(5);
+  await expect(list.getByRole("checkbox", { checked: true })).toHaveCount(3);
+  const blocker = pickFinding(page, "Take the lock once, before the loop.");
+  await expect(blocker).toContainText("Blocker");
+  await expect(blocker).toContainText("Not accepted yet");
+  await expect(blocker.getByRole("checkbox")).not.toBeChecked();
+  await expect(pickFinding(page, "The README does not name")).toContainText("README.md:1");
+  await list.getByRole("button", { name: "Propose fixes for 3" }).click();
+  await expect(list).toBeHidden();
+
+  // The run shows under each thread and under the finding. Its prompt lists both threads and the finding.
+  await expect(page.locator("[data-fixbar]")).toContainText("Fix: checking 3 points and proposing edits", { timeout: RUN_MS });
+  await expect(page.locator(`#d-${id} [data-fix]`)).toContainText("Claude is proposing a fix…");
+  await expect(fixCard(page, LOCK)).toContainText("Claude is proposing a fix…");
+  await expect.poll(runStdin, { timeout: RUN_MS }).toContain(`\nFix threads: ${LOCK} (comment ${LOCK}), ${LOOP} (comment ${LOOP})\n`);
+  expect(await runStdin()).toContain(`\nFix findings: ${id}\n`);
   await page.locator("#runline").getByRole("button", { name: "Cancel" }).click();
   await expect(runRow(page, "fix")).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
   expect(await writes()).toEqual([]);

@@ -218,7 +218,7 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
         text: "Accept, edit, or discard the current draft or question. a again undoes an accept, d again restores.",
       },
       { keys: ["p"], text: "Post the accepted items, after a confirm" },
-      { keys: ["f"], text: "Your pull request: open the Fix list with the current thread ticked" },
+      { keys: ["f"], text: "Your pull request: open the Fix list with the current thread or finding ticked" },
       { keys: ["F"], text: "Your pull request: open the Fix list" },
       { keys: ["Ctrl", "Enter"], text: "In a reply box: show the reply and its destination before it posts" },
     ],

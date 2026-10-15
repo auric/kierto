@@ -1,29 +1,48 @@
-// The Fix list (plan pr-view-v4 2.12, docs/plans/fix-ux.md Option A): one checkbox per open thread with a live message.
-// "Propose fixes for K" starts one fix run with the ticked threads. Each reason that blocks the run shows as text.
-import { CircleAlert, CircleCheck, ClipboardCopy, GitCommitHorizontal, Hourglass } from "lucide-react";
+// The Fix list (plan pr-view-v4 2.12, docs/plans/fix-ux.md Option A): one checkbox per open thread with a live message, and one per
+// open review finding that you did not post. "Propose fixes for K" starts one fix run with the ticked rows. Each reason that blocks
+// the run shows as text.
+import { Check, CircleAlert, CircleCheck, ClipboardCopy, GitCommitHorizontal, Hourglass } from "lucide-react";
 import { useRef } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Severity } from "../review/Drafts";
+import { SEVERITY } from "../review/model";
 import { JudgementChip } from "../review/ReplyDraft";
 import { dialogKeys } from "./CloneDialog";
-import { type FixReason, type FixRow, type FixTargets, JUDGEMENT, leftOutText, NOTHING_TO_FIX } from "./model";
+import { cardKey, type FixFindingRow, type FixReason, type FixRow, type FixTargets, JUDGEMENT, leftOutText, NOTHING_TO_FIX } from "./model";
 
 const icon = "size-[15px] shrink-0";
+const rowBox = "grid cursor-pointer grid-cols-[18px_minmax(0,1fr)_auto] items-start gap-x-2.5 gap-y-0.5 rounded px-1 py-2 hover:bg-hover";
+const groupHead = "m-0 flex items-baseline gap-2 text-xs font-semibold text-muted-foreground";
 
-function Row({ r, ticked, onTick }: { r: FixRow; ticked: boolean; onTick: (thread: number, on: boolean) => void }) {
+type Tick = (key: string, on: boolean) => void;
+
+function FixedIn({ short }: { short: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 font-medium text-ink-2">
+      <GitCommitHorizontal aria-hidden className="size-[13px] shrink-0" />
+      Fixed in{" "}
+      <code translate="no" className="font-mono">
+        {short}
+      </code>
+    </span>
+  );
+}
+
+function Row({ r, ticked, onTick }: { r: FixRow; ticked: boolean; onTick: Tick }) {
   const about = `fx-pick-${r.thread}-about`;
   return (
     <li className="border-b">
-      <label className="grid cursor-pointer grid-cols-[18px_minmax(0,1fr)_auto] items-start gap-x-2.5 gap-y-0.5 rounded px-1 py-2 hover:bg-hover">
+      <label className={rowBox}>
         <input
           type="checkbox"
           className="m-0 mt-[3px] accent-foreground"
           checked={ticked}
           aria-label={`${r.who}, ${r.place}`}
           aria-describedby={about}
-          onChange={(e) => onTick(r.thread, e.target.checked)}
+          onChange={(e) => onTick(cardKey({ kind: "thread", id: r.thread }), e.target.checked)}
         />
         <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1 text-sm">
           <b className="font-semibold">{r.who}</b>
@@ -38,19 +57,7 @@ function Row({ r, ticked, onTick }: { r: FixRow; ticked: boolean; onTick: (threa
         </span>
         {/* The description of the checkbox repeats this column for screen readers. */}
         <span aria-hidden className="justify-self-end text-xs text-muted-foreground">
-          {r.fixed ? (
-            <span className="inline-flex items-center gap-1 font-medium text-ink-2">
-              <GitCommitHorizontal aria-hidden className="size-[13px] shrink-0" />
-              Fixed in{" "}
-              <code translate="no" className="font-mono">
-                {r.fixed}
-              </code>
-            </span>
-          ) : r.judgement ? (
-            <JudgementChip j={r.judgement} />
-          ) : (
-            "No judgement yet"
-          )}
+          {r.fixed ? <FixedIn short={r.fixed} /> : r.judgement ? <JudgementChip j={r.judgement} /> : "No judgement yet"}
         </span>
         <span id={about} className="col-span-2 col-start-2 truncate text-sm text-ink-2">
           <span className="sr-only">
@@ -64,31 +71,79 @@ function Row({ r, ticked, onTick }: { r: FixRow; ticked: boolean; onTick: (threa
   );
 }
 
-// prKey: "PROJ/repo #id". ticks: the ticked thread IDs. reason: fixReason for the current ticks. starting: the POST is out.
+// One open finding: severity, place, and state, then the title. The state explains the tick at the start.
+function FindingRow({ r, ticked, onTick }: { r: FixFindingRow; ticked: boolean; onTick: Tick }) {
+  const about = `fx-pick-f${r.finding}-about`;
+  const state = r.fixed ? `Fixed in ${r.fixed}.` : r.accepted ? "Accepted." : "Not accepted yet.";
+  return (
+    <li className="border-b">
+      <label className={rowBox}>
+        <input
+          type="checkbox"
+          className="m-0 mt-[3px] accent-foreground"
+          checked={ticked}
+          aria-label={`${SEVERITY[r.severity]} finding, ${r.place}`}
+          aria-describedby={about}
+          onChange={(e) => onTick(cardKey({ kind: "finding", id: r.finding }), e.target.checked)}
+        />
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1 text-sm">
+          <span className="text-xs">
+            <Severity s={r.severity} />
+          </span>
+          <code translate="no" className="min-w-0 font-mono text-xs [overflow-wrap:anywhere]">
+            {r.place}
+          </code>
+        </span>
+        {/* The description of the checkbox repeats this column for screen readers. */}
+        <span aria-hidden className="justify-self-end text-xs text-muted-foreground">
+          {r.fixed ? (
+            <FixedIn short={r.fixed} />
+          ) : r.accepted ? (
+            <span className="inline-flex items-center gap-1 font-semibold text-ink-2">
+              <Check aria-hidden className="size-[13px] shrink-0" />
+              Accepted
+            </span>
+          ) : (
+            "Not accepted yet"
+          )}
+        </span>
+        <span id={about} className="col-span-2 col-start-2 truncate text-sm text-ink-2">
+          <span className="sr-only">{state} </span>
+          {r.text}
+        </span>
+      </label>
+    </li>
+  );
+}
+
+// prKey: "PROJ/repo #id". ticks: the cardKey of each ticked row. reason: fixReason for the current ticks. starting: the POST is out.
 export function FixPicker(props: {
   open: boolean;
   prKey: string;
   targets: FixTargets;
-  ticks: ReadonlySet<number>;
+  ticks: ReadonlySet<string>;
   reason: FixReason;
   starting: boolean;
-  onTick: (thread: number, on: boolean) => void;
+  onTick: Tick;
   onPropose: () => void;
   onClose: () => void;
 }) {
-  const { targets, reason } = props;
+  const { targets, reason, ticks } = props;
   const propose = useRef<HTMLButtonElement>(null);
   const blocked = reason.kind !== "ok";
-  const rows = targets.rows;
+  const { rows, findings } = targets;
+  const any = rows.length + findings.length > 0;
   const left = leftOutText(targets);
-  const k = rows.filter((r) => props.ticks.has(r.thread)).length;
+  const k =
+    rows.filter((r) => ticks.has(cardKey({ kind: "thread", id: r.thread }))).length +
+    findings.filter((r) => ticks.has(cardKey({ kind: "finding", id: r.finding }))).length;
   const ReasonIcon = reason.kind === "busy" ? Hourglass : CircleAlert;
   return (
     <Dialog open={props.open} onOpenChange={(on) => !on && props.onClose()}>
       <DialogContent
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[620px]"
         onKeyDown={dialogKeys(props.onClose)}
-        initialFocus={rows.length > 0 && !blocked ? propose : true}
+        initialFocus={any && !blocked ? propose : true}
       >
         <DialogHeader>
           <DialogTitle>Fix comments on your pull request</DialogTitle>
@@ -96,24 +151,45 @@ export function FixPicker(props: {
             <span translate="no">{props.prKey}</span>. Pick the points to fix. Your clone stays untouched until you Apply.
           </DialogDescription>
         </DialogHeader>
-        {rows.length ? (
+        {any ? (
           <div className="grid gap-1">
-            <h3 className="m-0 flex items-baseline gap-2 text-xs font-semibold text-muted-foreground">
-              Open threads <span className="font-medium">{rows.length}</span>
-            </h3>
-            <ul aria-label="Open threads" className="m-0 list-none border-t p-0">
-              {rows.map((r) => (
-                <Row key={r.thread} r={r} ticked={props.ticks.has(r.thread)} onTick={props.onTick} />
-              ))}
-            </ul>
-            <p className="m-0 mt-1.5 text-xs text-muted-foreground">
-              {left && `${left} `}A reply judgement of Valid or Partly valid ticks a thread at the start. Your own comments and posted
-              findings start unticked.
-            </p>
-            <h3 className="m-0 mt-3 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-              Review findings that you did not post
-              <Badge variant="quiet">Planned</Badge>
-            </h3>
+            {rows.length > 0 && (
+              <>
+                <h3 className={groupHead}>
+                  Open threads <span className="font-medium">{rows.length}</span>
+                </h3>
+                <ul aria-label="Open threads" className="m-0 list-none border-t p-0">
+                  {rows.map((r) => (
+                    <Row key={r.thread} r={r} ticked={ticks.has(cardKey({ kind: "thread", id: r.thread }))} onTick={props.onTick} />
+                  ))}
+                </ul>
+                <p className="m-0 mt-1.5 text-xs text-muted-foreground">
+                  {left && `${left} `}A reply judgement of Valid or Partly valid ticks a thread at the start. Your own comments and posted
+                  findings start unticked.
+                </p>
+              </>
+            )}
+            {findings.length > 0 && (
+              <>
+                <h3 className={`${groupHead} ${rows.length ? "mt-3" : ""}`}>
+                  Review findings that you did not post <span className="font-medium">{findings.length}</span>
+                </h3>
+                <ul aria-label="Review findings that you did not post" className="m-0 list-none border-t p-0">
+                  {findings.map((r) => (
+                    <FindingRow
+                      key={r.finding}
+                      r={r}
+                      ticked={ticks.has(cardKey({ kind: "finding", id: r.finding }))}
+                      onTick={props.onTick}
+                    />
+                  ))}
+                </ul>
+                <p className="m-0 mt-1.5 text-xs text-muted-foreground">
+                  {!rows.length && left && `${left} `}Accepted findings start ticked. A commit that fixes a finding takes it out of Ready to
+                  post.
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <Alert role="note">
@@ -126,13 +202,13 @@ export function FixPicker(props: {
           </Alert>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          {rows.length > 0 && (
+          {any && (
             <p id="fix-why" className="m-0 flex w-full items-start gap-1.5 text-sm text-muted-foreground">
               {blocked && <ReasonIcon aria-hidden className={`${icon} mt-0.5`} />}
               {reason.text}
             </p>
           )}
-          {rows.length > 0 && (
+          {any && (
             <Button
               ref={propose}
               id="fix-propose"
@@ -146,7 +222,7 @@ export function FixPicker(props: {
             </Button>
           )}
           <Button variant="outline" onClick={props.onClose}>
-            {rows.length ? "Cancel" : "Close"}
+            {any ? "Cancel" : "Close"}
           </Button>
           <span className="flex-1" />
           <Button variant="ghost" size="sm" disabled className="text-ink-2">

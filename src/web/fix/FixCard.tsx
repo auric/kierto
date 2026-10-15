@@ -11,7 +11,7 @@ import { Rows } from "../diff/FileDiff";
 import { AiAvatar, Inline } from "../review/Drafts";
 import { plural, RUN_TEXT } from "../review/model";
 import { type Hints, HintTrigger } from "../shell/Hint";
-import { commitText, type FixState, fetchCommands } from "./model";
+import { cardKey, commitText, type FixState, type FixTarget, fetchCommands } from "./model";
 
 export type FixCtx = {
   meta: MetaDto;
@@ -19,8 +19,8 @@ export type FixCtx = {
   announce: (text: string) => void;
   onLog: (run: number) => void;
   onTick: (edit: number, on: boolean) => void;
-  // thread: the card to focus after the undo. null: the focus stays.
-  onUndo: (c: FixCommitDto, thread: number | null) => void;
+  // target: the card to focus after the undo. null: the focus stays.
+  onUndo: (c: FixCommitDto, target: FixTarget | null) => void;
 };
 
 const icon = "size-[15px] shrink-0";
@@ -126,11 +126,11 @@ function Edit({ e, ticked, free, ctx }: { e: FixEditDto; ticked: boolean; free: 
   );
 }
 
-function Commit({ c, thread, busy, ctx }: { c: FixCommitDto; thread: number; busy: boolean; ctx: FixCtx }) {
+function Commit({ c, target, busy, ctx }: { c: FixCommitDto; target: FixTarget; busy: boolean; ctx: FixCtx }) {
   const staged = c.state === "staged";
   const text = commitText(c);
   return (
-    <div id={`fxc-${thread}`} tabIndex={-1} className="rl-indent mt-2.5 grid scroll-mt-3 gap-1.5 rounded">
+    <div id={`fxc-${cardKey(target)}`} tabIndex={-1} className="rl-indent mt-2.5 grid scroll-mt-3 gap-1.5 rounded">
       <p key={`${c.id}:${c.state}`} className="rl-fade m-0 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-sm">
         {staged ? (
           <Err>{text}</Err>
@@ -140,7 +140,7 @@ function Commit({ c, thread, busy, ctx }: { c: FixCommitDto; thread: number; bus
             <span>{text}</span>
           </span>
         )}
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => ctx.onUndo(c, thread)}>
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => ctx.onUndo(c, target)}>
           {busy ? (
             <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin" />
           ) : (
@@ -154,19 +154,20 @@ function Commit({ c, thread, busy, ctx }: { c: FixCommitDto; thread: number; bus
   );
 }
 
-// ticks: the checkbox state of each free edit. busy: an undo of the commit of this card is out.
+// target: the thread or the finding of the card. ticks: the checkbox state of each free edit. busy: an undo of the commit of this card is out.
 export const FixCard = memo(function FixCard(props: {
   state: FixState;
-  thread: number;
+  target: FixTarget;
   ticks: ReadonlyMap<number, boolean>;
   busy: boolean;
   ctx: FixCtx;
 }) {
-  const { state: s, thread, ctx } = props;
+  const { state: s, target, ctx } = props;
+  const key = cardKey(target);
   const short = ctx.meta.runner.short;
   if (s.kind === "running") {
     return (
-      <p data-fix={thread} className="rl-enter mt-3.5 mb-0 flex items-center gap-2 text-sm text-ink-2">
+      <p data-fix={key} className="rl-enter mt-3.5 mb-0 flex items-center gap-2 text-sm text-ink-2">
         <AiAvatar meta={ctx.meta} />
         <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
         {short} is proposing a fix…
@@ -176,7 +177,9 @@ export const FixCard = memo(function FixCard(props: {
   if (s.kind === "failed" || s.kind === "none") {
     const why =
       s.kind === "none" ? (
-        <span className="text-ink-2">{short} proposed no fix for this comment.</span>
+        <span className="text-ink-2">
+          {short} proposed no fix for this {target.kind === "thread" ? "comment" : "finding"}.
+        </span>
       ) : s.run.status === "cancelled" ? (
         <span className="text-ink-2">You cancelled {RUN_TEXT.fix.cancelled}.</span>
       ) : (
@@ -185,7 +188,7 @@ export const FixCard = memo(function FixCard(props: {
         </Err>
       );
     return (
-      <p data-fix={thread} className="rl-enter mt-3.5 mb-0 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+      <p data-fix={key} className="rl-enter mt-3.5 mb-0 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         <AiAvatar meta={ctx.meta} />
         {why}
         <LogButton run={s.run.id} ctx={ctx} />
@@ -197,8 +200,8 @@ export const FixCard = memo(function FixCard(props: {
   const fixed = edits.length > 0;
   return (
     <article
-      id={`fx-${thread}`}
-      data-fix={thread}
+      id={`fx-${key}`}
+      data-fix={key}
       tabIndex={-1}
       aria-label={`Proposed fix from ${short}: ${plural(edits.length, "edit")}.${commit ? ` ${commit.state === "staged" ? "Staged" : "Committed"}.` : ""}`}
       className={cn(box, commit && "border-solid")}
@@ -220,7 +223,7 @@ export const FixCard = memo(function FixCard(props: {
       {edits.map((e) => (
         <Edit key={e.id} e={e} free={!held.has(e.id)} ticked={props.ticks.get(e.id) ?? newest} ctx={ctx} />
       ))}
-      {commit && <Commit c={commit} thread={thread} busy={props.busy} ctx={ctx} />}
+      {commit && <Commit c={commit} target={target} busy={props.busy} ctx={ctx} />}
     </article>
   );
 });

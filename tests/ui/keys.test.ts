@@ -148,7 +148,7 @@ describe("detail keys", () => {
     // After g, f is the second key of "g f".
     expect(reduceKey(reduceKey({ ...S, selected: 20 }, "g", C).state, "f", C).effect).toBe("files");
     const text = (k: string) => HELP_KEYS.flatMap((g) => g.keys).find((x) => x.keys[0] === k && !x.second)?.text;
-    expect(text("f")).toBe("Your pull request: open the Fix list with the current thread ticked");
+    expect(text("f")).toBe("Your pull request: open the Fix list with the current thread or finding ticked");
     expect(text("F")).toBe("Your pull request: open the Fix list");
   });
 
