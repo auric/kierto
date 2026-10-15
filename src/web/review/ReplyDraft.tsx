@@ -95,11 +95,12 @@ export function JudgementChip({ j }: { j: Judgement }) {
   );
 }
 
-function Head({ meta, children }: { meta: MetaDto; children?: ReactNode }) {
+// who: "Your session" for a draft from a pasted session answer (session-consult.md part B), else the runner.
+function Head({ meta, who, children }: { meta: MetaDto; who: string; children?: ReactNode }) {
   return (
     <div className="flex min-h-(--av) flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-muted-foreground">
       <AiAvatar meta={meta} />
-      <b className="font-semibold text-foreground">{meta.runner.short}</b>
+      <b className="font-semibold text-foreground">{who}</b>
       {children}
     </div>
   );
@@ -131,6 +132,8 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   const it = card.it;
   const p = replyOf(it);
   const id = `rd-${it.id}`;
+  const session = !!it.payload.session;
+  const who = session ? "Your session" : short;
   if (card.kind === "discarded") {
     return (
       <article
@@ -175,10 +178,12 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
         id={id}
         data-reply-draft={thread}
         tabIndex={-1}
-        aria-label={`${short}: no reply needed${judged && `.${judged}`}`}
+        aria-label={`${who}: no reply needed${judged && `.${judged}`}`}
         className={box}
       >
-        <Head meta={ctx.meta}>{chip}</Head>
+        <Head meta={ctx.meta} who={who}>
+          {chip}
+        </Head>
         <p className="rl-indent m-0 mt-px text-ink-2 [overflow-wrap:anywhere]">
           No reply needed: <Inline text={p.reason} />
         </p>
@@ -193,10 +198,10 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
       data-item={it.id}
       data-reply-draft={thread}
       tabIndex={-1}
-      aria-label={`Reply draft from ${short}${props.to ? ` to ${props.to}` : ""}.${judged}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}`}
+      aria-label={`Reply draft from ${session ? "your session" : short}${props.to ? ` to ${props.to}` : ""}.${judged}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}`}
       className={cn(box, accepted && "border-solid")}
     >
-      <Head meta={ctx.meta}>
+      <Head meta={ctx.meta} who={who}>
         <span>Reply draft{props.to && <> to {props.to}</>}</span>
         {chip}
         {accepted && (
@@ -218,7 +223,9 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
             <Text text={it.body} />
           </div>
           <p className="rl-indent m-0 mt-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-            {EVIDENCE[p.evidenceStatus]}. <Inline text={p.reason} />
+            {session ? "From your session." : `${EVIDENCE[p.evidenceStatus]}.`}{" "}
+            {/* A session draft without reply text holds the reason as its body. */}
+            {!(session && p.reason.trim() === it.body.trim()) && <Inline text={p.reason} />}
           </p>
           {props.waiting && (
             <p className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-2">

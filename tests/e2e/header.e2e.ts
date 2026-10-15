@@ -153,7 +153,7 @@ test("the key opens the PR on the server, the author name opens the user page, a
   // The byline names the author, so the Description heading does not repeat it.
   await expect(page.locator("#h-desc")).toHaveText("Description");
 
-  // More: open the PR on the server, or copy its link. A reviewer PR has no planned items.
+  // More: open the PR on the server, or copy its link. A reviewer PR has no session consult items.
   await page.locator("#more-btn").click();
   const menu = page.getByRole("menu");
   await expect(menu.getByRole("menuitem", { name: "Open on Bitbucket" })).toHaveAttribute("href", B_WEB);
@@ -216,7 +216,7 @@ test("task chips: a chip without a link pattern opens Settings, Task IDs; with a
   await expect(link).toHaveCSS("border-style", "solid");
 });
 
-test("Review and Draft replies are plain buttons; a zero count explains itself; an own PR keeps the planned More items", async ({
+test("Review and Draft replies are plain buttons; a zero count explains itself; an own PR has the session consult in More", async ({
   page,
 }) => {
   await connect(page, A);
@@ -253,15 +253,16 @@ test("Review and Draft replies are plain buttons; a zero count explains itself; 
   await expect(page.locator("#ask-btn")).toHaveText("Ask");
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  // An own PR: More keeps the places of the session consult. They are planned and do nothing yet.
+  // An own PR: More holds the session consult (docs/plans/session-consult.md). tests/e2e/consult.e2e.ts covers its dialogs.
   await control("state", { author: true });
   await row(page, D).click();
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(D);
   await expect(page.locator("[data-author]")).toContainText("Opened by You");
   await page.locator("#more-btn").click();
-  const planned = page.getByRole("menu").getByRole("menuitem", { name: /^Copy for your session…/ });
-  await expect(planned).toContainText("Planned");
-  await expect(planned).toHaveAttribute("aria-disabled", "true");
-  await expect(page.getByRole("menu").getByRole("menuitem", { name: /^Paste the answer…/ })).toContainText("Planned");
+  for (const name of [/^Copy for your session…/, /^Paste the answer…/]) {
+    const item = page.getByRole("menu").getByRole("menuitem", { name });
+    await expect(item).not.toContainText("Planned");
+    await expect(item).not.toHaveAttribute("aria-disabled", "true");
+  }
   await page.keyboard.press("Escape");
 });

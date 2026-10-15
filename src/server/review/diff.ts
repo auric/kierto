@@ -25,8 +25,8 @@ const MOVED = /^The (?:source|target) head moved/;
 
 export type DiffResult<T> = { status: 200; body: T } | { status: 400 | 404 | 409 | 502; body: ApiError | DiffFetchNeeded };
 
-type Pr = { ref: PrRef; sourceHead: string; targetHead: string };
-type Cache = { cache: string; env: Record<string, string>; mergeBase: string };
+export type Pr = { ref: PrRef; sourceHead: string; targetHead: string };
+export type Cache = { cache: string; env: Record<string, string>; mergeBase: string };
 
 const fail = (status: 400 | 404 | 409 | 502, error: string) => ({ status, body: { error } }) as const;
 const fetchNeeded = { status: 409, body: { error: "Get the code first.", fetch: true } } as const;
@@ -94,7 +94,7 @@ async function filesOf(c: Cache, head: string): Promise<DiffFile[] | null> {
 }
 
 // The cache when its refs hold the PR heads. null: a fetch is needed. Reads only, so it needs no lock.
-async function cachedHeads(dataDir: string, pr: Pr): Promise<Cache | null> {
+export async function cachedHeads(dataDir: string, pr: Pr): Promise<Cache | null> {
   if (!existsSync(dataDir)) return null;
   const dir = realpathSync.native(dataDir);
   const cache = cachePath(dir, pr.ref);

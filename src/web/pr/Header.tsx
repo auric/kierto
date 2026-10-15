@@ -20,7 +20,6 @@ import {
   Star,
 } from "lucide-react";
 import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -35,6 +34,7 @@ import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { PrRow } from "../../shared/dto";
 import { archived } from "../../shared/views";
+import type { ConsultUi } from "../consult/Consult";
 import { useMeta } from "../meta";
 import { useArchive, useFollow } from "../shell/data";
 import { Hint } from "../shell/Hint";
@@ -176,8 +176,18 @@ function TaskChip({ t, onTaskIds }: { t: PrRow["tasks"][number]; onTaskIds: () =
   );
 }
 
-// Plan pr-view-v4 2.2 and section 9: More holds the PR link actions. The places for the session consult wait for package S1.
-function MoreMenu({ pr, forge, announce }: { pr: PrRow; forge: string; announce: (text: string) => void }) {
+// Plan pr-view-v4 2.2 and section 9: More holds the PR link actions and, on your own PR, the session consult (session-consult.md).
+function MoreMenu({
+  pr,
+  forge,
+  announce,
+  consult,
+}: {
+  pr: PrRow;
+  forge: string;
+  announce: (text: string) => void;
+  consult: Pick<ConsultUi, "copy" | "paste">;
+}) {
   const web = webLink(pr.webUrl);
   const own = pr.role === "AUTHOR";
   if (!web && !own) return null;
@@ -187,14 +197,11 @@ function MoreMenu({ pr, forge, announce }: { pr: PrRow; forge: string; announce:
         ? announce("Copied the pull request link.")
         : toast.add({ title: "The clipboard is blocked here. Copy the link from the address bar of the server page." }),
     );
-  const planned = (label: string, note: string, Icon: typeof Link) => (
-    <DropdownMenuItem disabled className="items-start py-1.5">
+  const item = (label: string, note: string, Icon: typeof Link, onClick: () => void) => (
+    <DropdownMenuItem className="items-start py-1.5" onClick={onClick}>
       <Icon aria-hidden className="mt-0.5" />
       <span className="grid min-w-0 flex-1 gap-0.5">
-        <span className="flex items-center gap-1.5 font-medium">
-          {label}
-          <Badge variant="quiet">Planned</Badge>
-        </span>
+        <span className="font-medium">{label}</span>
         <span className="text-xs text-muted-foreground">{note}</span>
       </span>
     </DropdownMenuItem>
@@ -223,8 +230,10 @@ function MoreMenu({ pr, forge, announce }: { pr: PrRow; forge: string; announce:
           <>
             {web && <DropdownMenuSeparator />}
             <DropdownMenuGroup>
-              {planned("Copy for your session…", "Give open comments to the session that wrote the code.", ClipboardCopy)}
-              {planned("Paste the answer…", "Turn its verdicts into reply drafts and Fix ticks.", ClipboardPaste)}
+              {item("Copy for your session…", "Give open comments to the session that wrote the code.", ClipboardCopy, () =>
+                consult.copy(),
+              )}
+              {item("Paste the answer…", "Turn its verdicts into reply drafts and Fix ticks.", ClipboardPaste, () => consult.paste())}
             </DropdownMenuGroup>
           </>
         )}
@@ -389,6 +398,7 @@ export function Header(props: {
   onFull: () => void;
   onTaskIds: () => void;
   announce: (text: string) => void;
+  consult: Pick<ConsultUi, "copy" | "paste">;
   action: ReactNode;
   slot: ReactNode;
 }) {
@@ -530,7 +540,7 @@ export function Header(props: {
             {props.full ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
           </Button>
         </Hint>
-        <MoreMenu pr={pr} forge={forge} announce={announce} />
+        <MoreMenu pr={pr} forge={forge} announce={announce} consult={props.consult} />
       </ActionBar>
       <nav
         aria-label="Pull request summary"

@@ -127,6 +127,8 @@ export function FixPicker(props: {
   onTick: Tick;
   onPropose: () => void;
   onClose: () => void;
+  // Closes the list and opens "Copy for your session" (docs/plans/session-consult.md part A).
+  onConsult: () => void;
 }) {
   const { targets, reason, ticks } = props;
   const propose = useRef<HTMLButtonElement>(null);
@@ -165,7 +167,7 @@ export function FixPicker(props: {
                 </ul>
                 <p className="m-0 mt-1.5 text-xs text-muted-foreground">
                   {left && `${left} `}A reply judgement of Valid or Partly valid ticks a thread at the start. Your own comments and posted
-                  findings start unticked.
+                  findings start unticked, unless your session accepted them.
                 </p>
               </>
             )}
@@ -185,8 +187,8 @@ export function FixPicker(props: {
                   ))}
                 </ul>
                 <p className="m-0 mt-1.5 text-xs text-muted-foreground">
-                  {!rows.length && left && `${left} `}Accepted findings start ticked. A commit that fixes a finding takes it out of Ready to
-                  post.
+                  {!rows.length && left && `${left} `}Accepted findings, and findings that your session accepted, start ticked. A commit
+                  that fixes a finding takes it out of Ready to post.
                 </p>
               </>
             )}
@@ -225,10 +227,9 @@ export function FixPicker(props: {
             {any ? "Cancel" : "Close"}
           </Button>
           <span className="flex-1" />
-          <Button variant="ghost" size="sm" disabled className="text-ink-2">
+          <Button id="fix-consult" variant="ghost" size="sm" className="text-ink-2" onClick={props.onConsult}>
             <ClipboardCopy aria-hidden data-icon="inline-start" />
             Copy for your session
-            <Badge variant="quiet">Planned</Badge>
           </Button>
         </div>
       </DialogContent>

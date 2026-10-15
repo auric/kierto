@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunConflict, RunDetail, RunDto, RunKind } from "../../shared/dto";
 import { busyText } from "../ask/model";
+import { type ConsultUi, useConsult } from "../consult/Consult";
 import { useFix } from "../fix/FixBar";
 import { fixWaiting } from "../fix/model";
 import type { Layer } from "../keys";
@@ -103,6 +104,8 @@ export type ReviewUi = {
   diff: { drafts: ReviewItemDto[]; head: string | null; replies: ReadonlyMap<number, ReviewItemDto> };
   // Plan pr-view-v4 2.11 and 2.12: the fix parts of the bottom bar, the Fix list and the apply dialog, and the runner prompt.
   fix: { bar: ReactNode; dialog: ReactNode; copyPrompt: (thread: number) => Promise<string | null> };
+  // docs/plans/session-consult.md parts A and B: the More menu items, the Fix list footer link, and their dialogs.
+  consult: ConsultUi;
 };
 
 const NO_ITEMS: ReviewItemDto[] = [];
@@ -437,6 +440,8 @@ export function useReview(
   );
 
   // ---------- Fix it (plan r3 UI-FIX) ----------
+  // useConsult comes after useFix, so the Fix list footer reads it through this ref.
+  const onConsult = useRef(() => {});
   const fix = useFix(pr, {
     meta,
     hints: o.hints,
@@ -452,8 +457,11 @@ export function useReview(
     slotTaken,
     show: o.show,
     showFindings,
+    onConsult: () => onConsult.current(),
   });
   onFix.current = fix.openFinding;
+  const consult = useConsult(pr, { announce: o.announce, openFix: fix.openWith });
+  onConsult.current = () => consult.copy("fix-btn");
 
   // ---------- Reply drafts (replies.md step 6) ----------
   const replyCtx = useMemo<ReplyCtx>(
@@ -657,5 +665,6 @@ export function useReview(
     api,
     diff: forDiff,
     fix: { bar: fix.bar, dialog: fix.dialog, copyPrompt: fix.copyPrompt },
+    consult,
   };
 }

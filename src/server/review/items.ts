@@ -1,7 +1,15 @@
 // Triage of review items (plan v3 WP12): accept, discard, restore, edit, and move.
 import type { Database } from "bun:sqlite";
 import type { ItemActionInput, ItemConflict, ReviewItemDto } from "../../shared/dto";
-import { type AnchoredFinding, type AnchorState, diffLine, type ExcerptLine, type FixedMark, moveChoices } from "../../shared/review";
+import {
+  type AnchoredFinding,
+  type AnchorState,
+  diffLine,
+  type ExcerptLine,
+  type FixedMark,
+  moveChoices,
+  type SessionMark,
+} from "../../shared/review";
 import { type ItemRow, toItemDto } from "./jobs";
 
 export type TriageResult =
@@ -14,7 +22,8 @@ const SQL = {
   item: "SELECT i.*, r.pr FROM review_item i JOIN review_run r ON r.id = i.run WHERE i.id = $id",
   // The revision check and the write are one statement, so two pages cannot both win.
   update: `UPDATE review_item SET status = $status, body = $body, edited = $edited, line = $line, line_end = $line_end,
-      anchor_state = $anchor_state, revision = revision + 1 WHERE id = $id AND revision = $revision AND status != 'posted'`,
+      anchor_state = $anchor_state, payload_json = $payload_json, revision = revision + 1
+    WHERE id = $id AND revision = $revision AND status != 'posted'`,
 };
 
 type Row = ItemRow & { pr: number };
@@ -39,10 +48,19 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
     case "discard":
       next.status = "discarded";
       break;
-    case "restore":
+    case "restore": {
       // docs/plans/fix-ux.md decision 3: a restore of a finding that a fix commit discarded returns its earlier status. The mark stays.
-      next.status = row.status === "discarded" ? ((JSON.parse(row.payload_json) as { fixed?: FixedMark }).fixed?.was ?? "new") : "new";
+      // session-consult.md part B: a session reject discards only open findings, so its mark is newer than a fixed mark. The restore
+      // returns its status and removes it.
+      const p = JSON.parse(row.payload_json) as { fixed?: FixedMark; session?: SessionMark };
+      const rejected = row.status === "discarded" && p.session?.verdict === "reject" ? p.session : null;
+      next.status = row.status === "discarded" ? (rejected?.was ?? p.fixed?.was ?? "new") : "new";
+      if (rejected) {
+        const { session: _, ...rest } = p;
+        next.payload_json = JSON.stringify(rest);
+      }
       break;
+    }
     case "edit":
       next.status = "accepted";
       next.body = input.body;
@@ -76,6 +94,7 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
     line: next.line,
     line_end: next.line_end,
     anchor_state: next.anchor_state,
+    payload_json: next.payload_json,
   });
   const now = db.query(SQL.item).get({ id }) as Row;
   if (!done.changes) return { status: 409, conflict: { error: "The item changed on another page. Check it again.", item: toItemDto(now) } };

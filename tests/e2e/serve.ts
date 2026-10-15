@@ -160,6 +160,7 @@ const INITIAL: Scenario = {
   author: false,
   own: false,
   native: false,
+  consult: false,
 };
 let sc: Scenario = { ...INITIAL };
 
@@ -316,12 +317,19 @@ const D_THREADS = [
   [5000002, "Take the lock once, before the loop. Another writer can run between two entries."],
 ] as const;
 const D_OWN = "Note to self: say in the README that the flush takes the lock once per entry.";
+// consult: an outdated inline thread and a resolved thread by the reviewer.
+const D_INLINE = "Name the lock after the data that it guards.";
+const D_RESOLVED = "Add a test for an empty cache.";
 function activitiesD(): S.Activity[] {
-  const list: [number, string, unknown][] = D_THREADS.map(([id, text]) => [id, text, alex]);
+  const list: [number, string, unknown, Record<string, unknown>?][] = D_THREADS.map(([id, text]) => [id, text, alex]);
   if (sc.own) list.push([5000003, D_OWN, me]);
-  return list.map(([id, text, author], i) => {
+  if (sc.consult) {
+    const anchor = { path: "src/cache/flush.ts", line: 3, lineType: "ADDED", fileType: "TO", orphaned: true };
+    list.push([5000004, D_INLINE, alex, { anchor }], [5000005, D_RESOLVED, alex, { threadResolved: true }]);
+  }
+  return list.map(([id, text, author, extra], i) => {
     const root = S.clone(S.findComment(base(), ROOT));
-    Object.assign(root, { id, version: 0, text, author, comments: [], createdDate: T0 + i, updatedDate: T0 + i });
+    Object.assign(root, { id, version: 0, text, author, comments: [], createdDate: T0 + i, updatedDate: T0 + i, ...extra });
     return { id: 50000000 + i, action: "COMMENTED", commentAction: "ADDED", comment: root };
   });
 }

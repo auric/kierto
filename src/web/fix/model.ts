@@ -80,6 +80,7 @@ const placeText = (t: ThreadModel) => {
 // findings: the finding drafts of the newest review run, in screen order.
 // Decision D6: your own comments and posted findings start unticked. Valid and partly valid start ticked, unless a commit fixed them.
 // The plans give no default tick for a finding. Accepted findings start ticked and new ones do not. A restore returns the status of a fixed one.
+// session-consult.md part B: an accept of your session ticks any thread or finding.
 export function fixTargets(
   threads: ThreadModel[],
   replies: ReviewItemDto[] | undefined,
@@ -87,8 +88,13 @@ export function fixTargets(
   findings: ReviewItemDto[] = [],
 ): FixTargets {
   const judged = new Map<number, Judgement | null>();
-  for (const it of replies ?? [])
-    if (it.kind === "reply") judged.set((it.payload as ReplyPayload).thread, (it.payload as ReplyPayload).judgement ?? null);
+  const accepted = new Set<number>();
+  for (const it of replies ?? []) {
+    if (it.kind !== "reply") continue;
+    const p = it.payload as ReplyPayload;
+    judged.set(p.thread, p.judgement ?? null);
+    if (it.payload.session?.verdict === "accept" && it.status !== "discarded") accepted.add(p.thread);
+  }
   const fixedIn = new Map<number, string>();
   for (const f of fixes ?? [])
     for (const c of f.commits) {
@@ -100,16 +106,16 @@ export function fixTargets(
   const out: FixTargets = { rows: [], findings: [], resolved: 0, deleted: 0 };
   for (const it of findings) {
     if (!fixable(it) || !it.anchor) continue;
-    const accepted = it.status === "accepted";
+    const ok = it.status === "accepted";
     const fixed = it.payload.fixed?.short ?? null;
     out.findings.push({
       finding: it.id,
       severity: (it.payload as AnchoredFinding).severity,
       place: `${it.anchor.path}:${lineText(it.anchor)}`,
-      accepted,
+      accepted: ok,
       fixed,
       text: snippet(it.body, 160),
-      tick: accepted,
+      tick: ok || it.payload.session?.verdict === "accept",
     });
   }
   for (const t of ordered(threads, false)) {
@@ -133,7 +139,7 @@ export function fixTargets(
       judgement,
       fixed,
       text: snippet(head.text, 160),
-      tick: badge === null && fixed === null && (judgement === "valid" || judgement === "partly"),
+      tick: fixed === null && (accepted.has(t.id) || (badge === null && (judgement === "valid" || judgement === "partly"))),
     });
   }
   return out;

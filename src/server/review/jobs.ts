@@ -1655,14 +1655,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       return job?.id === run && job.db === db && cancelActive() ? "cancelled" : "not_running";
     },
 
-    // pr: the runs of one PR. null: the runs of all PRs. Newest first.
+    // pr: the runs of one PR. null: the runs of all PRs. Newest first. A consult run (session-consult.md part B) starts no process, so
+    // no run list shows it.
     // R14: the list of one PR also keeps its newest review run, and its newest review run with a result, when newer runs fill the limit.
     // The UI shows the drafts of the newest review run with a result after a cancelled or failed one.
     runs(db: Database, pr: number | null, limit: number): RunDto[] {
       const sql =
         pr === null
-          ? `${SQL.run} ORDER BY r.id DESC LIMIT $limit`
-          : `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE pr = $pr ORDER BY id DESC LIMIT $limit)
+          ? `${SQL.run} WHERE r.kind <> 'consult' ORDER BY r.id DESC LIMIT $limit`
+          : `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE pr = $pr AND kind <> 'consult' ORDER BY id DESC LIMIT $limit)
               OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review')
               OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review' AND status IN ('completed', 'incomplete'))
               ORDER BY r.id DESC`;
@@ -1672,7 +1673,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
 
     run(db: Database, id: number): RunDetail | null {
       const r = runRow(db, id);
-      if (!r) return null;
+      // The DTO kind has no "consult". Only the SQL row can hold it.
+      if (!r || (r.kind as string) === "consult") return null;
       return {
         run: withPhase(db, toRunDto(r)),
         events: db.query(SQL.events).all({ run: id }) as RunEvent[],

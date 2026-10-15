@@ -60,7 +60,7 @@ Scroll order: Header, Action bar (sticky), Status strip, Panel slot (brief or As
 - Draft replies shows when the PR has threads. N is the count of threads where it is your turn. With N = 0 the button has no count. A click opens a popover: "No thread waits for your reply. Your message is the newest in each open thread. They wait for the other person." With no open thread: "No open thread. Every thread is resolved, so no reply is due."
 - Fix N shows on an own PR only and is never disabled. N is the count of open, unresolved threads with a live message (BRIEF:69). A click or F opens the Fix list (2.12).
 - Review opens the brief. The brief holds the profile, "Edit <profile>", and the run setup.
-- More: "Open on the server", "Copy the pull request link". On an own PR also "Copy for your session..." and "Paste the answer..." (planned, section 9).
+- More: "Open on the server", "Copy the pull request link". On an own PR also "Copy for your session..." and "Paste the answer..." (section 9).
 - When the header leaves the view, the bar shows the key and the title, as today.
 - In a pane of 520 px or less: "Draft replies" becomes "Replies", and the stuck title hides. Every button keeps a text label.
 
@@ -125,7 +125,7 @@ Scroll order: Header, Action bar (sticky), Status strip, Panel slot (brief or As
 - Dialog title: "Fix comments on your pull request".
 - Group "Open threads · N": one checkbox row per thread with person, place, badge ("Your comment", "Posted finding"), verdict chip or "No judgement yet", snippet.
 - Default ticks: Valid and Partly. Your own comments and posted findings start unticked (decision D6). A per-thread Fix and the f key open the list with only that thread ticked.
-- Footer: "Propose fixes for K" (primary), Cancel, "Copy for your session" (planned).
+- Footer: "Propose fixes for K" (primary), Cancel, "Copy for your session" (section 9).
 - Each block has visible text under the buttons: busy slot, K = 0, K > 25, not synced, Explain profile, nothing to fix. The button stays focusable with `aria-disabled`.
 - "Not in the list: N resolved threads, N deleted comments."
 - Group "Review findings that are not posted" shows as planned (phase 2).
@@ -253,10 +253,10 @@ All other keys stay: j, k, Enter, Right, Esc, Left, /, ?, n, N, y, o, g c, g d, 
 - N4 (later, decision D1): the repository page link. provider.ts:131 already reads `toRef.repository.links.self[0].href` as `repoUrl`, but PrRow does not carry it.
 - No new REST call. The file click uses the existing "Get the code" route (`useGetCode`, diff/data.ts).
 
-## 9. Planned: consult the session that wrote the code
+## 9. Consult the session that wrote the code (S1 done)
 - Places: the More menu of an own PR ("Copy for your session...", "Paste the answer...") and a link in the Fix list footer. In the prototype they show a "Planned" tag and a toast.
-- The session-consult design applies: items in groups with IDs (T<thread>, F<finding>), a JSON answer, and a paste that maps verdicts to reply drafts and Fix ticks. Nothing posts.
-- Package S1 builds parts A and B. Part C waits for gate B16.
+- docs/plans/session-consult.md applies: items in groups with IDs (T<thread>, F<finding>), a JSON answer, and a paste that maps verdicts to reply drafts, finding marks, and Fix ticks. Nothing posts.
+- Package S1 built parts A and B. Part C waits for gate B16.
 
 ## 10. Implementation packages
 
@@ -271,7 +271,7 @@ Each package ends green on `bun run check` and on the e2e files it touches (`bun
 - P7 (done, 6ce7bf7) Threads and Fix phase 1 UI. This is fix-ux WP2 in this layout: thread footer (reply box, Draft reply, Fix, More), reply draft in one row, "All | Need me", "Fix N" in the bar, FixPicker dialog, f and F, one bottom bar (FixBar and PostBar), the D6 default ticks. Files: per docs/plans/fix-ux.md WP2, plus `src/web/pr/ThreadList.tsx`, `src/web/publish/PostBar.tsx`, `src/web/fix/FixBar.tsx`. Tests: per fix-ux WP2, plus `tests/e2e/replies.e2e.ts` (footer). Depends on fix-ux WP1 (server, in progress in another session) and P3.
 - P8 (done, 7bea7ec) Ask in the slot. Files: `src/web/ask/AskPanel.tsx` (slot with the answer list), `src/web/pr/PrDetail.tsx` (one slot state with the brief; the fold goes), the strip ("Answering..."). Tests: `tests/e2e/ask.e2e.ts`. Depends on P3.
 - P9 (done) Docs. BRIEF.md:237 (no profile menu, detail layout, URL), smoke steps for Back, panels, and the file click. Owner: the docs session.
-- S1 (later) Consult the session, parts A and B, per the session-consult design. Places are kept in P3 (More menu) and P7 (Fix list footer).
+- S1 (done) Consult the session, parts A and B, per docs/plans/session-consult.md. Files: new `src/shared/consult.ts`, `src/server/review/consult.ts`, `src/server/review/consult-routes.ts`, migration 024, new `src/web/consult/`, the More menu in `src/web/pr/Header.tsx`, and the Fix list footer. Tests: `tests/review/consult.test.ts`, `tests/e2e/consult.e2e.ts`.
 
 ## 11. Known limits
 

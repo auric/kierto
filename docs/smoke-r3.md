@@ -11,7 +11,7 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 - Use a new, empty data folder. Never use the data folder of your daily instance.
 - The app never pushes. Each push in this test is your own `git push`.
 - Do not copy tokens, host names, code, comment text, issue text, or file names into files, issues, or chat. Record payload shapes (key names and types), counts, and tag names only.
-- Expect about twelve runs on your Claude subscription quota: five in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, one in part I, and two in part J.
+- Expect about twelve runs on your Claude subscription quota: five in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, one in part I, two in part J, and one interactive session in part K.
 - Part I sends your project instructions to Claude. Turn on the global CLAUDE.md only when it holds nothing that the approval does not cover.
 - In this document, `<BITBUCKET_URL>` is the base URL of the Bitbucket server, `<JIRA_URL>` is the base URL of the Jira server, `<TEST_PR_URL>` is the URL of the test pull request, `<KEY>` is a Jira issue key that the test pull request names, and `<CLONE>` is the absolute path of your test clone.
 
@@ -154,6 +154,22 @@ Fix for threads and for review findings ships with docs/plans/fix-ux.md WP2 to W
 11. Apply the edit and commit in your clone. Expect the finding to show "Fixed in <short>" and to leave Ready to post. Expect p to post nothing for it.
 12. Click Restore on the finding. Expect "Accepted", the note "Fixed in <short>. You restored it.", and the finding back in Ready to post. Press F. Expect the finding ticked in the Fix list. Close the list. Click Undo on the fix card. Expect "Accepted" and no "Fixed in". Discard the finding.
 
+## K. Consult the session that wrote the code
+
+Parts A and B of docs/plans/session-consult.md (package S1). Part C waits for gate B16.
+
+1. Use the test pull request after part J. Keep at least one open reviewer thread, one thread of your own, one resolved thread, and one review finding that is not posted. If Files offers "Get the code", click it.
+2. Open More (…) in the action bar. Click "Copy for your session…". Expect four groups, all ticked, each with its count, and the line "N items, X KB."
+3. Untick "Resolved threads". Reload the page. Open the dialog again. Expect "Resolved threads" unticked. Tick it again.
+4. Click "Copy N items". Paste the clipboard into an empty editor window. Expect the PR key, both branches, the head commit, the task keys, and the changed files. Expect the IDs T<id> and F<id>, the code at the head, each full conversation, and an "Outdated" line for each inline item. Do not save the text.
+5. Open a terminal in `<CLONE>`. Run `claude` and resume the session that wrote the code, or start a new one. Paste the text. Expect one fenced json block as the answer. Do not let the session change files.
+6. Copy the answer. In the app, open More, click "Paste the answer…", and paste it. Expect one preview row per entry with its action, and each skipped row with its reason.
+7. Click "Apply N changes". Expect the result line. Expect a "Your session" reply draft under each rejected or questioned thread, and "Rejected by your session" on each rejected finding. Expect nothing new on the pull request in Bitbucket.
+8. Click "Open the Fix list". Expect exactly the accepted items ticked. Click Cancel. Press F. Expect the same items ticked.
+9. Ask the second user to reply in one thread of the answer. Click "Check now". Paste the same answer again. Expect that thread row "Skipped. Changed since the copy."
+10. Click Apply, then Undo in the result view. Expect the new session drafts gone and the findings back in their earlier status.
+11. Discard the remaining session drafts.
+
 ## H. Record
 
 - The build commit from the startup line.
@@ -162,4 +178,5 @@ Fix for threads and for review findings ships with docs/plans/fix-ux.md WP2 to W
 - The judgement chip of each thread T1 to T7.
 - For each fix run: the proposed edits and the skipped edits. This gives the rate of dropped edits.
 - From part J: the reason that the fix run gave for T9 in step 4.
+- From part K: the item count and the size of the copy, the count of entries per verdict, and the count of skipped rows. Record no text.
 - B11, B12, and B15, the tag names from E5, and the shapes from F1. From part I: the languages of step 4, the severity counts of step 6, and any coverage line from step 5. Update the "Release 3 (not run)" rows in integration-check.md.

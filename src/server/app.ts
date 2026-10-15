@@ -10,6 +10,7 @@ import type { Live } from "./live";
 import { createMeta } from "./meta";
 import { createOutbox, type Outbox } from "./publish/outbox";
 import { createPublishRoutes } from "./publish/routes";
+import { createConsultRoutes } from "./review/consult-routes";
 import { createDiffRoutes } from "./review/diff-routes";
 import { createFixRoutes } from "./review/fix-routes";
 import { createReviewJobs, type ReviewJobs } from "./review/jobs";
@@ -101,6 +102,7 @@ export function createApp(opts: AppOptions) {
     .route("/api", createInboxRoutes({ settings, sync, live: opts.live }))
     .route("/api", createReviewRoutes({ review, live: opts.live }))
     .route("/api", createDiffRoutes({ review }))
+    .route("/api", createConsultRoutes({ review, settings, live: opts.live }))
     .route("/api", createFixRoutes({ review, settings, live: opts.live, openFolder: opts.openFolder }))
     .route("/api", createContextRoutes({ settings, review, live: opts.live, openFolder: opts.openFolder }))
     .route("/api", createPublishRoutes({ review, settings, outbox }));

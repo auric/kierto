@@ -1,4 +1,5 @@
 // Forge-neutral types. The Bitbucket adapter maps its payloads to these.
+import type { Side } from "./review";
 
 export type PrRef = { project: string; repo: string; id: number };
 
@@ -57,6 +58,29 @@ export function commentLines(c: { anchor?: unknown; excerpt?: ExcerptLine[] }): 
   if (hit) return { line: hit.n, lineEnd: hit.n };
   const a = c.anchor as { line?: unknown; lineType?: unknown; fileType?: unknown } | null | undefined;
   return typeof a?.line === "number" && (a.lineType !== "CONTEXT" || a.fileType === "FROM") ? { line: a.line, lineEnd: a.line } : undefined;
+}
+
+// The place of a thread or a draft. line null: a comment on the whole file.
+export type Spot = { path: string; side: Side; line: number | null; lineEnd: number };
+
+// A thread's line comes from its range span (anchorSpan), else from its excerpt hit, else from its anchor.
+// The excerpt numbers a ctx line on the fileType side (provider.ts excerptOf).
+// Gate v3 U4: a CONTEXT anchor numbers its line on the old side, whatever fileType says. A REMOVED line exists only there.
+export function threadSpot(c: { anchor?: unknown; excerpt?: ExcerptLine[] }): (Spot & { orphaned: boolean }) | null {
+  const a = c.anchor as { path?: unknown; line?: unknown; lineType?: unknown; fileType?: unknown; orphaned?: unknown } | null | undefined;
+  if (!a || typeof a.path !== "string") return null;
+  const from = a.fileType === "FROM";
+  const orphaned = a.orphaned === true;
+  const span = anchorSpan(a);
+  if (span) return { path: a.path, side: "new", ...span, orphaned };
+  const hit = c.excerpt?.find((l) => l.hit);
+  if (hit) {
+    const side = hit.kind === "del" || (hit.kind === "ctx" && from) ? "old" : "new";
+    return { path: a.path, side, line: hit.n, lineEnd: hit.n, orphaned };
+  }
+  if (typeof a.line !== "number") return { path: a.path, side: "new", line: null, lineEnd: 0, orphaned };
+  const old = a.lineType === "REMOVED" || a.lineType === "CONTEXT" || (a.lineType === undefined && from);
+  return { path: a.path, side: old ? "old" : "new", line: a.line, lineEnd: a.line, orphaned };
 }
 
 export type Comment = {

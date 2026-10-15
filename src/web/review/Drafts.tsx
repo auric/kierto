@@ -9,7 +9,18 @@ import type { MetaDto, ReviewItemDto, RunDto } from "../../shared/dto";
 import type { AnchoredFinding, Question } from "../../shared/review";
 import { Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
-import { anchorNote, carriedNote, closedLabel, DROP_REASON, draftExcerpt, EVIDENCE, fixedNote, lineText, SEVERITY } from "./model";
+import {
+  anchorNote,
+  carriedNote,
+  closedLabel,
+  DROP_REASON,
+  draftExcerpt,
+  EVIDENCE,
+  fixedNote,
+  lineText,
+  SEVERITY,
+  sessionNote,
+} from "./model";
 import { Acts, Editor, Mover, type TriageCtx, type TriageMode } from "./Triage";
 
 const icon = "size-[15px] shrink-0";
@@ -194,6 +205,7 @@ function FindingBody({ it, mode, busy, fix, ctx }: { it: ReviewItemDto; mode: Tr
   const anchored = anchorNote(it);
   const carried = carriedNote(it);
   const restored = fixedNote(it);
+  const session = sessionNote(it);
   const onFix = ctx.onFix;
   // Acts shows lead only for a draft that is not discarded. jobs.ts fixFindings also needs the anchor.
   const toFix = onFix && a && (
@@ -253,6 +265,11 @@ function FindingBody({ it, mode, busy, fix, ctx }: { it: ReviewItemDto; mode: Tr
           </p>
           {carried && <p className={note}>{carried}</p>}
           {restored && <p className={note}>{restored}</p>}
+          {session && (
+            <p className={note} data-session-note>
+              <Inline text={session} />
+            </p>
+          )}
           {anchored && <p className={note}>{anchored}</p>}
           {mode === "move" ? (
             <Mover it={it} busy={busy} ctx={ctx.triage} />

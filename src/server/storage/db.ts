@@ -22,6 +22,7 @@ import m020_instructions from "./migrations/020_instructions.sql" with { type: "
 import m021_run_skills from "./migrations/021_run_skills.sql" with { type: "text" };
 import m022_author_link from "./migrations/022_author_link.sql" with { type: "text" };
 import m023_fix_finding from "./migrations/023_fix_finding.sql" with { type: "text" };
+import m024_consult from "./migrations/024_consult.sql" with { type: "text" };
 
 // Index i holds the SQL that raises user_version from i to i + 1. The list order, not the file number, sets the version.
 const MIGRATIONS = [
@@ -48,6 +49,7 @@ const MIGRATIONS = [
   m021_run_skills,
   m022_author_link,
   m023_fix_finding,
+  m024_consult,
 ];
 
 const tables = (db: Database) =>

@@ -207,6 +207,23 @@ describe("Fix list", () => {
     expect(fixTargets(threads, undefined, undefined).rows.some((r) => r.tick)).toBe(false);
   });
 
+  test("ticks: an accept of your session ticks your own and posted threads and a new finding, but not a fixed thread", () => {
+    const session = { run: 7, verdict: "accept" as const, reason: "Valid." };
+    const withSession = [
+      ...replies.filter((r) => ![20, 21, 40].includes((r.payload as ReplyPayload).thread)),
+      { ...reply(20, { judgement: "valid" }), payload: { ...reply(20, { judgement: "valid" }).payload, session } },
+      { ...reply(21, { judgement: "valid" }), payload: { ...reply(21, { judgement: "valid" }).payload, session } },
+      { ...reply(40, { judgement: "valid" }), payload: { ...reply(40, { judgement: "valid" }).payload, session } },
+    ];
+    const marked = finding(60, { status: "new", payload: { ...finding(60).payload, session } });
+    const t = fixTargets(threads, withSession, [fixed], [marked, finding(61)]);
+    expect(t.rows.filter((r) => r.tick).map((r) => r.thread)).toEqual([11, 10, 21, 20]);
+    expect(t.findings.map((f) => [f.finding, f.tick])).toEqual([
+      [60, true],
+      [61, false],
+    ]);
+  });
+
   test("resolved and deleted threads stay out of the list and are counted", () => {
     const t = fixTargets(threads, replies, undefined);
     expect(t.rows.some((r) => r.thread === 30 || r.thread === 31)).toBe(false);

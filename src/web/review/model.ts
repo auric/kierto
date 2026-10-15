@@ -448,7 +448,16 @@ const carriedLabel = (v: Verdict | undefined) => (v === "fixed" ? "Fixed in the 
 // commit discards the open findings that it covers. Other closed drafts are discards by you.
 export function closedLabel(it: ReviewItemDto): string {
   const f = it.payload.fixed;
-  return f ? `Fixed in ${f.short}` : carriedLabel(it.payload.carried?.verdict);
+  if (f) return `Fixed in ${f.short}`;
+  return it.payload.session?.verdict === "reject" ? "Rejected by your session" : carriedLabel(it.payload.carried?.verdict);
+}
+
+// session-consult.md part B: the verdict of your session on a finding. A reject mark exists only while its discard holds.
+export function sessionNote(it: ReviewItemDto): string | null {
+  const s = it.payload.session;
+  if (!s || it.kind !== "finding") return null;
+  if (s.verdict === "question") return `Your session asks: ${s.reason}`;
+  return `Your session: ${s.verdict === "accept" ? "Valid" : "Not valid"}. ${s.reason}`;
 }
 
 // A draft that a re-review carried. A fixed or outdated draft that is not discarded is one that you restored.

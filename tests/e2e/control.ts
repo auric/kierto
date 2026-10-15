@@ -38,6 +38,8 @@ export type Scenario = {
   own: boolean;
   // PR 1001: the source branch moves one commit on, with a C++ header and source and a Python file.
   native: boolean;
+  // PR 1004 (session consult): the reviewer adds the outdated inline thread 5000004 on src/cache/flush.ts and the resolved thread 5000005.
+  consult: boolean;
 };
 
 // The next fake Claude Code run. tree: a subagent run with drafts. schema: a result that fails the schema. limit: a usage limit.

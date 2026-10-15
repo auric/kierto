@@ -562,6 +562,7 @@ export function PrDetail({
         onFull={onFull}
         onTaskIds={onTaskIds}
         announce={announce}
+        consult={review.consult}
         action={review.action}
         slot={
           askOpen && meta ? (
@@ -649,6 +650,7 @@ export function PrDetail({
         </div>
       )}
       {review.fix.dialog}
+      {review.consult.dialog}
       <SharedHint hints={hints} />
       <p role="status" className="sr-only">
         <span key={said.n}>{said.text}</span>

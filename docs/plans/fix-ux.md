@@ -15,6 +15,7 @@ Status: code complete, 2026-10-15. All work packages are done (section 4). The u
 - Header button "Fix · N" is never disabled. It opens a picker dialog with one checkbox per source.
 - Sources: open, unresolved threads with a live message, including my own comments and posted findings. Phase 2 adds open findings that are not posted (new or accepted, with an anchor).
 - A reply draft verdict only sets the default tick. Valid and partly are ticked. Invalid, question, null, and already fixed are not.
+- docs/plans/session-consult.md part B (2026-10-15): an accept from your session ticks any row at the start, also your own comments, posted findings, and new findings. The Fix list footer link "Copy for your session" opens the copy dialog.
 - The dialog button reads "Propose fixes for K".
 - Each thread gets Fix and "Copy prompt for Claude Code" next to Draft reply. Phase 2 gives each finding a Fix button.
 - The fix agent judges first. It reads the whole thread and sets fixed to false, with the reason, when the code is already right or the thread asks for no change.
