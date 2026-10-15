@@ -1,6 +1,6 @@
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Archive, ArrowLeft, Send, Terminal } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -9,17 +9,32 @@ import { Toaster } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Group, PrRow } from "../shared/dto";
-import { VIEW_LABEL, VIEWS, type View } from "../shared/views";
+import { GROUPS, VIEW_LABEL, VIEWS, type View } from "../shared/views";
 import { type Effect, type KeyState, type Layer, reduceKey } from "./keys";
+import {
+  canGoBack,
+  enterEntry,
+  type FileRef,
+  formatRoute,
+  type ListView,
+  navMode,
+  noteScroll,
+  type PrRef,
+  parseRoute,
+  prKeyOf,
+  type Route,
+  type SettingsSection,
+  writeUrl,
+} from "./lib/route";
 import { useLive } from "./live";
 import { useMeta } from "./meta";
 import { useClaims } from "./notify";
-import { type DetailApi, PrDetail } from "./pr/PrDetail";
+import { type DetailApi, type DetailAt, type DetailPatch, PrDetail } from "./pr/PrDetail";
 import { useReadyToPost } from "./publish/data";
 import { destText } from "./publish/model";
 import { useRuns } from "./review/data";
 import { latestByPr, runRows } from "./review/model";
-import { Settings } from "./settings/Settings";
+import { Settings, type SettingsAt } from "./settings/Settings";
 import {
   claimEvents,
   isStale,
@@ -53,6 +68,7 @@ import {
   viewCounts,
 } from "./shell/model";
 import { Sidebar, useNow } from "./shell/Sidebar";
+import { Calm } from "./states";
 
 export function App() {
   const [stale, setStale] = useState(false);
@@ -80,9 +96,21 @@ export function App() {
 
 const INITIAL: KeyState = { focus: "list", mobile: "list", selected: null, help: false, settings: false, chord: null };
 
-// "runs" and "post": the Review runs and Ready to post views of the AI review group (prototype/v3 AIVIEWS).
-// "archive": the PRs that no other view shows (views.ts archived).
-type ListView = View | "runs" | "post" | "archive";
+// One pane at a time below 760 px (index.css). The URL then names a PR only while the detail shows it, so Back returns to the list.
+const narrowQuery = window.matchMedia("(max-width: 759px)");
+const onNarrow = (fn: () => void) => {
+  narrowQuery.addEventListener("change", fn);
+  return () => narrowQuery.removeEventListener("change", fn);
+};
+const useNarrow = () => useSyncExternalStore(onNarrow, () => narrowQuery.matches);
+
+const prRef = (p: PrRow): PrRef => ({ project: p.project, repo: p.repo, id: p.prId });
+const findRef = (list: PrRow[] | undefined, r: PrRef) => list?.find((p) => p.prId === r.id && p.project === r.project && p.repo === r.repo);
+const DONE: readonly Group[] = GROUPS.find((g) => g[0] === "done")?.[2] ?? [];
+
+// The thread and the file of the URL. key: the PR that they belong to (prKeyOf).
+type DetailRoute = { key: string | null; thread: number | null; file: FileRef | null };
+type SettingsPlace = { section: SettingsSection | null; profile: string | null };
 
 const EMPTY: Record<Exclude<ListView, "post">, string> = {
   needs: "Nothing needs you. New replies and review requests show here.",
@@ -101,14 +129,47 @@ function Shell({ stale }: { stale: boolean }) {
   const checkNow = useCheckNow();
   const follow = useFollowUrl();
   const restore = useRestore();
-  const [view, setView] = useState<ListView>("needs");
-  const [repo, setRepo] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const narrow = useNarrow();
+  // The URL at start: a reload or a link opened in a new tab shows the same place.
+  const [start] = useState(() => ({ route: parseRoute(location.pathname, location.search), scroll: enterEntry() }));
+  const r0 = start.route.kind === "list" ? start.route : null;
+  const s0: SettingsPlace =
+    start.route.kind === "settings" ? { section: start.route.section, profile: start.route.profile } : { section: null, profile: null };
+  const [view, setView] = useState<ListView>(r0?.view ?? "needs");
+  const [repo, setRepo] = useState<string | null>(r0?.repo ?? null);
+  const [query, setQuery] = useState(r0?.q ?? "");
   const [doneOpen, setDoneOpen] = useState(false);
-  const [ks, setKs] = useState<KeyState>(INITIAL);
+  const [ks, setKs] = useState<KeyState>(() => {
+    const detail = start.route.kind === "settings" || !!r0?.pr;
+    return {
+      ...INITIAL,
+      settings: start.route.kind === "settings",
+      mobile: detail ? "detail" : "list",
+      focus: detail && narrowQuery.matches ? "detail" : "list",
+    };
+  });
   const [frozen, setFrozen] = useState<{ scope: string; slots: Slot[] }>({ scope: "", slots: [] });
-  // The profile that "Edit profile…" opened. n changes on each request, so the same profile can be asked again.
-  const [profileAt, setProfileAt] = useState<{ id: string; n: number } | null>(null);
+  // The PR that the URL names. It waits for the PR list, then becomes the selection. A PR that no list holds stays named.
+  const [pin, setPin] = useState<PrRef | null>(r0?.pr ?? null);
+  // The PR that the last pin selected. It stays in the list while selected, also when it does not match the view.
+  const [routed, setRouted] = useState<number | null>(null);
+  const [detail, setDetail] = useState<DetailRoute>({
+    key: r0?.pr ? prKeyOf(r0.pr) : null,
+    thread: r0?.thread ?? null,
+    file: r0?.file ?? null,
+  });
+  // The thread, file, and scroll position that the detail restores. n changes on each Back or Forward.
+  const [at, setAt] = useState<DetailAt | null>(() =>
+    r0?.pr ? { key: prKeyOf(r0.pr), thread: r0.thread, file: r0.file, close: null, scroll: start.scroll, n: 0 } : null,
+  );
+  // Plan pr-view-v4 decision D5 reserves "full=1". Package P2 adds the full width layout.
+  const [full, setFull] = useState(r0?.full ?? false);
+  const [settingsRoute, setSettingsRoute] = useState<SettingsPlace>(s0);
+  // The section or the profile that Settings jumps to. It changes only when Settings opens or on Back and Forward.
+  const [settingsAt, setSettingsAt] = useState<SettingsAt>({ ...s0, n: 0 });
+  // A PR opened by a click, Enter, or a notification pushes a history entry. j and k replace it.
+  const opened = useRef(false);
+  const lastRoute = useRef<Route>(start.route);
   const filterRef = useRef<HTMLInputElement>(null);
   const detailRef = useRef<HTMLElement>(null);
   const detailApi = useRef<DetailApi | null>(null);
@@ -128,7 +189,16 @@ function Shell({ stale }: { stale: boolean }) {
   // A repository replaces the view (prototype/v3 aiMode), so filterRows then ignores the view argument.
   const aiView = (view === "runs" || view === "post") && !repo;
   const archiveView = view === "archive" && !repo;
-  const archive = useArchived(archiveView);
+  // The pin counts until a selection replaces it. A pinned PR that all does not hold can be in the Archive.
+  const pinFor = pin && ks.selected === null ? pin : null;
+  const pinInAll = pinFor && prs.data ? findRef(all, pinFor) : undefined;
+  const routedOut = routed !== null && ks.selected === routed && !!prs.data && !all.some((p) => p.id === routed);
+  const archive = useArchived(archiveView || (!!pinFor && !!prs.data && !pinInAll) || routedOut);
+  const pinRow = pinFor ? (pinInAll ?? findRef(archive.data, pinFor)) : undefined;
+  // A stale link, for example to a PR that the server no longer has. The detail says so and selects nothing, so nothing turns read.
+  const pinMissing = !!pinFor && !pinRow && !!prs.data && !archive.isPending;
+  const pinWait = !!pinFor && !pinRow && !pinMissing;
+  const want = pinRow?.id ?? ks.selected;
   // The Archive rows are not in all. The kept row comes from the list on screen.
   const pool = archiveView ? (archive.data ?? []) : all;
   const live = archiveView
@@ -144,9 +214,10 @@ function Shell({ stale }: { stale: boolean }) {
   const scope = JSON.stringify([view, repo, query]);
   const prev = frozen.scope === scope ? frozen.slots : [];
   // The selected PR stays in the list after it stops matching, for example after its read. Else the next row is shown and read.
+  // A PR from the URL stays too: a link to a PR outside the view keeps that PR shown.
   const kept =
-    ks.selected !== null && prev.some((s) => s.id === ks.selected) && !live.some((p) => p.id === ks.selected)
-      ? pool.find((p) => p.id === ks.selected)
+    want !== null && !live.some((p) => p.id === want) && (prev.some((s) => s.id === want) || want === routed || want === pinRow?.id)
+      ? (pool.find((p) => p.id === want) ?? all.find((p) => p.id === want) ?? archive.data?.find((p) => p.id === want))
       : undefined;
   const slots = freezeOrder(prev, kept ? [...live, kept] : live);
   const byId = new Map([...live, ...(kept ? [kept] : [])].map((p) => [p.id, p]));
@@ -156,7 +227,8 @@ function Shell({ stale }: { stale: boolean }) {
   const updated = movedCount(groups, layout(live));
   const ids = navIds(groups, doneOpen);
   // The first open row is the default. A row of the folded Done group stays selected only after a click.
-  const selected = rows.some((p) => p.id === ks.selected) ? ks.selected : (ids[0] ?? null);
+  // A pending or missing pin selects nothing, so no other PR shows and turns read.
+  const selected = rows.some((p) => p.id === want) ? want : pinFor ? null : (ids[0] ?? null);
   const current = rows.find((p) => p.id === selected) ?? null;
   const candidate = followCandidate(query, s?.baseUrl ?? null);
   const unread = unreadTotal(all);
@@ -166,6 +238,88 @@ function Shell({ stale }: { stale: boolean }) {
   const state: KeyState = { ...ks, selected };
   const mobile = showSettings && locked ? "detail" : ks.mobile;
 
+  // Plan pr-view-v4 section 5: the URL of this state. A missing or pending pin keeps its PR in the URL.
+  const shown = current ? prRef(current) : pinFor;
+  const shownKey = shown ? prKeyOf(shown) : null;
+  const own = detail.key !== null && detail.key === shownKey;
+  const route: Route = showSettings
+    ? { kind: "settings", ...settingsRoute }
+    : {
+        kind: "list",
+        view,
+        pr: !narrow || mobile === "detail" ? shown : null,
+        thread: own ? detail.thread : null,
+        file: own ? detail.file : null,
+        full,
+        repo,
+        q: query,
+      };
+  // A locked app shows Settings over any URL. The URL stays, so the PR of a link shows after the token is saved.
+  const urlReady = !!settings.data && !!prs.data && !!meta.data && !locked;
+  useLayoutEffect(() => {
+    if (!urlReady) return;
+    const mode = navMode(lastRoute.current, route, opened.current);
+    opened.current = false;
+    lastRoute.current = route;
+    writeUrl(formatRoute(route), mode);
+  });
+
+  // Back and Forward. Dialogs, the help sheet, and the panel slot close with the location change.
+  const refocus = useRef(false);
+  const applyRoute = useRef((_: Route, __: number | null) => {});
+  applyRoute.current = (r, scroll) => {
+    const toDetail = r.kind === "settings" || !!r.pr;
+    pending.current = narrow && !toDetail ? "focus-list" : null;
+    refocus.current = true;
+    setKs((k) => ({
+      ...k,
+      help: false,
+      chord: null,
+      settings: r.kind === "settings" || locked,
+      mobile: toDetail ? "detail" : "list",
+      focus: narrow ? (toDetail ? "detail" : "list") : k.focus,
+      // A route without a PR keeps the selection, so the narrow list shows the row that was open.
+      selected: r.kind === "list" && r.pr ? null : k.selected,
+    }));
+    if (r.kind === "settings") {
+      setSettingsRoute({ section: r.section, profile: r.profile });
+      setSettingsAt((a) => ({ section: r.section, profile: r.profile, n: a.n + 1 }));
+      return;
+    }
+    setView(r.view);
+    setRepo(r.repo);
+    setQuery(r.q);
+    setFull(r.full);
+    if (!r.pr) return;
+    const key = prKeyOf(r.pr);
+    const close = detail.key === key && detail.file && detail.file.path !== r.file?.path ? detail.file.path : null;
+    setPin(r.pr);
+    setDetail({ key, thread: r.thread, file: r.file });
+    setAt((a) => ({ key, thread: r.thread, file: r.file, close, scroll, n: (a?.n ?? 0) + 1 }));
+  };
+  useEffect(() => {
+    const pop = () => {
+      const r = parseRoute(location.pathname, location.search);
+      lastRoute.current = r;
+      applyRoute.current(r, enterEntry());
+    };
+    addEventListener("popstate", pop);
+    return () => removeEventListener("popstate", pop);
+  }, []);
+
+  // Esc and ← in the narrow detail, and the Back buttons there. The first entry of the app has no Back, so the list shows instead.
+  const goBack = () => {
+    if (canGoBack()) history.back();
+    else go({ mobile: "list", focus: "list", settings: locked }, "focus-list");
+  };
+
+  // The detail reports its thread and file. A file open pushes a history entry (navMode).
+  const onDetailRoute = useCallback(
+    (key: string, patch: DetailPatch) =>
+      setDetail((d) => (d.key === key ? { ...d, ...patch } : { key, thread: null, file: null, ...patch })),
+    [],
+  );
+
   // A notification click opens its PR in a view that holds it. A digest opens Needs you.
   useClaims(claimEvents, !!s?.baseUrl, !!s?.notifications, (id) => {
     const pr = id === null ? undefined : all.find((p) => p.id === id);
@@ -173,6 +327,7 @@ function Shell({ stale }: { stale: boolean }) {
     setView(v);
     setRepo(null);
     setQuery("");
+    opened.current = !!pr;
     if (pr) go({ selected: pr.id, settings: locked, focus: "detail", mobile: "detail" }, "open-cause");
     else go({ settings: locked, focus: "list", mobile: "list" }, "focus-list");
   });
@@ -181,15 +336,25 @@ function Shell({ stale }: { stale: boolean }) {
     document.title = unread > 0 ? `(${unread}) Review Loop` : "Review Loop";
   }, [unread]);
 
-  // Settings opened another way start at the top.
-  useEffect(() => {
-    if (!showSettings) setProfileAt(null);
-  }, [showSettings]);
-
   // The default row becomes the selection, so the selection follows the PR and not the first place.
   useEffect(() => {
     if (selected !== null && selected !== ks.selected) setKs((k) => ({ ...k, selected }));
   }, [selected, ks.selected]);
+
+  // A resolved pin becomes the selection (the effect above). A PR of the folded Done group opens the group, so its keys work.
+  useEffect(() => {
+    if (!pin) return;
+    if (pinRow) {
+      setRouted(pinRow.id);
+      setPin(null);
+      if (DONE.includes(pinRow.group)) setDoneOpen(true);
+    } else if (ks.selected !== null) setPin(null);
+  }, [pin, pinRow, ks.selected]);
+
+  // The restore request belongs to one PR. Another selection drops it, so a later visit opens that PR fresh.
+  useEffect(() => {
+    if (at && shownKey !== null && shownKey !== at.key) setAt(null);
+  }, [at, shownKey]);
 
   useEffect(() => {
     const same =
@@ -206,6 +371,12 @@ function Shell({ stale }: { stale: boolean }) {
   useLayoutEffect(() => {
     const effect = pending.current;
     pending.current = null;
+    // After Back or Forward, focus that the change removed goes to the detail.
+    if (refocus.current) {
+      refocus.current = false;
+      const a = document.activeElement;
+      if (effect !== "focus-list" && (!a || a === document.body)) detailRef.current?.focus({ preventScroll: true });
+    }
     if (effect === "focus-filter") filterRef.current?.focus();
     else if (effect === "focus-list") {
       const row = selected === null ? null : document.getElementById(`row-${selected}`);
@@ -250,10 +421,12 @@ function Shell({ stale }: { stale: boolean }) {
     const typing = (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !box) || t.isContentEditable;
     const onButton = (t.tagName === "BUTTON" && !t.hasAttribute("data-row")) || t.tagName === "A" || t.tagName === "SUMMARY" || box;
     const layer = detailApi.current?.layer(e.target) ?? null;
-    const r = reduceKey(state, e.key, { ids, typing, onButton, settingsLocked: locked, now: Date.now(), layer });
+    const r = reduceKey(state, e.key, { ids, typing, onButton, settingsLocked: locked, now: Date.now(), layer, narrow });
     if (!r.handled) return;
     e.preventDefault();
     if (e.key === "Escape" && typing) t.blur();
+    if (r.effect === "back") return goBack();
+    if (r.effect === "open-cause") opened.current = true;
     pending.current = r.effect;
     setKs(r.state);
   };
@@ -273,10 +446,18 @@ function Shell({ stale }: { stale: boolean }) {
   const onOpen = useCallback(
     (id: number) => {
       pending.current = "open-cause";
+      opened.current = true;
       setKs((k) => ({ ...k, selected: id, settings: locked, focus: "detail", mobile: "detail" }));
     },
     [locked],
   );
+
+  // Settings open at the top, at a section, or at one profile. Each open pushes a history entry (navMode).
+  const openSettings = (section: SettingsSection | null = null, profile: string | null = null) => {
+    setSettingsRoute({ section, profile });
+    setSettingsAt((a) => ({ section, profile, n: a.n + 1 }));
+    go({ settings: true, mobile: "detail", focus: "detail" });
+  };
 
   // The selection leaves a restored row, as it leaves an archived one. Focus stays in the list without a scroll.
   const restoreRef = useRef((_: PrRow) => {});
@@ -320,7 +501,7 @@ function Shell({ stale }: { stale: boolean }) {
           go({ mobile: "list", settings: locked, focus: "list" });
         }}
         onCheck={() => checkNow.mutate()}
-        onSettings={() => go({ settings: !ks.settings || locked, mobile: "detail", focus: "detail" })}
+        onSettings={() => (ks.settings && !locked ? go({ settings: false, mobile: "detail", focus: "detail" }) : openSettings())}
         settingsOpen={showSettings}
       />
       <main className="contents">
@@ -354,15 +535,7 @@ function Shell({ stale }: { stale: boolean }) {
           candidate={candidate}
           following={follow.isPending}
           followError={follow.error && !isStale(follow.error) ? follow.error.message : null}
-          banner={
-            <Banner
-              stale={stale}
-              status={status.data}
-              now={now}
-              forge={forge}
-              onSettings={() => go({ settings: true, mobile: "detail" })}
-            />
-          }
+          banner={<Banner stale={stale} status={status.data} now={now} forge={forge} onSettings={() => openSettings()} />}
           filterRef={filterRef}
           onQuery={(q) => {
             setQuery(q);
@@ -397,27 +570,33 @@ function Shell({ stale }: { stale: boolean }) {
               required={locked}
               prs={all}
               selected={selected}
-              profile={profileAt}
-              onBack={() => go({ settings: false, mobile: "list", focus: "list" }, "focus-list")}
+              at={settingsAt}
+              onSection={(section) => setSettingsRoute({ section, profile: null })}
+              // Wide: Close replaces the entry, so it adds no Back step. Narrow: the buttons go back like the browser.
+              onBack={() => (narrow ? goBack() : go({ settings: false, mobile: "list", focus: "list" }, "focus-list"))}
               onSaved={() => go({ settings: false, mobile: "list" })}
             />
-          ) : prs.isPending || settings.isPending || (archiveView && archive.isPending) ? (
+          ) : prs.isPending || settings.isPending || (archiveView && archive.isPending) || pinWait ? (
             <DetailSkeleton />
           ) : current ? (
             <>
-              <BackBar onBack={() => go({ mobile: "list", focus: "list" }, "focus-list")} />
+              <BackBar onBack={goBack} />
               {/* The sticky post bar covers the bottom of the pane, so focus and scroll targets stop above it. */}
-              <div data-scroll className="relative flex-1 overflow-auto overscroll-contain has-[[data-postbar]]:scroll-pb-16">
+              <div
+                data-scroll
+                className="relative flex-1 overflow-auto overscroll-contain has-[[data-postbar]]:scroll-pb-16"
+                onScroll={(e) => noteScroll(e.currentTarget.scrollTop)}
+              >
                 <PrDetail
                   key={current.id}
                   ref={detailApi}
                   pr={current}
                   me={s?.user ?? null}
-                  onSettings={() => go({ settings: true, mobile: "detail", focus: "detail" })}
-                  onProfile={(id) => {
-                    setProfileAt((t) => ({ id, n: (t?.n ?? 0) + 1 }));
-                    go({ settings: true, mobile: "detail", focus: "detail" });
-                  }}
+                  at={at?.key === shownKey ? at : null}
+                  file={own ? (detail.file?.path ?? null) : null}
+                  onRoute={(patch) => shownKey && onDetailRoute(shownKey, patch)}
+                  onSettings={() => openSettings()}
+                  onProfile={(id) => openSettings("profiles", id)}
                   onLeave={() => {
                     const i = ids.indexOf(current.id);
                     setKs((k) => ({ ...k, selected: ids[i + 1] ?? ids[i - 1] ?? null }));
@@ -426,9 +605,22 @@ function Shell({ stale }: { stale: boolean }) {
                 />
               </div>
             </>
+          ) : pinMissing && pin ? (
+            <>
+              <BackBar onBack={goBack} />
+              <Calm title="Cannot find this pull request">
+                <p className="m-0">
+                  Review Loop has no data for{" "}
+                  <span translate="no" className="font-mono">
+                    {pin.project}/{pin.repo} #{pin.id}
+                  </span>
+                  . The link can be old, or the pull request is not in your lists. Select another pull request.
+                </p>
+              </Calm>
+            </>
           ) : (
             <>
-              <BackBar onBack={() => go({ mobile: "list", focus: "list" }, "focus-list")} />
+              <BackBar onBack={goBack} />
               {aiView && view === "post" && !rows.length && !query.trim() ? (
                 <Empty className="my-10 flex-none">
                   <EmptyHeader>

@@ -11,6 +11,7 @@ import { fileCount, useDiffIndex } from "../diff/data";
 import { type DiffCtx, DiffSection, useDiffView } from "../diff/FileDiff";
 import type { Card } from "../diff/model";
 import type { Layer } from "../keys";
+import { type FileRef, restoreScroll } from "../lib/route";
 import { useMeta } from "../meta";
 import { PostsGroup, useOutbox } from "../publish/Outbox";
 import { usePostBar } from "../publish/PostBar";
@@ -53,6 +54,21 @@ export type DetailApi = {
   close(layer: Exclude<Layer, null>): void;
 };
 
+// The URL state that the detail restores on mount and on each Back or Forward (plan pr-view-v4 section 5).
+// key: the PR (prKeyOf). close: the file of the entry that Back or Forward left. scroll: the saved scrollTop, null for none.
+export type DetailAt = {
+  key: string;
+  thread: number | null;
+  file: FileRef | null;
+  close: string | null;
+  scroll: number | null;
+  n: number;
+};
+export type DetailPatch = { thread?: number | null; file?: FileRef | null };
+
+// The rows of an open Files section, in screen order. Both file lists put the row button first in its item.
+const FILE_ROWS = "#s-files[open] ul[aria-label='Changed files'] > li > button";
+
 const NO_COMMENTS: CommentDto[] = [];
 const NONE: ReadonlySet<number> = new Set();
 
@@ -76,9 +92,13 @@ function flash(el: HTMLElement) {
 
 // onLeave: the shell moves the selection away before the PR leaves the list. onSettings: the brief links to the task ID rules.
 // onProfile: the Review menu opens the settings at one profile. onRestore: the Archive view brings the PR back.
+// at: the URL state to restore. file: the file path in the URL. onRoute: the current thread and the opened file go to the URL.
 export function PrDetail({
   pr: row,
   me,
+  at,
+  file,
+  onRoute,
   onLeave,
   onSettings,
   onProfile,
@@ -87,6 +107,9 @@ export function PrDetail({
 }: {
   pr: PrRow;
   me: string | null;
+  at: DetailAt | null;
+  file: string | null;
+  onRoute: (patch: DetailPatch) => void;
   onLeave: () => void;
   onSettings: () => void;
   onProfile: (id: string) => void;
@@ -149,8 +172,9 @@ export function PrDetail({
     if (f.flash) flash(el);
   });
 
+  // focus false: Back and Forward open the thread and leave the scroll position to the saved one.
   const jump = useCallback(
-    (tid: number, msg?: number) => {
+    (tid: number, msg?: number, focus = true) => {
       const t = latest.current.find((x) => x.id === tid);
       if (!t) return;
       const m = msg === undefined ? undefined : t.msgs.find((x) => x.id === msg)?.id;
@@ -163,7 +187,7 @@ export function PrDetail({
       }
       setOpen((o) => new Map(o).set(tid, true));
       setCur(tid);
-      focusAfter({ id: m === undefined ? `t-${tid}` : `c-${m}`, block: "start", flash: m !== undefined });
+      if (focus) focusAfter({ id: m === undefined ? `t-${tid}` : `c-${m}`, block: "start", flash: m !== undefined });
     },
     [focusAfter],
   );
@@ -242,13 +266,6 @@ export function PrDetail({
   const files = fileCount(useDiffIndex(row.id, secs.has("files")).data, data?.files);
   showDiff.current = diff.show;
   const { openDraft } = review.api;
-  const onThreads = useCallback(
-    (ids: ReadonlySet<number>) => {
-      const t = ordered(latest.current, false).find((x) => ids.has(x.id));
-      if (t) jump(t.id);
-    },
-    [jump],
-  );
   const diffCtx = useMemo<DiffCtx | null>(
     () =>
       meta
@@ -260,12 +277,11 @@ export function PrDetail({
             ...review.diff,
             onThread: jump,
             onDraft: openDraft,
-            onThreads,
             focusAfter,
             announce,
           }
         : null,
-    [row.id, meta, hints, threads, review.diff, jump, openDraft, onThreads, focusAfter, announce],
+    [row.id, meta, hints, threads, review.diff, jump, openDraft, focusAfter, announce],
   );
   const bar = usePostBar(pr, {
     comments,
@@ -273,6 +289,54 @@ export function PrDetail({
     announce: ctx.announce,
     onPosted: (rows) => rows[0] && focusAfter({ id: `p-${rows[0].id}`, block: "nearest", flash: false }),
   });
+
+  // ---------- URL state (plan pr-view-v4 section 5) ----------
+  const routeRef = useRef(onRoute);
+  routeRef.current = onRoute;
+  const body = useRef<HTMLDivElement>(null);
+  const stopRestore = useRef(() => {});
+  useEffect(() => () => stopRestore.current(), []);
+  // The request waits for the data. This effect comes before the one that applies it.
+  const want = useRef<DetailAt | null>(null);
+  useLayoutEffect(() => {
+    want.current = at;
+  }, [at]);
+  useLayoutEffect(() => {
+    const a = want.current;
+    if (!a || !data) return;
+    want.current = null;
+    if (bar.api.isOpen) bar.api.close();
+    const l = review.api.layer(null);
+    if (l) review.api.close(l);
+    // Without a saved scroll position, as in a new tab, the file or else the thread gets the focus.
+    const fresh = a.scroll === null;
+    if (a.thread !== null) jump(a.thread, undefined, fresh && !a.file);
+    if (a.close !== null) diff.closeFile(a.close);
+    if (a.file) diff.goFile(a.file, fresh);
+    const box = body.current?.closest<HTMLElement>("[data-scroll]");
+    if (!fresh && box) {
+      stopRestore.current();
+      stopRestore.current = restoreScroll(box, a.scroll ?? 0);
+    }
+  });
+  // Thread focus replaces the URL. The first value is the one of the route, so it is not sent.
+  const sentCur = useRef(cur);
+  useEffect(() => {
+    if (cur === sentCur.current) return;
+    sentCur.current = cur;
+    routeRef.current({ thread: cur });
+  }, [cur]);
+  // A file that opens goes to the URL, and the shell pushes an entry. The close of that file clears it.
+  const sentOpen = useRef(diff.open);
+  useEffect(() => {
+    const was = sentOpen.current;
+    if (was === diff.open) return;
+    sentOpen.current = diff.open;
+    const added = [...diff.open].find((n) => !was.has(n));
+    if (added !== undefined) {
+      if (added !== file) routeRef.current({ file: { path: added, line: null, side: "new" } });
+    } else if (file !== null && was.has(file) && !diff.open.has(file)) routeRef.current({ file: null });
+  }, [diff.open, file]);
 
   const isOpen = (t: { id: number; open: boolean }) => open.get(t.id) ?? t.open;
   // The cause waits for the data. Cached data from an earlier visit can miss it, so the first fetch after mount must end too.
@@ -320,15 +384,27 @@ export function PrDetail({
       wantCause.current = true;
       rerender();
     },
+    // Plan pr-view-v4 section 6: j and k also move over the rows of an open Files section, after the threads.
     step(d) {
       const ids = shownThreads(threads, needMe, showResolved).map((t) => t.id);
-      const i = cur === null ? -1 : ids.indexOf(cur);
+      const rows = [...document.querySelectorAll<HTMLElement>(FILE_ROWS)];
+      const f = rows.indexOf(document.activeElement as HTMLElement);
+      const toRow = (el: HTMLElement | undefined) => {
+        el?.focus({ preventScroll: true });
+        el?.scrollIntoView({ block: "nearest" });
+      };
+      if (f >= 0 && (d > 0 || f > 0 || !ids.length)) return toRow(rows[Math.max(0, Math.min(rows.length - 1, f + d))]);
+      const i = f >= 0 ? ids.length : cur === null ? -1 : ids.indexOf(cur);
+      if (d > 0 && rows.length && (i === ids.length - 1 || !ids.length)) return toRow(rows[0]);
       const id = ids[i < 0 ? (d > 0 ? 0 : ids.length - 1) : Math.max(0, Math.min(ids.length - 1, i + d))];
       if (id === undefined) return;
       setCur(id);
       focusAfter({ id: `t-${id}`, block: "nearest", flash: false });
     },
     toggle() {
+      // o on a file row opens or closes its diff, like Enter.
+      const row = document.activeElement;
+      if (row instanceof HTMLElement && row.matches(FILE_ROWS)) return row.click();
       const at = document.activeElement?.closest("[data-thread]")?.getAttribute("data-thread");
       const id = cur ?? (at ? Number(at) : null);
       if (id === null) return;
@@ -344,6 +420,8 @@ export function PrDetail({
         toast.add({ title: id === "files" ? "The pull request is still loading." : "No commit list for this pull request yet." });
         return;
       }
+      // Plan pr-view-v4 section 6: g f focuses the first file row. Without a file list, the focus goes to Get the code.
+      if (id === "files") return diff.firstRow();
       setSecs((s) => new Set(s).add(id));
       focusAfter({ id: `s-${id}-sum`, block: "start", flash: false });
     },
@@ -389,7 +467,7 @@ export function PrDetail({
         brief={review.brief}
         run={review.run}
       />
-      <div data-mounting={!steady || undefined} className="px-6 pb-16 max-[759px]:px-4">
+      <div ref={body} data-mounting={!steady || undefined} className="px-6 pb-16 max-[759px]:px-4">
         {archived(pr) && <ArchiveNotice pr={pr} now={now} onRestore={() => onRestore(pr)} />}
         {data ? (
           <>
@@ -422,6 +500,7 @@ export function PrDetail({
                 onOpen={openSec("files")}
                 web={web}
                 forge={forge}
+                branches={pr.sourceBranch && pr.targetBranch ? [pr.sourceBranch, pr.targetBranch] : null}
                 view={diff}
                 ctx={diffCtx}
               />

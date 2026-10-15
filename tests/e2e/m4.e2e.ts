@@ -57,6 +57,11 @@ async function connect(page: Page) {
 
 const openSettings = (page: Page) => page.getByRole("button", { name: "Settings" }).click();
 const closeSettings = (page: Page) => page.getByRole("button", { name: "Close the settings" }).click();
+// A reload keeps the settings URL, so Settings opens again by itself (plan pr-view-v4 section 5).
+async function reloadSettings(page: Page) {
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+}
 
 // Autosave: the status names the save. A text field saves when it loses focus or after a pause.
 const saved = (page: Page) => expect(status(page)).toHaveText(SAVED);
@@ -118,8 +123,7 @@ test("the check interval persists after a reload", async ({ page, request }) => 
   ]);
   await every.selectOption({ label: "Every 5 minutes" });
   await expect.poll(async () => (await settingsApi(request)).checkSeconds).toBe(300);
-  await page.reload();
-  await openSettings(page);
+  await reloadSettings(page);
   await expect(page.getByLabel("Check for new activity")).toHaveValue("300");
 });
 
@@ -494,8 +498,7 @@ test("Copy to all profiles asks first, then gives every profile the skills and M
   await field(page, "Note", 4).fill("Explain note");
   await saved(page);
 
-  await page.reload();
-  await openSettings(page);
+  await reloadSettings(page);
   for (const n of [2, 3, 4]) {
     await expect(page.getByRole("list", { name: `Skills of profile ${n}` }).getByRole("listitem")).toHaveText([
       "test-check · Always",
@@ -572,8 +575,7 @@ test("Improve prompt shows a line diff of the proposal; Apply saves it for good,
   await expect(prompt).toHaveValue(`${before}\n${ADDED}`);
   await saved(page);
   await expect.poll(async () => (await settingsApi(request)).profiles[0]?.prompt).toBe(`${before}\n${ADDED}`);
-  await page.reload();
-  await openSettings(page);
+  await reloadSettings(page);
   await expect(prompt).toHaveValue(`${before}\n${ADDED}`);
 });
 
@@ -677,8 +679,7 @@ test("Language checks: on for General and Security, saved at once, and a review 
   await lang.uncheck();
   await saved(page);
   await expect.poll(async () => (await settingsApi(request)).profiles[0]?.languageChecks).toBe(false);
-  await page.reload();
-  await openSettings(page);
+  await reloadSettings(page);
   await expect(field(page, "Language checks", 1)).not.toBeChecked();
   await closeSettings(page);
   await row(page).click();

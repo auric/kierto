@@ -80,8 +80,6 @@ export type DiffCtx = {
   replies: ReadonlyMap<number, ReviewItemDto>;
   onThread: (id: number) => void;
   onDraft: (id: number) => void;
-  // The first thread in screen order of these IDs.
-  onThreads: (ids: ReadonlySet<number>) => void;
   focusAfter: (f: Focus) => void;
   announce: (text: string) => void;
 };
@@ -95,10 +93,16 @@ export type DiffView = {
   toggle: (name: string) => void;
   // Opens the file and keeps it open when it already is.
   openFile: (name: string) => void;
+  closeFile: (name: string) => void;
   more: (name: string) => void;
   // Opens Files and the file, loads the pages up to the line, then focuses its row.
   show: (card: Card) => void;
+  // Opens Files and the file of the URL. focus: also loads the pages up to the line and focuses it, else the file row.
+  // Without the code, Files shows the file list and the fetch. Nothing fetches.
+  goFile: (to: { path: string; line: number | null; side: "new" | "old" }, focus: boolean) => void;
   first: () => void;
+  // g f: opens Files and focuses its first row without a diff open.
+  firstRow: () => void;
 };
 
 export function useDiffView(
@@ -125,6 +129,7 @@ export function useDiffView(
     [],
   );
   const openFile = useCallback((name: string) => setOpen((s) => (s.has(name) ? s : new Set(s).add(name))), []);
+  const closeFile = useCallback((name: string) => setOpen((s) => (s.has(name) ? new Set([...s].filter((n) => n !== name)) : s)), []);
   const more = useCallback((name: string) => setPages((m) => new Map(m).set(name, (m.get(name) ?? 1) + 1)), []);
 
   const show = async (card: Card) => {
@@ -171,8 +176,37 @@ export function useDiffView(
     o.focusAfter({ id: id ?? `df-${i}`, block: "center", flash: true });
   };
 
-  // Opens Files and its first file, then focuses that file. Without the code, it focuses Get the code. Files shows an error itself.
-  const first = async () => {
+  const goFile: DiffView["goFile"] = async ({ path, line, side }, focus) => {
+    o.openFold();
+    let index: DiffIndex;
+    try {
+      index = await cachedIndex(qc, pr);
+    } catch {
+      return;
+    }
+    if ("fetch" in index) return;
+    const i = fileOf(index.files, path);
+    const f = index.files[i];
+    if (!f) return;
+    const name = fileName(f);
+    openFile(name);
+    if (!focus) return;
+    if (line !== null) {
+      try {
+        const got = await loadUntil(qc, pr, name, f.rows, (rows) => lineIndex(rows)[side].has(line));
+        setPages((m) => ((m.get(name) ?? 1) >= got.pages ? m : new Map(m).set(name, got.pages)));
+        const r = got.rows[lineIndex(got.rows)[side].get(line) ?? -1];
+        if (r) return o.focusAfter({ id: rowId(i, r), block: "center", flash: true });
+      } catch {
+        // The file row takes the focus.
+      }
+    }
+    o.focusAfter({ id: `df-${i}`, block: "start", flash: false });
+  };
+
+  // Opens Files and its first file (open), then focuses that file. Without the code, it focuses the first row of the forge file
+  // list, else Get the code. Files shows an error itself.
+  const first = async (open: boolean) => {
     o.openFold();
     const list = { id: "s-files-sum", block: "start", flash: false } as const;
     let index: DiffIndex;
@@ -181,25 +215,40 @@ export function useDiffView(
     } catch {
       return o.focusAfter(list);
     }
-    if ("fetch" in index) return o.focusAfter({ id: "diff-get", block: "center", flash: false });
+    if ("fetch" in index)
+      return o.focusAfter(
+        document.getElementById("ff-0") ? { id: "ff-0", block: "start", flash: false } : { id: "diff-get", block: "center", flash: false },
+      );
     const f = index.files[0];
     if (!f) return o.focusAfter(list);
-    openFile(fileName(f));
+    if (open) openFile(fileName(f));
     o.focusAfter({ id: "df-0", block: "start", flash: false });
   };
 
-  return { open, pages, toggle, openFile, more, show: (card) => void show(card), first: () => void first() };
+  return {
+    open,
+    pages,
+    toggle,
+    openFile,
+    closeFile,
+    more,
+    show: (card) => void show(card),
+    goFile: (to, focus) => void goFile(to, focus),
+    first: () => void first(true),
+    firstRow: () => void first(false),
+  };
 }
 
 // ---------- Files section ----------
 
-// files: the forge file list. It shows until the git index loads.
+// files: the forge file list. It shows until the git index loads. branches: the source and the target branch, when both are known.
 export function DiffSection(props: {
   files: ChangedFile[] | undefined;
   open: boolean;
   onOpen: (open: boolean) => void;
   web: string | null;
   forge: string;
+  branches: [string, string] | null;
   view: DiffView;
   ctx: DiffCtx;
 }) {
@@ -221,7 +270,8 @@ export function DiffSection(props: {
   });
   const fetchCode = (path: string | null) => {
     if (get.isPending) return;
-    ctx.announce(`Getting the code. Fetching both branches from ${forge}.`);
+    const b = props.branches;
+    ctx.announce(`Getting the code. Fetching ${b ? `${b[0]} and ${b[1]}` : `both branches from ${forge}`}.`);
     get.mutate(path, { onError: (e) => ctx.announce(`Cannot get the code. ${e.message}`) });
   };
   const failed = get.isError ? get.variables : undefined;

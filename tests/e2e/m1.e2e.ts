@@ -111,7 +111,8 @@ test("A1: a reply is one unread event in the right thread and stays unread after
 
   await control("restart");
   expect(await unreadIds(request, TITLE.a)).toEqual([1000010]);
-  await page.reload();
+  // A reload keeps the parked PR in the URL (plan pr-view-v4 section 5). The plain start URL opens Needs you.
+  await page.goto("/");
   // Needs you opens the PR first. The highlight keeps the state at open.
   const reply = page.locator("#c-1000010");
   await expect(detailTitle(page)).toHaveText(TITLE.a);
@@ -480,8 +481,7 @@ test("keys j, k, Enter, Esc, /, n, N, o, g f, and ? work", async ({ page }) => {
   await page.keyboard.press("g");
   await page.keyboard.press("f");
   await expect(page.locator("#s-files")).toHaveAttribute("open", "");
-  await expect(page.locator("#s-files-sum")).toBeFocused();
-  await expect(page.locator("#s-files").getByRole("button", { name: "Get the code", exact: true })).toBeVisible();
+  await expect(page.locator("#s-files").getByRole("button", { name: "Get the code", exact: true })).toBeFocused();
 
   await page.keyboard.press("?");
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });

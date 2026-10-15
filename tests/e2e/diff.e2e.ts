@@ -90,11 +90,12 @@ test("get the code, open flush.ts, cards on their lines, Show in diff and back, 
   await expect(general).toContainText("1 new");
   const reads = seen.reads;
 
-  // Every loaded PR has Files. The fetch waits for a click.
+  // Every loaded PR has Files. The fetch waits for a click. Plan pr-view-v4 section 6: g f goes to the first file row, and without
+  // a file list to Get the code.
   await page.keyboard.press("g");
   await page.keyboard.press("f");
   await expect(files(page)).toHaveAttribute("open", "");
-  await expect(page.locator("#s-files-sum")).toBeFocused();
+  await expect(page.locator("#diff-get")).toBeFocused();
   await getCode(page, "src/cache/flush.ts");
   await page.keyboard.press("Enter");
   await expect(page.locator("#df-0")).toHaveAttribute("aria-expanded", "true");
@@ -242,7 +243,7 @@ test("a file row without the code gets the code, shows the progress in the row, 
   await expect(flush).toHaveAttribute("aria-busy", "true");
   await expect(flush).toContainText("Getting the code");
   await expect(flush).toBeFocused();
-  await expect(live(page)).toHaveText("Getting the code. Fetching both branches from Bitbucket.");
+  await expect(live(page)).toHaveText("Getting the code. Fetching topic/sample-3 and topic/sample-4.");
   release();
 
   await expect(flush).toHaveAttribute("aria-expanded", "true");

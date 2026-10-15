@@ -78,6 +78,21 @@ describe("typing, help, and settings", () => {
     expect(press(["Escape"], settings, { ...C, settingsLocked: true }).settings).toBe(true);
   });
 
+  // Plan pr-view-v4 section 5: only the narrow layout makes Esc a Back. The shell then goes back in the browser history.
+  test("Esc and ← in the narrow detail are Back, and the state waits for the location change", () => {
+    const narrow = { ...C, narrow: true };
+    const detail = { ...S, focus: "detail" as const, mobile: "detail" as const, selected: 20 };
+    for (const k of ["Escape", "ArrowLeft"]) expect(reduceKey(detail, k, narrow)).toEqual({ state: detail, effect: "back", handled: true });
+    const settings = { ...detail, settings: true };
+    expect(reduceKey(settings, "Escape", narrow).effect).toBe("back");
+    // Wide: Esc goes to the list and keeps history. Required settings stay.
+    expect(reduceKey(detail, "Escape", C).effect).toBe("focus-list");
+    expect(reduceKey(settings, "Escape", { ...narrow, settingsLocked: true }).effect).toBe("focus-list");
+    // The narrow list and the views pane are no detail.
+    expect(reduceKey({ ...S, mobile: "side" }, "Escape", narrow).effect).toBe("focus-list");
+    expect(reduceKey(S, "ArrowLeft", narrow).handled).toBe(false);
+  });
+
   test("unknown keys are not handled", () => {
     expect(reduceKey(S, "x", C).handled).toBe(false);
     expect(reduceKey(S, "n", C).handled).toBe(false);

@@ -146,8 +146,9 @@ test("Settings: the global switch adds the global file to every preview and to t
   await expect(pre).toContainText("## From your global Claude Code settings: rules/locks.md (imported by CLAUDE.md)");
   await expect(pre).toContainText("GLOBAL-IMPORT-E2E-CANARY");
 
+  // The reload keeps the settings URL, so Settings opens again by itself (plan pr-view-v4 section 5).
   await page.reload();
-  await page.locator("nav[aria-label='Views']").getByRole("button", { name: "Settings" }).click();
+  await expect(page).toHaveURL(/\/settings$/);
   await expect(
     page.getByRole("region", { name: "Project instructions" }).getByRole("switch", { name: "Use your global CLAUDE.md" }),
   ).toBeChecked();

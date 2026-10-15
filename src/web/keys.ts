@@ -28,6 +28,8 @@ export type KeyContext = {
   // The open layer of the detail that Esc closes first: the review brief, the post confirm, or the run log (prototype/v3 Esc order).
   // A triage edit, a line field, and a reply box close themselves on Esc.
   layer?: Layer;
+  // One pane at a time (below 760 px). Esc and ← in the detail then go back in the browser history (plan pr-view-v4 section 5).
+  narrow?: boolean;
 };
 
 export type Layer = "brief" | "confirm" | "log" | null;
@@ -59,6 +61,8 @@ export type Effect =
   | "close-brief"
   | "close-confirm"
   | "close-log"
+  // The shell goes back in the browser history. Without an earlier entry of the app, it shows the list.
+  | "back"
   | null;
 
 export type KeyResult = { state: KeyState; effect: Effect; handled: boolean };
@@ -70,6 +74,7 @@ const ignore = (state: KeyState): KeyResult => ({ state, effect: null, handled: 
 
 function back(s: KeyState, ctx: KeyContext): KeyResult {
   if (s.focus !== "detail" && s.mobile !== "detail" && !(s.settings && !ctx.settingsLocked)) return ignore(s);
+  if (ctx.narrow && s.mobile === "detail" && !(s.settings && ctx.settingsLocked)) return { state: s, effect: "back", handled: true };
   const settings = s.settings && ctx.settingsLocked;
   return { state: { ...s, focus: "list", mobile: "list", settings }, effect: "focus-list", handled: true };
 }

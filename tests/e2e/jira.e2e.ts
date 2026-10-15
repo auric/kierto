@@ -94,8 +94,9 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
   const dto = await (await request.get(`${APP}/api/settings`)).text();
   expect(dto).not.toContain(E2E_JIRA_TOKEN);
   expect(JSON.parse(dto).jira).toEqual({ baseUrl: JIRA_URL, caFile: null, tokenStored: true });
+  // The reload keeps the settings URL, so Settings opens again by itself (plan pr-view-v4 section 5).
   await page.reload();
-  await openSettings(page);
+  await expect(page).toHaveURL(/\/settings$/);
   await expect(page.getByLabel("Jira URL")).toHaveValue(JIRA_URL);
   await expect(page.getByLabel("Personal access token")).toHaveValue("");
   expect(await page.content()).not.toContain(E2E_JIRA_TOKEN);

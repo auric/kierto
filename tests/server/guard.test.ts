@@ -86,6 +86,24 @@ describe("app", () => {
     expect(res.headers.get("content-security-policy")).toContain("default-src 'self'");
   });
 
+  // Plan pr-view-v4 section 5: a reload or a link at an app URL gets the page. The web app reads the route from the URL.
+  test("deep app paths get the page, API paths do not", async () => {
+    for (const path of [
+      "/needs/PROJ1/sample-repo-2/1001",
+      "/mine/~JDOE/sample-repo-1/7?thread=3&file=src/a%20b.ts",
+      "/settings/profiles/general",
+      "/unknown/x",
+    ]) {
+      const res = await app.request(req(path, { "sec-fetch-site": "none", "sec-fetch-mode": "navigate" }));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      expect(await res.text()).toContain(`content="${TOKEN}"`);
+    }
+    const api = await app.request(req("/api/missing", {}));
+    expect(api.status).toBe(404);
+    expect(await api.text()).not.toContain(TOKEN);
+  });
+
   test("no response has Access-Control-Allow-Origin", async () => {
     const cases = [
       req("/", {}),

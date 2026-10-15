@@ -1,11 +1,12 @@
 import { ArrowLeft, type LucideIcon, Monitor, Moon, Sun, X } from "lucide-react";
-import { type FormEvent, type MouseEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { CHECK_CHOICES, type PrRow, type SettingsDto } from "../../shared/dto";
+import type { SettingsSection } from "../lib/route";
 import { useForge, useMeta } from "../meta";
 import { notifyPermission } from "../notify";
 import { trackerOf } from "../review/tasks";
@@ -23,7 +24,7 @@ const sectionTitle = "m-0 scroll-mt-4 text-[15px] font-bold outline-none";
 const saveNote = "m-0 text-xs text-muted-foreground";
 const AT_ONCE = "Changes save at once.";
 
-// A section link focuses its heading. A plain hash link would add a history entry and leave the focus where it was.
+// A section link focuses its heading. The shell pushes the section URL (plan pr-view-v4 section 5).
 function jump(e: MouseEvent<HTMLAnchorElement>, id: string) {
   e.preventDefault();
   const el = document.getElementById(id);
@@ -31,6 +32,24 @@ function jump(e: MouseEvent<HTMLAnchorElement>, id: string) {
   el?.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
   el?.focus({ preventScroll: true });
 }
+
+// A modified click opens the section URL in a new tab or window.
+const plainClick = (e: MouseEvent) => e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
+
+// The section that the URL names, and the heading of each section.
+export type SettingsAt = { section: SettingsSection | null; profile: string | null; n: number };
+const HEADINGS: Record<SettingsSection, string> = {
+  connection: "h-connection",
+  checks: "checks-title",
+  notifications: "notify-title",
+  posts: "mark-title",
+  appearance: "h-appearance",
+  profiles: "h-profiles",
+  "task-ids": "h-taskids",
+  tracker: "h-tracker",
+  clones: "h-clones",
+  instructions: "h-instructions",
+};
 
 // A heading above this part of the pane height is in view. The line stays near the top, so a short section such as Checks also gets its turn.
 const SPY_LINE = 0.1;
@@ -90,7 +109,7 @@ function useSectionSpy(ids: string[]) {
   // The narrow nav scrolls sideways. The active link stays in view, also after the pane gets narrow.
   useEffect(() => {
     const ul = nav.current;
-    const a = current && ul?.querySelector<HTMLElement>(`a[href="#${current}"]`);
+    const a = current && ul?.querySelector<HTMLElement>(`a[data-sec="${current}"]`);
     if (!ul || !a) return;
     const show = () => {
       const left = a.offsetLeft - 16;
@@ -103,10 +122,10 @@ function useSectionSpy(ids: string[]) {
     resize.observe(ul);
     return () => resize.disconnect();
   }, [current]);
-  const hold = (id: string) => {
+  const hold = useCallback((id: string) => {
     held.current = true;
     setActive(id);
-  };
+  }, []);
   return { pane, end, nav, active: current, hold };
 }
 
@@ -117,7 +136,8 @@ export function Settings({
   required,
   prs,
   selected,
-  profile,
+  at,
+  onSection,
   onBack,
   onSaved,
 }: {
@@ -126,8 +146,10 @@ export function Settings({
   // The task-rule preview runs on one of these.
   prs: PrRow[];
   selected: number | null;
-  // The profile that "Edit profile…" opened. n changes on each request.
-  profile?: { id: string; n: number } | null;
+  // The section or the profile to show, for example after "Edit profile…" or Back. n changes on each request.
+  at: SettingsAt;
+  // A section link was used. The shell puts the section into the URL.
+  onSection: (section: SettingsSection) => void;
   onBack: () => void;
   onSaved: () => void;
 }) {
@@ -140,22 +162,38 @@ export function Settings({
   const memory = settings.tokenStorage === "memory";
   const missing = settings.baseUrl !== null && !settings.tokenStored;
   // The sections below Connection show only after the first connection.
-  const sections: [string, string][] =
+  const sections: [SettingsSection, string][] =
     settings.baseUrl === null
       ? []
       : [
-          ["h-connection", "Connection"],
-          ["checks-title", "Checks"],
-          ["notify-title", "Notifications"],
-          ["mark-title", "Posts"],
-          ["h-appearance", "Appearance"],
-          ["h-profiles", "Review profiles"],
-          ["h-taskids", "Task IDs"],
-          ...(tracker ? ([["h-tracker", tracker.name]] as [string, string][]) : []),
-          ["h-clones", "Clones"],
-          ["h-instructions", "Project instructions"],
+          ["connection", "Connection"],
+          ["checks", "Checks"],
+          ["notifications", "Notifications"],
+          ["posts", "Posts"],
+          ["appearance", "Appearance"],
+          ["profiles", "Review profiles"],
+          ["task-ids", "Task IDs"],
+          ...(tracker ? ([["tracker", tracker.name]] as [SettingsSection, string][]) : []),
+          ["clones", "Clones"],
+          ["instructions", "Project instructions"],
         ];
-  const spy = useSectionSpy(sections.map(([id]) => id));
+  const spy = useSectionSpy(sections.map(([s]) => HEADINGS[s]));
+  const { hold, pane } = spy;
+  // ReviewProfiles scrolls to the profile on each new target, so the target changes only with at.
+  const target = useMemo(() => (at.profile ? { id: at.profile, n: at.n } : null), [at.profile, at.n]);
+  // The URL names a section: its heading takes the focus. No section: the pane starts at the top.
+  useEffect(() => {
+    if (at.profile) return;
+    const id = at.section ? HEADINGS[at.section] : null;
+    const el = id ? document.getElementById(id) : null;
+    if (!id || !el) {
+      pane.current?.scrollTo({ top: 0 });
+      return;
+    }
+    hold(id);
+    el.scrollIntoView({ block: "start" });
+    el.focus({ preventScroll: true });
+  }, [at, hold, pane]);
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -206,20 +244,24 @@ export function Settings({
               ref={spy.nav}
               className="relative -mx-2 flex list-none flex-wrap gap-x-1 gap-y-1 p-0 text-sm max-[759px]:-mx-3 max-[759px]:flex-nowrap max-[759px]:overflow-x-auto max-[759px]:p-1 max-[759px]:[scrollbar-width:thin]"
             >
-              {sections.map(([id, label]) => {
+              {sections.map(([section, label]) => {
+                const id = HEADINGS[section];
                 const on = spy.active === id;
                 return (
                   <li key={id} className="shrink-0">
                     <a
-                      href={`#${id}`}
+                      href={`/settings/${section}`}
+                      data-sec={id}
                       aria-current={on || undefined}
                       className={cn(
                         "block rounded-md px-2 py-0.5 font-medium whitespace-nowrap transition-colors duration-150",
                         on ? "bg-sel text-foreground" : "text-pen hover:bg-hover",
                       )}
                       onClick={(e) => {
-                        spy.hold(id);
+                        if (!plainClick(e)) return;
+                        hold(id);
                         jump(e, id);
+                        onSection(section);
                       }}
                     >
                       {label}
@@ -320,7 +362,7 @@ export function Settings({
         {settings.baseUrl !== null && <Notifications settings={settings} />}
         {settings.baseUrl !== null && <AiMark settings={settings} />}
         {settings.baseUrl !== null && <Appearance />}
-        {settings.baseUrl !== null && <ReviewProfiles settings={settings} target={profile} />}
+        {settings.baseUrl !== null && <ReviewProfiles settings={settings} target={target} />}
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
         {settings.baseUrl !== null && <JiraSettings settings={settings} />}
         {settings.baseUrl !== null && <Clones />}
