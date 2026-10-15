@@ -1,5 +1,5 @@
 // PR detail (plan v3 WP5, r2 UI-ASK, r2 UI-DIFF, pr-view-v4 section 2): header and status strip, then one column of the run record,
-// Description, Threads, Files, Commits, and Ask. The run record goes after the Description until a review exists (decision D3).
+// Description, Drafts, Threads, Files, Commits, and Ask. The run record goes after the Description until a review exists (decision D3).
 import { useMutation } from "@tanstack/react-query";
 import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,7 +10,7 @@ import { AskPanel } from "../ask/AskPanel";
 import { fileCount, useDiffIndex } from "../diff/data";
 import { type DiffCtx, DiffSection, useDiffView } from "../diff/FileDiff";
 import type { Card } from "../diff/model";
-import type { Layer } from "../keys";
+import { detailStep, type Layer } from "../keys";
 import { type FileRef, restoreScroll } from "../lib/route";
 import { useMeta } from "../meta";
 import { PostsGroup, useOutbox } from "../publish/Outbox";
@@ -68,6 +68,9 @@ export type DetailPatch = { thread?: number | null; file?: FileRef | null };
 
 // The rows of an open Files section, in screen order. Both file lists put the row button first in its item.
 const FILE_ROWS = "#s-files[open] ul[aria-label='Changed files'] > li > button";
+// The head buttons of the Drafts rows, in screen order. The row is the [data-item] element around the head.
+const DRAFT_ROWS = "#s-drafts [data-row-head]";
+const draftRow = (el: Element | null) => el?.closest("#s-drafts [data-item]") ?? null;
 
 const NO_COMMENTS: CommentDto[] = [];
 const NONE: ReadonlySet<number> = new Set();
@@ -259,6 +262,7 @@ export function PrDetail({
     reveal: jump,
     announce,
     onSettings,
+    onTaskIds,
     onProfile,
     showInDiff: (id) => showDiff.current({ kind: "draft", id }),
   });
@@ -392,27 +396,38 @@ export function PrDetail({
       wantCause.current = true;
       rerender();
     },
-    // Plan pr-view-v4 section 6: j and k also move over the rows of an open Files section, after the threads.
+    // Plan pr-view-v4 section 6: j and k move over the Drafts rows, the threads, and the rows of an open Files section.
     step(d) {
+      const heads = [...document.querySelectorAll<HTMLElement>(DRAFT_ROWS)];
       const ids = shownThreads(threads, needMe, showResolved).map((t) => t.id);
       const rows = [...document.querySelectorAll<HTMLElement>(FILE_ROWS)];
+      const item = draftRow(document.activeElement);
+      const h = item ? heads.findIndex((b) => draftRow(b) === item) : -1;
       const f = rows.indexOf(document.activeElement as HTMLElement);
-      const toRow = (el: HTMLElement | undefined) => {
-        el?.focus({ preventScroll: true });
-        el?.scrollIntoView({ block: "nearest" });
-      };
-      if (f >= 0 && (d > 0 || f > 0 || !ids.length)) return toRow(rows[Math.max(0, Math.min(rows.length - 1, f + d))]);
-      const i = f >= 0 ? ids.length : cur === null ? -1 : ids.indexOf(cur);
-      if (d > 0 && rows.length && (i === ids.length - 1 || !ids.length)) return toRow(rows[0]);
-      const id = ids[i < 0 ? (d > 0 ? 0 : ids.length - 1) : Math.max(0, Math.min(ids.length - 1, i + d))];
-      if (id === undefined) return;
-      setCur(id);
-      focusAfter({ id: `t-${id}`, block: "nearest", flash: false });
+      const t = cur === null ? -1 : ids.indexOf(cur);
+      const at = h >= 0 ? h : f >= 0 ? heads.length + ids.length + f : t >= 0 ? heads.length + t : -1;
+      // k without a current item goes to the last thread.
+      const next = detailStep(heads.length + ids.length + rows.length, at, d, ids.length ? heads.length + ids.length - 1 : undefined);
+      if (next === null) return;
+      const el = next < heads.length ? heads[next] : rows[next - heads.length - ids.length];
+      const id = ids[next - heads.length];
+      if (el) {
+        el.focus({ preventScroll: true });
+        el.scrollIntoView({ block: "nearest" });
+      } else if (id !== undefined) {
+        setCur(id);
+        focusAfter({ id: `t-${id}`, block: "nearest", flash: false });
+      }
     },
     toggle() {
-      // o on a file row opens or closes its diff, like Enter.
+      // o on a file row opens or closes its diff, like Enter. o on a Drafts row opens or closes it, like a click on its head.
       const row = document.activeElement;
       if (row instanceof HTMLElement && row.matches(FILE_ROWS)) return row.click();
+      const head = draftRow(row)?.querySelector<HTMLElement>("[data-row-head]");
+      if (head) {
+        head.click();
+        return head.focus({ preventScroll: true });
+      }
       const at = document.activeElement?.closest("[data-thread]")?.getAttribute("data-thread");
       const id = cur ?? (at ? Number(at) : null);
       if (id === null) return;
@@ -437,7 +452,8 @@ export function PrDetail({
       const at = document.activeElement;
       const d = at?.closest("[data-draft]")?.getAttribute("data-draft");
       const t = at?.closest("[data-thread]")?.getAttribute("data-thread") ?? (cur === null ? null : String(cur));
-      if (d) diff.show({ kind: "draft", id: Number(d) });
+      if (at?.closest("[data-draft-question]")) toast.add({ title: "A question has no line in the diff. It posts as a general comment." });
+      else if (d) diff.show({ kind: "draft", id: Number(d) });
       else if (t) diff.show({ kind: "thread", id: Number(t) });
       else toast.add({ title: "Move to an inline thread or a draft first. Then g d shows its line in the diff." });
     },
@@ -495,6 +511,7 @@ export function PrDetail({
             {review.reviewed && review.run}
             <Description detail={data} me={me} />
             {!review.reviewed && review.run}
+            {review.drafts}
             <Threads
               threads={threads}
               needMe={needMe}
@@ -508,7 +525,6 @@ export function PrDetail({
               targets={targets}
               cards={review.cards}
               outbox={<PostsGroup posts={outbox.rest} comments={comments} forge={forge} web={web} hints={hints} ctx={outbox.ctx} />}
-              drafts={review.drafts}
               onNeedMe={setNeedMe}
               onShowResolved={() => {
                 setShowResolved(true);

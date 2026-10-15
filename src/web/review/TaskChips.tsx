@@ -62,6 +62,7 @@ const fetchBtn =
 // id: the prefix of the element IDs, one per place. focusTo: the element that takes the focus when Remove takes the chip away.
 // compact: a place outside the brief. It shows only the chips that can fetch or hold fetched text, with the fetch state
 // instead of the source. It shows nothing when no chip is left. onSettings absent: an error offers no settings link.
+// onTaskIds: "Set up task IDs" opens Settings, Task IDs.
 export function TaskChips(props: {
   pr: number;
   tasks: PrTask[];
@@ -71,6 +72,7 @@ export function TaskChips(props: {
   compact?: boolean;
   announce: (text: string) => void;
   onSettings?: () => void;
+  onTaskIds?: () => void;
 }) {
   const { pr, tasks, meta, id, compact, announce, onSettings } = props;
   const qc = useQueryClient();
@@ -127,7 +129,7 @@ export function TaskChips(props: {
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
         <span className="mr-1.5 font-semibold">Task</span>
         <span className="text-ink-2">No task ID found.</span>
-        <button type="button" className="cursor-pointer rounded text-sm font-medium text-pen hover:underline" onClick={onSettings}>
+        <button type="button" className="cursor-pointer rounded text-sm font-medium text-pen hover:underline" onClick={props.onTaskIds}>
           Set up task IDs
         </button>
       </div>

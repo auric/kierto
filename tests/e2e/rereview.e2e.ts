@@ -123,9 +123,17 @@ test("a push after a review: c and the button open the brief; Start reviews the 
   await expect(drafts(page)).toHaveCount(3);
   await expect(drafts(page).nth(0)).toContainText("Still open after the new commits.");
   await expect(drafts(page).nth(0)).toContainText(LOCK);
-  await expect(drafts(page).nth(1)).toContainText("Fixed in the new commits: lock.release() does not run when write() throws.");
+  // A closed row strikes its title through and names the verdict. Restore is in the row body.
+  await expect(drafts(page).nth(1)).toHaveAccessibleName("Draft, fixed in the new commits. flush.ts:5.");
+  await expect(drafts(page).nth(1).locator("[data-row-head]")).toContainText(
+    "lock.release() does not run when write() throws. Release the lock in a finally block.src/cache/flush.ts:5Fixed in the new commits",
+  );
+  await drafts(page).nth(1).locator("[data-row-head]").click();
   await expect(drafts(page).nth(1).getByRole("button", { name: "Restore" })).toBeVisible();
-  await expect(drafts(page).nth(2)).toContainText("Outdated: The README does not name the flush order.");
+  await expect(drafts(page).nth(2)).toHaveAccessibleName("Draft, outdated. README.md:1.");
+  await expect(drafts(page).nth(2).locator("[data-row-head]")).toContainText(
+    "The README does not name the flush order.README.md:1Outdated",
+  );
 
   await drafts(page).nth(0).getByRole("button", { name: "Accept" }).click();
   await expect(page.getByText("Ready to post: 1 inline comment")).toBeVisible();
@@ -176,14 +184,21 @@ test("a carried draft whose code is gone closes as outdated with no Restore, and
   await expect(drafts(page)).toHaveCount(3);
   const gone = drafts(page).nth(1);
   // The row names the line that the base run showed.
-  await expect(gone).toContainText("flush.ts:5Outdated: lock.release() does not run when write() throws.");
+  await expect(gone.locator("[data-row-head]")).toContainText(
+    "lock.release() does not run when write() throws. Release the lock in a finally block.src/cache/flush.ts:5Outdated",
+  );
+  await gone.locator("[data-row-head]").click();
+  await expect(gone).toContainText("Release the lock in a");
   await expect(gone.getByRole("button", { name: "Restore" })).toHaveCount(0);
-  await expect(drafts(page).nth(2)).toContainText("Fixed in the new commits: The README does not name the flush order.");
+  await expect(drafts(page).nth(2).locator("[data-row-head]")).toContainText(
+    "The README does not name the flush order.README.md:1Fixed in the new commits",
+  );
+  await drafts(page).nth(2).locator("[data-row-head]").click();
   await expect(drafts(page).nth(2).getByRole("button", { name: "Restore" })).toBeVisible();
 
   await gone.focus();
   await page.keyboard.press("d");
   await expect(page.getByText("The code of this finding is gone. It cannot come back.")).toBeVisible();
-  await expect(gone).toContainText("Outdated:");
+  await expect(gone).toHaveAccessibleName("Draft, outdated. flush.ts:5.");
   expect(await posts()).toEqual([]);
 });

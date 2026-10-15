@@ -117,7 +117,7 @@ test("A11: an unreadable result shows no clean result, and nothing from it can p
   // No result: no summary, no ledger, no coverage, and no questions.
   await expect(runRow(page).getByRole("list", { name: "Open drafts" })).toHaveCount(0);
   await expect(runRow(page).getByRole("button", { name: /^Not checked/ })).toHaveCount(0);
-  await expect(page.locator("#g-questions")).toHaveCount(0);
+  await expect(page.locator("#s-drafts")).toHaveCount(0);
   await expect(page.locator("[data-postbar]")).toHaveCount(0);
   await page.keyboard.press("p");
   await expect(page.getByText("Nothing is accepted yet. Accept drafts, questions, or replies first.")).toBeVisible();

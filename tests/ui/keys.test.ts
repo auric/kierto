@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type KeyContext, type KeyState, reduceKey } from "../../src/web/keys";
+import { detailStep, HELP_KEYS, type KeyContext, type KeyState, reduceKey } from "../../src/web/keys";
 
 const S: KeyState = { focus: "list", mobile: "list", selected: null, help: false, settings: false, chord: null };
 const C: KeyContext = { ids: [10, 20, 30], typing: false, onButton: false, settingsLocked: false, now: 10_000 };
@@ -195,5 +195,39 @@ describe("triage and post keys", () => {
   test("Esc closes the post confirm", () => {
     const detail = { ...S, selected: 20, focus: "detail" as const, mobile: "detail" as const };
     expect(reduceKey(detail, "Escape", { ...C, layer: "confirm" })).toMatchObject({ effect: "close-confirm", state: detail });
+  });
+});
+
+// Plan pr-view-v4 section 6 and 2.7: j and k in the detail move over the Drafts rows, the threads, and the file rows.
+describe("j and k over the items of the detail", () => {
+  test("they move one item and stop at the ends", () => {
+    expect(detailStep(5, 0, 1)).toBe(1);
+    expect(detailStep(5, 3, -1)).toBe(2);
+    expect(detailStep(5, 4, 1)).toBe(4);
+    expect(detailStep(5, 0, -1)).toBe(0);
+  });
+
+  test("without a current item, j goes to the first item and k to the given item, by default the last", () => {
+    expect(detailStep(5, -1, 1, 2)).toBe(0);
+    expect(detailStep(5, -1, -1, 2)).toBe(2);
+    expect(detailStep(5, -1, -1)).toBe(4);
+  });
+
+  test("an empty detail gives no item", () => {
+    expect(detailStep(0, -1, 1)).toBeNull();
+    expect(detailStep(0, -1, -1)).toBeNull();
+  });
+
+  test("j, k, Enter, and o keep their effects; the help names drafts and files", () => {
+    const detail = { ...S, selected: 20, focus: "detail" as const };
+    expect(["j", "k", "o", "Enter"].map((k) => reduceKey(detail, k, C).effect)).toEqual([
+      "thread-next",
+      "thread-prev",
+      "thread-toggle",
+      "thread-toggle",
+    ]);
+    const text = (k: string) => HELP_KEYS.flatMap((g) => g.keys).find((x) => x.keys[0] === k && !x.second)?.text;
+    expect(text("j")).toContain("draft, thread, or file in the detail");
+    expect(text("o")).toBe("Open or close the current draft, thread, or file");
   });
 });

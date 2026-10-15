@@ -74,6 +74,19 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
 
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runLine(page)).toContainText("3 findings, 1 question");
+  // Plan pr-view-v4 2.7: one Drafts section between the Description and the threads. It holds the findings, then the question.
+  // Only the first untriaged row starts open. The head and the status strip count all four.
+  const section = page.locator("#s-drafts");
+  const heads = section.locator("[data-row-head]");
+  await expect(page.locator("#s-overview ~ #s-drafts ~ #s-threads")).toHaveCount(1);
+  await expect(section.locator("h2")).toHaveText(/^Drafts\s*4$/);
+  await expect(page.getByRole("navigation", { name: "Pull request summary" }).getByRole("button", { name: "4 drafts" })).toBeVisible();
+  await expect(heads).toHaveCount(4);
+  await expect(heads.nth(0)).toContainText("Blocker");
+  await expect(heads.nth(0)).toContainText("src/cache/flush.ts:3");
+  await expect(heads.nth(3)).toContainText("QuestionMust flush() stay atomic for readers?");
+  for (const [i, open] of [true, false, false, false].entries()) await expect(heads.nth(i)).toHaveAttribute("aria-expanded", String(open));
+  await expect(page.locator("#s-threads [data-draft], #s-threads [data-draft-question]")).toHaveCount(0);
   // One button per severity of the open drafts. Each one goes to the first draft of its severity.
   await expect(runLine(page).locator("[data-severity]")).toHaveText(["1 Blocker", "1 Minor", "1 Nit"]);
   await runLine(page).getByRole("button", { name: "1 Nit" }).click();
@@ -86,6 +99,9 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await expect(page.getByText(`Your note: ${NOTE}`)).toBeVisible();
   // Exact, moved, and outside drafts. The finding on a file that the snapshot does not have is dropped.
   await expect(page.locator("[data-draft]")).toHaveCount(3);
+  await expect(page.getByText("Moved from line 6: the quoted code is on line 5.")).toBeHidden();
+  await heads.nth(1).click();
+  await expect(heads.nth(1)).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText("Moved from line 6: the quoted code is on line 5.")).toBeVisible();
   await expect(page.getByText("Outside the diff. Posts as a general comment with a link to README.md:1.")).toBeVisible();
   // The record holds the summary. Nothing was skipped, so "Not checked: 0" starts closed and holds the dropped finding.
@@ -97,10 +113,11 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await expect(runRow(page)).toContainText("Also not done, by design: Tests did not run, because the review has read-only tools.");
   await runRow(page).getByRole("button", { name: "Risk areas: 2" }).click();
   await expect(runRow(page).getByText("Readers of the cache during a flush.")).toBeVisible();
-  // The ledger counts the question too. It goes to the question below the drafts.
+  // The ledger counts the question too. It opens the question row after the findings.
   await runLine(page).getByRole("button", { name: "1 question" }).click();
-  await expect(page.locator("#g-questions article").first()).toBeFocused();
-  await expect(page.getByText("Must flush() stay atomic for readers?")).toBeVisible();
+  await expect(page.locator("[data-draft-question]")).toBeFocused();
+  await expect(heads.nth(3)).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByText("The description does not say if a reader may see a partial batch.")).toBeVisible();
 
   // "from rl-reviewer" opens the log at that agent. Its calls nest under it by parent.
   await page.getByRole("button", { name: "from rl-reviewer" }).click();
@@ -125,6 +142,20 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await page.keyboard.press("Escape");
   await page.keyboard.press("2");
   await expect(page.locator("[data-draft]").first()).toBeFocused();
+  // Plan pr-view-v4 section 6: j and k move over the Drafts rows, then on to the threads. o and Enter open and close a row.
+  await page.keyboard.press("j");
+  await expect(heads.nth(1)).toBeFocused();
+  await page.keyboard.press("o");
+  await expect(heads.nth(1)).toHaveAttribute("aria-expanded", "false");
+  await page.keyboard.press("Enter");
+  await expect(heads.nth(1)).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("k");
+  await expect(heads.nth(0)).toBeFocused();
+  await heads.nth(3).focus();
+  await page.keyboard.press("j");
+  await expect(page.locator("#s-threads [data-thread]").first()).toBeFocused();
+  await page.keyboard.press("k");
+  await expect(heads.nth(3)).toBeFocused();
   await page.keyboard.press("r");
   await expect(page.getByLabel("Your note")).toHaveValue(NOTE);
   await expect(page.getByRole("radio", { name: /^Security/ })).toBeChecked();

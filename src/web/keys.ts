@@ -150,12 +150,21 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
   }
 }
 
+// Plan pr-view-v4 section 6: j and k in the detail move over the Drafts rows, the threads, and the file rows, in screen order.
+// n: the item count. at: the index of the current item, or -1. back: the index that k takes without a current item.
+// The ends stop the move. null: no item.
+export function detailStep(n: number, at: number, d: 1 | -1, back = n - 1): number | null {
+  if (n <= 0) return null;
+  if (at < 0) return d > 0 ? 0 : back;
+  return Math.max(0, Math.min(n - 1, at + d));
+}
+
 // Only the keys that work now.
 export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string[]; text: string }[] }[] = [
   {
     group: "Move",
     keys: [
-      { keys: ["j", "k"], text: "Next or previous pull request in the list, or thread in the detail" },
+      { keys: ["j", "k"], text: "Next or previous pull request in the list, or draft, thread, or file in the detail" },
       { keys: ["Enter", "→"], text: "Open the pull request at the thread that put it in the inbox" },
       { keys: ["Esc", "←"], text: "Back to the list" },
       { keys: ["/"], text: "Filter the list" },
@@ -166,7 +175,7 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
     keys: [
       { keys: ["n", "N"], text: "Next or previous new message" },
       { keys: ["y"], text: "Next thread where it is your turn" },
-      { keys: ["o"], text: "Open or close the current thread" },
+      { keys: ["o"], text: "Open or close the current draft, thread, or file" },
       { keys: ["g"], second: ["f", "c"], text: "Open and go to Files or Commits" },
       { keys: ["g"], second: ["d"], text: "Show the current inline thread or draft on its line in the diff" },
       {

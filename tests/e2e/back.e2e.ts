@@ -236,3 +236,18 @@ test("a reload or a deep link shows the same place; an unknown view and a gone P
   await row(page, A).click();
   await expect(h1(page)).toHaveText(A);
 });
+
+// "Skip to the list" moves the focus and leaves the history as it is: no "#rows" entry without a state.
+test("Skip to the list focuses the list with no history entry", async ({ page }) => {
+  await connect(page);
+  await row(page, A).click();
+  await expect(h1(page)).toHaveText(A);
+  const before = await depth(page);
+  const url = page.url();
+  const skip = page.getByRole("button", { name: "Skip to the list" });
+  await skip.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#rows")).toBeFocused();
+  expect(page.url()).toBe(url);
+  expect(await depth(page)).toBe(before);
+});

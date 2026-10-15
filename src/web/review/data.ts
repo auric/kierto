@@ -106,9 +106,7 @@ export const runBody = ({ threads, profile }: RunStart) => ({ ...(threads && { t
 
 // POST /api/prs/:id/review runs the stored brief.
 export const useStartReview = (pr: number) =>
-  useStart(pr, async (profile: string | undefined) =>
-    started(await api.api.prs[":id"].review.$post({ ...param(pr), query: runBody({ profile }) })),
-  );
+  useStart(pr, async () => started(await api.api.prs[":id"].review.$post({ ...param(pr), query: {} })));
 
 // POST /api/prs/:id/rereview (plan r2 S-RR) reviews the commits since the newest review run and carries its open items.
 export const useStartRereview = (pr: number) => useStart(pr, async () => started(await api.api.prs[":id"].rereview.$post(param(pr))));

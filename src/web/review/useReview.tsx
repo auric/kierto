@@ -16,7 +16,7 @@ import { planKey } from "../publish/data";
 import { Hint, type Hints } from "../shell/Hint";
 import { prKey } from "../shell/model";
 import { BriefComposer, type BriefMode, ReviewButton } from "./Brief";
-import { type DraftCtx, Drafts, modeOf, Questions, type TriageState } from "./Drafts";
+import { type DraftCtx, Drafts, draftDomId, modeOf, type TriageState } from "./Drafts";
 import {
   replyKey,
   saveLastProfile,
@@ -39,6 +39,7 @@ import {
   newCommits,
   plural,
   questionJump,
+  questions,
   replyCard,
   replyMap,
   replyOf,
@@ -53,7 +54,7 @@ import { DraftRepliesButton, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft"
 import { Ledger, RunRecord } from "./RunLine";
 import { type LogTarget, RunLog } from "./RunLog";
 import { TaskChips, useTaskContext } from "./TaskChips";
-import type { TriageAction, TriageCtx } from "./Triage";
+import { storedEdit, type TriageAction, type TriageCtx, writeEdit } from "./Triage";
 import { contextLines, trackerOf } from "./tasks";
 
 export type Focus = { id: string; block: ScrollLogicalPosition; flash: boolean };
@@ -134,6 +135,8 @@ export function useReview(
     reveal: (thread: number) => void;
     announce: (text: string) => void;
     onSettings: () => void;
+    // Opens Settings, Task IDs: "Set up task IDs" in the brief.
+    onTaskIds: () => void;
     // Opens the settings at one profile: "Edit <profile>" in the brief.
     onProfile: (id: string) => void;
     // Focuses the line of a draft in the diff.
@@ -168,7 +171,11 @@ export function useReview(
   const pinned = useRun(typeof log?.of === "number" ? log.of : null);
   const fetched = useTaskContext(pr.id).data;
   const [openDrafts, setOpenDrafts] = useState<ReadonlyMap<number, boolean>>(new Map());
-  const [triage, setTriage] = useState<TriageState>({ open: null, busy: new Set() });
+  // An unsent edit from an earlier visit opens its editor again (plan pr-view-v4 section 5).
+  const [triage, setTriage] = useState<TriageState>(() => {
+    const id = storedEdit(pr.id);
+    return { open: id === null ? null : { id, mode: "edit", quiet: true }, busy: new Set() };
+  });
   // The threads of the reply run that this page started. They show a pending card while it runs.
   const [asked, setAsked] = useState<{ run: number; threads: number[] } | null>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -271,26 +278,33 @@ export function useReview(
 
   // Stable while the items stay, so the diff renders again only when they change.
   const ds = useMemo(() => (items.length ? drafts(items) : NO_ITEMS), [items]);
+  // Plan pr-view-v4 2.7: one list of the findings, then the questions. The first untriaged one starts open.
+  const list = useMemo(() => (items.length ? [...ds, ...questions(items)] : NO_ITEMS), [items, ds]);
+  const firstNew = list.find((x) => x.status === "new")?.id ?? null;
   const all = [...items, ...replyItems];
   const latestItems = useRef(all);
   latestItems.current = all;
-  const isDraftOpen = (it: ReviewItemDto) => openDrafts.get(it.id) ?? it.status === "new";
+  const latestList = useRef({ list, firstNew });
+  latestList.current = { list, firstNew };
+  const isDraftOpen = (it: ReviewItemDto) => openDrafts.get(it.id) ?? it.id === firstNew;
   const onLog = useRef(openLog);
   onLog.current = openLog;
   const onDraft = useRef(draftReplies);
   onDraft.current = draftReplies;
   const onShow = useRef(o.showInDiff);
   onShow.current = o.showInDiff;
+  // Opens a draft or a question and focuses it: "Go to draft" in the diff, the ledger, and key 2.
   const openDraft = useCallback(
     (id: number) => {
+      const it = latestList.current.list.find((x) => x.id === id);
       setOpenDrafts((m) => new Map(m).set(id, true));
-      focusAfter({ id: `d-${id}`, block: "start", flash: true });
+      focusAfter({ id: it ? draftDomId(it) : `d-${id}`, block: "start", flash: true });
     },
     [focusAfter],
   );
 
   // ---------- Triage (plan v3 WP14a) ----------
-  const domId = (it: ReviewItemDto) => (it.kind === "question" ? `q-${it.id}` : it.kind === "reply" ? `rd-${it.id}` : `d-${it.id}`);
+  const domId = (it: ReviewItemDto) => (it.kind === "reply" ? `rd-${it.id}` : draftDomId(it));
   const setBusy = (id: number, on: boolean) =>
     setTriage((s) => {
       const busy = new Set(s.busy);
@@ -303,16 +317,16 @@ export function useReview(
     if (it.kind === "reply") qc.setQueryData<ReviewItemDto[]>(replyKey(pr.id), (old) => old?.map((x) => (x.id === it.id ? it : x)));
   };
 
-  // prototype/v3 setItem: accept and discard close the item and go to the next untriaged one of the same kind.
+  // prototype/v3 setItem: accept and discard close the row and open the next untriaged row of the Drafts list.
   // A reply draft stays under its thread, so the focus stays on it.
   const advance = (it: ReviewItemDto) => {
     if (it.kind === "reply") {
       focusAfter({ id: domId(it), block: "nearest", flash: false });
     } else if (it.status === "accepted" || it.status === "discarded") {
-      setOpenDrafts((m) => new Map(m).set(it.id, false));
-      const same = latestItems.current.filter((x) => x.kind === it.kind && x.status !== "posted");
+      const same = latestList.current.list;
       const fresh = (x: ReviewItemDto) => x.id !== it.id && x.status === "new";
       const next = same.slice(same.findIndex((x) => x.id === it.id) + 1).find(fresh) ?? same.find(fresh) ?? it;
+      setOpenDrafts((m) => new Map(m).set(it.id, false).set(next.id, next !== it));
       focusAfter({ id: domId(next), block: "nearest", flash: false });
     } else {
       setOpenDrafts((m) => new Map(m).set(it.id, true));
@@ -330,6 +344,7 @@ export function useReview(
         return;
       }
       putItem(r.item);
+      if (input.action !== "move") writeEdit(pr.id, it.id, null);
       void qc.invalidateQueries({ queryKey: planKey(pr.id) });
       // The focus goes on to the next item, so the live region says what happened to this one.
       o.announce(triageText(it, r.item, input.action));
@@ -369,31 +384,34 @@ export function useReview(
   };
   const onTriage = useRef(triageFns);
   onTriage.current = triageFns;
+  const quiet = useRef<number | null>(null);
+  quiet.current = triage.open?.quiet ? triage.open.id : null;
   // Stable, so the memo drafts render again only when their own data changes.
+  const prId = pr.id;
   const triageCtx = useMemo<TriageCtx>(
     () => ({
+      pr: prId,
       act: (it, a) => onTriage.current.act(it, a),
       edit: (it) => onTriage.current.edit(it),
       save: (it, t) => onTriage.current.save(it, t),
       move: (it) => onTriage.current.move(it),
       moveTo: (it, l) => onTriage.current.moveTo(it, l),
+      quiet: (id) => quiet.current === id,
     }),
-    [],
+    [prId],
   );
+  // The questions ask the author. On your own PR, the runner asks you as the author.
+  const asker = pr.role === "AUTHOR" ? "the author" : ((pr.authorName ?? pr.authorSlug ?? "the author").split(/\s+/)[0] ?? "the author");
   const draftCtx = useMemo<DraftCtx>(
     () => ({
       meta,
-      hints: o.hints,
-      onToggle: (id) =>
-        setOpenDrafts((m) => {
-          const it = latestItems.current.find((x) => x.id === id);
-          return new Map(m).set(id, !(m.get(id) ?? it?.status === "new"));
-        }),
+      asker,
+      onToggle: (id) => setOpenDrafts((m) => new Map(m).set(id, !(m.get(id) ?? id === latestList.current.firstNew))),
       onFrom: (agent) => onLog.current(agent, false, "review"),
       onShowInDiff: (id) => onShow.current(id),
       triage: triageCtx,
     }),
-    [meta, o.hints, triageCtx],
+    [meta, asker, triageCtx],
   );
 
   // ---------- Fix it (plan r3 UI-FIX) ----------
@@ -466,23 +484,19 @@ export function useReview(
     rereview,
     brief: () => openBrief(),
     drafts() {
-      // prototype/v3 goDrafts: the first draft, else the first question.
-      // The reply drafts come next, in screen order. A press in the review drafts goes on to them.
-      const first = ds.find((i) => i.status !== "discarded") ?? ds[0];
-      const q = questionJump(items);
+      // prototype/v3 goDrafts: the first row of the Drafts section that is not discarded.
+      // The reply drafts come next, in screen order. A press in the Drafts section goes on to them.
+      const first = list.find((i) => i.status !== "discarded") ?? list[0];
       const rs = ordered(o.threads, false).flatMap((t) => {
         const it = byThread.get(t.id);
         return it ? [{ thread: t.id, it }] : [];
       });
       const reply = rs.find((r) => r.it.status !== "discarded") ?? rs[0];
-      const inReview = !!document.activeElement?.closest("#g-drafts, #g-questions");
-      if (reply && (inReview || (!first && !q))) {
+      const inReview = !!document.activeElement?.closest("#s-drafts");
+      if (reply && (inReview || !first)) {
         o.reveal(reply.thread);
         focusAfter({ id: `rd-${reply.it.id}`, block: "start", flash: true });
-      } else if (first) {
-        setOpenDrafts((m) => new Map(m).set(first.id, true));
-        focusAfter({ id: `d-${first.id}`, block: "start", flash: true });
-      } else if (q) focusAfter({ id: `q-${q.first}`, block: "start", flash: true });
+      } else if (first) openDraft(first.id);
       else toast.add({ title: `No drafts. Press r to start a review with ${meta.runner.name}.` });
     },
     log: () => openLog(null),
@@ -534,14 +548,7 @@ export function useReview(
       stale: staleText(shown, o.commits),
       // The ledger follows the drafts of latestReview. The record shows it only for a done run.
       ledger:
-        r.kind === "review" ? (
-          <Ledger
-            jumps={severityJumps(ds)}
-            questions={qJump}
-            onDraft={openDraft}
-            onQuestion={(id) => focusAfter({ id: `q-${id}`, block: "start", flash: true })}
-          />
-        ) : null,
+        r.kind === "review" ? <Ledger jumps={severityJumps(ds)} questions={qJump} onDraft={openDraft} onQuestion={openDraft} /> : null,
       context: taskText(shown),
     };
   });
@@ -576,6 +583,7 @@ export function useReview(
           onStart={() => (mode.kind === "rereview" ? rereviewNow() : runNow())}
           onClose={closeBrief}
           onSettings={o.onSettings}
+          onTaskIds={o.onTaskIds}
           onEditProfile={o.onProfile}
           announce={o.announce}
         />
@@ -606,12 +614,7 @@ export function useReview(
     ),
     reviewed: latest !== null,
     draftCount: ds.filter((d) => d.status !== "discarded").length + (qJump?.n ?? 0),
-    drafts: (
-      <>
-        <Drafts items={ds} isOpen={isDraftOpen} triage={triage} ctx={draftCtx} />
-        <Questions items={items} pr={pr} meta={meta} triage={triage} ctx={triageCtx} />
-      </>
-    ),
+    drafts: <Drafts items={list} isOpen={isDraftOpen} triage={triage} ctx={draftCtx} />,
     cards,
     sheet: log && (
       <RunLog

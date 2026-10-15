@@ -37,7 +37,6 @@ export function Description({ detail, me }: { detail: PrDetail; me: string | nul
   const text = description?.trim() ?? "";
   const blocks = text.split(/\n\s*\n/);
   const long = blocks.length > 1;
-  const opener = pr.role === "AUTHOR" ? "you" : (pr.authorName ?? pr.authorSlug);
   return (
     // minmax(0, 1fr): a long word must not widen the column past the pane.
     <section
@@ -45,9 +44,8 @@ export function Description({ detail, me }: { detail: PrDetail; me: string | nul
       aria-labelledby="h-desc"
       className="grid max-w-[86ch] scroll-mt-3 grid-cols-[minmax(0,1fr)] justify-items-start gap-2.5 pt-6"
     >
-      <h2 id="h-desc" className={`${h2} w-full flex-wrap gap-y-0.5`}>
+      <h2 id="h-desc" className={h2}>
         Description
-        {opener && <span className="ml-auto text-xs font-normal text-muted-foreground">Opened by {opener}</span>}
       </h2>
       {!pr.followed && (
         <p className="m-0 text-muted-foreground">Not followed. Review Loop does not check this pull request for new comments.</p>

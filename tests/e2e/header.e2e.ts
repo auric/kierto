@@ -150,6 +150,8 @@ test("the key opens the PR on the server, the author name opens the user page, a
   const author = page.locator("[data-author]");
   await expect(author.getByRole("link", { name: "Maria Lopez" })).toHaveAttribute("href", `${FAKE_URL}/users/mlopez`);
   await expect(author).toContainText("Opened by Maria Lopez");
+  // The byline names the author, so the Description heading does not repeat it.
+  await expect(page.locator("#h-desc")).toHaveText("Description");
 
   // More: open the PR on the server, or copy its link. A reviewer PR has no planned items.
   await page.locator("#more-btn").click();
@@ -176,6 +178,21 @@ test("the key opens the PR on the server, the author name opens the user page, a
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(A);
   await expect(author).toContainText("Alex");
   await expect(author.getByRole("link")).toHaveCount(0);
+});
+
+// The brief of a PR without a task ID offers "Set up task IDs". It opens the same section as a chip without a link pattern.
+test("Set up task IDs in the brief opens Settings, Task IDs, and Back returns to the PR", async ({ page }) => {
+  await connect(page, A);
+  const pr = new URL(page.url()).pathname;
+  await page.keyboard.press("r");
+  const brief = page.locator("#brief");
+  await expect(brief).toContainText("No task ID found.");
+  await brief.getByRole("button", { name: "Set up task IDs" }).click();
+  await expect(page).toHaveURL(`${APP}/settings/task-ids`);
+  await expect(page.getByRole("heading", { name: "Task IDs" })).toBeFocused();
+  await page.goBack();
+  await expect.poll(() => new URL(page.url()).pathname).toBe(pr);
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(A);
 });
 
 test("task chips: a chip without a link pattern opens Settings, Task IDs; with a pattern it opens the task", async ({ page }) => {

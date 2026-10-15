@@ -121,6 +121,28 @@ test("get the code, open flush.ts, cards on their lines, Show in diff and back, 
   await page.keyboard.press("g");
   await page.keyboard.press("d");
   await expect(page.locator("#dl-0-n3")).toBeFocused();
+  // Plan pr-view-v4 2.7: g d also works from a closed row. A question has no line, so g d says why.
+  const strip = page.getByRole("navigation", { name: "Pull request summary" });
+  const head = page.locator("#h-drafts");
+  await expect(strip.getByRole("button", { name: "4 drafts" })).toBeVisible();
+  await expect(head).toHaveText(/^Drafts\s*4$/);
+  const minor = drafts(page).nth(1).locator("[data-row-head]");
+  await expect(minor).toHaveAttribute("aria-expanded", "false");
+  await minor.focus();
+  await page.keyboard.press("g");
+  await page.keyboard.press("d");
+  await expect(page.locator("#dl-0-n5")).toBeFocused();
+  const question = page.locator("[data-draft-question] [data-row-head]");
+  await question.focus();
+  await page.keyboard.press("g");
+  await page.keyboard.press("d");
+  await expect(page.locator("[data-slot=toast-title]", { hasText: "A question has no line in the diff." })).toBeVisible();
+  await expect(question).toBeFocused();
+  // d discards the question. The strip and the head count only the drafts that are not discarded.
+  await page.keyboard.press("d");
+  await expect(page.locator("[data-draft-question]")).toHaveAccessibleName("Discarded question");
+  await expect(strip.getByRole("button", { name: "3 drafts" })).toBeVisible();
+  await expect(head).toHaveText(/^Drafts\s*3$/);
 
   // Show in diff from the inline thread finds the old-side line.
   const mine = page.locator("[data-thread]", { hasText: "flush.ts" }).first();

@@ -87,10 +87,16 @@ test("A8: two of the drafts are accepted, and exactly those two texts post after
   await page.keyboard.press("a");
   await expect(drafts(page).nth(2)).toBeFocused();
   await page.keyboard.press("d");
-  await expect(drafts(page).nth(2)).toContainText("Discarded: The README does not name the flush order.");
-  // The questions sit below the drafts.
-  await page.locator("#g-questions").getByRole("button", { name: "Discard" }).click();
-  await expect(page.locator("#g-questions")).toContainText("Discarded: Must flush() stay atomic for readers?");
+  await expect(drafts(page).nth(2)).toHaveAccessibleName("Discarded draft. README.md:1.");
+  await expect(drafts(page).nth(2).locator("[data-row-head]")).toContainText(
+    "The README does not name the flush order.README.md:1Discarded",
+  );
+  // The question follows the findings in the same list. The focus and the open row go on to it.
+  const question = page.locator("[data-draft-question]");
+  await expect(question).toBeFocused();
+  await question.getByRole("button", { name: "Discard" }).click();
+  await expect(question).toHaveAccessibleName("Discarded question");
+  await expect(question.locator("[data-row-head]")).toContainText("Must flush() stay atomic for readers?Discarded");
   await expect(page.getByText("Ready to post: 2 inline comments")).toBeVisible();
   await expect(page.locator("#nav-post")).toHaveAccessibleName("Ready to post: 1");
 
@@ -209,6 +215,60 @@ test("p right after Accept opens the confirm while the accept request is still o
   await expect(page.getByText("Nothing is accepted yet. Accept drafts, questions, or replies first.")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(box).toBeHidden();
+  expect(await posts()).toEqual([]);
+});
+
+// Plan pr-view-v4 section 5: a triage edit keeps its text when the PR closes. A click on the PR or Back opens the editor again.
+test("an unsent triage edit survives a change of PR and Back; Save and Cancel clear it", async ({ page }) => {
+  await connect(page);
+  await reviewed(page);
+  const other = page.locator("[data-row]", { hasText: "Drop the legacy export endpoint" }).first();
+  const h1 = page.locator("section[aria-label='Details'] h1");
+  const edit = page.getByRole("textbox", { name: "Edit the finding" });
+  const stored = () => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("rl:edit:")));
+  // The Reviewing view holds this PR and PR 77.
+  await page.getByRole("button", { name: /^Reviewing/ }).click();
+  await drafts(page).nth(0).getByRole("button", { name: "Edit" }).click();
+  await expect(edit).toBeFocused();
+  await edit.fill(`${LOCK} Unsent edit.`);
+
+  // Another PR, then this one again: the editor is open with the text. It leaves the focus where it is.
+  await other.click();
+  await expect(h1).toHaveText("Drop the legacy export endpoint");
+  await row(page).click();
+  await expect(h1).toHaveText(TITLE);
+  await expect(edit).toHaveValue(`${LOCK} Unsent edit.`);
+  await expect(edit).not.toBeFocused();
+  // Back from another PR does the same.
+  await other.click();
+  await expect(h1).toHaveText("Drop the legacy export endpoint");
+  await page.goBack();
+  await expect(h1).toHaveText(TITLE);
+  await expect(edit).toHaveValue(`${LOCK} Unsent edit.`);
+
+  // Save posts nothing. It accepts the new text and clears the stored text.
+  await drafts(page).nth(0).getByRole("button", { name: "Save and accept" }).click();
+  await expect(edit).toHaveCount(0);
+  await expect(drafts(page).nth(0).locator("[data-row-head]")).toContainText("Unsent edit.");
+  await expect(drafts(page).nth(0).locator("[data-row-head]")).toContainText("Accepted");
+  expect(await stored()).toEqual([]);
+
+  // Cancel clears the text too, so the next visit opens no editor.
+  const minor = page.getByRole("textbox", { name: "Edit the finding" });
+  await expect(drafts(page).nth(1)).toBeFocused();
+  await page.keyboard.press("e");
+  await expect(minor).toBeFocused();
+  await minor.fill("A text that I cancel.");
+  expect(await stored()).toHaveLength(1);
+  await page.keyboard.press("Escape");
+  await expect(minor).toHaveCount(0);
+  expect(await stored()).toEqual([]);
+  await other.click();
+  await expect(h1).toHaveText("Drop the legacy export endpoint");
+  await row(page).click();
+  await expect(h1).toHaveText(TITLE);
+  await expect(drafts(page)).toHaveCount(3);
+  await expect(page.getByRole("textbox", { name: /^Edit the / })).toHaveCount(0);
   expect(await posts()).toEqual([]);
 });
 

@@ -1,5 +1,5 @@
-// Threads section (prototype/v3 threadsSec): the filter, the posts on the way, the drafts of the newest review,
-// then your turn, waiting, others, and resolved threads.
+// Threads section (prototype/v3 threadsSec): the filter, the posts on the way, then your turn, waiting, others, and resolved
+// threads. The drafts of the newest review have their own section above (plan pr-view-v4 2.7).
 import { CircleCheck, Hourglass, Reply, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -29,9 +29,8 @@ export function Threads(props: {
   posts: ReadonlyMap<number, readonly PostDto[]>;
   targets: ReadonlyMap<number, ReplyTarget>;
   cards?: ReadonlyMap<number, ReactNode>;
-  // The posts group and the drafts group above the threads.
+  // The posts group above the threads.
   outbox?: ReactNode;
-  drafts?: ReactNode;
   onNeedMe: (on: boolean) => void;
   onShowResolved: () => void;
 }) {
@@ -58,7 +57,6 @@ export function Threads(props: {
         )}
       </div>
       {props.outbox}
-      {props.drafts}
       {groups.length ? (
         // One flat list: a thread keeps its key and its state when it moves to another group, so an open reply confirm stays.
         groups.flatMap(({ k, ts }) => {

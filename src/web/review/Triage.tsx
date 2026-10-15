@@ -1,6 +1,6 @@
 // Triage of drafts and questions (plan v3 WP14a, prototype/v3 acts, editor, mover): accept, edit, discard, restore, and move.
 import { Check, CircleAlert, MoveVertical, Pencil, Undo2, X } from "lucide-react";
-import { type KeyboardEvent, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,13 +14,48 @@ export type TriageAction = "accept" | "discard" | "restore";
 export type TriageMode = "edit" | "move" | null;
 
 export type TriageCtx = {
+  // The local PR ID, for the key of an unsent edit.
+  pr: number;
   act: (it: ReviewItemDto, action: TriageAction) => void;
   // null closes the editor or the line field.
   edit: (it: ReviewItemDto | null) => void;
   save: (it: ReviewItemDto, text: string) => void;
   move: (it: ReviewItemDto | null) => void;
   moveTo: (it: ReviewItemDto, line: number) => void;
+  // true: the editor of this item opened again with its unsent text when the PR opened. It then leaves the focus where it is.
+  quiet: (id: number) => boolean;
 };
+
+// Unsent edit text stays in localStorage under rl:edit:<pr>:<item> (plan pr-view-v4 section 5). Storage can be off or full.
+// The editor then keeps the text in memory only.
+const EDIT = "rl:edit:";
+const editKey = (pr: number, id: number) => `${EDIT}${pr}:${id}`;
+function readEdit(pr: number, id: number): string | null {
+  try {
+    return localStorage.getItem(editKey(pr, id));
+  } catch {
+    return null;
+  }
+}
+// null removes the text.
+export function writeEdit(pr: number, id: number, text: string | null) {
+  try {
+    if (text === null) localStorage.removeItem(editKey(pr, id));
+    else localStorage.setItem(editKey(pr, id), text);
+  } catch {}
+}
+// The item of one unsent edit of this PR, so its editor opens again. null: none.
+export function storedEdit(pr: number): number | null {
+  try {
+    const p = `${EDIT}${pr}:`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      const id = k?.startsWith(p) ? Number(k.slice(p.length)) : 0;
+      if (Number.isSafeInteger(id) && id > 0) return id;
+    }
+  } catch {}
+  return null;
+}
 
 // Esc in a triage field closes only that field. The shell key handler never sees it.
 function onEscape(e: KeyboardEvent, close: () => void) {
@@ -31,10 +66,23 @@ function onEscape(e: KeyboardEvent, close: () => void) {
   return true;
 }
 
-// prototype/v3 acts(). Each button names its key in the tooltip.
-// flush: no indent under an avatar, as in the questions of the summary.
-export function Acts(props: { it: ReviewItemDto; busy: boolean; showState?: boolean; flush?: boolean; ctx: TriageCtx }) {
+// prototype/v3 acts(), pr-view-v4 drafts(). Each button names its key in the tooltip.
+// flush: no indent under an avatar, as in the open rows of the Drafts section.
+export function Acts(props: { it: ReviewItemDto; busy: boolean; flush?: boolean; ctx: TriageCtx; children?: ReactNode }) {
   const { it, busy, ctx } = props;
+  const row = cn("mt-2.5 flex flex-wrap items-center gap-1.5", !props.flush && "rl-indent");
+  if (it.status === "discarded") {
+    // items.ts refuses Restore for a finding without an anchor: a re-review found its code gone.
+    if (it.kind === "finding" && !it.anchor) return null;
+    return (
+      <div className={row}>
+        <Button size="sm" variant="outline" disabled={busy} title="Key: d" aria-keyshortcuts="d" onClick={() => ctx.act(it, "restore")}>
+          <Undo2 aria-hidden data-icon="inline-start" />
+          Restore
+        </Button>
+      </div>
+    );
+  }
   const move = it.kind === "finding" && it.anchor && (
     <button
       type="button"
@@ -49,15 +97,9 @@ export function Acts(props: { it: ReviewItemDto; busy: boolean; showState?: bool
     </button>
   );
   return (
-    <div className={cn("mt-2.5 flex flex-wrap items-center gap-1.5", !props.flush && "rl-indent")}>
+    <div className={row}>
       {it.status === "accepted" ? (
         <>
-          {props.showState && (
-            <span className="mr-1 inline-flex items-center gap-1 font-medium text-ink-2">
-              <Check aria-hidden className="size-[15px]" />
-              Accepted
-            </span>
-          )}
           <Button size="sm" variant="outline" disabled={busy} title="Key: e" aria-keyshortcuts="e" onClick={() => ctx.edit(it)}>
             <Pencil aria-hidden data-icon="inline-start" />
             Edit
@@ -84,6 +126,7 @@ export function Acts(props: { it: ReviewItemDto; busy: boolean; showState?: bool
         </>
       )}
       {move}
+      {props.children}
     </div>
   );
 }
@@ -106,17 +149,23 @@ export function RestoreButton({ it, busy, ctx }: { it: ReviewItemDto; busy: bool
 }
 
 // Saving binds the approval to the new text: an edit always accepts the item (prototype/v3 saveEdit).
+// The unsent text survives Back and a change of PR. Save, Cancel, and each other triage action clear it.
 export function Editor({ it, busy, flush, ctx }: { it: ReviewItemDto; busy: boolean; flush?: boolean; ctx: TriageCtx }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const box = useRef<HTMLDivElement>(null);
+  const [initial] = useState(() => readEdit(ctx.pr, it.id) ?? it.body);
   // The whole editor comes into view, so its buttons do too.
   useLayoutEffect(() => {
     const ta = ref.current;
-    if (!ta) return;
+    if (!ta || ctx.quiet(it.id)) return;
     ta.focus({ preventScroll: true });
     ta.setSelectionRange(ta.value.length, ta.value.length);
     box.current?.scrollIntoView({ block: "nearest" });
-  }, []);
+  }, [ctx, it.id]);
+  const cancel = () => {
+    writeEdit(ctx.pr, it.id, null);
+    ctx.edit(null);
+  };
   const save = () => {
     const v = ref.current?.value.trim() ?? "";
     if (!v) {
@@ -137,10 +186,11 @@ export function Editor({ it, busy, flush, ctx }: { it: ReviewItemDto; busy: bool
         rows={6}
         maxLength={MAX_NOTE}
         spellCheck
-        defaultValue={it.body}
+        defaultValue={initial}
         className="field-sizing-fixed min-h-[9em] resize-y bg-pane leading-normal"
+        onChange={(e) => writeEdit(ctx.pr, it.id, e.target.value === it.body ? null : e.target.value)}
         onKeyDown={(e) => {
-          if (onEscape(e, () => ctx.edit(null))) return;
+          if (onEscape(e, cancel)) return;
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             save();
@@ -152,7 +202,7 @@ export function Editor({ it, busy, flush, ctx }: { it: ReviewItemDto; busy: bool
           <Check aria-hidden data-icon="inline-start" />
           Save and accept
         </Button>
-        <Button size="sm" variant="outline" title="Key: Esc" onClick={() => ctx.edit(null)}>
+        <Button size="sm" variant="outline" title="Key: Esc" onClick={cancel}>
           Cancel
         </Button>
         <span className="ml-1 text-xs text-muted-foreground">Ctrl+Enter saves. Esc cancels.</span>
@@ -186,7 +236,7 @@ export function Mover({ it, busy, ctx }: { it: ReviewItemDto; busy: boolean; ctx
   const id = `mv-${it.id}`;
   return (
     <>
-      <div className="rl-indent mt-2.5 flex flex-wrap items-center gap-1.5 text-sm text-ink-2">
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-sm text-ink-2">
         <MoveVertical aria-hidden className="size-[13px] text-muted-foreground" />
         <label htmlFor={id}>Line</label>
         <Input
@@ -223,7 +273,7 @@ export function Mover({ it, busy, ctx }: { it: ReviewItemDto; busy: boolean; ctx
         </span>
       </div>
       {err && (
-        <p id={`${id}-err`} role="alert" className="rl-indent m-0 mt-1.5 flex items-center gap-1.5 text-xs text-destructive">
+        <p id={`${id}-err`} role="alert" className="m-0 mt-1.5 flex items-center gap-1.5 text-xs text-destructive">
           <CircleAlert aria-hidden className="size-[13px] shrink-0" />
           {err}
         </p>

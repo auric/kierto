@@ -476,12 +476,14 @@ function Shell({ stale }: { stale: boolean }) {
 
   return (
     <div className="rl-app" data-m={mobile}>
-      <a
-        href="#rows"
-        className="sr-only rounded-md bg-pane text-pen focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1.5"
+      {/* A button, not a "#rows" link: a hash change pushes a history entry with no state. */}
+      <button
+        type="button"
+        className="sr-only cursor-pointer rounded-md bg-pane text-pen focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1.5"
+        onClick={() => document.getElementById("rows")?.focus()}
       >
         Skip to the list
-      </a>
+      </button>
       <Sidebar
         view={showSettings || repo ? null : view}
         counts={viewCounts(all)}
