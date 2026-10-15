@@ -1,7 +1,7 @@
-// Plan r2 UI-ASK: the pure Ask rules. The state of each answer, the fold count, and the busy note.
+// Plan r2 UI-ASK: the pure Ask rules. The state of each answer and the busy note.
 import { describe, expect, test } from "bun:test";
 import type { AskDto, RunDto } from "../../src/shared/dto";
-import { askCount, askView, busyText } from "../../src/web/ask/model";
+import { askView, busyText } from "../../src/web/ask/model";
 
 const run = (o: Partial<RunDto> = {}): RunDto => ({
   id: 1,
@@ -98,12 +98,6 @@ describe("ask", () => {
   test("a running and a cancelled ask", () => {
     expect(askView(ask({ status: "running", finishedAt: null }, null), "Claude Code")).toEqual({ kind: "running", startedAt: 1_000 });
     expect(askView(ask({ status: "cancelled" }, null), "Claude Code")).toEqual({ kind: "cancelled" });
-  });
-
-  test("the fold head counts the answers and names the running one", () => {
-    expect(askCount([])).toBe("");
-    expect(askCount([ask(), ask({ id: 2 })])).toBe("2");
-    expect(askCount([ask({ id: 3, status: "running" }), ask()])).toBe("2, 1 running");
   });
 
   test("the busy note names what holds the slot, never a review for an ask", () => {

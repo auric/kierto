@@ -3,20 +3,25 @@ import {
   Bot,
   Check,
   ChevronRight,
+  ClipboardCopy,
   Copy,
   CornerDownRight,
+  Ellipsis,
   ExternalLink,
   FileCode,
   History,
   Hourglass,
+  Link,
   MessageSquare,
   Reply,
   SquareCheckBig,
   SquareDot,
+  Wrench,
 } from "lucide-react";
 import { lazy, memo, type ReactNode, Suspense, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
@@ -24,8 +29,7 @@ import type { ExcerptLine, PostDto } from "../../shared/dto";
 import { commentUrl } from "../../shared/links";
 import { type PostCtx, ReplyPosts } from "../publish/Outbox";
 import { lineText } from "../review/model";
-import type { Hints } from "../shell/Hint";
-import { HintTrigger } from "../shell/Hint";
+import { Hint, type Hints, HintTrigger } from "../shell/Hint";
 import { ago, initials } from "../shell/model";
 import { ReplyComposer, type ReplyTarget } from "./ReplyComposer";
 import {
@@ -78,6 +82,12 @@ export type ThreadCtx = {
   onDraftReply: (thread: number) => void;
   // Plan r2 UI-DIFF: focuses the line of an inline thread in the diff.
   onShowInDiff: (thread: number) => void;
+  // The user's own pull request: open threads get Fix and the runner prompt (plan pr-view-v4 2.8).
+  author: boolean;
+  // Opens the Fix list with only this thread ticked.
+  onFix: (thread: number) => void;
+  // Copies the runner prompt of the thread. Call it in the click handler. Resolves to the next step, or null.
+  copyPrompt: (thread: number) => Promise<string | null>;
   posts: PostCtx;
 };
 
@@ -144,6 +154,7 @@ const placeOf = (t: ThreadModel) =>
 
 // A collapsed thread is one line that sums it up. An open thread shows the same facts in its messages, so the line drops them.
 // posts: my replies on the way. target: the message that the reply box answers. draft: the AI reply draft card (WP18).
+// drafted: the thread has a reply draft to accept, or one on the way, so the footer has no Draft reply.
 export const Thread = memo(function Thread({
   t,
   open,
@@ -153,6 +164,7 @@ export const Thread = memo(function Thread({
   posts,
   target,
   draft,
+  drafted,
   ctx,
 }: {
   t: ThreadModel;
@@ -163,6 +175,7 @@ export const Thread = memo(function Thread({
   posts?: readonly PostDto[];
   target?: ReplyTarget;
   draft?: ReactNode;
+  drafted: boolean;
   ctx: ThreadCtx;
 }) {
   const a = t.anchor;
@@ -252,25 +265,7 @@ export const Thread = memo(function Thread({
                   />
                 )}
                 {draft}
-                <ReplyComposer
-                  t={t}
-                  target={target}
-                  ctx={ctx}
-                  aside={
-                    <>
-                      {a && (
-                        <Button size="sm" variant="ghost" className="text-ink-2" onClick={() => ctx.onShowInDiff(t.id)}>
-                          <FileCode aria-hidden data-icon="inline-start" />
-                          Show in diff
-                        </Button>
-                      )}
-                      <Button size="sm" variant="ghost" className="text-ink-2" onClick={() => ctx.onDraftReply(t.id)}>
-                        <Bot aria-hidden data-icon="inline-start" />
-                        Draft reply
-                      </Button>
-                    </>
-                  }
-                />
+                <Footer t={t} drafted={drafted} target={target} ctx={ctx} />
               </>
             }
           />
@@ -279,6 +274,93 @@ export const Thread = memo(function Thread({
     </article>
   );
 });
+
+// Plan pr-view-v4 2.8: the reply box, Draft reply on a your-turn thread without a draft, Fix on an open thread of the own PR, and
+// More. The note after a prompt copy stays, so the user can read the next step.
+function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean; target?: ReplyTarget; ctx: ThreadCtx }) {
+  const [next, setNext] = useState<string | null>(null);
+  const open = t.turn !== "resolved" && t.last !== null;
+  const link = ctx.web && commentUrl(ctx.web, t.id);
+  const prompt = ctx.author && t.last !== null;
+  const copyLink = (url: string) =>
+    copyText(url).then((ok) =>
+      ok
+        ? ctx.announce("Copied the comment link.")
+        : toast.add({ title: `The clipboard is blocked here. Open the thread on ${ctx.forge}.` }),
+    );
+  return (
+    <>
+      <ReplyComposer
+        t={t}
+        target={target}
+        ctx={ctx}
+        aside={
+          <span className="flex flex-wrap items-center gap-1.5">
+            {t.turn === "your" && !drafted && (
+              <Button size="sm" variant="outline" onClick={() => ctx.onDraftReply(t.id)}>
+                <Bot aria-hidden data-icon="inline-start" />
+                Draft reply
+              </Button>
+            )}
+            {ctx.author && open && (
+              <Hint label="Fix this thread. Key: f">
+                <Button size="sm" variant="outline" aria-keyshortcuts="f" onClick={() => ctx.onFix(t.id)}>
+                  <Wrench aria-hidden data-icon="inline-start" />
+                  Fix
+                </Button>
+              </Hint>
+            )}
+            {(t.anchor || prompt || link) && (
+              <DropdownMenu modal={false}>
+                <Hint label="More for this thread">
+                  <DropdownMenuTrigger
+                    render={<Button variant="ghost" size="icon-sm" aria-label="More for this thread" className="text-ink-2" />}
+                  >
+                    <Ellipsis aria-hidden />
+                  </DropdownMenuTrigger>
+                </Hint>
+                <DropdownMenuContent align="end" className="w-64">
+                  <DropdownMenuGroup>
+                    {t.anchor && (
+                      <DropdownMenuItem onClick={() => ctx.onShowInDiff(t.id)}>
+                        <FileCode aria-hidden />
+                        Show in diff
+                      </DropdownMenuItem>
+                    )}
+                    {prompt && (
+                      <DropdownMenuItem onClick={() => void ctx.copyPrompt(t.id).then((text) => text && setNext(text))}>
+                        <ClipboardCopy aria-hidden />
+                        Copy prompt for {ctx.runner}
+                      </DropdownMenuItem>
+                    )}
+                    {link && (
+                      <>
+                        <DropdownMenuItem onClick={() => void copyLink(link)}>
+                          <Link aria-hidden />
+                          Copy the comment link
+                        </DropdownMenuItem>
+                        <DropdownMenuItem render={<a href={link} target="_blank" rel="noopener noreferrer" />}>
+                          <ExternalLink aria-hidden />
+                          Open on {ctx.forge}
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </span>
+        }
+      />
+      {next && (
+        <p className="rl-fade m-0 mt-1.5 max-w-[72ch] text-xs text-ink-2 [overflow-wrap:anywhere]">
+          <Check aria-hidden className="mr-1 inline size-[13px] align-[-2px]" />
+          {next}
+        </p>
+      )}
+    </>
+  );
+}
 
 const SIGN = { add: "+", del: "−", ctx: " " } as const;
 

@@ -34,6 +34,8 @@ export type Scenario = {
   // PR 1004 (PROJ1/sample-repo-4, source branch fix/flush-lock): the PR of the token owner joins the author dashboard.
   // The reviewer asks for code changes in threads 5000001 and 5000002. makeClone(1004) gives a clone on its source branch.
   author: boolean;
+  // PR 1004: the token owner adds the general thread 5000003. Its newest message is mine, so it waits for the reviewer.
+  own: boolean;
   // PR 1001: the source branch moves one commit on, with a C++ header and source and a Python file.
   native: boolean;
 };
@@ -157,6 +159,13 @@ export async function runSkills(): Promise<string[] | null> {
 export async function testCheckSkill(present: boolean): Promise<void> {
   const res = await fetch(`${FAKE_URL}/__control/skill`, { method: "POST", headers: auth, body: JSON.stringify({ present }) });
   if (!res.ok) throw new Error(`control skill: ${res.status}`);
+}
+
+// The stdin of the newest fake CLI run, or null before the first run. The prompt of a run is its stdin.
+export async function runStdin(): Promise<string | null> {
+  const res = await fetch(`${FAKE_URL}/__control/run-stdin`, { method: "POST", headers: auth });
+  if (!res.ok) throw new Error(`control run-stdin: ${res.status}`);
+  return ((await res.json()) as { stdin: string | null }).stdin;
 }
 
 // The prompt of each agent of the newest fake CLI run, by agent name. null before the first run and after the run ends.

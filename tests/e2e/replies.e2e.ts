@@ -1,5 +1,6 @@
 // Reply drafts (docs/plans/replies.md WP18): the Draft replies button, the draft card in each thread, its triage and post,
-// the stale mark, cancel, and a reply confirm that stays open when its thread changes group.
+// the stale mark, cancel, a reply confirm that stays open when its thread changes group, and the thread footer with the
+// "All | Need me" filter (plan pr-view-v4 2.8).
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI. The CLI echoes one reply per
 // thread of its "Threads:" line, and every third thread gets action none (tests/support/fake-claude.ts echoReplies).
 import { test as base, expect, type Locator, type Page } from "@playwright/test";
@@ -262,4 +263,44 @@ test("the confirm shows the mark on an AI reply draft, and not after the setting
   await postButton(confirmBox(page)).click();
   await expect(thread(page, 1000101).locator("[data-post]")).toContainText("Posted.");
   expect(await posts()).toMatchObject([{ text: echoRaw(1000201), parent: { id: 1000201 } }]);
+});
+
+test("the thread footer: Draft reply only on a your-turn thread without a draft, More with the links, no Fix; Need me filters", async ({
+  page,
+}) => {
+  await connect(page);
+  await control("state", { turns: 1 });
+  await openThread(page, ROOT);
+  await openThread(page, 1000101);
+  // ROOT waits for the other person. 1000101 is your turn.
+  await expect(thread(page, ROOT).getByRole("button", { name: "Write a reply" })).toBeVisible();
+  await expect(thread(page, ROOT).getByRole("button", { name: "Draft reply" })).toHaveCount(0);
+  await expect(thread(page, 1000101).getByRole("button", { name: "Draft reply" })).toBeVisible();
+  // A reviewer PR gets no Fix and no runner prompt.
+  await expect(thread(page, 1000101).getByRole("button", { name: "Fix", exact: true })).toHaveCount(0);
+  await thread(page, 1000101).getByRole("button", { name: "More for this thread" }).click();
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem")).toHaveText(["Copy the comment link", "Open on Bitbucket"]);
+  await expect(menu.getByRole("menuitem", { name: "Open on Bitbucket" })).toHaveAttribute(
+    "href",
+    `${FAKE_URL}/projects/PROJ1/repos/sample-repo-2/pull-requests/1001/overview?commentId=1000101`,
+  );
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+
+  // A reply draft in the thread takes the place of Draft reply.
+  await thread(page, 1000101).getByRole("button", { name: "Draft reply" }).click();
+  await expect(card(page, 1000101)).toContainText(echo(1000201), { timeout: RUN_MS });
+  await expect(thread(page, 1000101).getByRole("button", { name: "Draft reply" })).toHaveCount(0);
+
+  // Need me shows only the threads where it is your turn or with a new message.
+  const filter = page.getByRole("group", { name: "Show threads" });
+  await expect(filter.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+  await filter.getByRole("button", { name: "Need me" }).click();
+  await expect(filter.getByRole("button", { name: "Need me" })).toHaveAttribute("aria-pressed", "true");
+  await expect(thread(page, ROOT)).toHaveCount(0);
+  await expect(thread(page, 1000101)).toBeVisible();
+  await filter.getByRole("button", { name: "All" }).click();
+  await expect(thread(page, ROOT)).toBeVisible();
+  expect(await posts()).toEqual([]);
 });

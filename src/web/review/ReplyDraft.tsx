@@ -1,21 +1,19 @@
 // Reply drafts (docs/plans/replies.md step 6): the Draft replies button and the draft card under each thread tree.
 // A draft is a draft only. It posts after Accept and the post confirm, as one reply to the message it answers.
-// Plan r3 UI-FIX: the judgement chip, Fix and the runner prompt on the own PR, and the wait for a "Fixed in" commit.
+// Plan r3 UI-FIX: the judgement chip and the wait for a "Fixed in" commit. Fix sits in the thread footer (plan pr-view-v4 2.8).
 import {
   Check,
   CircleCheck,
   CircleHelp,
   CircleSlash,
-  ClipboardCopy,
   Contrast,
   History,
   Hourglass,
   LoaderCircle,
   type LucideIcon,
   Reply,
-  Wrench,
 } from "lucide-react";
-import { memo, type ReactNode, useState } from "react";
+import { memo, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
@@ -76,11 +74,8 @@ export type ReplyCtx = {
   triage: TriageCtx;
   // Draft again: a new reply run for this thread only.
   again: (thread: number) => void;
-  // Plan r3: a fix run for this thread only.
-  fix: (thread: number) => void;
-  // Copies the runner prompt of the thread. Call it in the click handler. Resolves to the next step for the user, or null
-  // when the clipboard is blocked.
-  copyPrompt: (thread: number) => Promise<string | null>;
+  // The user's own pull request: the judgement sets the default tick of the Fix list.
+  author: boolean;
 };
 
 // Dashed: a draft that nobody accepted yet. Solid: accepted, so the post bar holds it.
@@ -90,49 +85,13 @@ const icon = "size-[15px] shrink-0";
 const JUDGEMENT_ICON: Record<Judgement, LucideIcon> = { valid: CircleCheck, partly: Contrast, invalid: CircleSlash, question: CircleHelp };
 
 // The judgement of the AI on the review point. The word carries the state, the icon only repeats it.
-function JudgementChip({ j }: { j: Judgement }) {
+export function JudgementChip({ j }: { j: Judgement }) {
   const Icon = JUDGEMENT_ICON[j];
   return (
     <Badge variant="outline" data-judgement={j}>
       <Icon aria-hidden data-icon="inline-start" />
       {JUDGEMENT[j]}
     </Badge>
-  );
-}
-
-// The note stays after the copy, so the user can read the next step.
-function PromptButton({ thread, ctx }: { thread: number; ctx: ReplyCtx }) {
-  const [next, setNext] = useState<string | null>(null);
-  const copy = () =>
-    void ctx.copyPrompt(thread).then((text) => {
-      if (text) setNext(text);
-    });
-  return (
-    <>
-      <Button size="sm" variant="ghost" className="text-ink-2" onClick={copy}>
-        <ClipboardCopy aria-hidden data-icon="inline-start" />
-        Copy prompt for {ctx.meta.runner.name}
-      </Button>
-      {next && (
-        <p className="rl-fade m-0 w-full text-xs text-ink-2 [overflow-wrap:anywhere]">
-          <Check aria-hidden className="mr-1 inline size-[13px] align-[-2px]" />
-          {next}
-        </p>
-      )}
-    </>
-  );
-}
-
-// Plan r3 section 1: only valid and partly offer Fix, on the user's own pull request.
-function FixActs({ thread, ctx }: { thread: number; ctx: ReplyCtx }) {
-  return (
-    <div className="rl-indent mt-1.5 flex flex-wrap items-center gap-1.5">
-      <Button size="sm" variant="outline" aria-label="Fix the code for this comment" onClick={() => ctx.fix(thread)}>
-        <Wrench aria-hidden data-icon="inline-start" />
-        Fix
-      </Button>
-      <PromptButton thread={thread} ctx={ctx} />
-    </div>
   );
 }
 
@@ -148,14 +107,13 @@ function Head({ meta, children }: { meta: MetaDto; children?: ReactNode }) {
 
 // thread: the root comment ID. to: the author of the message that the draft answers.
 // mode: the open editor of this draft. busy: a triage request of this draft is out.
-// fixable: the draft offers Fix. waiting: the short hash of a "Fixed in" commit that the PR commits do not list yet.
+// waiting: the short hash of a "Fixed in" commit that the PR commits do not list yet.
 export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   card: ReplyCard;
   thread: number;
   to: string | null;
   mode: TriageMode;
   busy: boolean;
-  fixable: boolean;
   waiting: string | null;
   ctx: ReplyCtx;
 }) {
@@ -198,9 +156,18 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
     </p>
   );
   const j = p.judgement ?? null;
-  const chip = j && <JudgementChip j={j} />;
+  const chip =
+    j &&
+    (ctx.author ? (
+      <Hint label="The judgement sets the default tick in the Fix list.">
+        <span className="inline-flex">
+          <JudgementChip j={j} />
+        </span>
+      </Hint>
+    ) : (
+      <JudgementChip j={j} />
+    ));
   const judged = j ? ` ${JUDGEMENT[j]}.` : "";
-  const fix = props.fixable && <FixActs thread={thread} ctx={ctx} />;
   // No data-item: there is nothing to accept, so the keys a, e, and d skip it. The reply box below takes your own reply.
   if (card.kind === "none") {
     return (
@@ -216,7 +183,6 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
           No reply needed: <Inline text={p.reason} />
         </p>
         {stale}
-        {fix}
       </article>
     );
   }
@@ -268,7 +234,6 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
           )}
           {stale}
           <Acts it={it} busy={props.busy} ctx={ctx.triage} />
-          {fix}
         </>
       )}
     </article>

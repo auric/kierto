@@ -1,7 +1,8 @@
-// Threads section (prototype/v3 threadsSec): the filter, the posts on the way, then your turn, waiting, others, and resolved
-// threads. The drafts of the newest review have their own section above (plan pr-view-v4 2.7).
+// Threads section (prototype/v3 threadsSec, plan pr-view-v4 2.8): the "All | Need me" filter, the posts on the way, then your turn,
+// waiting, others, and resolved threads. The drafts of the newest review have their own section above (plan pr-view-v4 2.7).
 import { CircleCheck, Hourglass, Reply, Users } from "lucide-react";
 import type { ReactNode } from "react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import type { PostDto } from "../../shared/dto";
 import type { Turn } from "../../shared/turn";
@@ -29,6 +30,8 @@ export function Threads(props: {
   posts: ReadonlyMap<number, readonly PostDto[]>;
   targets: ReadonlyMap<number, ReplyTarget>;
   cards?: ReadonlyMap<number, ReactNode>;
+  // The threads with a reply draft to accept, or one on the way.
+  drafted: ReadonlySet<number>;
   // The posts group above the threads.
   outbox?: ReactNode;
   onNeedMe: (on: boolean) => void;
@@ -40,20 +43,37 @@ export function Threads(props: {
     const ts = vis.filter((t) => t.turn === k);
     return ts.length ? [{ k, ts }] : [];
   });
+  const open = threads.filter((t) => t.turn !== "resolved").length;
   return (
     <section id="s-threads" aria-labelledby="h-threads" className="max-w-[86ch] scroll-mt-3 pt-6">
-      <div className="mb-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1">
         <h2 id="h-threads" className="m-0 flex items-baseline gap-2 text-[15px] font-bold tracking-[-0.005em]">
           Threads
-          <span className="text-sm font-medium text-muted-foreground">
-            {needMe ? `${vis.length} of ${threads.length}` : threads.length}
-          </span>
+          <span className="text-sm font-medium text-muted-foreground">{threads.length ? `${open} open` : 0}</span>
         </h2>
         {threads.length > 0 && (
-          <label className="ml-auto inline-flex cursor-pointer items-center gap-[7px] text-sm text-ink-2">
-            <input type="checkbox" className="m-0 accent-foreground" checked={needMe} onChange={(e) => props.onNeedMe(e.target.checked)} />
-            Only threads that need me
-          </label>
+          <ToggleGroup
+            aria-label="Show threads"
+            variant="outline"
+            size="sm"
+            spacing={0}
+            className="ml-auto"
+            value={[needMe ? "me" : "all"]}
+            onValueChange={(v) => v[0] && props.onNeedMe(v[0] === "me")}
+          >
+            {[
+              ["all", "All"],
+              ["me", "Need me"],
+            ].map(([value, label]) => (
+              <ToggleGroupItem
+                key={value}
+                value={value}
+                className="aria-pressed:bg-foreground aria-pressed:font-semibold aria-pressed:text-background"
+              >
+                {label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
         )}
       </div>
       {props.outbox}
@@ -93,6 +113,7 @@ export function Threads(props: {
                 posts={props.posts.get(t.id)}
                 target={props.targets.get(t.id)}
                 draft={props.cards?.get(t.id)}
+                drafted={props.drafted.has(t.id)}
                 ctx={props.ctx}
               />
             )),

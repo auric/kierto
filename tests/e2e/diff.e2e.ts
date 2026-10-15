@@ -147,7 +147,9 @@ test("get the code, open flush.ts, cards on their lines, Show in diff and back, 
   // Show in diff from the inline thread finds the old-side line.
   const mine = page.locator("[data-thread]", { hasText: "flush.ts" }).first();
   await mine.locator("button[aria-expanded]").first().click();
-  await mine.getByRole("button", { name: "Show in diff" }).click();
+  // Show in diff sits in More of the thread footer (plan pr-view-v4 2.8).
+  await mine.getByRole("button", { name: "More for this thread" }).click();
+  await page.getByRole("menuitem", { name: "Show in diff" }).click();
   await expect(page.locator("#dl-0-n2")).toBeFocused();
   await cardsAt(page, "dl-0-n2").getByRole("button", { name: "Go to thread" }).click();
   await expect(mine).toBeFocused();

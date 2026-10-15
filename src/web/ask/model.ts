@@ -32,12 +32,6 @@ export function askView(a: AskDto, runner: string): AskView {
   }
 }
 
-// The fold head: the answer count, and the running ask. One run holds the slot at a time (A14).
-export function askCount(asks: AskDto[]): string {
-  if (!asks.length) return "";
-  return asks.some((a) => a.run.status === "running") ? `${asks.length}, 1 running` : `${asks.length}`;
-}
-
 // The note under the box while a run holds the only slot. where: "this pull request" or the PR key. The server still decides.
 export const busyText = (runner: string, kind: RunKind, where: string) =>
   `${runner} is ${RUN_TEXT[kind].doing} ${where}. One review runs at a time.`;

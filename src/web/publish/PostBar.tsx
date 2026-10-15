@@ -1,5 +1,6 @@
-// Post bar (prototype/v3 postBar): shown while something is accepted. p or the button opens the confirm with the exact text
-// and destination of each comment. The confirm keeps the plan it showed: a change on the server gives 409 and a new plan.
+// The post part of the bottom bar (prototype/v3 postBar, plan pr-view-v4 2.11): shown while something is accepted. p or the button
+// opens the confirm with the exact text and destination of each comment. The confirm keeps the plan it showed: a change on the
+// server gives 409 and a new plan.
 import { useQueryClient } from "@tanstack/react-query";
 import { Send } from "lucide-react";
 import { useState } from "react";
@@ -112,35 +113,31 @@ export function usePostBar(
   })();
 
   const api: PostBarApi = { open, close, isOpen: c !== null && !c.posting };
-  if (!c && !posts.length) return { node: null, api };
+  // Plan pr-view-v4 2.11: the part shares the bottom bar with the fix parts. The confirm takes the place of the part.
   return {
     api,
-    node: (
-      <div data-postbar className="sticky bottom-0 z-[2] border-t border-rule-strong bg-pane px-6 text-sm max-[759px]:px-4">
-        {c ? (
-          <Confirm
-            id="post-confirm"
-            title={shown.length ? `Post ${destText(shown)} to ${key}?` : `Post to ${key}?`}
-            note={note}
-            entries={c.plan && entries(c.plan, o.comments)}
-            posting={c.posting}
-            error={c.error}
-            canPost={!!c.plan}
-            onPost={() => void post()}
-            onCancel={close}
-            className="max-h-[62vh] pt-3.5 pb-2.5"
-          />
-        ) : (
-          <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2 py-2.5">
-            <span>Ready to post: {destText(posts)}</span>
-            <span className="flex-1" />
-            <Button id="post-btn" size="sm" title="Key: p" aria-keyshortcuts="p" onClick={open}>
-              <Send aria-hidden data-icon="inline-start" />
-              Post to {o.forge}
-            </Button>
-          </div>
-        )}
-      </div>
+    part: !c && posts.length > 0 && (
+      <span data-post-part className="flex min-w-0 flex-[1_1_auto] flex-wrap items-center gap-x-3.5 gap-y-2">
+        <span>Ready to post: {destText(posts)}</span>
+        <Button id="post-btn" size="sm" title="Key: p" aria-keyshortcuts="p" className="ml-auto" onClick={open}>
+          <Send aria-hidden data-icon="inline-start" />
+          Post to {o.forge}
+        </Button>
+      </span>
+    ),
+    confirm: c && (
+      <Confirm
+        id="post-confirm"
+        title={shown.length ? `Post ${destText(shown)} to ${key}?` : `Post to ${key}?`}
+        note={note}
+        entries={c.plan && entries(c.plan, o.comments)}
+        posting={c.posting}
+        error={c.error}
+        canPost={!!c.plan}
+        onPost={() => void post()}
+        onCancel={close}
+        className="max-h-[62vh] pt-3.5 pb-2.5"
+      />
     ),
   };
 }

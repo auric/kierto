@@ -1388,10 +1388,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     return out.sort((a, b) => a.thread - b.thread);
   }
 
-  // The threads of a fix run (plan r3 S-FIX). A given list passes the reply-run checks.
+  // The threads of a fix run (plan r3 S-FIX). A given list passes the reply-run checks, and each thread must be unresolved (fix-ux.md).
   // Absent list: each thread whose newest reply item is not posted and judges the comment valid or partly valid, and that has a live message.
   function fixThreads(db: Database, pr: PrRow, list?: number[]): ReplyThread[] | { status: 400 | 409; error: string } {
-    if (list) return replyThreads(db, pr, list);
+    if (list) {
+      const threads = turnThreads(db, pr);
+      const resolved = list.find((id) => threads.get(id)?.some((m) => m.threadResolved));
+      if (resolved !== undefined) return { status: 400, error: `Thread ${resolved} is resolved. Fix works only on open threads.` };
+      return replyThreads(db, pr, list);
+    }
     const newest = new Map<number, ItemRow>();
     for (const r of db.query(SQL.replyItems).all({ pr: pr.id }) as ItemRow[]) if (r.thread !== null) newest.set(r.thread, r);
     const threads = turnThreads(db, pr);
@@ -1532,7 +1537,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (!pr) return { status: 404, error: "Pull request not found." };
       const { source_head, target_head } = pr;
       if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
-      if (pr.my_role !== "AUTHOR") return { status: 409, error: "Fix runs work only on your own pull requests." };
+      if (pr.my_role !== "AUTHOR") return { status: 409, error: "Fix works only on your own pull requests." };
       const brief = briefOf(db, id);
       const profile = profileOf(settings.profiles(), profileId ?? brief.profile);
       if (profile.explain) return { status: 409, error: "The Explain profile proposes no fixes. Pick a review profile first." };

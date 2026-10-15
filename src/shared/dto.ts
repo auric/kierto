@@ -247,6 +247,8 @@ export type PrRow = {
   targetBranchUrl: string | null;
   // The user page of the author on the forge (plan pr-view-v4 N2). null until a sync cycle gets it, or when it has another origin.
   authorUrl: string | null;
+  // The server has the source and the target head. A run needs both (jobs.ts).
+  synced: boolean;
   // Empty until the first sync cycle that writes the PR.
   // login: null for reviewers stored before the username was kept.
   reviewers: (Omit<Reviewer, "login"> & { login: string | null })[];

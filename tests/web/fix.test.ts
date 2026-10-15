@@ -1,25 +1,28 @@
-// Plan r3 UI-FIX: the pure Fix it rules. The selection per run, the default commit message, the judgement labels, the card state of
-// a thread, the "Fixed in" wait, and the runner prompt with the comment as an indented block.
+// Plan r3 UI-FIX and docs/plans/fix-ux.md: the pure Fix it rules. The Fix list rows, ticks, and reasons, the selection per run,
+// the default commit message, the judgement labels, the card state of a thread, the "Fixed in" wait, and the runner prompt with the
+// comment as an indented block.
 import { describe, expect, test } from "bun:test";
 import { fixRef } from "../../src/server/review/clone";
-import type { CommitDto, FixCommitDto, FixDto, FixEditDto, ReviewItemDto, RunDto } from "../../src/shared/dto";
+import type { CommentDto, CommitDto, FixCommitDto, FixDto, FixEditDto, ReviewItemDto, RunDto } from "../../src/shared/dto";
 import type { ReplyPayload } from "../../src/shared/review";
 import { HANDOFF_RULE, handoffText, indentBlock } from "../../src/web/fix/handoff";
 import {
   applyText,
   appRefPrefix,
-  canFix,
   commitText,
   defaultMessage,
   fetchCommands,
-  fixAllButton,
+  fixReason,
   fixState,
-  fixThreads,
+  fixTargets,
   fixWaiting,
   freeEdits,
   JUDGEMENT,
+  leftOutText,
   selection,
+  threadFixWhy,
 } from "../../src/web/fix/model";
+import { buildThreads } from "../../src/web/pr/threads";
 
 const run = (id: number, o: Partial<RunDto> = {}): RunDto => ({
   id,
@@ -85,36 +88,137 @@ describe("judgement", () => {
   test("labels", () => {
     expect(JUDGEMENT).toEqual({ valid: "Valid", partly: "Partly valid", invalid: "Not valid", question: "Question" });
   });
+});
 
-  test("only valid and partly offer Fix, and only on the own pull request", () => {
-    const p = (judgement: ReplyPayload["judgement"]) => reply(1, { judgement }).payload as ReplyPayload;
-    expect(canFix(p("valid"), true)).toBe(true);
-    expect(canFix(p("partly"), true)).toBe(true);
-    expect(canFix(p("valid"), false)).toBe(false);
-    for (const j of ["invalid", "question", null, undefined] as const) expect(canFix(p(j), true)).toBe(false);
+// The Fix list (plan pr-view-v4 2.12, fix-ux Option A, decision D6).
+describe("Fix list", () => {
+  const ME = "jdoe";
+  const comment = (id: number, o: Partial<CommentDto> = {}): CommentDto => ({
+    id,
+    version: 0,
+    parentId: null,
+    rootId: id,
+    authorSlug: "asmith",
+    authorName: "Alex Smith",
+    authorLogin: "asmith",
+    text: `Point ${id}.`,
+    anchor: null,
+    threadResolved: false,
+    createdAt: id,
+    updatedAt: id,
+    unread: false,
+    deleted: false,
+    ...o,
+  });
+  const mine = { authorSlug: ME, authorName: "Jordan Doe", authorLogin: ME };
+  const build = (cs: CommentDto[]) => buildThreads(cs, new Set(), ME, { role: "AUTHOR", authorSlug: ME, authorName: "Jordan Doe" });
+
+  const threads = build([
+    // Reviewer threads with each judgement, and one without a reply draft.
+    comment(10, { anchor: { path: "src/cache/flush.ts", line: 12, lineType: "ADDED", fileType: "TO" } }),
+    comment(11),
+    comment(12),
+    comment(13),
+    comment(14),
+    comment(15),
+    // Your own comment and a finding that the app posted. Both wait for the reviewer.
+    comment(20, mine),
+    comment(21, { ...mine, posted: "run" }),
+    // A resolved thread, and a thread with only deleted messages.
+    comment(30, { threadResolved: true }),
+    comment(31, { deleted: true, text: null }),
+    // A reviewer thread that a fix commit fixed.
+    comment(40),
+  ]);
+  const replies = [
+    reply(10, { judgement: "valid" }),
+    reply(11, { judgement: "partly" }),
+    reply(12, { judgement: "invalid" }),
+    reply(13, { judgement: "question" }),
+    reply(14, { judgement: null }),
+    reply(20, { judgement: "valid" }),
+    reply(21, { judgement: "partly" }),
+    reply(40, { judgement: "valid" }),
+  ];
+  const fixed = fix(1, { edits: [edit(7, 40), edit(8, 11)], commits: [commit(1, [7]), commit(2, [8], { state: "undone" })] });
+
+  test("rows: each open thread with a live message, in screen order, with the own and posted badges", () => {
+    const t = fixTargets(threads, replies, [fixed]);
+    expect(t.rows.map((r) => r.thread)).toEqual([40, 15, 14, 13, 12, 11, 10, 21, 20]);
+    expect(t.rows.find((r) => r.thread === 10)).toEqual({
+      thread: 10,
+      who: "Alex Smith",
+      place: "src/cache/flush.ts:12",
+      badge: null,
+      judgement: "valid",
+      fixed: null,
+      text: "Point 10.",
+      tick: true,
+    });
+    expect(t.rows.find((r) => r.thread === 20)).toMatchObject({ who: "You", place: "General comment", badge: "own", judgement: "valid" });
+    expect(t.rows.find((r) => r.thread === 21)).toMatchObject({ who: "You", badge: "posted", judgement: "partly" });
   });
 
-  test("Fix all valid counts the valid and partly drafts of live threads, as jobs.ts fixThreads does", () => {
-    const drafts = [
-      reply(10, { judgement: "valid" }),
-      reply(11, { judgement: "partly" }),
-      reply(12, { judgement: "invalid" }),
-      reply(13, { judgement: "question" }),
-      reply(14, { judgement: null }),
-      reply(15),
-      reply(16, { judgement: "valid" }),
-    ];
-    expect(fixThreads(drafts, new Set([10, 11, 12, 13, 14, 15]))).toEqual([10, 11]);
-    expect(fixThreads(undefined, new Set())).toEqual([]);
-    expect(fixAllButton(0, "General").disabled).toBe(true);
-    expect(fixAllButton(26, "General")).toEqual({
-      disabled: true,
-      hint: "26 threads have a valid reply draft. Fix at most 25 at a time: use Fix in each reply draft.",
+  test("ticks: valid and partly from a reviewer; not invalid, question, null, no draft, fixed, own, or posted", () => {
+    const t = fixTargets(threads, replies, [fixed]);
+    expect(t.rows.filter((r) => r.tick).map((r) => r.thread)).toEqual([11, 10]);
+    expect(t.rows.find((r) => r.thread === 40)).toMatchObject({ judgement: "valid", fixed: "eeeeeee", tick: false });
+    // An undone commit fixes nothing.
+    expect(t.rows.find((r) => r.thread === 11)?.fixed).toBeNull();
+    expect(fixTargets(threads, undefined, undefined).rows.some((r) => r.tick)).toBe(false);
+  });
+
+  test("resolved and deleted threads stay out of the list and are counted", () => {
+    const t = fixTargets(threads, replies, undefined);
+    expect(t.rows.some((r) => r.thread === 30 || r.thread === 31)).toBe(false);
+    expect({ resolved: t.resolved, deleted: t.deleted }).toEqual({ resolved: 1, deleted: 1 });
+    expect(leftOutText(t)).toBe("Not in the list: 1 resolved thread, 1 deleted thread.");
+    expect(leftOutText({ resolved: 2, deleted: 0 })).toBe("Not in the list: 2 resolved threads.");
+    expect(leftOutText({ resolved: 0, deleted: 0 })).toBe("");
+  });
+
+  test("a thread whose root is deleted shows its newest live message", () => {
+    const t = build([comment(50, { deleted: true, text: null }), comment(51, { rootId: 50, parentId: 50, text: "Still open." })]);
+    expect(fixTargets(t, undefined, undefined).rows).toMatchObject([{ thread: 50, who: "Alex Smith", text: "Still open." }]);
+  });
+
+  const base = { rows: 3, ticked: 1, synced: true, profile: { name: "General", explain: false }, busy: null };
+  test("reasons: each block is text, and only ok lets Propose run", () => {
+    expect(fixReason({ ...base, rows: 0 })).toEqual({
+      kind: "nothing",
+      text: "Nothing to fix. No open thread and no open finding. Press r to review.",
     });
-    expect(fixAllButton(2, "General")).toEqual({
-      disabled: false,
-      hint: "Propose code edits for each of the 2 comments that the reply drafts find valid or partly valid. Profile: General.",
+    expect(fixReason({ ...base, synced: false })).toEqual({
+      kind: "sync",
+      text: "Sync the pull request first. Wait for the next sync, or click Check now.",
     });
+    expect(fixReason({ ...base, profile: { name: "Explain", explain: true } })).toEqual({
+      kind: "explain",
+      text: "The brief uses the Explain profile, which proposes no fixes. Press r and pick a review profile.",
+    });
+    expect(fixReason({ ...base, busy: "Claude is reviewing PROJ/repo #7. One review runs at a time." })).toEqual({
+      kind: "busy",
+      text: "Claude is reviewing PROJ/repo #7. One review runs at a time. Propose fixes when it ends.",
+    });
+    expect(fixReason({ ...base, ticked: 0 })).toEqual({ kind: "none", text: "Tick at least one thread." });
+    expect(fixReason({ ...base, rows: 30, ticked: 25 }).kind).toBe("ok");
+    expect(fixReason({ ...base, rows: 30, ticked: 26 })).toEqual({
+      kind: "many",
+      text: "Tick at most 25 threads for one run. Now 26 are ticked.",
+    });
+    expect(fixReason(base)).toEqual({
+      kind: "ok",
+      text: "A read-only run checks each point first, then proposes exact edits. You review each edit before Apply. Nothing posts. Profile: General.",
+    });
+  });
+
+  test("the f key: an open thread with a live message, else the reason", () => {
+    const by = (id: number) => threads.find((t) => t.id === id);
+    expect(threadFixWhy(by(10))).toBeNull();
+    expect(threadFixWhy(by(20))).toBeNull();
+    expect(threadFixWhy(by(30))).toBe("This thread is resolved. Fix works only on open threads.");
+    expect(threadFixWhy(by(31))).toBe("Every message of this thread is deleted. Fix needs a live message.");
+    expect(threadFixWhy(undefined)).toBe("Move to a thread first. F opens the Fix list.");
   });
 });
 

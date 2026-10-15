@@ -158,6 +158,7 @@ const INITIAL: Scenario = {
   forge: false,
   task: false,
   author: false,
+  own: false,
   native: false,
 };
 let sc: Scenario = { ...INITIAL };
@@ -309,14 +310,18 @@ const baseC = () => (sc.forge ? [...base(), ...S.activities("activities-v3-after
 const activitiesC = () => (sc.merge === "open" ? baseC() : addReply(baseC(), ROOT, 3000001, kenji, "Merged. Thanks for the quick review."));
 
 // PR 1004: two general threads by the reviewer. Each newest message is theirs, so both wait for the author.
+// own: a general thread 5000003 by the token owner. Its newest message is mine, so it waits for the reviewer.
 const D_THREADS = [
   [5000001, "Release the lock in a `finally` block, so a throwing `write()` cannot leave it held."],
   [5000002, "Take the lock once, before the loop. Another writer can run between two entries."],
 ] as const;
+const D_OWN = "Note to self: say in the README that the flush takes the lock once per entry.";
 function activitiesD(): S.Activity[] {
-  return D_THREADS.map(([id, text], i) => {
+  const list: [number, string, unknown][] = D_THREADS.map(([id, text]) => [id, text, alex]);
+  if (sc.own) list.push([5000003, D_OWN, me]);
+  return list.map(([id, text, author], i) => {
     const root = S.clone(S.findComment(base(), ROOT));
-    Object.assign(root, { id, version: 0, text, author: alex, comments: [], createdDate: T0 + i, updatedDate: T0 + i });
+    Object.assign(root, { id, version: 0, text, author, comments: [], createdDate: T0 + i, updatedDate: T0 + i });
     return { id: 50000000 + i, action: "COMMENTED", commentAction: "ADDED", comment: root };
   });
 }
@@ -596,18 +601,21 @@ r[key("POST", "/__control/open-folder")] = async (req) => {
   if (opens !== undefined) folders.opens = opens;
   return ok({ paths: folders.paths });
 };
-// The cwd of the newest fake CLI run, or undefined before the first run.
-function runCwd() {
+// The record of the newest fake CLI run, or undefined before the first run.
+function lastRun() {
   const record = join(claudeDir, "calls.jsonl");
   const runs = existsSync(record)
     ? readFileSync(record, "utf8")
         .split("\n")
         .filter(Boolean)
-        .map((l) => JSON.parse(l) as { argv?: string[]; cwd?: string })
+        .map((l) => JSON.parse(l) as { argv?: string[]; cwd?: string; stdin?: string })
         .filter((c) => c.argv?.includes("-p"))
     : [];
-  return runs.at(-1)?.cwd;
+  return runs.at(-1);
 }
+const runCwd = () => lastRun()?.cwd;
+// The stdin of the newest fake CLI run. null: no run.
+r[key("POST", "/__control/run-stdin")] = () => ok({ stdin: lastRun()?.stdin ?? null });
 // The names in context/attachments/ of the newest fake CLI run. null: no run. The run folder exists only while the run runs.
 r[key("POST", "/__control/run-attachments")] = () => {
   const cwd = runCwd();

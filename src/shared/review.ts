@@ -53,7 +53,7 @@ export const reviewJsonSchema = (): Record<string, unknown> => z.toJSONSchema(re
 
 export const replyActions = ["reply", "none"] as const;
 export const MAX_REPLY_THREADS = 25;
-// Plan r3: only valid and partly offer Fix.
+// docs/plans/fix-ux.md: valid and partly tick a thread in the Fix list at the start.
 export const judgements = ["valid", "partly", "invalid", "question"] as const;
 export type Judgement = (typeof judgements)[number];
 

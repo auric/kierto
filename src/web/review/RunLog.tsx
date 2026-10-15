@@ -344,7 +344,7 @@ function Foot({ detail, meta, raw, onRaw }: { detail: RunDetail; meta: MetaDto; 
     default: {
       const tokens = tokenTotal(r.usage);
       const time = r.usage ? clockDur(r.usage.durationMs / 1000) : r.finishedAt ? clockDur((r.finishedAt - r.startedAt) / 1000) : "";
-      // An ask run has no items. Its answer shows in the Ask section.
+      // An ask run has no items. Its answer shows in Ask, in the panel slot.
       const count = countText(detail.items, r.status === "incomplete", r.kind);
       return (
         <span>

@@ -1,7 +1,8 @@
-// Fix it on the own pull request (plan r3 UI-FIX): the fix runs, "Fix all valid", the fix card of each thread, the runner prompt,
-// and the fix bar with the apply dialog. The bar shows while an edit is ticked, as the post bar shows while an item is accepted.
+// Fix it on the own pull request (plan r3 UI-FIX, pr-view-v4 2.11 and 2.12): the Fix button and the Fix list, the fix runs, the
+// fix card of each thread, the runner prompt, and the fix part of the bottom bar with the apply dialog.
+// The fix part shows while a fix run runs, and while an edit is ticked, as the post part shows while an item is accepted.
 import { useQueryClient } from "@tanstack/react-query";
-import { Wrench } from "lucide-react";
+import { LoaderCircle, Wrench } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
@@ -11,64 +12,38 @@ import type { ThreadModel } from "../pr/threads";
 import { planKey } from "../publish/data";
 import { replyKey } from "../review/data";
 import { plural, shortHash } from "../review/model";
-import { RunSplit } from "../review/RunSplit";
 import type { Focus } from "../review/useReview";
-import type { Hints } from "../shell/Hint";
+import { Hint, type Hints } from "../shell/Hint";
 import { prKey, repoOf } from "../shell/model";
 import { ApplyDialog, type ApplyTarget } from "./ApplyDialog";
 import { CloneFolder } from "./CloneDialog";
 import { cloneKey, fixesKey, getClone, undoFix, useClone, useClones, useFixes, useStartFix } from "./data";
 import { FixCard, type FixCtx } from "./FixCard";
+import { FixPicker } from "./FixPicker";
 import { handoffText } from "./handoff";
-import { applyText, fixAllButton, fixState, fixThreads, selection } from "./model";
+import { applyText, fixReason, fixState, fixTargets, OWN_ONLY, selection, threadFixWhy } from "./model";
 
-// profile: the brief profile. The menu leaves out the Explain profiles: the server refuses them (jobs.ts fix).
-function FixAllButton(props: {
-  n: number;
-  meta: MetaDto;
-  profile: { id: string; name: string };
-  busy: boolean;
-  onRun: (profile?: string) => void;
-}) {
-  const s = fixAllButton(props.n, props.profile.name);
-  return (
-    <RunSplit
-      id="fix-all-btn"
-      variant="outline"
-      hint={s.hint}
-      disabled={s.disabled || props.busy}
-      label={`Fix all valid${s.disabled ? `. ${s.hint}` : `, ${plural(props.n, "comment")}`}`}
-      menu="Fix with another profile"
-      heading="Profile for this fix run"
-      profiles={props.meta.profiles.filter((p) => !p.explain)}
-      current={props.profile.id}
-      onRun={props.onRun}
-    >
-      <Wrench aria-hidden data-icon="inline-start" />
-      Fix all valid
-      <span aria-hidden className="rounded-[4px] bg-sel px-1 text-xs font-semibold text-ink-2">
-        {props.n}
-      </span>
-    </RunSplit>
-  );
-}
+const icon = "size-[15px] shrink-0";
 
 export type FixUi = {
-  // The button next to Draft replies. null on a pull request of another author.
+  // "Fix N" next to Draft replies. false on a pull request of another author.
   button: ReactNode;
   // The fix card of each thread, keyed by thread ID.
   cards: ReadonlyMap<number, ReactNode>;
+  // The fix parts of the bottom bar, or false.
   bar: ReactNode;
+  // The apply dialog and the Fix list.
   dialog: ReactNode;
   fixes: FixDto[] | undefined;
-  // threads absent: each thread with a valid or partly valid reply draft, as the server selects them.
-  // profile absent: the brief profile.
-  run: (threads?: number[], profile?: string) => void;
+  // Opens the Fix list. thread absent: the default ticks. A thread ID: only that thread is ticked. null: no current thread.
+  // A pull request of another author, a resolved thread, or a thread without a live message gives a toast.
+  open: (thread?: number | null) => void;
   // Copies the runner prompt of the thread. Call it in the click handler. Resolves to the next step, or null.
   copyPrompt: (thread: number) => Promise<string | null>;
 };
 
 const NO_CARDS: ReadonlyMap<number, ReactNode> = new Map();
+const NO_TICKS: ReadonlySet<number> = new Set();
 
 export function useFix(
   pr: PrRow,
@@ -77,12 +52,18 @@ export function useFix(
     hints: Hints;
     threads: ThreadModel[];
     replies: ReviewItemDto[] | undefined;
-    // The brief profile. Fix runs use it, unless the menu of Fix all valid gives another one.
-    profile: { id: string; name: string };
+    // The brief profile. Each fix run uses it.
+    profile: { name: string; explain: boolean };
+    // busyText of the run that holds the only slot, or null.
+    busy: string | null;
+    // The server has the source and target head of the PR.
+    synced: boolean;
     announce: (text: string) => void;
     focusAfter: (f: Focus) => void;
     onLog: (run: number) => void;
     slotTaken: (c: RunConflict) => void;
+    // Opens these threads, so their fix cards mount.
+    show: (threads: number[]) => void;
   },
 ): FixUi {
   const author = pr.role === "AUTHOR";
@@ -102,21 +83,35 @@ export function useFix(
   const list = fixes.data;
   const { announce, focusAfter } = o;
 
-  const live = new Set(o.threads.flatMap((t) => (t.last ? [t.id] : [])));
-  const valid = fixThreads(o.replies, live);
+  // ---------- The Fix list ----------
+  const targets = useMemo(() => fixTargets(o.threads, o.replies, list), [o.threads, o.replies, list]);
+  // The ticked thread IDs while the Fix list is open. null: closed.
+  const [pick, setPick] = useState<ReadonlySet<number> | null>(null);
+  const ticked = pick ? targets.rows.flatMap((r) => (pick.has(r.thread) ? [r.thread] : [])) : [];
+  const reason = fixReason({ rows: targets.rows.length, ticked: ticked.length, synced: o.synced, profile: o.profile, busy: o.busy });
 
-  const run = (ids?: number[], profile?: string) => {
-    const shown = ids ?? valid;
+  const open = (thread?: number | null) => {
+    if (!author) return void toast.add({ title: OWN_ONLY });
+    if (thread === undefined) return setPick(new Set(targets.rows.flatMap((r) => (r.tick ? [r.thread] : []))));
+    const t = threads.current.find((x) => x.id === thread);
+    const why = threadFixWhy(t);
+    if (why !== null || !t) return void toast.add({ title: why ?? "" });
+    setPick(new Set([t.id]));
+  };
+
+  const propose = () => {
+    if (reason.kind !== "ok" || start.isPending) return;
+    const ids = ticked;
     start.mutate(
-      { threads: ids, profile },
+      { threads: ids },
       {
         onSuccess: (r) => {
           if ("conflict" in r) return o.slotTaken(r.conflict);
-          setAsked({ run: r.run.id, threads: shown });
+          setAsked({ run: r.run.id, threads: ids });
+          setPick(null);
+          o.show(ids);
           void qc.invalidateQueries({ queryKey: fixesKey(pr.id) });
-          announce(
-            `${ids ? "Proposing a fix" : `Proposing fixes for ${plural(shown.length, "comment")}`}${profile ? ` with the ${r.run.profileName} profile` : ""}.`,
-          );
+          announce(ids.length === 1 ? "Proposing a fix." : `Proposing fixes for ${plural(ids.length, "comment")}.`);
         },
         onError: (e) => toast.add({ title: "The fix run did not start", description: e.message }),
       },
@@ -222,23 +217,47 @@ export function useFix(
     return `Open a terminal in ${path ?? `your clone of ${repoOf(pr)}`}, run ${command}, and paste.`;
   };
 
-  const open = (list ?? []).flatMap((f, i) => {
+  const free = (list ?? []).flatMap((f, i) => {
     if (f.run.status === "running") return [];
     const s = selection(f, i === 0, ticks);
     return s.edits.length ? [{ f, s }] : [];
   });
-  const clones = useClones(author && open.length > 0).data;
+  const clones = useClones(author && free.length > 0).data;
   const folder = clones?.find((c) => c.project === pr.project && c.repo === pr.repo && !c.missing)?.path;
-  const bar = author && open.length > 0 && (
-    <div data-fixbar className="border-t border-rule-strong bg-pane px-6 text-sm max-[759px]:px-4">
-      {open.map(({ f, s }, i) => (
-        <div key={f.run.id} className="flex flex-wrap items-center gap-x-3.5 gap-y-2 py-2.5">
+  // The run that this page started shows before GET /fixes lists it.
+  const runningRun =
+    list?.find((f) => f.run.status === "running")?.run.id ?? (asked && !list?.some((f) => f.run.id === asked.run) ? asked.run : null);
+  const points = asked && asked.run === runningRun ? asked.threads.length : 0;
+  // Review edits: the card of the first ticked edit.
+  const reviewEdits = (thread: number) => {
+    o.show([thread]);
+    focusAfter({ id: `fx-${thread}`, block: "start", flash: true });
+  };
+  const part = "inline-flex flex-wrap items-center gap-x-3 gap-y-2";
+  const bar = author && (runningRun !== null || free.length > 0) && (
+    <>
+      {runningRun !== null && (
+        <span data-fixbar className={part}>
           <span className="inline-flex items-center gap-1.5 text-ink-2">
-            <Wrench aria-hidden className="size-[15px] shrink-0" />
-            {meta.runner.short} proposed {plural(f.edits.length, "edit")} on {shortHash(f.run.sourceHead)}.
+            <LoaderCircle aria-hidden className={`${icon} animate-spin`} />
+            Fix: checking {points ? plural(points, "point") : "the points"} and proposing edits
           </span>
-          <span className="rl-wide-pane text-muted-foreground">Only the ticked edits apply.</span>
-          <span className="flex-1" />
+          <Button variant="link" size="sm" className="h-auto px-0" onClick={() => o.onLog(runningRun)}>
+            Log
+          </Button>
+        </span>
+      )}
+      {free.map(({ f, s }, i) => (
+        <span key={f.run.id} data-fixbar className={part}>
+          <span className="inline-flex items-center gap-1.5 text-ink-2">
+            <Wrench aria-hidden className={icon} />
+            Fix: {plural(f.edits.length, "edit")} proposed
+          </span>
+          {s.threads[0] !== undefined && (
+            <Button variant="link" size="sm" className="h-auto px-0" onClick={() => reviewEdits(s.threads[0] as number)}>
+              Review edits
+            </Button>
+          )}
           {i === 0 && folder && <CloneFolder pr={pr.id} path={folder} icons />}
           <Button
             id={`fix-apply-${f.run.id}`}
@@ -250,40 +269,76 @@ export function useFix(
           >
             {applyText(s.edits.length, s.threads.length)}
           </Button>
-        </div>
+        </span>
       ))}
-    </div>
+    </>
   );
 
   const dialog = author && (
-    <ApplyDialog
-      target={target}
-      pr={pr.id}
-      prNumber={pr.prId}
-      repo={repoOf(pr)}
-      fixes={list ?? []}
-      clone={{ data: clone.data, error: clone.error, refetch: () => void clone.refetch() }}
-      onCommitted={committed}
-      onRefused={(ids) => {
-        // A failed commit holds the edits, so the bar can go. The focus then goes to the card of the edits.
-        focusTo.current = `fx-${ids[0]}`;
-        refresh();
-      }}
-      onClose={() => setTarget(null)}
-      ctx={ctx}
-      focusTo={() => focusTo.current}
-    />
+    <>
+      <FixPicker
+        open={pick !== null}
+        prKey={prKey(pr)}
+        targets={targets}
+        ticks={pick ?? NO_TICKS}
+        reason={reason}
+        starting={start.isPending}
+        onTick={(thread, on) =>
+          setPick((p) => {
+            const out = new Set(p);
+            if (on) out.add(thread);
+            else out.delete(thread);
+            return out;
+          })
+        }
+        onPropose={propose}
+        onClose={() => setPick(null)}
+      />
+      <ApplyDialog
+        target={target}
+        pr={pr.id}
+        prNumber={pr.prId}
+        repo={repoOf(pr)}
+        fixes={list ?? []}
+        clone={{ data: clone.data, error: clone.error, refetch: () => void clone.refetch() }}
+        onCommitted={committed}
+        onRefused={(ids) => {
+          // A failed commit holds the edits, so the bar can go. The focus then goes to the card of the edits.
+          focusTo.current = `fx-${ids[0]}`;
+          refresh();
+        }}
+        onClose={() => setTarget(null)}
+        ctx={ctx}
+        focusTo={() => focusTo.current}
+      />
+    </>
   );
 
+  const n = targets.rows.length;
   return {
     button: author && (
-      <FixAllButton n={valid.length} meta={meta} profile={o.profile} busy={start.isPending} onRun={(p) => run(undefined, p)} />
+      <Hint label="Choose the threads to fix. Key: F. The f key fixes the current thread.">
+        <Button
+          id="fix-btn"
+          size="sm"
+          variant="outline"
+          aria-label={`Fix, ${plural(n, "open thread")}`}
+          aria-keyshortcuts="Shift+F"
+          onClick={() => open()}
+        >
+          <Wrench aria-hidden data-icon="inline-start" />
+          Fix
+          <span aria-hidden className="rounded-[4px] bg-sel px-1 text-xs font-semibold text-ink-2">
+            {n}
+          </span>
+        </Button>
+      </Hint>
     ),
     cards,
     bar,
     dialog,
     fixes: list,
-    run,
+    open,
     copyPrompt,
   };
 }

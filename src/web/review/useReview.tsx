@@ -8,7 +8,7 @@ import { toast } from "@/components/ui/toast";
 import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunConflict, RunDetail, RunDto, RunKind } from "../../shared/dto";
 import { busyText } from "../ask/model";
 import { useFix } from "../fix/FixBar";
-import { canFix, fixWaiting } from "../fix/model";
+import { fixWaiting } from "../fix/model";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
 import { ordered, type ThreadModel } from "../pr/threads";
@@ -73,6 +73,8 @@ export type ReviewApi = {
   triage(key: "accept" | "edit" | "discard"): void;
   // A reply-draft run for one thread (replies.md step 6).
   draftReply(thread: number): void;
+  // Keys f and F (plan pr-view-v4 section 6): the Fix list. thread absent: the default ticks. null: no current thread.
+  fix(thread?: number | null): void;
   // Plan r2 UI-DIFF: opens a draft and focuses it, for "Go to draft" in the diff.
   openDraft(id: number): void;
   // The layer that Esc closes first, for focus at target.
@@ -91,12 +93,14 @@ export type ReviewUi = {
   drafts: ReactNode;
   // The reply draft card of each thread, keyed by thread ID.
   cards: ReadonlyMap<number, ReactNode>;
+  // The threads with a reply draft that the user can accept, or one on the way. Their footer has no Draft reply.
+  drafted: ReadonlySet<number>;
   sheet: ReactNode;
   api: ReviewApi;
   // Plan r2 UI-DIFF: the finding drafts, the source head of their run, and the reply draft of each thread.
   diff: { drafts: ReviewItemDto[]; head: string | null; replies: ReadonlyMap<number, ReviewItemDto> };
-  // Plan r3 UI-FIX: the fix bar above the post bar, and the apply dialog.
-  fix: { bar: ReactNode; dialog: ReactNode };
+  // Plan pr-view-v4 2.11 and 2.12: the fix parts of the bottom bar, the Fix list and the apply dialog, and the runner prompt.
+  fix: { bar: ReactNode; dialog: ReactNode; copyPrompt: (thread: number) => Promise<string | null> };
 };
 
 const NO_ITEMS: ReviewItemDto[] = [];
@@ -133,6 +137,8 @@ export function useReview(
     focusAfter: (f: Focus) => void;
     // Opens and shows a thread, so its reply draft card mounts.
     reveal: (thread: number) => void;
+    // Opens these threads without a focus change, so their fix cards mount.
+    show: (threads: number[]) => void;
     announce: (text: string) => void;
     onSettings: () => void;
     // Opens Settings, Task IDs: "Set up task IDs" in the brief.
@@ -420,14 +426,15 @@ export function useReview(
     hints: o.hints,
     threads: o.threads,
     replies: replies.data,
-    profile: { id: state.profile, name: state.name },
+    profile: { name: state.name, explain: meta.profiles.find((p) => p.id === state.profile)?.explain ?? false },
+    busy,
+    synced: pr.synced,
     announce: o.announce,
     focusAfter,
     onLog: (id) => openLog(null, false, id),
     slotTaken,
+    show: o.show,
   });
-  const onFix = useRef(fix);
-  onFix.current = fix;
   const author = pr.role === "AUTHOR";
 
   // ---------- Reply drafts (replies.md step 6) ----------
@@ -438,20 +445,21 @@ export function useReview(
       announce: o.announce,
       triage: triageCtx,
       again: (thread) => onDraft.current([thread]),
-      fix: (thread) => onFix.current.run([thread]),
-      copyPrompt: (thread) => onFix.current.copyPrompt(thread),
+      author,
     }),
-    [meta, o.hints, o.announce, triageCtx],
+    [meta, o.hints, o.announce, triageCtx, author],
   );
   const byThread = useMemo(() => replyMap(replies.data), [replies.data]);
   const pending = asked && newest?.id === asked.run && newest.status === "running" ? asked : null;
   // Per thread, so a memo thread renders again only when its own card changes. The fix card follows the reply draft card.
   const { cards: fixCards, fixes } = fix;
   const { commits } = o;
-  const cards = useMemo(() => {
+  const { cards, drafted } = useMemo(() => {
     const out = new Map<number, ReactNode>();
+    const drafted = new Set<number>();
     for (const t of o.threads) {
       const card = replyCard(byThread.get(t.id), t.last?.id ?? null, !!pending?.threads.includes(t.id));
+      if (card?.kind === "draft" || card?.kind === "pending") drafted.add(t.id);
       const fixCard = fixCards.get(t.id);
       if (!card && !fixCard) continue;
       const it = !card || card.kind === "pending" ? null : card.it;
@@ -467,7 +475,6 @@ export function useReview(
               to={to ? (to.who.me ? "your message" : to.who.name) : null}
               mode={it ? modeOf(triage, it.id) : null}
               busy={!!it && triage.busy.has(it.id)}
-              fixable={!!p && !!t.last && canFix(p, author)}
               waiting={p ? fixWaiting(p, commits, fixes) : null}
               ctx={replyCtx}
             />
@@ -476,8 +483,8 @@ export function useReview(
         </>,
       );
     }
-    return out;
-  }, [o.threads, byThread, pending, triage, replyCtx, fixCards, fixes, commits, author]);
+    return { cards: out, drafted };
+  }, [o.threads, byThread, pending, triage, replyCtx, fixCards, fixes, commits]);
 
   const api: ReviewApi = {
     rerun: () => openBrief(),
@@ -519,6 +526,7 @@ export function useReview(
       else if (it.status !== "discarded") triageFns.edit(it);
     },
     draftReply: (thread) => draftReplies([thread]),
+    fix: (thread) => fix.open(thread),
     openDraft,
     layer(target) {
       const inSheet = target instanceof Node && !!document.getElementById("run-log")?.contains(target);
@@ -568,8 +576,7 @@ export function useReview(
         onOpen={() => openBrief()}
       />
     ),
-    // Plan r3 Feature C: every run kind reads the fetched task text. While the brief is closed, its task row shows here,
-    // next to Draft replies and Fix all valid.
+    // Plan r3 Feature C: every run kind reads the fetched task text. While the brief is closed, its task row shows here.
     brief: composer ? (
       brief.data ? (
         <BriefComposer
@@ -616,6 +623,7 @@ export function useReview(
     draftCount: ds.filter((d) => d.status !== "discarded").length + (qJump?.n ?? 0),
     drafts: <Drafts items={list} isOpen={isDraftOpen} triage={triage} ctx={draftCtx} />,
     cards,
+    drafted,
     sheet: log && (
       <RunLog
         detail={details.find((d) => d && d.run.id === logRun)}
@@ -629,6 +637,6 @@ export function useReview(
     ),
     api,
     diff: forDiff,
-    fix: { bar: fix.bar, dialog: fix.dialog },
+    fix: { bar: fix.bar, dialog: fix.dialog, copyPrompt: fix.copyPrompt },
   };
 }

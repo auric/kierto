@@ -43,6 +43,8 @@ export type DetailApi = {
   showInDiff(): void;
   // Plan pr-view-v4 2.4: q opens Ask in the panel slot with the focus in its box.
   ask(): void;
+  // Plan pr-view-v4 section 6: f opens the Fix list with the current thread ticked. F opens it with the default ticks.
+  fix(list: boolean): void;
   // Plan v3 WP11: r, Shift+R, 2, 3, and the Esc layers of the review. Plan r2 UI-RR: c.
   rerun(): void;
   rereview(): void;
@@ -228,6 +230,20 @@ export function PrDetail({
   const draftReply = useRef((_: number) => {});
   // The diff view needs the drafts of the review hook. The thread context and the drafts read its action through this ref.
   const showDiff = useRef((_: Card) => {});
+  const fixRef = useRef<{ open: (thread: number) => void; copy: (thread: number) => Promise<string | null> }>({
+    open: () => {},
+    copy: async () => null,
+  });
+  // Opens threads without a focus change. A thread that the "Need me" filter hides turns the filter off.
+  const show = useCallback((ids: number[]) => {
+    const hidden = latest.current.some((t) => ids.includes(t.id) && !passes(t, true));
+    if (hidden) setNeedMe(false);
+    setOpen((o) => {
+      const out = new Map(o);
+      for (const id of ids) out.set(id, true);
+      return out;
+    });
+  }, []);
 
   const web = webLink(pr.webUrl);
   const ctx = useMemo<ThreadCtx>(
@@ -257,9 +273,12 @@ export function PrDetail({
       onReply,
       onDraftReply: (tid) => draftReply.current(tid),
       onShowInDiff: (tid) => showDiff.current({ kind: "thread", id: tid }),
+      author: role === "AUTHOR",
+      onFix: (tid) => fixRef.current.open(tid),
+      copyPrompt: (tid) => fixRef.current.copy(tid),
       posts: outbox.ctx,
     }),
-    [row.id, hints, now, forge, web, runner, mine, ackRef, focusAfter, jump, announce, onReply, outbox.ctx],
+    [row.id, hints, now, forge, web, runner, mine, ackRef, focusAfter, jump, announce, onReply, outbox.ctx, role],
   );
 
   const review = useReview(pr, {
@@ -269,6 +288,7 @@ export function PrDetail({
     now,
     focusAfter,
     reveal: jump,
+    show,
     announce,
     onSettings,
     onTaskIds,
@@ -276,6 +296,7 @@ export function PrDetail({
     showInDiff: (id) => showDiff.current({ kind: "draft", id }),
   });
   draftReply.current = review.api.draftReply;
+  fixRef.current = { open: review.api.fix, copy: review.fix.copyPrompt };
   // One slot: a brief that opens closes Ask.
   const briefOpen = review.api.layer(null) === "brief";
   if (briefOpen && askOpen) setAskOpen(false);
@@ -478,6 +499,11 @@ export function PrDetail({
     },
     ask: openAsk,
     ...review.api,
+    fix(list) {
+      if (list) return review.api.fix();
+      const at = document.activeElement?.closest("[data-thread]")?.getAttribute("data-thread");
+      review.api.fix(at ? Number(at) : cur);
+    },
     // prototype/v3 Esc order: an edit, the brief, the post confirm, the run log. Ask comes after the dialogs (plan pr-view-v4 4.4).
     // Ask uses the "brief" layer of keys.ts: both are the panel slot, and only one is open.
     layer(target) {
@@ -558,6 +584,7 @@ export function PrDetail({
               posts={outbox.threads}
               targets={targets}
               cards={review.cards}
+              drafted={review.drafted}
               outbox={<PostsGroup posts={outbox.rest} comments={comments} forge={forge} web={web} hints={hints} ctx={outbox.ctx} />}
               onNeedMe={setNeedMe}
               onShowResolved={() => {
@@ -601,11 +628,17 @@ export function PrDetail({
           </div>
         )}
       </div>
-      {/* The fix bar sits above the post bar. Both stay at the bottom of the pane. */}
-      {data && (review.fix.bar || bar.node) && (
-        <div className="sticky bottom-0 z-[2]">
-          {review.fix.bar}
-          {bar.node}
+      {/* Plan pr-view-v4 2.11: one bar at the bottom of the pane for the fix run and the post. The post confirm opens in it. */}
+      {data && (review.fix.bar || bar.part || bar.confirm) && (
+        <div data-postbar className="sticky bottom-0 z-[2] border-t border-rule-strong bg-pane px-6 text-sm max-[759px]:px-4">
+          {(review.fix.bar || bar.part) && (
+            // A wide pane keeps the parts in one row, with a rule between them. A narrow pane wraps them without the rule.
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-2.5 @min-[800px]/detail:[&>*+*]:border-l @min-[800px]/detail:[&>*+*]:pl-4">
+              {review.fix.bar}
+              {bar.part}
+            </div>
+          )}
+          {bar.confirm}
         </div>
       )}
       {review.fix.dialog}

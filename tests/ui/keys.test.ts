@@ -138,7 +138,21 @@ describe("detail keys", () => {
     expect(reduceKey(S, "c", C).handled).toBe(false);
   });
 
-  // Plan r2 UI-ASK: q opens the Ask section. In a text field, q is a letter.
+  // Plan pr-view-v4 section 6: f fixes the current thread, F opens the Fix list. The detail decides about a reviewer PR.
+  test("f and F open the Fix list; they do nothing while typing, in the help, or without a PR", () => {
+    expect(reduceKey({ ...S, selected: 20 }, "f", C)).toMatchObject({ effect: "fix", state: { focus: "detail", mobile: "detail" } });
+    expect(reduceKey({ ...S, selected: 20, focus: "detail" }, "F", C)).toMatchObject({ effect: "fix-list", handled: true });
+    expect(reduceKey({ ...S, selected: 20 }, "f", { ...C, typing: true }).handled).toBe(false);
+    expect(reduceKey({ ...S, selected: 20, help: true }, "F", C).handled).toBe(false);
+    expect(reduceKey(S, "f", C).handled).toBe(false);
+    // After g, f is the second key of "g f".
+    expect(reduceKey(reduceKey({ ...S, selected: 20 }, "g", C).state, "f", C).effect).toBe("files");
+    const text = (k: string) => HELP_KEYS.flatMap((g) => g.keys).find((x) => x.keys[0] === k && !x.second)?.text;
+    expect(text("f")).toBe("Your pull request: open the Fix list with the current thread ticked");
+    expect(text("F")).toBe("Your pull request: open the Fix list");
+  });
+
+  // Plan r2 UI-ASK, pr-view-v4 2.4: q opens Ask in the panel slot. In a text field, q is a letter.
   test("q asks; it does nothing while typing or without a PR", () => {
     expect(reduceKey({ ...S, selected: 20 }, "q", C)).toMatchObject({ effect: "ask", state: { focus: "detail", mobile: "detail" } });
     expect(reduceKey({ ...S, selected: 20 }, "q", { ...C, typing: true }).handled).toBe(false);
@@ -158,7 +172,8 @@ describe("detail keys", () => {
     expect(reduceKey(g.state, "f", C)).toMatchObject({ effect: "files", state: { focus: "detail", chord: null } });
     expect(reduceKey(g.state, "c", C).effect).toBe("commits");
     expect(reduceKey(g.state, "x", C)).toMatchObject({ handled: true, effect: null, state: { chord: null } });
-    expect(reduceKey(g.state, "f", { ...C, now: C.now + 1300 }).handled).toBe(false);
+    // After the chord ends, f is the Fix key.
+    expect(reduceKey(g.state, "f", { ...C, now: C.now + 1300 }).effect).toBe("fix");
     expect(reduceKey(S, "g", C).handled).toBe(false);
   });
 

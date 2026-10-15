@@ -429,6 +429,7 @@ function Shell({ stale }: { stale: boolean }) {
       else if (effect === "brief") api?.brief();
       else if (effect === "accept" || effect === "edit" || effect === "discard") api?.triage(effect);
       else if (effect === "post") api?.post();
+      else if (effect === "fix" || effect === "fix-list") api?.fix(effect === "fix-list");
       else if (effect === "close-brief" || effect === "close-confirm" || effect === "close-log")
         api?.close(effect.slice(6) as Exclude<Layer, null>);
     }
@@ -442,8 +443,8 @@ function Shell({ stale }: { stale: boolean }) {
     if (t.closest('[role="menu"], [data-slot="popover-content"]')) return;
     // A checkbox takes keys like a button, so the detail keys work after the thread filter.
     const box = t instanceof HTMLInputElement && (t.type === "checkbox" || t.type === "radio");
-    // The arrow keys move between the profile radios of the review brief.
-    if (box && t.type === "radio" && e.key.startsWith("Arrow")) return;
+    // The arrow keys move between the profile radios of the review brief and between the items of a toggle group.
+    if (e.key.startsWith("Arrow") && ((box && t.type === "radio") || t.closest('[data-slot="toggle-group"]'))) return;
     const typing = (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !box) || t.isContentEditable;
     const onButton = (t.tagName === "BUTTON" && !t.hasAttribute("data-row")) || t.tagName === "A" || t.tagName === "SUMMARY" || box;
     const layer = detailApi.current?.layer(e.target) ?? null;

@@ -1,9 +1,10 @@
-// Pure Fix it rules (plan r3 UI-FIX). No DOM access, so bun test runs them directly.
+// Pure Fix it rules (plan r3 UI-FIX, docs/plans/fix-ux.md). No DOM access, so bun test runs them directly.
 import type { CommitDto, FixCommitDto, FixDto, FixEditDto, ReviewItemDto, RunDto } from "../../shared/dto";
 import { type Judgement, MAX_REPLY_THREADS, type ReplyPayload } from "../../shared/review";
-import { plural, shortHash } from "../review/model";
+import { ordered, snippet, type ThreadModel } from "../pr/threads";
+import { lineText, plural, shortHash } from "../review/model";
 
-// Judgement null means "no action": no chip and no Fix.
+// Judgement null means "no action": no chip, and no tick at the start of the Fix list.
 export const JUDGEMENT: Record<Judgement, string> = {
   valid: "Valid",
   partly: "Partly valid",
@@ -11,32 +12,116 @@ export const JUDGEMENT: Record<Judgement, string> = {
   question: "Question",
 };
 
-// Plan r3 section 1: only valid and partly offer Fix, and only on the user's own pull request.
-export const canFix = (p: ReplyPayload, author: boolean) => author && (p.judgement === "valid" || p.judgement === "partly");
+// ---------- The Fix list (plan pr-view-v4 2.12, fix-ux Option A) ----------
 
-// jobs.ts fixThreads without a list: each thread whose newest unposted reply draft finds the comment valid or partly valid,
-// and that has a live message. drafts: GET /api/prs/:id/reply-drafts. live: the threads with a live message.
-export function fixThreads(drafts: ReviewItemDto[] | undefined, live: ReadonlySet<number>): number[] {
-  return (drafts ?? []).flatMap((it) => {
-    const p = it.payload as ReplyPayload;
-    return it.kind === "reply" && (p.judgement === "valid" || p.judgement === "partly") && live.has(p.thread) ? [p.thread] : [];
-  });
+// One open, unresolved thread with a live message. badge: own for your comment, posted for a finding that the app posted.
+// judgement: the newest unposted reply draft. fixed: the short hash of a fix commit that holds an edit of the thread.
+// tick: the tick at the start.
+export type FixRow = {
+  thread: number;
+  who: string;
+  place: string;
+  badge: "own" | "posted" | null;
+  judgement: Judgement | null;
+  fixed: string | null;
+  text: string;
+  tick: boolean;
+};
+
+// resolved, deleted: the threads that the list leaves out. A deleted thread has no live message.
+export type FixTargets = { rows: FixRow[]; resolved: number; deleted: number };
+
+const placeText = (t: ThreadModel) => {
+  const a = t.anchor;
+  if (!a) return "General comment";
+  return a.line === undefined ? a.path : `${a.path}:${lineText({ line: a.line, lineEnd: a.lineEnd ?? a.line })}`;
+};
+
+// threads: in any order; the rows come in screen order. replies: GET /api/prs/:id/reply-drafts. fixes: GET /api/prs/:id/fixes.
+// Decision D6: your own comments and posted findings start unticked. Valid and partly valid start ticked, unless a commit fixed them.
+export function fixTargets(threads: ThreadModel[], replies: ReviewItemDto[] | undefined, fixes: FixDto[] | undefined): FixTargets {
+  const judged = new Map<number, Judgement | null>();
+  for (const it of replies ?? [])
+    if (it.kind === "reply") judged.set((it.payload as ReplyPayload).thread, (it.payload as ReplyPayload).judgement ?? null);
+  const fixedIn = new Map<number, string>();
+  for (const f of fixes ?? [])
+    for (const c of f.commits) {
+      if (c.state !== "committed") continue;
+      for (const e of f.edits)
+        if (c.edits.includes(e.id) && !fixedIn.has(e.thread)) fixedIn.set(e.thread, c.short ?? shortHash(c.commit ?? ""));
+    }
+  const out: FixTargets = { rows: [], resolved: 0, deleted: 0 };
+  for (const t of ordered(threads, false)) {
+    if (!t.last) {
+      out.deleted++;
+      continue;
+    }
+    if (t.turn === "resolved") {
+      out.resolved++;
+      continue;
+    }
+    const head = t.root.deleted ? t.last : t.root;
+    const badge = t.root.posted === "run" ? "posted" : t.root.who.me ? "own" : null;
+    const judgement = judged.get(t.id) ?? null;
+    const fixed = fixedIn.get(t.id) ?? null;
+    out.rows.push({
+      thread: t.id,
+      who: head.who.me ? "You" : head.who.name,
+      place: placeText(t),
+      badge,
+      judgement,
+      fixed,
+      text: snippet(head.text, 160),
+      tick: badge === null && fixed === null && (judgement === "valid" || judgement === "partly"),
+    });
+  }
+  return out;
 }
 
-// The "Fix all valid" button. The server refuses more than MAX_REPLY_THREADS threads in one run.
-export function fixAllButton(n: number, profile: string): { disabled: boolean; hint: string } {
-  if (!n) return { disabled: true, hint: "No reply draft finds a comment valid or partly valid. Draft replies first." };
-  if (n > MAX_REPLY_THREADS)
+// The f key on one thread. null: the Fix list can tick it. Else the reason, as a toast.
+export function threadFixWhy(t: ThreadModel | undefined): string | null {
+  if (!t) return "Move to a thread first. F opens the Fix list.";
+  if (!t.last) return "Every message of this thread is deleted. Fix needs a live message.";
+  if (t.turn === "resolved") return "This thread is resolved. Fix works only on open threads.";
+  return null;
+}
+
+export const NOTHING_TO_FIX = { title: "Nothing to fix.", text: "No open thread and no open finding. Press r to review." };
+
+// The text under the buttons of the Fix list. Only "ok" lets Propose start a run.
+// rows: the row count. ticked: the ticked rows. synced: the server has both heads (jobs.ts fix). busy: busyText of the active run.
+export type FixReason = { kind: "nothing" | "sync" | "explain" | "busy" | "none" | "many" | "ok"; text: string };
+export function fixReason(o: {
+  rows: number;
+  ticked: number;
+  synced: boolean;
+  profile: { name: string; explain: boolean };
+  busy: string | null;
+}): FixReason {
+  if (!o.rows) return { kind: "nothing", text: `${NOTHING_TO_FIX.title} ${NOTHING_TO_FIX.text}` };
+  if (!o.synced) return { kind: "sync", text: "Sync the pull request first. Wait for the next sync, or click Check now." };
+  if (o.profile.explain)
     return {
-      disabled: true,
-      hint: `${n} threads have a valid reply draft. Fix at most ${MAX_REPLY_THREADS} at a time: use Fix in each reply draft.`,
+      kind: "explain",
+      text: `The brief uses the ${o.profile.name} profile, which proposes no fixes. Press r and pick a review profile.`,
     };
-  const which = n === 1 ? "the comment" : `each of the ${n} comments`;
+  if (o.busy) return { kind: "busy", text: `${o.busy} Propose fixes when it ends.` };
+  if (!o.ticked) return { kind: "none", text: "Tick at least one thread." };
+  if (o.ticked > MAX_REPLY_THREADS)
+    return { kind: "many", text: `Tick at most ${MAX_REPLY_THREADS} threads for one run. Now ${o.ticked} are ticked.` };
   return {
-    disabled: false,
-    hint: `Propose code edits for ${which} that the reply drafts find valid or partly valid. Profile: ${profile}.`,
+    kind: "ok",
+    text: `A read-only run checks each point first, then proposes exact edits. You review each edit before Apply. Nothing posts. Profile: ${o.profile.name}.`,
   };
 }
+
+// "Not in the list: 2 resolved threads, 1 deleted thread." Empty when the list leaves out nothing.
+export function leftOutText(t: Pick<FixTargets, "resolved" | "deleted">): string {
+  const parts = [t.resolved && plural(t.resolved, "resolved thread"), t.deleted && plural(t.deleted, "deleted thread")].filter(Boolean);
+  return parts.length ? `Not in the list: ${parts.join(", ")}.` : "";
+}
+
+export const OWN_ONLY = "Fix works only on your own pull requests.";
 
 // ---------- Edits and their selection ----------
 

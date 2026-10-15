@@ -1,5 +1,5 @@
 // Task chips (plan r2 task context UI, plan r3 Feature C): the task IDs of the PR with Fetch, Fetch again, and Remove.
-// Every run kind reads the fetched task text. So the brief, the run buttons, and the Ask section show the chips.
+// Every run kind reads the fetched task text. So the brief, the run buttons, and Ask in the panel slot show the chips.
 // All places share one query, so a fetch in one place shows in all.
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, LoaderCircle, Settings2, X } from "lucide-react";

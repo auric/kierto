@@ -61,6 +61,8 @@ export type Effect =
   | "edit"
   | "discard"
   | "post"
+  | "fix"
+  | "fix-list"
   | "close-brief"
   | "close-confirm"
   | "close-log"
@@ -101,6 +103,9 @@ const DETAIL: Record<string, Effect> = {
   e: "edit",
   d: "discard",
   p: "post",
+  // Plan pr-view-v4 section 6: f fixes the current thread, F opens the Fix list. A reviewer PR gives a toast.
+  f: "fix",
+  F: "fix-list",
 };
 // Plan r2 UI-DIFF: g d shows the current inline thread or draft in the diff.
 const CHORD: Record<string, Effect> = { f: "files", c: "commits", d: "show-in-diff" };
@@ -213,6 +218,8 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
         text: "Accept, edit, or discard the current draft or question. a again undoes an accept, d again restores.",
       },
       { keys: ["p"], text: "Post the accepted items, after a confirm" },
+      { keys: ["f"], text: "Your pull request: open the Fix list with the current thread ticked" },
+      { keys: ["F"], text: "Your pull request: open the Fix list" },
       { keys: ["Ctrl", "Enter"], text: "In a reply box: show the reply and its destination before it posts" },
     ],
   },

@@ -38,8 +38,8 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 ## A. Fix one comment and commit it in your clone
 
 1. Open the test pull request. Click "Draft replies". Wait for the end of the run. Open each thread.
-2. Expect a judgement chip on each reply draft: Valid, Partly valid, Not valid, or Question. Expect no chip on T7, because its draft has no judgement ("no action"). Expect Fix and "Copy prompt for Claude Code" only on drafts with Valid or Partly valid. Record the chip of each thread.
-3. On T1, click Fix. Expect "Proposing a fix." on the thread. Wait for the end of the run. Expect a fix card under T1 with the note and each edit as a diff with a checkbox. Read every edit.
+2. Expect a judgement chip on each reply draft: Valid, Partly valid, Not valid, or Question. Expect no chip on T7, because its draft has no judgement ("no action"). Expect Fix in the footer of each open thread, whatever its chip. Expect "Copy prompt for Claude Code" in the More menu of each open thread. Record the chip of each thread.
+3. On T1, click Fix in the thread footer. Expect the Fix list with only T1 ticked. Click "Propose fixes for 1". Expect "Proposing a fix." and "Fix: checking 1 point" in the bottom bar. Wait for the end of the run. Expect a fix card under T1 with the note and each edit as a diff with a checkbox. Read every edit.
 4. Click Log on the fix card. Expect no Edit, Write, or Agent tool in the init line. Count the proposed edits and the edits that the coverage lists as skipped. Close the log.
 5. Add a pre-commit hook in the clone. Write `<CLONE>/.git/hooks/pre-commit` with the two lines `#!/bin/sh` and `echo pre-commit >> "$HOME/rl-smoke-hook.txt"`. On Linux, run `chmod +x` on it.
 6. Click the fix bar button "Apply 1 edit from 1 comment". Expect the Apply dialog with "No folder set". Click "Set the folder". Enter `<CLONE>`. Click "Save folder". Expect the folder path, "On <source branch> at <short hash>", and no clone problem.
@@ -53,10 +53,10 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 14. Run `git -C <CLONE> push`. Click "Check now". Expect the waiting text to go. Press p and confirm. Expect exactly one reply "Fixed in <short>." under T1 in Bitbucket.
 15. Delete `<CLONE>/.git/hooks/pre-commit` and `$HOME/rl-smoke-hook.txt`.
 
-## B. Fix all valid, untick one edit, and a failing hook
+## B. Fix the default ticks, untick one edit, and a failing hook
 
 1. On Windows only: make a second clone with `git clone -c core.autocrlf=true <repository URL> <CLONE2>` on the source branch. In the Apply dialog of part B, click Change and set `<CLONE2>`. Use `<CLONE2>` as `<CLONE>` in this part. On Linux, keep the first clone.
-2. Click "Fix all valid" next to "Draft replies". Its badge counts the threads. Expect a fix run for each thread whose draft is Valid or Partly valid and not posted. Expect T1 to be absent, because its newest reply is posted. Wait for the end of the run.
+2. Click "Fix" next to "Draft replies". Its badge counts the open threads with a live message. Expect the Fix list with ticks on each thread whose draft is Valid or Partly valid and not posted. Expect T1 unticked with "Fixed in <short>", because a fix commit holds its edit. Click "Propose fixes for <k>". Wait for the end of the run.
 3. Untick one edit. Expect the fix bar to count the remaining edits and comments. Open the Apply dialog. Expect the default message "Fix <k> review comments on PR <n>" with one body line per thread.
 4. Write `<CLONE>/.git/hooks/commit-msg` with the two lines `#!/bin/sh` and `echo "smoke: commit-msg refused" >&2; exit 1`. On Linux, run `chmod +x` on it.
 5. Click "Apply and commit". Expect "The commit failed. The edits stay staged. Fix the problem, then commit in your clone, or Undo." with "smoke: commit-msg refused" in the dialog. Close the dialog. Expect the same staged text on the fix card. Run `git -C <CLONE> diff --cached --stat`. Expect only the files of the ticked edits.
@@ -74,7 +74,7 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 
 ## D. Copy the prompt for Claude Code
 
-1. On a draft with Valid or Partly valid, click "Copy prompt for Claude Code". Expect "Copied the prompt." and "Open a terminal in <CLONE>, run claude, and paste."
+1. On an open thread, open the More menu in the thread footer and click "Copy prompt for Claude Code". Expect "Copied the prompt." and "Open a terminal in <CLONE>, run claude, and paste."
 2. Paste the prompt into a text editor. Expect the PR identity, the branch, the path and line, the rule ("Judge whether the review point is valid. Fix it only if it is valid. Do not commit or push."), and the comment text as an indented block. Expect no shell command.
 3. Open a terminal in `<CLONE>`. Run `claude`. Paste the prompt. Expect a judgement first. If Claude proposes an edit, expect a permission prompt for each file change.
 4. Exit Claude Code. Expect no new commit and no push: `git log -1` is unchanged. Run `git -C <CLONE> restore .` to drop the edits.
@@ -88,7 +88,7 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 5. In a browser where you are logged in to Jira, open `<JIRA_URL>/rest/api/2/issue/<KEY>?fields=description&expand=renderedFields`. Record whether `renderedFields.description` exists. Record its tag names only, for example `p h3 ul li table tr th td pre a img`. Open `<JIRA_URL>/rest/api/2/issue/<KEY>/comment?expand=renderedBody`. Record whether `renderedBody` exists (U25).
 6. Click "Draft replies". Wait for the end of the run. Expect the run line to show `<KEY>`. Its tooltip says "Task text that this run read: <KEY>".
 7. Click Remove on the chip next to Draft replies. Expect the chip "<KEY> · not fetched". Expect the run line to keep `<KEY>`. Fetch the task again.
-8. Press q. Expect the same task chip in the Ask section. Press Esc.
+8. Press q. Expect the same task chip in Ask, in the panel slot. Press Esc.
 
 ## F. Jira attachments
 
@@ -146,7 +146,7 @@ Run this part after the Fix picker ships (docs/plans/fix-ux.md, WP2). Steps J10 
 3. Expect the header button "Fix · N" to be enabled. Click it. Expect the picker with one checkbox per open, unresolved thread with a live message. Expect T8 and T9 in the list and unticked. Expect ticks only on threads with a Valid or Partly valid draft.
 4. Tick only T8 and T9. Click "Propose fixes for 2". Wait for the end of the run. Expect edits for T8. Expect T9 with no edit and a reason that says the code is already right. Do not apply.
 5. Click Log on the fix card. Expect no Edit, Write, or Agent tool in the init line. Close the log.
-6. Focus T8 and press f. Expect a fix run for T8 only. Wait for the end of the run. Do not apply.
+6. Focus T8 and press f. Expect the Fix list with only T8 ticked. Press Enter on "Propose fixes for 1". Expect a fix run for T8 only. Wait for the end of the run. Do not apply.
 7. Resolve T9 in Bitbucket. Click "Check now". Press F. Expect T9 absent from the picker and the count of resolved threads in the picker text. Close the picker.
 8. Ask the second user for a test pull request where you are a reviewer. Open it. Do not post on it. If none exists, record this step as not run. Expect no Fix button and no "Fix · N". Focus a thread and press f. Expect the toast "Fix works only on your own pull requests."
 9. Delete T8 and T9 in Bitbucket by hand.

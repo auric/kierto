@@ -308,6 +308,20 @@ describe("thread selection and refusals", () => {
     SLOW,
   );
 
+  test("a listed resolved thread gives 400 and starts no run (docs/plans/fix-ux.md known limit)", async () => {
+    const h = await setup();
+    h.db
+      .query(
+        `INSERT INTO comment (pr, comment_id, version, root_id, author_slug, text, thread_resolved, created_at, updated_at)
+        VALUES ($pr, 1002, 0, 1002, $me, 'x', 1, 1002, 1002)`,
+      )
+      .run({ pr: h.pr, me: FAKE_USER });
+    const r = await h.start([101, 1002]);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe("Thread 1002 is resolved. Fix works only on open threads.");
+    expect(h.runCalls()).toEqual([]);
+  });
+
   test(
     "404, unsynced, non-author, Explain, no valid draft, and more than 25 threads give errors; a list passes the reply checks",
     async () => {
@@ -323,7 +337,7 @@ describe("thread selection and refusals", () => {
       h.db.query("UPDATE pull_request SET my_role = 'REVIEWER' WHERE id = $pr").run({ pr: h.pr });
       const role = await h.start([101]);
       expect(role.status).toBe(409);
-      expect(role.body.error).toBe("Fix runs work only on your own pull requests.");
+      expect(role.body.error).toBe("Fix works only on your own pull requests.");
       h.db.query("UPDATE pull_request SET my_role = 'AUTHOR' WHERE id = $pr").run({ pr: h.pr });
 
       expect((await h.json(`/api/prs/${h.pr}/brief`, { method: "PUT", body: { note: "", profile: "explain" } })).status).toBe(200);
