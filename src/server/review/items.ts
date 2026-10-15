@@ -1,7 +1,7 @@
 // Triage of review items (plan v3 WP12): accept, discard, restore, edit, and move.
 import type { Database } from "bun:sqlite";
 import type { ItemActionInput, ItemConflict, ReviewItemDto } from "../../shared/dto";
-import { type AnchoredFinding, type AnchorState, diffLine, type ExcerptLine, moveChoices } from "../../shared/review";
+import { type AnchoredFinding, type AnchorState, diffLine, type ExcerptLine, type FixedMark, moveChoices } from "../../shared/review";
 import { type ItemRow, toItemDto } from "./jobs";
 
 export type TriageResult =
@@ -40,7 +40,8 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
       next.status = "discarded";
       break;
     case "restore":
-      next.status = "new";
+      // docs/plans/fix-ux.md decision 3: a restore of a finding that a fix commit discarded returns its earlier status. The mark stays.
+      next.status = row.status === "discarded" ? ((JSON.parse(row.payload_json) as { fixed?: FixedMark }).fixed?.was ?? "new") : "new";
       break;
     case "edit":
       next.status = "accepted";

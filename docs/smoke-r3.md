@@ -139,20 +139,20 @@ Use a test pull request that changes C++, C, or Python files for step 4. If it h
 
 ## J. Fix on your own comments and on threads without a reply draft
 
-Run this part after the Fix picker ships (docs/plans/fix-ux.md, WP2). Steps J10 to J12 need phase 2 (WP3 and WP4). Until then, record them as not run.
+Fix for threads and for review findings ships with docs/plans/fix-ux.md WP2 to WP4.
 
 1. As the PR author, write two comments on the test pull request. T8 asks for one small change in a text source file. T9 asks for a change that the code already has. Click "Check now".
 2. Expect no reply draft for T8 and T9, because your message is the newest in each. If no thread waits for you, expect the Draft replies hint "Your message is the newest in each open thread. They wait for the other person."
-3. Expect the header button "Fix · N" to be enabled. Click it. Expect the picker with one checkbox per open, unresolved thread with a live message. Expect T8 and T9 in the list and unticked. Expect ticks only on threads with a Valid or Partly valid draft.
+3. Expect the action bar button "Fix N" to be enabled. Click it. Expect the picker with one checkbox per open, unresolved thread with a live message. Expect T8 and T9 in the list and unticked. Expect ticks only on threads with a Valid or Partly valid draft.
 4. Tick only T8 and T9. Click "Propose fixes for 2". Wait for the end of the run. Expect edits for T8. Expect T9 with no edit and a reason that says the code is already right. Do not apply.
 5. Click Log on the fix card. Expect no Edit, Write, or Agent tool in the init line. Close the log.
 6. Focus T8 and press f. Expect the Fix list with only T8 ticked. Press Enter on "Propose fixes for 1". Expect a fix run for T8 only. Wait for the end of the run. Do not apply.
 7. Resolve T9 in Bitbucket. Click "Check now". Press F. Expect T9 absent from the picker and the count of resolved threads in the picker text. Close the picker.
-8. Ask the second user for a test pull request where you are a reviewer. Open it. Do not post on it. If none exists, record this step as not run. Expect no Fix button and no "Fix · N". Focus a thread and press f. Expect the toast "Fix works only on your own pull requests."
+8. Ask the second user for a test pull request where you are a reviewer. Open it. Do not post on it. If none exists, record this step as not run. Expect no Fix button in the action bar. Focus a thread and press f. Expect the toast "Fix works only on your own pull requests."
 9. Delete T8 and T9 in Bitbucket by hand.
-10. Phase 2: run a review on the test pull request. Accept one finding that names a real change. Do not post it. Click Fix on the finding. Expect a fix card for the finding.
-11. Phase 2: apply the edit and commit in your clone. Expect the finding to show "Fixed in <short>" and to leave Ready to post. Expect p to post nothing for it.
-12. Phase 2: restore the finding. Expect it back in Ready to post. Click Undo on the fix card. Discard the finding.
+10. Run a review on the test pull request. Accept one finding that names a real change. Do not post it. Click Fix in the draft row of the finding. Expect the Fix list with only that finding ticked, in the group "Review findings that you did not post". Click "Propose fixes for 1". Expect a fix card under the finding.
+11. Apply the edit and commit in your clone. Expect the finding to show "Fixed in <short>" and to leave Ready to post. Expect p to post nothing for it.
+12. Click Restore on the finding. Expect "Accepted", the note "Fixed in <short>. You restored it.", and the finding back in Ready to post. Press F. Expect the finding ticked in the Fix list. Close the list. Click Undo on the fix card. Expect "Accepted" and no "Fixed in". Discard the finding.
 
 ## H. Record
 

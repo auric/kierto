@@ -79,7 +79,7 @@ const placeText = (t: ThreadModel) => {
 // threads: in any order; the rows come in screen order. replies: GET /api/prs/:id/reply-drafts. fixes: GET /api/prs/:id/fixes.
 // findings: the finding drafts of the newest review run, in screen order.
 // Decision D6: your own comments and posted findings start unticked. Valid and partly valid start ticked, unless a commit fixed them.
-// The plans give no default tick for a finding. Accepted findings start ticked, new ones do not, and a fixed one does not.
+// The plans give no default tick for a finding. Accepted findings start ticked and new ones do not. A restore returns the status of a fixed one.
 export function fixTargets(
   threads: ThreadModel[],
   replies: ReviewItemDto[] | undefined,
@@ -109,7 +109,7 @@ export function fixTargets(
       accepted,
       fixed,
       text: snippet(it.body, 160),
-      tick: accepted && fixed === null,
+      tick: accepted,
     });
   }
   for (const t of ordered(threads, false)) {

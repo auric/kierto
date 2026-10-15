@@ -5,7 +5,7 @@
 - Gate A is not needed for manual replies. Gate 0 already confirmed the reply POST: `POST .../comments` with `parent: {id}` returned 201 (integration-check.md:47; `.gate0/raw/14-post-reply.json`). A general comment POST also returned 201 (raw `08-post-general.json`; integration-check.md:48). Only some inline-post details and comment links wait for Gate A.
 - Manual reply goes into WP13 and WP14 (v3.md:281, v3.md:292), each split by Gate A: WP13a and WP14a need no gate; WP13b waits for Gate A. AI reply drafts are new packages WP17 (server) and WP18 (UI). The copy button is WP16.
 - Schema: add a sibling `replyResult` in `src/shared/review.ts`. Do not extend `reviewResult`. The module stays the one shared schema module.
-- A reply run is a new job kind (`review_run.kind = 'reply'`), not a new profile. "Draft replies · <profile>" keeps the profile's focus, cap and docs.
+- A reply run is a new job kind (`review_run.kind = 'reply'`), not a new profile. "Draft replies · <profile>" keeps the profile's focus, cap and docs. Replaced by pr-view-v4 (2026-10-15): the button is "Draft replies N", and the brief holds the profile.
 - Injection guard: comment text reaches the run only in `context/pr.md`, under the existing UNTRUSTED banner (workspace.ts:178-215). The prompt holds only numeric thread and message IDs plus the user's note. The validator drops any reply to a thread that was not requested. Nothing posts without Accept and the confirm step.
 
 ## Ordered steps
@@ -59,7 +59,7 @@
 
 ### Step 6. WP18: reply-draft UI (implementer; no gate)
 - Files: `src/web/review/{ReplyDraft.tsx, data.ts, model.ts, useReview.tsx, Brief.tsx, RunLine.tsx}`, `src/web/pr/{Thread.tsx, ThreadList.tsx}`, `tests/web/review.test.ts`, new `tests/e2e/replies.e2e.ts`.
-- Header button "Draft replies · <profile>" shows the your-turn count; disabled at 0 with tooltip "No thread waits for your reply."
+- Header button "Draft replies · <profile>" shows the your-turn count; disabled at 0 with tooltip "No thread waits for your reply." Replaced by pr-view-v4 (2026-10-15): "Draft replies N" is never disabled; at 0 a popover gives the reason.
 - Each live thread's composer row gets "Draft reply" for that thread only.
 - An inline draft card after the tree: AI avatar, body, reason, Accept/Edit/Discard/Restore from WP14a, plus Copy. A `none` result shows "No reply needed: <reason>" with "Write a reply".
 - Stale mark when `payload.replyTo` is not the newest live message: "New messages since this draft" and "Draft again".

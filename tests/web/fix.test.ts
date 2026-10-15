@@ -256,7 +256,7 @@ describe("Fix list", () => {
     finding(1, { status: "accepted" }, { severity: "blocker" }),
     finding(2),
     finding(3, { status: "accepted", anchor: { ...anchor, line: 8, lineEnd: 9, side: "new" } }),
-    // A finding that a commit fixed and that you restored keeps the mark.
+    // A finding that a commit fixed and that you restored keeps the mark and its earlier status.
     finding(4, { status: "accepted", payload: { ...finding(4).payload, fixed: mark } }),
     // Not open: discarded, fixed and still discarded, posted, and a finding whose code is gone.
     finding(5, { status: "discarded" }),
@@ -279,7 +279,7 @@ describe("Fix list", () => {
     });
     expect(t.findings[1]).toMatchObject({ finding: 2, accepted: false, tick: false });
     expect(t.findings[2]?.place).toBe("src/cache/flush.ts:8–9");
-    expect(t.findings[3]).toMatchObject({ finding: 4, accepted: true, fixed: "fffffff", tick: false });
+    expect(t.findings[3]).toMatchObject({ finding: 4, accepted: true, fixed: "fffffff", tick: true });
     // The thread rows stay as they were.
     expect(t.rows).toEqual(fixTargets(threads, replies, [fixed]).rows);
     expect(fixTargets(threads, replies, [fixed]).findings).toEqual([]);

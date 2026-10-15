@@ -158,7 +158,7 @@ export const rereviewJsonSchema = (): Record<string, unknown> => z.toJSONSchema(
 export type Carried = { from: number; verdict: Verdict; reason: string; since: string };
 
 // docs/plans/fix-ux.md decision 3: a fix commit that covers an open finding discards it with this mark. id: the fix_commit ID.
-// was: the status before the mark. An undo of the commit restores it. A restore by the user keeps the mark.
+// was: the status before the mark. An undo of the commit and a restore by the user return it. A restore keeps the mark.
 export type FixedMark = { id: number; commit: string; short: string; was: "new" | "accepted" };
 
 // ---------- Ask (plan r2 S-ASK) ----------

@@ -1,6 +1,6 @@
 # Fix UX plan: Fix on every open thread of my own PR
 
-Status: approved by the user, 2026-10-14. WP-D and WP1 are done. WP2 to WP4 are open. Line references point to the code at HEAD efd8f8c.
+Status: code complete, 2026-10-15. All work packages are done (section 4). The user runs docs/smoke-r3.md part J. Line references point to the code at HEAD efd8f8c.
 
 ## 1. Root cause
 
@@ -22,7 +22,7 @@ Status: approved by the user, 2026-10-14. WP-D and WP1 are done. WP2 to WP4 are 
 - Keys: f fixes the focused thread or finding. F opens the picker.
 - A reviewer gets no Fix. f shows the toast "Fix works only on your own pull requests."
 - Draft replies with 0 threads shows the hint "Your message is the newest in each open thread. They wait for the other person."
-- A fix commit that covers an accepted finding that is not posted marks it "Fixed in <short hash>". The finding leaves Ready to post. The user can restore it.
+- A fix commit that covers an open finding that is not posted (new or accepted) discards it and marks it "Fixed in <short hash>". The finding leaves Ready to post. Restore returns its earlier status and keeps the mark. Undo of the commit also returns the earlier status.
 
 ## 3. Phases
 
@@ -31,19 +31,21 @@ Status: approved by the user, 2026-10-14. WP-D and WP1 are done. WP2 to WP4 are 
 
 ## 4. Work packages
 
-- WP-D docs: BRIEF.md (Fix it, Judgement, Fix run, Fixed finding), r3.md risk 8 replaced, this plan, docs/smoke-r3.md part J.
-- WP1 server, judge first: catalog.ts fixAgent rule, prompt.ts buildFixPrompt line "Read the whole thread of each entry, not only its newest message.". Tests: prompt.test.ts and a fix.test.ts case for a thread with only the author's message.
-- WP2 UI phase 1, threads: fix/model.ts targets and button state, a new FixPicker.tsx, FixBar split, a Thread.tsx aside prop (a boolean, replies.md R14), PrDetail ref wiring, useReview reveal, FixActs removed, keys f and F, the zero hint. E2e: an own-comment scenario (thread 5000003), a picker test, and updates to fix.e2e.ts:89 and 117-118.
-- WP3 server phase 2, findings: migration 022 makes `fix_edit.thread` nullable and adds `item`, with a CHECK for exactly one. Changes in review.ts and dto findings, jobs.ts fix() with findings and context/findings.md, validateFix, and the fix-routes finish step that skips rows without a thread. The fake CLI gets findings.
-- WP4 UI phase 2, findings: Drafts.tsx Fix and its card, fix state by thread or finding, picker entries, f on a finding.
+- WP-D (done, 33cdaa1) docs: BRIEF.md (Fix it, Judgement, Fix run, Fixed finding), r3.md risk 8 replaced, this plan, docs/smoke-r3.md part J.
+- WP1 (done, 33cdaa1) server, judge first: catalog.ts fixAgent rule, prompt.ts buildFixPrompt line "Read the whole thread of each entry, not only its newest message.". Tests: prompt.test.ts and a fix.test.ts case for a thread with only the author's message.
+- WP2 (done, 6ce7bf7, pr-view-v4 P7) UI phase 1, threads: fix/model.ts targets and button state, a new FixPicker.tsx, FixBar split, a Thread.tsx aside prop (a boolean, replies.md R14), PrDetail ref wiring, useReview reveal, FixActs removed, keys f and F, the zero hint. E2e: an own-comment scenario (thread 5000003), a picker test, and updates to fix.e2e.ts:89 and 117-118.
+- WP3 (done, 6bf52ad) server phase 2, findings: migration 022 makes `fix_edit.thread` nullable and adds `item`, with a CHECK for exactly one. Changes in review.ts and dto findings, jobs.ts fix() with findings and context/findings.md, validateFix, and the fix-routes finish step that skips rows without a thread. The fake CLI gets findings.
+- WP4 (done, 5fecf2f) UI phase 2, findings: Drafts.tsx Fix and its card, fix state by thread or finding, picker entries, f on a finding.
 
 ## 5. User decisions (2026-10-14)
 
 1. Option A. The valid-only rule is dropped.
 2. A reviewer gets no Fix, and the app says why.
-3. A fixed accepted finding shows "Fixed in <commit>", leaves Ready to post, and can be restored.
+3. A fixed accepted finding shows "Fixed in <commit>", leaves Ready to post, and can be restored. Built for new and accepted findings. Restore returns the earlier status (2026-10-15).
 4. No "Draft replies for all open threads" menu item.
 
 ## 6. Known limits
 
-- The server does not refuse a resolved thread in an explicit list (replyThreads, jobs.ts). WP2 leaves resolved threads out of the picker. WP2 decides whether the server refuses them too.
+- WP3 made `fix_edit.thread` nullable in migration 023, not 022. Migration 022 holds the author page link (pr-view-v4 P3).
+- WP2 decided: the server refuses a resolved thread in an explicit list. The Fix list leaves resolved threads out.
+- Fix cards show only for findings of the newest review run.

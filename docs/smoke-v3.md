@@ -27,7 +27,7 @@ This test checks reviews, triage, posts, replies, and reply drafts against the r
 1. Press Shift+R. Expect the review brief with the focus in "Your note".
 2. Type a short note, for example "Check the error handling first." Keep the profile General. Press Ctrl+Enter.
 3. Expect "Reviewing…" in the run line, with a count of tool calls that goes up. Press 3. Expect the run log. Each subagent has its own fold. Press Esc.
-4. Wait for the end of the run. Expect the Review row of the run list to show the number of findings and questions. If the row shows "Coverage gaps", click it and record the gaps.
+4. Wait for the end of the run. Expect the review record above the Description, with the summary and a count per severity. If the record shows "Not checked: N", click it. Expect one plain line per item in place, and no jump to the run log. Record the items.
 5. Accept one finding. Expect "Accepted" on it and the focus on the next draft. Discard one finding. Expect "Discarded:" and a Restore button. Edit one finding, change one word, and press Ctrl+Enter. Expect "edited by you" and "Accepted".
 6. Press p. Expect a confirm with the destination and the exact text of each comment. Expect no discarded text in it.
 7. Click Post. Expect "Posted." on each row, with an "Open in Bitbucket" link.
@@ -63,7 +63,7 @@ This test checks reviews, triage, posts, replies, and reply drafts against the r
 ## E. Draft replies, accept one, and post (A16, U20)
 
 1. You need a thread where it is your turn: another user wrote the newest message. If you have none, use "Draft reply" in an open thread. Then skip to step 3.
-2. Click "Draft replies · General" in the header. Expect "Claude is drafting a reply…" in each requested thread and "Drafting replies…" in the run line.
+2. Click "Draft replies" in the action bar. Expect "Claude is drafting a reply…" in each requested thread and "Drafting replies…" in the run line.
 3. Expect the Reply drafts row to show the number of reply drafts at the end. This confirms U20: the real CLI accepts the reply schema. If the Reply drafts row shows "Reply drafts failed.", click "Show raw output". Click Copy and keep the text locally for the record.
 4. Expect a dashed card "Reply draft to <name>" in each thread, or "No reply needed: <reason>". Expect no card in a thread that you did not request.
 5. Accept one draft. Expect "Accepted" and a solid border. Press p. Expect one reply, "Reply to <name> in <place>", and the text with 🤖.
@@ -81,6 +81,22 @@ This test checks reviews, triage, posts, replies, and reply drafts against the r
 1. Search the data folder for the token. PowerShell: `Select-String -Path "$env:REVIEW_LOOP_DATA_DIR\*" -Pattern "<first 8 characters of the token>"`. Expect no hit.
 2. Search the terminal output and the browser console for the same text. Expect no hit.
 3. Expect that your own checkout of the repository has no change. The app reviews its own cache clone only.
+
+## H. PR view: Back, deep links, panels, and the file click
+
+Run steps 1 to 3 right after Preparation, before part A, because they need an empty code cache. Run the other steps at any time.
+
+1. Open the test pull request. Expect the note "Select a file to see its diff." above the Files list.
+2. Click a file row. Expect a spinner and "Getting the code" in the row. Expect the diff of that file to open when the fetch ends. Expect the focus to stay on the row.
+3. Click another file row. Expect its diff at once, with no second fetch.
+4. Open a second pull request from the list by a click. Press the browser Back button. Expect the test pull request at its scroll position. Press Forward. Expect the second pull request.
+5. Open a file of the test pull request. Copy the URL from the address bar. Open it in a new tab. Expect the same view, pull request, and open file. Close the tab.
+6. Open Settings. Click a section link. Press Back. Expect the previous section, then the pull request on the next Back.
+7. Change the URL to a pull request ID that does not exist. Expect "Cannot find this pull request".
+8. At a window of 1440 px or wider, drag the splitter on the list edge. Expect the list width to follow, from 280 to 560 px. Focus the splitter and press the arrow keys, then Enter. Expect the default width again. Reload. Expect the width to stay.
+9. Make the window narrower than 1440 px. Expect the sidebar as an icon rail. Click "Expand sidebar". Reload. Expect the full sidebar to stay.
+10. Press z. Expect the sidebar and the list to hide, and "full=1" in the URL. Press Back. Expect three panes. Press z, then Esc. Expect three panes.
+11. Make the window narrower than 760 px. Expect one pane at a time. Open a pull request. Press Back. Expect the list.
 
 ## Cleanup
 

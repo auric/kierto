@@ -813,16 +813,22 @@ describe("undo", () => {
       ]);
       expect(await planned()).toEqual([]);
 
-      // The user restores one finding. It keeps the mark.
+      // The user restores both findings. Each gets its earlier status back and keeps the mark.
       const restore = await s.call<{ status: string }>("POST", `/api/items/${fresh}`, { action: "restore", revision: 1 });
       expect([restore.status, restore.body.status]).toEqual([200, "new"]);
+      const back = await s.call<{ status: string; payload: { fixed?: unknown } }>("POST", `/api/items/${accepted}`, {
+        action: "restore",
+        revision: 1,
+      });
+      expect([back.status, back.body.status, back.body.payload.fixed]).toEqual([200, "accepted", mark("accepted")]);
+      expect(await planned()).toEqual([accepted]);
 
       sent.length = 0;
       const u = await s.undo(r.body.id);
       expect([u.status, u.body.state]).toEqual([200, "undone"]);
       expect(sent).toEqual([["changed", { prs: [s.id], runs: [s.run, review] }]]);
       expect(findings()).toEqual([
-        { id: accepted, status: "accepted", revision: 2, fixed: undefined },
+        { id: accepted, status: "accepted", revision: 3, fixed: undefined },
         { id: fresh, status: "new", revision: 3, fixed: undefined },
       ]);
       expect(await planned()).toEqual([accepted]);

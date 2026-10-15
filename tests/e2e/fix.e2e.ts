@@ -679,7 +679,7 @@ test("Fix on an accepted finding: its edit shows under it, Apply commits it, it 
   await expect(head).not.toContainText("Fixed in");
   await expect(post).toContainText("Ready to post: 1 inline comment");
 
-  // A second commit, then Restore: the finding is new again and keeps the mark, so it starts unticked in the Fix list.
+  // A second commit, then Restore: the finding is accepted again and keeps the mark. It is back in Ready to post and starts ticked.
   await expect(apply).toHaveText("Apply 1 edit from 1 finding");
   await apply.click();
   const commitBtn = box.getByRole("button", { name: "Apply and commit" });
@@ -689,12 +689,14 @@ test("Fix on an accepted finding: its edit shows under it, Apply commits it, it 
   const again = git(path, ["rev-parse", "--short", "HEAD"]);
   await expect(head).toContainText(`Fixed in ${again}`);
   await row.getByRole("button", { name: "Restore" }).click();
-  await expect(row).toContainText(`Fixed in ${again}. You restored it.`);
+  // An accepted draft closes to its row. The row name keeps the note.
+  await expect(row).toHaveAccessibleName(`Draft from Claude. Minor. flush.ts:5. Accepted. Fixed in ${again}. You restored it.`);
   await expect(head.locator(".line-through")).toHaveCount(0);
-  await expect(post).toHaveCount(0);
+  await expect(head).toContainText("Accepted");
+  await expect(post).toContainText("Ready to post: 1 inline comment");
   await page.locator("#fix-btn").click();
   await expect(pickFinding(page, RELEASE)).toContainText(`Fixed in ${again}`);
-  await expect(pickFinding(page, RELEASE).getByRole("checkbox")).not.toBeChecked();
+  await expect(pickFinding(page, RELEASE).getByRole("checkbox")).toBeChecked();
   await page.keyboard.press("Escape");
   await expect(fixList(page)).toBeHidden();
   expect(await writes()).toEqual([]);
