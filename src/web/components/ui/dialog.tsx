@@ -33,21 +33,26 @@ function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) 
   );
 }
 
+// instant: a shortcut key opened the dialog. Base UI 1.8 sets no data-instant on a dialog, so the caller tells it.
+// The dialog and its backdrop then open and close with no animation.
 function DialogContent({
   className,
   children,
   showCloseButton = true,
+  instant = false,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
+  instant?: boolean;
 }) {
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay data-instant={instant || undefined} className="data-instant:animate-none" />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
+        data-instant={instant || undefined}
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 ease-(--ease-out) outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:duration-75",
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 ease-(--ease-out) outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:duration-75 data-instant:animate-none",
           className,
         )}
         {...props}

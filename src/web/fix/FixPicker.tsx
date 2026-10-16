@@ -119,6 +119,8 @@ function FindingRow({ r, ticked, onTick }: { r: FixFindingRow; ticked: boolean; 
 // prKey: "PROJ/repo #id". ticks: the cardKey of each ticked row. reason: fixReason for the current ticks. starting: the POST is out.
 export function FixPicker(props: {
   open: boolean;
+  // A shortcut key opened the list (DialogContent instant).
+  instant: boolean;
   prKey: string;
   targets: FixTargets;
   ticks: ReadonlySet<string>;
@@ -144,6 +146,7 @@ export function FixPicker(props: {
     <Dialog open={props.open} onOpenChange={(on) => !on && props.onClose()}>
       <DialogContent
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[620px]"
+        instant={props.instant}
         onKeyDown={dialogKeys(props.onClose)}
         initialFocus={any && !blocked ? propose : true}
       >

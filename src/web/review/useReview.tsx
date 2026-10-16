@@ -76,9 +76,10 @@ export type ReviewApi = {
   // A reply-draft run for one thread (replies.md step 6).
   draftReply(thread: number): void;
   // Keys f and F (plan pr-view-v4 section 6): the Fix list. thread absent: the default ticks. null: no current thread.
-  fix(thread?: number | null): void;
+  // key: a shortcut key opens the list, so it shows no animation.
+  fix(thread?: number | null, key?: boolean): void;
   // Key f on a finding draft: the Fix list with only that finding ticked.
-  fixFinding(id: number): void;
+  fixFinding(id: number, key?: boolean): void;
   // Plan r2 UI-DIFF: opens a draft and focuses it, for "Go to draft" in the diff.
   openDraft(id: number): void;
   // The layer that Esc closes first, for focus at target.
@@ -554,8 +555,8 @@ export function useReview(
       else if (it.status !== "discarded") triageFns.edit(it);
     },
     draftReply: (thread) => draftReplies([thread]),
-    fix: (thread) => fix.open(thread),
-    fixFinding: (id) => fix.openFinding(id),
+    fix: (thread, key) => fix.open(thread, key),
+    fixFinding: (id, key) => fix.openFinding(id, key),
     openDraft,
     layer(target) {
       const inSheet = target instanceof Node && !!document.getElementById("run-log")?.contains(target);

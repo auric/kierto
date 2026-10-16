@@ -6,7 +6,8 @@ import { HELP_KEYS } from "../keys";
 export function HelpSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px]">
+      {/* Only the ? key opens this sheet. */}
+      <DialogContent className="sm:max-w-[480px]" instant>
         <DialogTitle>Keyboard shortcuts</DialogTitle>
         {HELP_KEYS.map((g) => (
           <section key={g.group} className="grid gap-2">

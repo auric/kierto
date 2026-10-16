@@ -324,11 +324,12 @@ test("Ask your session: off hides it; on lists the branch session with its cost,
   await answerDialog(page).getByRole("button", { name: "Close" }).first().click();
 
   // The CLI forked the session file in a run folder, never in a clone, with the read tools only.
+  // Gate B16 (d): the fork writes no transcript.
   const a = await runArgv();
   expect(a?.argv).toContain("--fork-session");
   expect(a?.argv[a.argv.indexOf("--resume") + 1]).toMatch(new RegExp(`${SESSION_ID}.jsonl$`));
   expect(a?.argv[a.argv.indexOf("--tools") + 1]).toBe("Read,Grep,Glob");
-  expect(a?.argv).not.toContain("--no-session-persistence");
+  expect(a?.argv).toContain("--no-session-persistence");
   // "." stands for the path separator of either OS.
   expect(a?.cwd).toMatch(/.runs.\d+.work$/);
   expect(a?.stdin).toContain(`### T${LOCK}\n`);

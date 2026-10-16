@@ -51,9 +51,10 @@ export type FixUi = {
   fixes: FixDto[] | undefined;
   // Opens the Fix list. thread absent: the default ticks. A thread ID: only that thread is ticked. null: no current thread.
   // A pull request of another author, a resolved thread, or a thread without a live message gives a toast.
-  open: (thread?: number | null) => void;
+  // key: a shortcut key opens the list, so it shows no animation.
+  open: (thread?: number | null, key?: boolean) => void;
   // Opens the Fix list with only this finding ticked. A pull request of another author or a closed finding gives a toast.
-  openFinding: (id: number) => void;
+  openFinding: (id: number, key?: boolean) => void;
   // Opens the Fix list with exactly these targets ticked: the accepts of a session answer (session-consult.md part B).
   openWith: (targets: FixTarget[]) => void;
   // Copies the runner prompt of the thread. Call it in the click handler. Resolves to the next step, or null.
@@ -134,6 +135,7 @@ export function useFix(
   const targets = useMemo(() => fixTargets(o.threads, o.replies, list, o.findings), [o.threads, o.replies, list, o.findings]);
   // The cardKey of each ticked row while the Fix list is open. null: closed.
   const [pick, setPick] = useState<ReadonlySet<string> | null>(null);
+  const [keyed, setKeyed] = useState(false);
   const tick = (kind: FixTarget["kind"], id: number) => cardKey({ kind, id });
   const tickedThreads = pick ? targets.rows.flatMap((r) => (pick.has(tick("thread", r.thread)) ? [r.thread] : [])) : [];
   const tickedFindings = pick ? targets.findings.flatMap((r) => (pick.has(tick("finding", r.finding)) ? [r.finding] : [])) : [];
@@ -146,26 +148,30 @@ export function useFix(
     busy: o.busy,
   });
 
-  const open = (thread?: number | null) => {
+  const showList = (ticks: Iterable<string>, key: boolean) => {
+    setKeyed(key);
+    setPick(new Set(ticks));
+  };
+  const open = (thread?: number | null, key = false) => {
     if (!author) return void toast.add({ title: OWN_ONLY });
     if (thread === undefined) {
       const rows = targets.rows.flatMap((r) => (r.tick ? [tick("thread", r.thread)] : []));
-      return setPick(new Set([...rows, ...targets.findings.flatMap((r) => (r.tick ? [tick("finding", r.finding)] : []))]));
+      return showList([...rows, ...targets.findings.flatMap((r) => (r.tick ? [tick("finding", r.finding)] : []))], key);
     }
     const t = threads.current.find((x) => x.id === thread);
     const why = threadFixWhy(t);
     if (why !== null || !t) return void toast.add({ title: why ?? "" });
-    setPick(new Set([tick("thread", t.id)]));
+    showList([tick("thread", t.id)], key);
   };
-  const openFinding = (id: number) => {
+  const openFinding = (id: number, key = false) => {
     if (!author) return void toast.add({ title: OWN_ONLY });
     const why = findingFixWhy(findings.current.find((x) => x.id === id));
     if (why !== null) return void toast.add({ title: why });
-    setPick(new Set([tick("finding", id)]));
+    showList([tick("finding", id)], key);
   };
   const openWith = (targets: FixTarget[]) => {
     if (!author) return void toast.add({ title: OWN_ONLY });
-    setPick(new Set(targets.map(cardKey)));
+    showList(targets.map(cardKey), false);
   };
 
   const propose = () => {
@@ -360,6 +366,7 @@ export function useFix(
     <>
       <FixPicker
         open={pick !== null}
+        instant={keyed}
         prKey={prKey(pr)}
         targets={targets}
         ticks={pick ?? NO_TICKS}

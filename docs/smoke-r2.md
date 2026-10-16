@@ -58,7 +58,7 @@ This test checks the Release 2 features against a real Bitbucket Server, a real 
 2. Click the button. Expect the git file list with added and removed counts, renames, and binary marks.
 3. Open each file. Expect two number columns and a gap row between hunks.
 4. Expect each inline thread as a compact card on its line. Expect a thread on a removed or context line on the old side. Expect orphaned threads and threads off the shown lines in the "Not on the lines shown" list at the file top.
-5. Open a draft in the Review tab. Click "Show in diff". Expect the file to open and the row to flash. Press Esc or ←. Expect the previous view and the same unread state as before.
+5. Open a draft in the Review tab. Click "Show in diff". Expect the file to open and the row to get the focus with a static inner ring. Expect no flash, and expect the row to keep its added or removed color. Press Esc or ←. Expect the previous view and the same unread state as before.
 6. In a thread, press g then d. Expect the same jump. Click "Go to thread" on a card. Expect the thread in the Activity tab.
 7. Open a large pull request (more than 1,000 rows in one file, or more than 100 files). Get the code. Expect the file to load in pages and the page to scroll without a freeze. Record the file count, the largest file row count, and the load time.
 

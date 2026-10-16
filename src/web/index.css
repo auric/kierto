@@ -857,8 +857,12 @@ button.rl-ll:hover {
 }
 /* A jump target keeps a static highlight while it holds the focus. The jump code sets data-jump and removes it on blur.
    :focus, not :focus-visible: a jump from a mouse click must show the target too. */
-[data-jump]:focus {
+[data-jump]:not(.rl-dr):focus {
   background: var(--sel);
+}
+/* A diff row keeps its added or removed color. Its mark is a band inside the focus ring of .rl-dr:focus. */
+.rl-dr[data-jump]:focus {
+  box-shadow: inset 0 0 0 4px var(--sel);
 }
 /* Feedback for a change that the user causes or watches: a new card or row, a new state mark, a new answer, the copy check.
    Content that mounts with the detail, an opened thread, the run line, or the shown answers is inside [data-mounting] for one frame, so it does not move. */

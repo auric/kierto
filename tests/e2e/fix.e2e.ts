@@ -8,7 +8,20 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, cloneState, control, E2E_TOKEN, FAKE_URL, makeClone, openApp, openFolder, pushClone, runStdin, writes } from "./control";
+import {
+  APP_PORT,
+  cloneState,
+  control,
+  E2E_TOKEN,
+  FAKE_URL,
+  makeClone,
+  motion,
+  openApp,
+  openFolder,
+  pushClone,
+  runStdin,
+  writes,
+} from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Release the write lock after each entry";
@@ -564,6 +577,9 @@ test("the Fix list: three rows, my own comment unticked; F opens it, the reasons
   await page.keyboard.press("Shift+F");
   const list = fixList(page);
   await expect(list.getByRole("checkbox")).toHaveCount(3);
+  // A key opens the list and its backdrop at once.
+  expect(await motion(list)).toEqual({ name: "none", running: 0 });
+  expect(await motion(page.locator("[data-slot='dialog-overlay']"))).toEqual({ name: "none", running: 0 });
   await expect(pickRow(page, "Release the lock")).toContainText("Valid");
   await expect(pickRow(page, "Take the lock once")).toContainText("Partly valid");
   await expect(pickRow(page, "Note to self")).toContainText("Your comment");
@@ -586,13 +602,18 @@ test("the Fix list: three rows, my own comment unticked; F opens it, the reasons
   await expect(list).toBeHidden();
 
   // The run shows in the bottom bar and on each thread. Its prompt lists the two ticked threads only.
+  // The running card answers Propose in an open thread, so it does not move.
   await expect(page.locator("[data-fixbar]")).toContainText("Fix: checking 2 points and proposing edits", { timeout: RUN_MS });
   await expect(fixCard(page, LOCK)).toContainText("Claude is proposing a fix…");
+  expect(await fixCard(page, LOCK).evaluate((e) => [e.className.includes("rl-enter"), e.getAnimations().length])).toEqual([false, 0]);
   await expect(fixCard(page, LOOP)).toContainText("Claude is proposing a fix…");
   await expect.poll(runStdin, { timeout: RUN_MS }).toContain(`\nFix threads: ${LOCK} (comment ${LOCK}), ${LOOP} (comment ${LOOP})\n`);
 
-  // A busy slot: the Fix list names the active run, and Propose waits.
+  // A busy slot: the Fix list names the active run, and Propose waits. A click opens the list with its fade and zoom.
   await page.locator("#fix-btn").click();
+  await expect(list).not.toHaveAttribute("data-instant");
+  expect((await motion(list)).name).toBe("enter");
+  expect((await motion(page.locator("[data-slot='dialog-overlay']"))).name).toBe("enter");
   await expect(list.locator("#fix-why")).toContainText("Propose fixes when it ends.");
   await expect(list.getByRole("button", { name: /^Propose fixes for/ })).toHaveAttribute("aria-disabled", "true");
   await page.keyboard.press("Escape");

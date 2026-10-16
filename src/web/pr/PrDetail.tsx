@@ -495,16 +495,16 @@ export function PrDetail({
     ask: openAsk,
     ...review.api,
     fix(list) {
-      if (list) return review.api.fix();
+      if (list) return review.api.fix(undefined, true);
       const at = document.activeElement;
       const d = at?.closest("[data-draft]")?.getAttribute("data-draft");
-      if (d) return review.api.fixFinding(Number(d));
+      if (d) return review.api.fixFinding(Number(d), true);
       if (role === "AUTHOR" && at?.closest("[data-draft-question]")) {
         toast.add({ title: "A question has no code to fix. Fix works on threads and findings." });
         return;
       }
       const t = at?.closest("[data-thread]")?.getAttribute("data-thread");
-      review.api.fix(t ? Number(t) : cur);
+      review.api.fix(t ? Number(t) : cur, true);
     },
     // prototype/v3 Esc order: an edit, the brief, the post confirm, the run log. Ask comes after the dialogs (plan pr-view-v4 4.4).
     // Ask uses the "brief" layer of keys.ts: both are the panel slot, and only one is open.

@@ -165,9 +165,10 @@ export const FixCard = memo(function FixCard(props: {
   const { state: s, target, ctx } = props;
   const key = cardKey(target);
   const short = ctx.meta.runner.short;
+  // The running card answers Propose, often from a key, so it does not move. A card that a run result brings plays rl-enter.
   if (s.kind === "running") {
     return (
-      <p data-fix={key} className="rl-enter mt-3.5 mb-0 flex items-center gap-2 text-sm text-ink-2">
+      <p data-fix={key} className="mt-3.5 mb-0 flex items-center gap-2 text-sm text-ink-2">
         <AiAvatar meta={ctx.meta} />
         <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
         {short} is proposing a fix…

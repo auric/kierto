@@ -1,7 +1,7 @@
 // Shared by serve.ts (Bun) and the Playwright files (Node). Keep it free of Bun APIs.
 // E2E_APP_PORT, E2E_FAKE_PORT, and E2E_JIRA_PORT move the servers, so that two checkouts can run e2e at the same time.
 // Playwright passes its environment to the web server command.
-import type { Page, Request } from "@playwright/test";
+import type { Locator, Page, Request } from "@playwright/test";
 
 export const APP_PORT = Number(process.env.E2E_APP_PORT || 7399);
 export const FAKE_URL = `http://127.0.0.1:${Number(process.env.E2E_FAKE_PORT || 7398)}`;
@@ -36,6 +36,20 @@ export async function openApp(page: Page, path = "/"): Promise<void> {
   }
   if (lost.length) throw new Error(`App assets failed twice: ${lost.join(", ")}`);
 }
+
+// The animation name and the running animations of an element.
+export const motion = (l: Locator) => l.evaluate((e) => ({ name: getComputedStyle(e).animationName, running: e.getAnimations().length }));
+
+// A color token of index.css, such as "--sel", as getComputedStyle gives it.
+export const cssColor = (page: Page, token: string) =>
+  page.evaluate((t) => {
+    const probe = document.createElement("div");
+    probe.style.background = `var(${t})`;
+    document.body.append(probe);
+    const bg = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return bg;
+  }, token);
 
 export type Scenario = {
   // PR 1001: the reply 1000010 by another user under my comment 1000003. "two": then the reply 1000011 by a third user.

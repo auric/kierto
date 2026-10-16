@@ -1,7 +1,7 @@
 // Plan r2 UI-DIFF in the browser: get the code on a click, open a file, threads and drafts on their lines, Show in diff and
 // back, and the diff marks nothing read. Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, makeClone, openApp, pushClone, writes } from "./control";
+import { APP_PORT, control, cssColor, E2E_TOKEN, FAKE_URL, makeClone, openApp, pushClone, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -115,6 +115,14 @@ test("get the code, open flush.ts, cards on their lines, Show in diff and back, 
   const first = drafts(page).nth(0);
   await first.getByRole("button", { name: "Show in diff" }).click();
   await expect(page.locator("#dl-0-n3")).toBeFocused();
+  // The jump mark of a diff row is a static band inside its focus ring. The row keeps its added color.
+  const added = page.locator("#dl-0-n3");
+  await expect(added).toHaveAttribute("data-jump", "");
+  await expect(added).toHaveAttribute("data-k", "add");
+  await expect(added).toHaveCSS("background-color", await cssColor(page, "--add"));
+  await expect(added).toHaveCSS("box-shadow", `${await cssColor(page, "--sel")} 0px 0px 0px 4px inset`);
+  await expect(added).toHaveCSS("outline-style", "solid");
+  expect(await added.evaluate((e) => e.getAnimations().length)).toBe(0);
   await cardsAt(page, "dl-0-n3").getByRole("button", { name: "Go to draft" }).click();
   await expect(first).toBeFocused();
   // g d from the focused draft.
