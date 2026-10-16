@@ -2,7 +2,7 @@
 // and the settings section links.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runAgents, runMcp, runSkills, testCheckSkill } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp, runAgents, runMcp, runSkills, testCheckSkill } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -45,7 +45,7 @@ const names = (page: Page) =>
     .evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value));
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

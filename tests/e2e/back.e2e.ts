@@ -1,7 +1,7 @@
 // Plan pr-view-v4 P1: the URL holds the view, the PR, the thread, the file, and the settings section. Back and Forward walk them.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 // PR 1001 of PROJ1/sample-repo-2. Its general thread is 1000003. The fake git remote gives one changed file.
@@ -39,7 +39,7 @@ const depth = (page: Page) => page.evaluate(() => history.length);
 // A low window, so the detail of PR 1001 scrolls.
 async function connect(page: Page) {
   await page.setViewportSize({ width: 1280, height: 440 });
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();
@@ -178,7 +178,7 @@ test("narrow: the detail has its own entry; Esc and Back to the list go back; a 
   await expect(h1(page)).toHaveText(A);
 
   // A deep link has no earlier entry of the app. Esc then shows the list and replaces the entry.
-  await page.goto(A_PATH);
+  await openApp(page, A_PATH);
   await expect(detail).toBeVisible();
   await expect(h1(page)).toHaveText(A);
   await page.keyboard.press("Escape");
@@ -214,19 +214,19 @@ test("a reload or a deep link shows the same place; an unknown view and a gone P
   await tab.close();
 
   // A PR outside the view stays shown, and the list keeps it.
-  await page.goto("/mine/PROJ1/sample-repo-3/77");
+  await openApp(page, "/mine/PROJ1/sample-repo-3/77");
   await expect(h1(page)).toHaveText(C);
   await expect(row(page, C)).toHaveAttribute("aria-current", "true");
   await expect(page.locator("[data-row]")).toHaveCount(1);
 
   // An unknown view gives Needs you.
-  await page.goto("/inbox/x");
+  await openApp(page, "/inbox/x");
   await expect.poll(() => new URL(page.url()).pathname).toMatch(/^\/needs/);
   await expect(page.locator("[data-row]").first()).toBeVisible();
 
   // A gone PR: the detail says so, and no other PR opens or turns read.
   const reads = seen.reads.length;
-  await page.goto("/needs/PROJ1/sample-repo-2/999");
+  await openApp(page, "/needs/PROJ1/sample-repo-2/999");
   await expect(page.getByRole("heading", { name: "Cannot find this pull request" })).toBeVisible();
   await expect(page.locator("section[aria-label='Details']")).toContainText("PROJ1/sample-repo-2 #999");
   await page.waitForTimeout(1500);

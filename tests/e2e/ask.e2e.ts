@@ -3,7 +3,7 @@
 // The answer is text only: no draft, no post, and no write request to the forge.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, posts, writes } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp, posts, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -48,7 +48,7 @@ const askBtn = (page: Page) => page.locator("#ask-btn");
 const runLog = (page: Page) => page.getByRole("dialog", { name: "Ask run log" });
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

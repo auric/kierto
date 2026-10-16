@@ -11,6 +11,7 @@ import {
   JIRA_ISSUE,
   JIRA_URL,
   jiraRequests,
+  openApp,
   openFolder,
   runAttachments,
 } from "./control";
@@ -54,7 +55,7 @@ const openSettings = (page: Page) => page.getByRole("button", { name: "Settings"
 const closeSettings = (page: Page) => page.getByRole("button", { name: "Close the settings" }).click();
 
 async function open(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

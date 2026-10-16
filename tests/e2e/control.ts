@@ -1,6 +1,8 @@
 // Shared by serve.ts (Bun) and the Playwright files (Node). Keep it free of Bun APIs.
 // E2E_APP_PORT, E2E_FAKE_PORT, and E2E_JIRA_PORT move the servers, so that two checkouts can run e2e at the same time.
 // Playwright passes its environment to the web server command.
+import type { Page, Request } from "@playwright/test";
+
 export const APP_PORT = Number(process.env.E2E_APP_PORT || 7399);
 export const FAKE_URL = `http://127.0.0.1:${Number(process.env.E2E_FAKE_PORT || 7398)}`;
 export const JIRA_URL = `http://127.0.0.1:${Number(process.env.E2E_JIRA_PORT || 7397)}`;
@@ -11,6 +13,29 @@ export const E2E_JIRA_TOKEN = "e2e-jira-token-3c9d1f7a2b5e8d60";
 export const JIRA_ISSUE = "ABC-42";
 // src/server/publish/plan.ts AI_MARK. The default markAi setting puts it before each post of an AI item.
 export const MARK = "🤖 ";
+
+// ---------- The app page ----------
+
+// Chromium on Windows can fail one loopback connect with net::ERR_NO_BUFFER_SPACE. The load event still fires,
+// but a lost module chunk leaves #root empty. openApp reloads once and fails on a second lost asset.
+export async function openApp(page: Page, path = "/"): Promise<void> {
+  const assets = `http://127.0.0.1:${APP_PORT}/assets/`;
+  const lost: string[] = [];
+  const note = (r: Request) => {
+    if (r.url().startsWith(assets)) lost.push(`${r.url()} ${r.failure()?.errorText}`);
+  };
+  page.on("requestfailed", note);
+  try {
+    await page.goto(path);
+    if (lost.length) {
+      console.warn(`Reload after a failed asset: ${lost.splice(0).join(", ")}`);
+      await page.reload();
+    }
+  } finally {
+    page.off("requestfailed", note);
+  }
+  if (lost.length) throw new Error(`App assets failed twice: ${lost.join(", ")}`);
+}
 
 export type Scenario = {
   // PR 1001: the reply 1000010 by another user under my comment 1000003. "two": then the reply 1000011 by a third user.

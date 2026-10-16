@@ -1,6 +1,6 @@
 // M1 browser acceptance (plan G8, BRIEF section 6). Runs against the fake Bitbucket of serve.ts only.
 import { type APIRequestContext, test as base, expect, type Locator, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = {
@@ -73,7 +73,7 @@ async function unreadIds(request: APIRequestContext, title: string) {
 
 // US9 in the browser: the URL and the token go through the settings screen. Then the first check imports silently.
 async function connect(page: Page, notify = true) {
-  await page.goto("/");
+  await openApp(page);
   await expect(page.getByText("Connect Review Loop to your Bitbucket Server.")).toBeVisible();
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
@@ -112,7 +112,7 @@ test("A1: a reply is one unread event in the right thread and stays unread after
   await control("restart");
   expect(await unreadIds(request, TITLE.a)).toEqual([1000010]);
   // A reload keeps the parked PR in the URL (plan pr-view-v4 section 5). The plain start URL opens Needs you.
-  await page.goto("/");
+  await openApp(page);
   // Needs you opens the PR first. The highlight keeps the state at open.
   const reply = page.locator("#c-1000010");
   await expect(detailTitle(page)).toHaveText(TITLE.a);

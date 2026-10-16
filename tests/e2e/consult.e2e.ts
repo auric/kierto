@@ -2,7 +2,7 @@
 // text, the paste of a crafted answer with its preview, Apply, Undo, the direct session run with its opt-in and cancel, and no post.
 // Runs against serve.ts only: the fake Bitbucket with the author PR 1004, the temp git remote, and the fake CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runArgv, sessions, writes } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp, runArgv, sessions, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Release the write lock after each entry";
@@ -45,7 +45,7 @@ const runRow = (page: Page) => page.locator("#runline [data-run-kind='review']")
 const clipboard = async (page: Page) => (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

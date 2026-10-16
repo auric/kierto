@@ -4,7 +4,7 @@
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI. The CLI echoes one reply per
 // thread of its "Threads:" line, and every third thread gets action none (tests/support/fake-claude.ts echoReplies).
 import { test as base, expect, type Locator, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, MARK, posts } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, MARK, openApp, posts } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -47,7 +47,7 @@ const confirmBox = (page: Page) => page.getByRole("dialog", { name: /^Post .* to
 const postButton = (box: Locator) => box.getByRole("button", { name: "Post", exact: true });
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

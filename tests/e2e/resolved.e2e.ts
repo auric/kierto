@@ -1,7 +1,7 @@
 // Resolved threads (integration-check.md U56, synthetic): the badge names who resolved the thread and when, in the Threads list and
 // in the diff. A resolved card folds to one line and opens on a click or Enter. A deep link opens a resolved thread.
 import { expect, type Page, test } from "@playwright/test";
-import { control, E2E_TOKEN, FAKE_URL } from "./control";
+import { control, E2E_TOKEN, FAKE_URL, openApp } from "./control";
 
 const TITLE = "Batch cache writes in the sync worker";
 const A_PATH = "/needs/PROJ1/sample-repo-2/1001";
@@ -13,7 +13,7 @@ test.beforeEach(async () => {
 });
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

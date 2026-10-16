@@ -1,7 +1,7 @@
 // Archive view: an archived or unfollowed PR stays reachable after its toast closes, opens there, and Restore brings it back.
 // Runs against serve.ts only: the fake Bitbucket and its fixture data.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 // PR 1001: a review request on the dashboard.
@@ -42,7 +42,7 @@ const listed = async (request: APIRequestContext, path: "prs" | "archive", title
   ((await (await request.get(`${APP}/api/${path}`)).json()) as Row[]).find((p) => p.title === title);
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

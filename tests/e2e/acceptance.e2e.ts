@@ -2,7 +2,7 @@
 // A7 (stale), A10 (sign-in problem), A11 (unreadable or cut result), A12 (unavailable source), and A17 (injected comment).
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, posts } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp, posts } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -39,7 +39,7 @@ const thread = (page: Page, id: number) => page.locator(`#t-${id}`);
 const card = (page: Page, id: number) => thread(page, id).locator("[data-reply-draft]");
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

@@ -1,7 +1,7 @@
 // M3 browser acceptance (plan v3 WP14a): triage, the post confirm, the outbox states, and replies.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { test as base, expect, type Locator, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, MARK, posts } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, MARK, openApp, posts } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -39,7 +39,7 @@ const thread = (page: Page) => page.locator(`#t-${ROOT}`);
 const replyBox = (page: Page) => thread(page).getByRole("textbox", { name: /^Reply to / });
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

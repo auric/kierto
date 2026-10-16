@@ -1,7 +1,7 @@
 // Plan r2 UI-DIFF in the browser: get the code on a click, open a file, threads and drafts on their lines, Show in diff and
 // back, and the diff marks nothing read. Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, makeClone, pushClone, writes } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, makeClone, openApp, pushClone, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -49,7 +49,7 @@ async function contextComment() {
 }
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

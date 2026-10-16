@@ -2,7 +2,7 @@
 // run buttons, the More menu, and the Ask button. Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake
 // Claude Code CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, JIRA_ISSUE, type Scenario } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, JIRA_ISSUE, openApp, type Scenario } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 // A run passes the git workspace, the fake CLI, and the validator.
@@ -37,7 +37,7 @@ const pane = (page: Page) => page.locator("[data-scroll]");
 
 // state: PR 210 shows in Needs you only with new messages (tall).
 async function connect(page: Page, title: string, state: Partial<Scenario> = {}) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

@@ -1,7 +1,7 @@
 // Plan pr-view-v4 P2: the list splitter, the sidebar rail (decision D4), and full width (decision D5).
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
-import { test as base, expect, type Page, type Request } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL } from "./control";
+import { test as base, expect, type Page } from "@playwright/test";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 // PR 1001 of PROJ1/sample-repo-2.
@@ -32,19 +32,7 @@ const tip = (page: Page) => page.locator("[data-slot='tooltip-content']");
 
 async function connect(page: Page, w: number) {
   await page.setViewportSize({ width: w, height: 800 });
-  // Chromium on Windows can fail one loopback connect with net::ERR_NO_BUFFER_SPACE. A lost module chunk leaves the page empty.
-  const lost: string[] = [];
-  const note = (r: Request) => {
-    if (r.url().startsWith(`${APP}/assets/`)) lost.push(`${r.url()} ${r.failure()?.errorText}`);
-  };
-  page.on("requestfailed", note);
-  await page.goto("/");
-  if (lost.length) {
-    console.warn(`Reload after a failed asset: ${lost.splice(0).join(", ")}`);
-    await page.reload();
-  }
-  page.off("requestfailed", note);
-  expect(lost).toEqual([]);
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();
@@ -190,7 +178,7 @@ test("below 1440 px the sidebar is a rail; the choice to expand or collapse stay
 
   // The one pane layout has no rail and no toggle.
   await page.setViewportSize({ width: 400, height: 800 });
-  await page.goto("/needs");
+  await openApp(page, "/needs");
   await page.getByRole("button", { name: "Open views" }).click();
   await expect(side(page)).toBeVisible();
   await expect(side(page).getByRole("heading", { name: "Inbox" })).toBeVisible();
@@ -323,4 +311,15 @@ test("the narrow layout ignores z, shows one pane, and has no Full width button"
   expect(search(page)).toBe("");
   await expect(split(page)).toBeHidden();
   await expect(fullBtn(page)).toBeHidden();
+});
+
+test("openApp reloads once when the React chunk fails to load", async ({ page }) => {
+  let aborted = 0;
+  await page.route(/\/assets\/react-[^/]+\.js$/, (route) => {
+    if (aborted++) return route.continue();
+    return route.abort("connectionfailed");
+  });
+  await openApp(page);
+  await expect(page.getByLabel("Bitbucket URL")).toBeVisible();
+  expect(aborted).toBe(2);
 });

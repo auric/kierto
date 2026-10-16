@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, cloneState, control, E2E_TOKEN, FAKE_URL, makeClone, openFolder, pushClone, runStdin, writes } from "./control";
+import { APP_PORT, cloneState, control, E2E_TOKEN, FAKE_URL, makeClone, openApp, openFolder, pushClone, runStdin, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Release the write lock after each entry";
@@ -85,7 +85,7 @@ const toast = (page: Page) => page.locator("[data-slot='toast']");
 const git = (path: string, args: string[]) => execFileSync("git", ["-C", path, ...args], { encoding: "utf8" }).trim();
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();
@@ -747,7 +747,7 @@ test("one run takes threads and findings: f on a finding ticks only it; F ticks 
 });
 
 test("a reviewer PR has no Fix; f and F show why", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();

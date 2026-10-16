@@ -1,7 +1,7 @@
 // Forge data in the browser (plan v3 WP4, WP13b): the excerpt, the task mark, Files, Commits, and the comment link.
 // Runs against serve.ts only: the fake Bitbucket replays the Gate v3 fixtures of PR 77.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Drop the legacy export endpoint";
@@ -22,7 +22,7 @@ const test = base.extend<{ seen: { urls: string[] } }>({
 });
 
 async function connect(page: Page) {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();
