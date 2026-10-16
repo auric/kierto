@@ -262,7 +262,7 @@ describe("findSessions", () => {
 // ---------- The resume command ----------
 
 describe("resumeArgs", () => {
-  test("forks always, passes the launch flags again, and gives no agent, MCP server, persistence flag, or permission mode", () => {
+  test("forks without persistence, passes the launch flags again, and gives no agent, MCP server, or permission mode", () => {
     const root = fresh("args");
     const session = join(root, "projects", "a", "s1.jsonl");
     const { args, allowed } = resumeArgs({
@@ -277,14 +277,14 @@ describe("resumeArgs", () => {
     expect(args[0]).toBe("-p");
     expect(flag("--resume")).toBe(session);
     expect(args).toContain("--fork-session");
-    for (const f of ["--restricted", "--strict-mcp-config", "--verbose"]) expect(args).toContain(f);
+    for (const f of ["--restricted", "--strict-mcp-config", "--verbose", "--no-session-persistence"]) expect(args).toContain(f);
     expect(flag("--output-format")).toBe("stream-json");
     expect(flag("--tools")).toBe("Read,Grep,Glob");
     expect(flag("--allowedTools")).toBe("Read,Grep,Glob");
     expect(flag("--json-schema")).toBe(JSON.stringify(consultJsonSchema()));
     expect(flag("--max-turns")).toBe("12");
     expect(JSON.parse(readFileSync(flag("--mcp-config") as string, "utf8"))).toEqual({ mcpServers: {} });
-    for (const f of ["--no-session-persistence", "--permission-mode", "--agents", "--agent", "--bare", "--model", "--effort", "--add-dir"])
+    for (const f of ["--permission-mode", "--agents", "--agent", "--bare", "--model", "--effort", "--add-dir"])
       expect(args).not.toContain(f);
     expect([...allowed].sort()).toEqual(["Glob", "Grep", "Read", "StructuredOutput"]);
     expect(() => resumeArgs({ cwd: root, appDir: join(root, "app"), prompt: "p", schema: {}, maxTurns: 1, resume: "s1.jsonl" })).toThrow(
@@ -527,7 +527,7 @@ describe("session routes and runs", () => {
       const [c] = h.runCalls() as [Call];
       expect(flagOf(c.argv, "--resume")).toBe(h.session);
       expect(c.argv).toContain("--fork-session");
-      expect(c.argv).not.toContain("--no-session-persistence");
+      expect(c.argv).toContain("--no-session-persistence");
       expect(c.cwd.startsWith(join(h.dir, "runs"))).toBe(true);
       expect(c.cwd.startsWith(h.clone)).toBe(false);
       expect(c.stdin).toContain("### T101");

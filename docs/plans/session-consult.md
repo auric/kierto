@@ -1,6 +1,6 @@
 # Session consult plan: ask the session that wrote the code
 
-Status: parts A and B are code complete (package S1, 2026-10-15). Part C is code complete behind its opt-in (package S2, 2026-10-16). Gate B16 is written and not run yet. The user runs gate B16 and docs/smoke-r3.md part K.
+Status: parts A and B are code complete (package S1, 2026-10-15). Part C is code complete behind its opt-in (package S2, 2026-10-16). Gate B16 passed on CLI 2.1.301 (2026-10-16, integration-check.md). The user runs docs/smoke-r3.md part K.
 
 ## 0. Sources and user decisions
 
@@ -10,13 +10,16 @@ Status: parts A and B are code complete (package S1, 2026-10-15). Part C is code
 
 ## 1. CLI facts for part C
 
-Source: a scout run on CLI 2.1.300 and its docs, 2026-10-14. Part C uses them. Gate B16 checks the unverified ones.
+Source: a scout run on CLI 2.1.300 and its docs, 2026-10-14. Part C uses them. Gate B16 (CLI 2.1.301, 2026-10-16) confirmed the rows marked B16.
 
-- Verified: `claude -p --resume <id or absolute .jsonl path> --fork-session` leaves the original session unchanged.
-- Verified: resume works from any working folder since 2.1.223. So C can run in the sanitized run snapshot, with no exception for the clone.
+- Verified, B16 (a): `claude -p --resume <id or absolute .jsonl path> --fork-session` leaves the original session unchanged.
+- Verified, B16 (e): resume works from any working folder since 2.1.223. So C can run in the sanitized run snapshot, with no exception for the clone.
 - Verified: always pass `--fork-session`. Without it, a running `--bg` session attaches, or the command exits with code 1.
 - Verified: resume does not restore the launch flags (`--tools`, `--restricted`, `--strict-mcp-config`, `--mcp-config`, `--add-dir`). Pass them again.
-- Unverified: whether the passed launch flags apply on resume. Gate B16 checks it.
+- Verified, B16 (b): the passed launch flags apply on resume. Init lists only Glob, Grep, Read, and StructuredOutput, and no MCP server.
+- Verified, B16 (c): `--json-schema` gives `structured_output` with `--resume`.
+- Verified, B16 (d): `--no-session-persistence` with `--fork-session` leaves no transcript. Without it, the fork transcript goes to the project folder of the fork cwd.
+- Verified, B16: a resumed `-p` run shows `init.permissionMode` `default`, no hook events, and no replay of the old messages on stdout.
 - Verified: resume reuses the system prompt of the original session. Put the instructions in the user prompt.
 - Verified: `-p` does not restore the permission mode. Pass it explicitly.
 - Verified: transcripts are `<config>/projects/<cwd with each non-alphanumeric character as '-'>/<session>.jsonl`, with the keys cwd, gitBranch, sessionId, and timestamp. Titles come from ai-title or custom-title. A continued-in record points to the next file. The format is internal and can change.
@@ -79,9 +82,9 @@ Source: a scout run on CLI 2.1.300 and its docs, 2026-10-14. Part C uses them. G
 
 - Start: More, "Ask your session…", or "Ask your session instead…" in the copy dialog. The dialog has the groups of part A, the session list (best match picked), and the cost line. "Ask the session" starts the run.
 - cwd: a fresh sanitized snapshot of the PR head from the workspace builder. Never the user's clone.
-- Command (`claude.ts` `resumeArgs`): `-p --resume <absolute path> --fork-session --output-format stream-json --verbose --restricted --strict-mcp-config --mcp-config <empty> --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --json-schema <answer schema> --max-turns 12`. Same auth check and child env as review runs.
-- Decision: no `--permission-mode`, the same as review runs. `--restricted` ignores the settings files, and 2.1.295 has no "default" choice. B16 records `init.permissionMode` on resume.
-- Decision: no `--no-session-persistence` until B16 (d) shows that it leaves no transcript with `--fork-session`. So the CLI writes a fork transcript. The run end deletes the per-cwd folder of the run cwd. A fork file in another folder, for example next to the original, stays in the user's projects folder. B16 records the folder. The finder leaves out a fork whose newest cwd is a run folder.
+- Command (`claude.ts` `resumeArgs`): `-p --resume <absolute path> --fork-session --output-format stream-json --verbose --restricted --strict-mcp-config --mcp-config <empty> --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --json-schema <answer schema> --max-turns 12 --no-session-persistence`. Same auth check and child env as review runs.
+- Decision: no `--permission-mode`, the same as review runs. `--restricted` ignores the settings files, and 2.1.295 has no "default" choice. B16 shows `init.permissionMode` `default` on resume.
+- Decision: pass `--no-session-persistence`. B16 (d) shows no new transcript with `--fork-session`. The run end still deletes the per-cwd folders of the run cwd, because the flag still writes them (Gate B4). The finder still leaves out a fork whose newest cwd is a run folder, for transcripts of an older CLI or an older app run.
 - Safety net: the init check stops the run when init lists a tool outside Read, Grep, Glob, and StructuredOutput. So a resume that ignores `--tools` or `--strict-mcp-config` makes no tool call.
 - stdin: the text of the ticked groups (part A, with its 200 KB cap) and `SESSION_RULES`, which ends with "Answer only with the json block in the schema".
 - Schema: `{"answers": [part B entries]}`, because `--json-schema` needs an object. The parse keeps bad entries, and the preview of part B skips them with the reason.
@@ -104,4 +107,4 @@ Source: a scout run on CLI 2.1.300 and its docs, 2026-10-14. Part C uses them. G
 - The code quote needs the git cache. Without it, threads quote the stored excerpt.
 - Part C reads only the 300 newest transcripts. An older session on the branch does not show.
 - The transcript format is internal to the CLI. A format change can hide sessions or titles. The finder then shows fewer sessions, never message text.
-- Unverified until B16 runs: the launch flags on resume, structured output with `--resume`, the folder of the fork transcript, and history replay in stdout.
+- Gate B16 ran on CLI 2.1.301 only. A newer CLI can change the resume behavior. The init tool check still stops a run with another tool.

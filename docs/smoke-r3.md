@@ -175,7 +175,7 @@ Parts A and B (package S1) and part C (package S2) of docs/plans/session-consult
 14. Turn the switch on. Open More and click "Ask your session…". Expect the four groups and, under "Session on branch <source branch>", the sessions of that branch. Expect a session in `<CLONE>` first, with "In your clone". Each row shows a title, the folder name, the last use, the size, and a token estimate. Expect the cost line. Expect no message text of a transcript anywhere in the dialog.
 15. Pick the session of step 5. Click "Ask the session". Expect "Your session is answering…" and a "Session" row under the review with a tool call count. Run `git -C <CLONE> status` meanwhile. Expect no change.
 16. Wait for the end. Expect the dialog "Answer of your session" with one preview row per entry, and no change before Apply. Click "Apply N changes". Expect the result line, and nothing new on the pull request in Bitbucket. Click Close. Click "Show the answer" in the Session row. Expect the preview again. Close it.
-17. List the projects folder of step 13 again. Record the count of new `.jsonl` files. Resume the session of step 5 in a terminal. Expect no message of the session run in its history. Exit without a prompt.
+17. List the projects folder of step 13 again. Expect no new `.jsonl` file: the run passes `--no-session-persistence` (gate B16 (d)). Record the count. Resume the session of step 5 in a terminal. Expect no message of the session run in its history. Exit without a prompt.
 18. Start a second session run, then click "Cancel the run". Expect "The session run was cancelled." and the Session row "Cancelled". Click "Ask again". Expect the list. Click Cancel.
 19. Turn the switch off. Expect no "Ask your session…" in More. Discard the remaining session drafts.
 

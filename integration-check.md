@@ -267,6 +267,20 @@ Run: `bun scripts/gate/claude-checks.ts --only B11,B12`, then `bun scripts/gate/
 | B11. Real CLI with `--json-schema replyJsonSchema()` and `fixJsonSchema()` and the WP8 flag set: `structured_output` parses with zod, including a null judgement and a 2 KB `new` string | NOT RUN | One Haiku run per schema. |
 | B12. Read of a generated one-color PNG at `context/attachments/1.png` under `--restricted` | NOT RUN | PASS when the run has a Read `tool_result` for the file without `is_error`. The color answer is INFO only. |
 
+## Agent model and effort (B13)
+
+Status: B13 RUN by the user, 2026-10-16, claude 2.1.301. Result: PASS. `src/server/review/catalog.ts` `reviewerAgent` writes the profile reviewer model and effort into the rl-reviewer definition.
+
+Raw B13 line: `PASS B13 calls=2 agent fields run: exit=0 refused=false init.model=claude-haiku-5-5 main models=claude-haiku-5-5 agent call=Agent subagent ran=true subagent models=claude-sonnet-5-5 (want sonnet); bad effort (INFO): exit=1 refused=true stderr=Error: Invalid --agents configuration: rl-reviewer.effort: Invalid input (read from ~\AppData\Local\Temp\rl-gb-b13-7ll7lo\app\agents.json) ; --effort help=--effort <level> Effort level for the current session (low, medium, high, xhigh, max); --model help=--model <model> Model for the current session. Provide an alias for the latest model (e.g. 'fable', 'opus', or 'sonnet') or a model's full name.; init.permissionMode: b13-agent-fields=default, b13-bad-effort=none`.
+
+Run: `bun scripts/gate/claude-checks.ts --only B13`.
+
+| Fact | Result | Evidence |
+|---|---|---|
+| U57. The CLI accepts `model` and `effort` in an `--agents` definition, and the subagent runs on that model | CONFIRMED (2.1.301) | B13 run 1: rl-reviewer with `model: "sonnet"` and `effort: "low"` ran under a haiku main thread. The subagent messages name claude-sonnet-5-5. The main messages name claude-haiku-5-5. |
+| U58. An effort outside the CLI list makes the CLI refuse the whole `--agents` file | CONFIRMED (2.1.301) | B13 run 2 (INFO): `effort: "turbo"` gave exit 1 and "Invalid --agents configuration: rl-reviewer.effort: Invalid input". No run started. `--effort` help lists low, medium, high, xhigh, and max. The app checks every effort before the run: `claude.ts` `prepare` throws "Invalid effort" for the run, rl-main, and each agent when the value is not in `EFFORTS` (`src/shared/dto.ts`: low, medium, high, xhigh, max). |
+| B13. rl-reviewer with model sonnet and effort low under `--model haiku --effort low`; a bad agent effort (INFO) | PASS (2.1.301, 2026-10-16) | Run 1: exit 0, not refused, the Agent call ran, subagent model claude-sonnet-5-5. Run 2: refused with exit 1. `init.permissionMode`: default for run 1, none for run 2. |
+
 ## Default model and effort (not run)
 
 Status: NOT RUN, 2026-10-14. The rows come from code.claude.com/docs (model-config, settings, settings-reference, env-vars, commands). `src/server/review/defaults.ts` implements them. The app reads only the user settings file `<config>/settings.json` and only the keys `model`, `effortLevel`, `maxEffortLevel`, `modelSettings`, and named `env` entries.
@@ -308,9 +322,11 @@ Run: `bun scripts/gate/claude-checks.ts --only B15`.
 | U46. The global CLAUDE.md lives in the Claude config folder | DOCUMENTED | memory "User memory": `~/.claude/CLAUDE.md`. The app reads `CLAUDE_CONFIG_DIR` or `~/.claude` (the same folder as the skills), only when the global switch is on. Imports resolve inside that folder only, with real path checks. A "~/" import resolves from the home folder and must also end inside it. |
 | B15. `work/CLAUDE.md` with a canary under the runner flag set: the main thread knows the canary with no tool call; a code-span `@repo/b15.txt` imports nothing; rl-reviewer with `omitClaudeMd` (INFO) | FAIL (2.1.296, 2026-10-14) | main word=false, no tool call, exit 0; import text leaked=false; rl-reviewer ran, word=false. U40 refuted. B15 still tests CLI loading, not the inline path. |
 
-## Session consult part C (not run)
+## Session consult part C
 
-Status: NOT RUN. Gate B16 is written (docs/plans/session-consult.md part C). The user runs it. Until then, each row below that names B16 is unverified. The other rows come from the scout run of 2026-10-14 (CLI 2.1.300 and its docs) and from a local count of transcript key names and positions (2026-10-16, CLI 2.1.301, 54 transcripts, no message text read out).
+Status: B16 RUN by the user, 2026-10-16, claude 2.1.301. Result: PASS. The consult command now passes `--no-session-persistence` (U50). The other rows come from the scout run of 2026-10-14 (CLI 2.1.300 and its docs) and from a local count of transcript key names and positions (2026-10-16, CLI 2.1.301, 54 transcripts, no message text read out).
+
+Raw B16 line: `PASS B16 calls=3 (a) original hash unchanged=true; (b) init.tools=Glob,Grep,Read,StructuredOutput mcp_servers=none; (c) structured word="B16-FILE-9902"; (e) exit=0 origin="B16-ORIGIN-4417" from another cwd; (d, INFO) no-persistence exit=0 new transcripts=0 (none); INFO: fork transcripts=1 (fork cwd folder) fork session=new init.model=claude-haiku-5-5 hook events=0 history replay in stdout=false; init.permissionMode: b16-create=default, b16-fork=default, b16-fork-nopersist=default`.
 
 Run: `bun scripts/gate/claude-checks.ts --only B16`. Dry run: add `--dry-run`. It prints the planned argv and starts no model call.
 
@@ -318,16 +334,18 @@ Result format: one line `<PASS|FAIL> B16 calls=3 (a) original hash unchanged=<bo
 
 | Fact | Result | Evidence |
 |---|---|---|
-| U47. `claude -p --resume <absolute .jsonl path> --fork-session` leaves the original file unchanged | DOCUMENTED, B16 (a) not run | Scout 2026-10-14. B16 compares the SHA-256 of the throwaway original before and after two forks. |
-| U48. `--tools`, `--restricted`, `--strict-mcp-config`, and `--mcp-config` apply on resume | UNVERIFIED, B16 (b) not run | Resume does not restore them, so the app passes them again. The init tool check stops a run that lists another tool, so a wrong guess makes no tool call. |
-| U49. `--json-schema` gives `structured_output` with `--resume` | UNVERIFIED, B16 (c) not run | The app needs it for the answer. Without it, the run fails with error kind schema. |
-| U50. `--no-session-persistence` with `--fork-session` leaves no transcript | UNVERIFIED, B16 (d) INFO | The app leaves the flag out until a B16 run shows no new transcript. The run end deletes the per-cwd folder of the run cwd (Gate B4). |
-| U51. Resume works from another cwd | DOCUMENTED (2.1.223 and later), B16 (e) not run | B16 checks that the fork in another folder knows the first reply of the original. |
+| U47. `claude -p --resume <absolute .jsonl path> --fork-session` leaves the original file unchanged | CONFIRMED (2.1.301) | B16 (a): the SHA-256 of the throwaway original did not change after two forks. |
+| U48. `--tools`, `--restricted`, `--strict-mcp-config`, and `--mcp-config` apply on resume | CONFIRMED (2.1.301) | B16 (b): `init.tools` = Glob, Grep, Read, StructuredOutput; no MCP server. The app passes the flags again on each resume. The init tool check stays as a guard. |
+| U49. `--json-schema` gives `structured_output` with `--resume` | CONFIRMED (2.1.301) | B16 (c): the fork returned the structured word from the file. |
+| U50. `--no-session-persistence` with `--fork-session` leaves no transcript | CONFIRMED (2.1.301) | B16 (d): exit 0, 0 new transcripts. `resumeArgs` now passes the flag. The run end still deletes the per-cwd folders of the run cwd, because the flag still writes them (Gate B4). |
+| U51. Resume works from another cwd | CONFIRMED (2.1.301) | B16 (e): the fork in another folder returned the first reply of the original. |
 | U52. Transcript keys: message lines carry `cwd`, `gitBranch`, `sessionId`, `timestamp`; titles are `{"type":"ai-title","aiTitle"}` and `{"type":"custom-title","customTitle"}`; `{"type":"continued-in","continuedInSessionId"}` names the next session; the file name is the session ID | OBSERVED (2.1.301) | Local count of key names only, 2026-10-16. The format is internal to the CLI and can change. Both title types repeat through a file. 3 continued-in lines named sessions that no listed file had. |
 | U53. Positions: the first cwd line within 2 KB of the start; the last branch line within 23 KB and the last title line within 37 KB of the end | OBSERVED (2.1.301) | The same count. The finder caps each file at the first 64 KB and the last 256 KB. |
-| U54. A resumed `-p` run does not replay the old messages on stdout | UNVERIFIED, B16 INFO | The run log keeps only tool names and targets. B16 looks for the first prompt of the original in the user events of the fork output. |
-| U55. The permission mode of a resumed `-p` run with `--restricted` and no `--permission-mode` is `default` | UNVERIFIED, B16 INFO | Review runs show `default` (Gate B). `-p` does not restore the mode of the original (scout). B16 prints `init.permissionMode` per call. |
-| B16. Throwaway session, then two forks with the app flags from another cwd: (a) to (e) above | NOT RUN | Own cap 3 calls. It never opens a real session. PASS needs (a), (b), (c), and (e). |
+| U54. A resumed `-p` run does not replay the old messages on stdout | CONFIRMED (2.1.301) | B16 INFO: history replay in stdout=false. The fork also gets a new session ID. |
+| U55. The permission mode of a resumed `-p` run with `--restricted` and no `--permission-mode` is `default` | CONFIRMED (2.1.301) | B16 INFO: `init.permissionMode` = default for all three calls. |
+| U59. A fork without `--no-session-persistence` writes its transcript in the project folder of the fork cwd, with a new session ID | OBSERVED (2.1.301) | B16 INFO: fork transcripts=1 (fork cwd folder), fork session=new. The original folder gets no file. |
+| U60. A resumed `-p` run with `--restricted` fires no hooks | OBSERVED (2.1.301) | B16 INFO: hook events=0 on the fork. |
+| B16. Throwaway session, then two forks with the app flags from another cwd: (a) to (e) above | PASS (2.1.301, 2026-10-16) | Own cap 3 calls. It never opened a real session. (a), (b), (c), and (e) pass. (d) INFO: no new transcript. |
 
 ## Thread resolver (not verified)
 

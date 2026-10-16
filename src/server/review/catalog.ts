@@ -420,7 +420,8 @@ export function mcpLines(used: McpUse[]): string[] {
 export const withMcp = (a: AgentSpec, used: McpUse[]): AgentSpec =>
   used.length ? { ...a, prompt: [a.prompt, ...mcpLines(used)].join("\n") } : a;
 
-// model and effort are agent definition fields (code.claude.com/docs/en/sub-agents). Gate B13 checks that the CLI accepts them.
+// model and effort are agent definition fields (code.claude.com/docs/en/sub-agents). Gate B13 (2.1.301): the CLI accepts both, and
+// it refuses the whole --agents file for an unknown effort. prepare in claude.ts checks each effort first.
 export function reviewerAgent(p: Profile): AgentSpec {
   return {
     ...(p.reviewer.model !== null && { model: p.reviewer.model }),

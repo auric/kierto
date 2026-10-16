@@ -246,8 +246,8 @@ function prepare(spec: RunSpec) {
 // The CLI arguments of a session fork. Resume does not restore the launch flags, so each one is passed again (session-consult.md
 // section 1). --fork-session is always present: without it, a running background session attaches, or the CLI exits with code 1.
 // No --permission-mode, as for review runs: --restricted ignores the settings files, and 2.1.295 has no "default" choice.
-// No --no-session-persistence until gate B16 shows that it works with --fork-session. So the CLI writes a fork transcript. The run end
-// deletes the per-cwd folder of the run (removeCwdFolders). A fork file in another folder stays (gate B16 records the folder).
+// Gate B16 (d): --no-session-persistence with --fork-session writes no fork transcript (2.1.301). The run end still deletes the
+// per-cwd folders of the run (removeCwdFolders), because the flag still writes them (gate B4).
 export function resumeArgs(spec: ResumeSpec) {
   if (!isAbsolute(spec.resume) || !spec.resume.endsWith(".jsonl")) throw new Error("The session path must be an absolute .jsonl path.");
   mkdirSync(spec.appDir, { recursive: true });
@@ -274,6 +274,7 @@ export function resumeArgs(spec: ResumeSpec) {
     JSON.stringify(spec.schema),
     "--max-turns",
     String(spec.maxTurns),
+    "--no-session-persistence",
   ];
   return { args, allowed: new Set([...READ_TOOLS, "StructuredOutput"]) };
 }
