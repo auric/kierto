@@ -3,6 +3,7 @@ import {
   Bot,
   Check,
   ChevronRight,
+  CircleCheck,
   ClipboardCopy,
   Copy,
   CornerDownRight,
@@ -43,6 +44,7 @@ import {
   type Node,
   names,
   type Person,
+  resolvedText,
   snippet,
   splitExcerpt,
   type ThreadModel,
@@ -146,6 +148,24 @@ function TaskMark({ task }: { task: "open" | "done" }) {
   );
 }
 
+// A resolved thread: an icon and words, never color alone. The tooltip gives the full name and time when the forge sent them.
+// In a narrow head the mark shrinks before the file name.
+export function ResolvedMark({ t, hints, now }: { t: Pick<ThreadModel, "resolver" | "resolvedAt">; hints: Hints; now: number }) {
+  const badge = (
+    <Badge variant="quiet" data-resolved="" className="min-w-0 shrink-[4]">
+      <CircleCheck aria-hidden />
+      <span className="truncate">{resolvedText(t, now)}</span>
+    </Badge>
+  );
+  if (!t.resolver && t.resolvedAt === null) return badge;
+  const by = t.resolver ? ` by ${t.resolver.me ? "you" : t.resolver.name}` : "";
+  return (
+    <HintTrigger hints={hints} label={`Resolved${by}${t.resolvedAt === null ? "" : `, ${fullTime(t.resolvedAt)}`}`}>
+      <span className="inline-flex min-w-0 shrink-[4]">{badge}</span>
+    </HintTrigger>
+  );
+}
+
 // The lines of a thread: "7", or "3–12" for a range comment.
 const linesOf = (a: Anchor) => (a.line === undefined ? undefined : lineText({ line: a.line, lineEnd: a.lineEnd ?? a.line }));
 
@@ -213,6 +233,7 @@ export const Thread = memo(function Thread({
           ) : (
             <span className="shrink-0 text-foreground">General comment</span>
           )}
+          {t.turn === "resolved" && <ResolvedMark t={t} hints={ctx.hints} now={ctx.now} />}
           {!open && (
             <>
               {a?.orphaned && (

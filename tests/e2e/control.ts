@@ -40,6 +40,9 @@ export type Scenario = {
   native: boolean;
   // PR 1004 (session consult): the reviewer adds the outdated inline thread 5000004 on src/cache/flush.ts and the resolved thread 5000005.
   consult: boolean;
+  // PR 1001 (synthetic, integration-check.md U56): Maria resolves the inline thread 1000401 on src/cache/flush.ts new line 3, which
+  // has her reply 1000402. I resolve the general thread 1000403.
+  resolved: boolean;
 };
 
 // The next fake Claude Code run. tree: a subagent run with drafts. schema: a result that fails the schema. limit: a usage limit.

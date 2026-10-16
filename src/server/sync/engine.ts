@@ -48,21 +48,22 @@ const SQL = {
   stored:
     "SELECT comment_id AS id, root_id AS rootId, author_slug AS author, author_login AS login, tombstoned_at IS NULL AS live FROM comment WHERE pr = $pr",
   // A3: a lower or equal version never overwrites. ack_version stays unless this write acknowledges the new version.
-  // commentMeta writes the anchor, the resolved flag, the task fields, and the excerpt.
+  // commentMeta writes the anchor, the resolved flag and its resolver, the task fields, and the excerpt.
   commentUpsert: `INSERT INTO comment (pr, comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json,
-      thread_resolved, created_at, updated_at, ack_version, severity, task_state, excerpt_json)
+      thread_resolved, created_at, updated_at, ack_version, severity, task_state, excerpt_json, thread_resolver_json, thread_resolved_at)
     VALUES ($pr, $comment_id, $version, $parent_id, $root_id, $author_slug, $author_name, $author_login, $text, $anchor_json,
-      $thread_resolved, $created_at, $updated_at, $ack_version, $severity, $task_state, $excerpt_json)
+      $thread_resolved, $created_at, $updated_at, $ack_version, $severity, $task_state, $excerpt_json, $thread_resolver_json, $thread_resolved_at)
     ON CONFLICT (pr, comment_id) DO UPDATE SET version = excluded.version, parent_id = excluded.parent_id, root_id = excluded.root_id,
       author_slug = excluded.author_slug, author_name = excluded.author_name, author_login = excluded.author_login, text = excluded.text, updated_at = excluded.updated_at,
       ack_version = COALESCE(excluded.ack_version, comment.ack_version)
     WHERE excluded.version > comment.version`,
-  // Bitbucket can change orphaned and threadResolved without a new version. The stored row with the highest version wins; at an equal version, the latest complete fetch wins.
+  // Bitbucket can change orphaned and threadResolved without a new version. The resolver follows threadResolved. The stored row with the highest version wins; at an equal version, the latest complete fetch wins.
   // A task resolve raises the version and adds no activity (Gate v3 U14). The equal-version write also fills rows stored before 006_forge.sql.
   commentMeta: `UPDATE comment SET anchor_json = $anchor_json, thread_resolved = $thread_resolved, severity = $severity, task_state = $task_state,
-      excerpt_json = $excerpt_json
+      excerpt_json = $excerpt_json, thread_resolver_json = $thread_resolver_json, thread_resolved_at = $thread_resolved_at
     WHERE pr = $pr AND comment_id = $comment_id AND version <= $version AND (anchor_json IS NOT $anchor_json OR thread_resolved IS NOT $thread_resolved
-      OR severity IS NOT $severity OR task_state IS NOT $task_state OR excerpt_json IS NOT $excerpt_json)`,
+      OR severity IS NOT $severity OR task_state IS NOT $task_state OR excerpt_json IS NOT $excerpt_json
+      OR thread_resolver_json IS NOT $thread_resolver_json OR thread_resolved_at IS NOT $thread_resolved_at)`,
   clearCommits: "DELETE FROM pr_commit WHERE pr = $pr",
   commit: `INSERT INTO pr_commit (pr, hash, ord, message, author_slug, author_name, ts) VALUES ($pr, $hash, $ord, $message, $author_slug, $author_name, $ts)
     ON CONFLICT DO NOTHING`,
@@ -331,6 +332,8 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
             severity: c.severity ?? null,
             task_state: c.state ?? null,
             excerpt_json: c.excerpt ? JSON.stringify(c.excerpt) : null,
+            thread_resolver_json: c.threadResolver ? JSON.stringify(c.threadResolver) : null,
+            thread_resolved_at: c.threadResolvedAt ?? null,
           };
           run(SQL.commentUpsert, {
             pr: row.id,

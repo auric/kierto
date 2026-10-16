@@ -72,6 +72,7 @@ Release 3 (plan: docs/plans/r3.md):
 - Jira attachments: the brief lists the attachments of a fetched issue. I download each one on a click, save it, or open its folder. Inclusion in runs is an opt-in per file.
 - Jira Markdown: the brief shows the Jira text as Markdown. The server converts it from the rendered HTML.
 - Tasks for every run kind: reply drafts, Ask, and fix runs show the same task chips as the brief. Each run records the tasks it used.
+- Resolved threads: a resolved thread shows who resolved it and when, read from Bitbucket. The diff folds resolved threads to one line. The app never resolves or reopens a thread.
 
 ## 3. Decisions
 

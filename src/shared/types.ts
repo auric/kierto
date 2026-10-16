@@ -95,6 +95,9 @@ export type Comment = {
   // Root comments only. A reply carries a copy of its root anchor on the forge (Gate v3 U16). The adapter drops it.
   anchor?: unknown;
   threadResolved: boolean;
+  // Root comments of resolved threads only. Absent when the forge sends no such field (integration-check.md U56).
+  threadResolver?: User;
+  threadResolvedAt?: number;
   createdAt: number;
   updatedAt: number;
   // Open forge values. A task is severity BLOCKER. Done is state RESOLVED (Gate v3 U14).

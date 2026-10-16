@@ -188,6 +188,7 @@ const INITIAL: Scenario = {
   own: false,
   native: false,
   consult: false,
+  resolved: false,
 };
 let sc: Scenario = { ...INITIAL };
 
@@ -311,6 +312,19 @@ function activitiesA(): S.Activity[] {
     Object.assign(root, { createdDate: at, updatedDate: at });
     out = [...out, { id: 10000100 + i, action: "COMMENTED", commentAction: "ADDED", comment: root }];
     out = addReply(out, 1000100 + i, 1000200 + i, alex, sc.inject && i === 1 ? INJECT : `Why must point ${i} run first?`);
+  }
+  if (sc.resolved) {
+    const thread = (id: number, text: string, extra: Record<string, unknown> = {}) => {
+      const root = S.clone(S.findComment(base(), ROOT));
+      Object.assign(root, { id, version: 0, text, author: alex, comments: [], createdDate: T0 + 20, updatedDate: T0 + 20, ...extra });
+      out = [...out, { id: id + 9_000_000, action: "COMMENTED", commentAction: "ADDED", comment: root }];
+    };
+    const anchor = { path: "src/cache/flush.ts", line: 3, lineType: "ADDED", fileType: "TO", orphaned: false };
+    thread(1000401, "Rename the lock so that the name says what it guards.", { anchor });
+    out = addReply(out, 1000401, 1000402, maria, "Renamed in the next commit.");
+    out = S.resolveThread(out, 1000401, maria, T0 + 30 * 60_000);
+    thread(1000403, "Say in the README that the flush holds the lock.");
+    out = S.resolveThread(out, 1000403, me, T0 + 40 * 60_000);
   }
   return out;
 }

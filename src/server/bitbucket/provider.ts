@@ -211,6 +211,9 @@ export function createBitbucketProvider(opts: ClientOptions) {
             text: c.text,
             anchor: root ? c.anchor : undefined,
             threadResolved: c.threadResolved ?? false,
+            // A reopened thread has threadResolved false, so it drops both.
+            ...(root && c.threadResolved && c.threadResolver && { threadResolver: toUser(c.threadResolver) }),
+            ...(root && c.threadResolved && typeof c.threadResolvedDate === "number" && { threadResolvedAt: c.threadResolvedDate }),
             createdAt: c.createdDate,
             updatedAt: c.updatedDate,
             severity: c.severity,

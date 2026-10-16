@@ -74,6 +74,18 @@ export function byUser(list: Activity[], id: number, user: unknown): Activity[] 
   return out;
 }
 
+// Synthetic: a resolved thread in the shape of the Data Center 8.15 REST docs. No recorded file has a resolved thread
+// (integration-check.md U56). resolver and at undefined: a server that sends only threadResolved. The root comment only carries them.
+export function resolveThread(list: Activity[], rootId: number, resolver?: unknown, at?: number): Activity[] {
+  const out = clone(list);
+  Object.assign(findComment(out, rootId), {
+    threadResolved: true,
+    ...(resolver !== undefined && { threadResolver: clone(resolver) }),
+    ...(at !== undefined && { threadResolvedDate: at }),
+  });
+  return out;
+}
+
 // A new reply under comment `parentId`. Bitbucket nests a reply in the parent's comments[] and gives it no activity (I2).
 export function addReply(list: Activity[], parentId: number, id: number, user: unknown, text = `Reply ${id}`): Activity[] {
   const out = clone(list);

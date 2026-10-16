@@ -14,6 +14,7 @@ import {
   PR_REF,
   pageRoutes,
   pages,
+  resolveThread,
   secondUser,
   versionZero,
 } from "../support/scenarios";
@@ -154,6 +155,49 @@ describe("comments", () => {
     const body = { size: 2, limit: 50, start: 0, isLastPage: true, values };
     const r = await setup({ [key("GET", ACTIVITIES_PATH)]: { status: 200, body } }).listComments(PR_REF);
     expect(r.items[0]?.author).toEqual({ slug: "asmith", name: "Alex Smith", login: "asmith" });
+  });
+
+  // Synthetic (integration-check.md U56): the recorded files have no resolved thread.
+  const resolvedList = async (values: ReturnType<typeof activities>) => {
+    const body = { size: values.length, limit: 50, start: 0, isLastPage: true, values };
+    const r = await setup({ [key("GET", ACTIVITIES_PATH)]: { status: 200, body } }).listComments(PR_REF);
+    fake.stop();
+    expect(r.complete).toBe(true);
+    return { root: r.items.find((c) => c.id === 1000003), reply: r.items.find((c) => c.id === 1000001) };
+  };
+
+  test("synthetic: a resolved root maps its resolver without the email and its date; the reply carries neither", async () => {
+    const r = await resolvedList(resolveThread(activities("activities-nested-reply.json"), 1000003, secondUser(), 1791571400000));
+    expect(r.root).toMatchObject({ threadResolved: true, threadResolvedAt: 1791571400000 });
+    expect(r.root?.threadResolver).toEqual({ slug: "asmith", name: "Alex Smith", login: "asmith" });
+    expect(JSON.stringify(r.root)).not.toContain("@");
+    expect(r.reply?.threadResolver).toBeUndefined();
+    expect(r.reply?.threadResolvedAt).toBeUndefined();
+  });
+
+  test("synthetic: a resolved root without the two fields, or with bad values, still parses", async () => {
+    const plain = await resolvedList(resolveThread(activities("activities-nested-reply.json"), 1000003));
+    expect(plain.root).toMatchObject({ threadResolved: true });
+    expect(plain.root && "threadResolver" in plain.root).toBe(false);
+    expect(plain.root && "threadResolvedAt" in plain.root).toBe(false);
+    for (const [who, at] of [
+      [null, null],
+      [{ displayName: "No slug" }, "yesterday"],
+    ] as const) {
+      const bad = await resolvedList(resolveThread(activities("activities-nested-reply.json"), 1000003, who, at as unknown as number));
+      expect(bad.root).toMatchObject({ threadResolved: true });
+      expect(bad.root?.threadResolver).toBeUndefined();
+      expect(bad.root?.threadResolvedAt).toBeUndefined();
+    }
+  });
+
+  test("synthetic: a reopened thread drops a resolver and a date that the server still sends", async () => {
+    const values = resolveThread(activities("activities-nested-reply.json"), 1000003, secondUser(), 1791571400000);
+    findComment(values, 1000003).threadResolved = false;
+    const r = await resolvedList(values);
+    expect(r.root).toMatchObject({ threadResolved: false });
+    expect(r.root?.threadResolver).toBeUndefined();
+    expect(r.root?.threadResolvedAt).toBeUndefined();
   });
 
   test("the inline anchor maps path and line", async () => {

@@ -27,6 +27,7 @@ import {
   pageRoutes,
   pages,
   REVIEW_PR_PATH,
+  resolveThread,
   reviewPr,
   secondUser,
   versionZero,
@@ -108,6 +109,8 @@ type CommentRow = {
   ack_version: number | null;
   anchor_json: string | null;
   thread_resolved: number;
+  thread_resolver_json: string | null;
+  thread_resolved_at: number | null;
 };
 type Checkpoint = { last_complete_at: number | null; incomplete_reason: string | null; last_error: string | null };
 
@@ -320,6 +323,34 @@ describe("metadata outside the version guard", () => {
     expect(h.comment(1000003)).toMatchObject({ version: 1, ack_version: 1, thread_resolved: 1 });
     expect(h.unread()).toBe(0);
     expect(h.events()).toEqual([]);
+  });
+
+  test("synthetic U56: the resolver and the date follow threadResolved at the same version, and a reopen clears them", async () => {
+    const base = byUser(inline(), 1000003, OTHER);
+    world.own = base;
+    const h = await setup();
+    await h.cycle();
+    expect(h.comment(1000003)).toMatchObject({ thread_resolved: 0, thread_resolver_json: null, thread_resolved_at: null });
+    const resolved = resolveThread(base, 1000003, OTHER, 1_500_000);
+    world.own = resolved;
+    await h.cycle();
+    const row = h.comment(1000003);
+    expect(row).toMatchObject({ version: 1, thread_resolved: 1, thread_resolved_at: 1_500_000 });
+    expect(JSON.parse(row.thread_resolver_json ?? "null")).toEqual({ slug: "asmith", name: "Alex Smith", login: "asmith" });
+    expect(h.comment(1000001)).toMatchObject({ thread_resolver_json: null, thread_resolved_at: null });
+    expect(h.unread()).toBe(0);
+    expect(h.events()).toEqual([]);
+    const dto = (id: number) => prDetail(h.db(), FAKE_USER, h.pr(2).id as number)?.comments.find((c) => c.id === id);
+    expect(dto(1000003)).toMatchObject({ threadResolved: true, resolvedAt: 1_500_000, resolver: { slug: "asmith", name: "Alex Smith" } });
+    expect(dto(1000001)?.resolver).toBeUndefined();
+    const reopened = clone(resolved);
+    findComment(reopened, 1000003).threadResolved = false;
+    world.own = reopened;
+    await h.cycle();
+    expect(h.comment(1000003)).toMatchObject({ version: 1, thread_resolved: 0, thread_resolver_json: null, thread_resolved_at: null });
+    expect(dto(1000003)).toMatchObject({ threadResolved: false });
+    expect(dto(1000003)?.resolver).toBeUndefined();
+    expect(dto(1000003)?.resolvedAt).toBeUndefined();
   });
 
   test("an older version never rolls metadata back", async () => {

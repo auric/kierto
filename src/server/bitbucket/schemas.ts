@@ -56,6 +56,8 @@ export type RawComment = {
   createdDate: number;
   updatedDate: number;
   threadResolved?: boolean;
+  threadResolvedDate?: number | null;
+  threadResolver?: z.infer<typeof user> | null;
   anchor?: z.infer<typeof anchor>;
   comments?: RawComment[];
   severity?: string;
@@ -71,6 +73,10 @@ export const comment: z.ZodType<RawComment> = z.object({
   createdDate: z.number(),
   updatedDate: z.number(),
   threadResolved: z.boolean().optional(),
+  // The REST docs (Data Center 8.15) show both on a resolved thread. 9.4 is not verified (integration-check.md U56).
+  // A bad value reads as absent, so it cannot fail the activities fetch. The user schema drops emailAddress.
+  threadResolvedDate: z.number().nullish().catch(undefined),
+  threadResolver: user.nullish().catch(undefined),
   anchor: anchor.optional(),
   comments: z.array(z.lazy(() => comment)).optional(),
   // Gate v3 U14: a task has severity BLOCKER. A resolve sets state RESOLVED and resolvedDate, raises the version, and adds no activity.

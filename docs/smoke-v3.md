@@ -97,6 +97,7 @@ Run steps 1 to 3 right after Preparation, before part A, because they need an em
 9. Make the window narrower than 1440 px. Expect the sidebar as an icon rail. Click "Expand sidebar". Reload. Expect the full sidebar to stay.
 10. Press z. Expect the sidebar and the list to hide, and "full=1" in the URL. Press Back. Expect three panes. Press z, then Esc. Expect three panes.
 11. Make the window narrower than 760 px. Expect one pane at a time. Open a pull request. Press Back. Expect the list.
+12. In Bitbucket, resolve an inline thread of the test pull request. In the app, press Check now. Click "Show N resolved" if it shows. Expect "Resolved by you · <time> ago" with a check icon in the thread head. If it shows only "Resolved", record U56 as refuted for 9.4. Open the file of the thread. Expect a dashed one-line card with the same mark. Press Enter on it. Expect the newest message and "Go to thread". Reopen the thread in Bitbucket, then press Check now. Expect no mark.
 
 ## Cleanup
 

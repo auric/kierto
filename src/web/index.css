@@ -531,6 +531,11 @@ details[open] > summary .rl-chev {
   border-radius: 6px;
   background: var(--pane);
 }
+/* A folded resolved thread: no fill and a dashed edge, so it reads as set aside. */
+.rl-dc[data-folded] {
+  background: transparent;
+  border-style: dashed;
+}
 .rl-doff {
   padding: 8px 10px 10px;
   border-bottom: 1px solid var(--border);

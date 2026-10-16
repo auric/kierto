@@ -328,3 +328,11 @@ Result format: one line `<PASS|FAIL> B16 calls=3 (a) original hash unchanged=<bo
 | U54. A resumed `-p` run does not replay the old messages on stdout | UNVERIFIED, B16 INFO | The run log keeps only tool names and targets. B16 looks for the first prompt of the original in the user events of the fork output. |
 | U55. The permission mode of a resumed `-p` run with `--restricted` and no `--permission-mode` is `default` | UNVERIFIED, B16 INFO | Review runs show `default` (Gate B). `-p` does not restore the mode of the original (scout). B16 prints `init.permissionMode` per call. |
 | B16. Throwaway session, then two forks with the app flags from another cwd: (a) to (e) above | NOT RUN | Own cap 3 calls. It never opens a real session. PASS needs (a), (b), (c), and (e). |
+
+## Thread resolver (not verified)
+
+Status: NOT VERIFIED. The Bitbucket Data Center REST docs (8.15) show a resolved comment with `threadResolved: true`, `threadResolvedDate` (epoch ms), and `threadResolver` (a user). No recorded fixture has a resolved thread. The tests use a synthetic state (`resolveThread` in tests/support/scenarios.ts).
+
+| Fact | Result | Evidence |
+|---|---|---|
+| U56. `threadResolver` and `threadResolvedDate` on a resolved root comment on 9.4 | UNVERIFIED | Capture with `scripts/gate0/capture-a.ts` after resolving a thread on the test PR. The schema reads both as optional. A missing or bad value shows "Resolved" without a name or a time, and the sync stays complete. A reopened thread (`threadResolved: false`) clears both. |

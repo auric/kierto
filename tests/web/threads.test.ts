@@ -11,6 +11,7 @@ import {
   names,
   newMessages,
   ordered,
+  resolvedText,
   reveal,
   shownThreads,
   splitExcerpt,
@@ -257,5 +258,40 @@ describe("helpers", () => {
     expect(anchorOf(c(2, { anchor: ctx }))).toMatchObject({ path: "sample1.md", line: undefined });
     expect(anchorOf(c(2, { anchor: { ...ctx, fileType: "FROM" } }))?.line).toBe(7);
     expect(anchorOf(c(2, { anchor: { ...ctx, lineType: "ADDED" } }))?.line).toBe(7);
+  });
+});
+
+describe("resolved mark (integration-check.md U56)", () => {
+  const NOW = 10 * 86_400_000;
+  const lena = { slug: "lena", name: "Lena Park", login: "lena" };
+  const at = (min: number) => NOW - min * 60_000;
+  const resolved = (o: Partial<CommentDto>) => one([c(1, { threadResolved: true, ...o }), r(2, 1, 1, "me")]);
+
+  test("the root resolver and date give the name, the relative time, and the full name in the model", () => {
+    const t = resolved({ resolver: lena, resolvedAt: at(125) });
+    expect(t.turn).toBe("resolved");
+    expect(t.resolver).toEqual({ slug: "lena", name: "Lena Park", me: false });
+    expect(t.resolvedAt).toBe(at(125));
+    expect(resolvedText(t, NOW)).toBe("Resolved by Lena · 2h ago");
+  });
+
+  test("my own resolve says you; the username also matches; under a minute says now", () => {
+    const mine = resolved({ resolver: { slug: "x-slug", name: "Jordan Doe", login: "me" }, resolvedAt: at(0) });
+    expect(mine.resolver?.me).toBe(true);
+    expect(resolvedText(mine, NOW)).toBe("Resolved by you · now");
+    expect(resolvedText({ resolver: mine.resolver, resolvedAt: at(3 * 1440) }, NOW)).toBe("Resolved by you · 3d ago");
+  });
+
+  test("absent fields give the plain word, and each field shows alone", () => {
+    const plain = resolved({});
+    expect([plain.resolver, plain.resolvedAt]).toEqual([null, null]);
+    expect(resolvedText(plain, NOW)).toBe("Resolved");
+    expect(resolvedText(resolved({ resolver: lena }), NOW)).toBe("Resolved by Lena");
+    expect(resolvedText(resolved({ resolvedAt: at(45) }), NOW)).toBe("Resolved · 45m ago");
+  });
+
+  test("a reply never supplies the resolver", () => {
+    const t = one([c(1, { threadResolved: true }), r(2, 1, 1, "me", { resolver: lena, resolvedAt: at(5) })]);
+    expect([t.resolver, t.resolvedAt]).toEqual([null, null]);
   });
 });

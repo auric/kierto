@@ -314,6 +314,7 @@ export function PrDetail({
             pr: row.id,
             meta,
             hints,
+            now,
             threads,
             ...review.diff,
             onThread: jump,
@@ -322,7 +323,7 @@ export function PrDetail({
             announce,
           }
         : null,
-    [row.id, meta, hints, threads, review.diff, jump, openDraft, focusAfter, announce],
+    [row.id, meta, hints, now, threads, review.diff, jump, openDraft, focusAfter, announce],
   );
   const bar = usePostBar(pr, {
     comments,

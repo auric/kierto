@@ -3,7 +3,7 @@ import type { CommentDto, ExcerptLine, PrRow } from "../../shared/dto";
 import { isMe } from "../../shared/me";
 import { newestLive, type Turn, threadTurn } from "../../shared/turn";
 import { commentLines } from "../../shared/types";
-import { clock } from "../shell/model";
+import { ago, clock } from "../shell/model";
 
 // line, lineEnd: the lines of the comment (commentLines). A range comment has lineEnd > line.
 export type Anchor = { path: string; line?: number; lineEnd?: number; orphaned?: boolean };
@@ -49,6 +49,9 @@ export type ThreadModel = {
   people: Person[];
   waitOn: Person | null;
   task: "open" | "done" | null;
+  // Who resolved the thread, and when. null when the forge did not send it (integration-check.md U56).
+  resolver: Person | null;
+  resolvedAt: number | null;
   // Keys are message IDs.
   fold: Map<number, Fold>;
 };
@@ -112,6 +115,8 @@ export function buildThreads(comments: CommentDto[], hl: ReadonlySet<number>, me
       people,
       waitOn: turn === "wait" ? other : null,
       task: live.find((m) => m.task)?.task ?? null,
+      resolver: root.resolver ? person(root.resolver.slug, root.resolver.name, root.resolver.login) : null,
+      resolvedAt: root.resolvedAt ?? null,
       fold: foldPlan(root, last ?? root),
     };
   });
@@ -191,6 +196,13 @@ export function turnText(t: ThreadModel): string {
     default:
       return "Resolved";
   }
+}
+
+// The resolved mark: "Resolved by Lena · 2h ago", "Resolved by you · now", or "Resolved" without the forge fields.
+export function resolvedText(t: Pick<ThreadModel, "resolver" | "resolvedAt">, now: number): string {
+  const by = t.resolver ? ` by ${firstName(t.resolver)}` : "";
+  const when = t.resolvedAt === null ? "" : ago(t.resolvedAt, now);
+  return `Resolved${by}${when && ` · ${when === "now" ? when : `${when} ago`}`}`;
 }
 
 // One fold row: closed, or open above the message it starts with.

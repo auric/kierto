@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   Check,
+  ChevronRight,
   Download,
   FileDiff as FileChanged,
   FileMinus,
@@ -25,6 +26,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -41,7 +43,7 @@ import {
 } from "../../shared/dto";
 import type { AnchoredFinding } from "../../shared/review";
 import { Err, FileRowButton, FilesFold, ForgeFiles } from "../pr/Sections";
-import { Avatar, NewMark } from "../pr/Thread";
+import { Avatar, NewMark, ResolvedMark } from "../pr/Thread";
 import { firstName, snippet, type ThreadModel } from "../pr/threads";
 import { AiAvatar, Severity } from "../review/Drafts";
 import { plural } from "../review/model";
@@ -72,6 +74,7 @@ export type DiffCtx = {
   pr: number;
   meta: MetaDto;
   hints: Hints;
+  now: number;
   threads: ThreadModel[];
   // The finding drafts of the newest review run, and its source head.
   drafts: ReviewItemDto[];
@@ -85,6 +88,24 @@ export type DiffCtx = {
 };
 
 // ---------- State and "Show in diff" ----------
+
+// The resolved thread cards that this viewer opened, as "<pr>:<thread>". Memory only: a reload folds them again.
+const unfolded = new Set<string>();
+const foldSubs = new Set<() => void>();
+function setUnfolded(pr: number, thread: number, on: boolean) {
+  const k = `${pr}:${thread}`;
+  if (unfolded.has(k) === on) return;
+  if (on) unfolded.add(k);
+  else unfolded.delete(k);
+  for (const f of foldSubs) f();
+}
+const subscribeFolds = (f: () => void) => {
+  foldSubs.add(f);
+  return () => {
+    foldSubs.delete(f);
+  };
+};
+const useUnfolded = (pr: number, thread: number) => useSyncExternalStore(subscribeFolds, () => unfolded.has(`${pr}:${thread}`));
 
 // Keys of open and pages: the file name in the index (fileName).
 export type DiffView = {
@@ -154,6 +175,7 @@ export function useDiffView(
       return;
     }
     const item = (t ? threadItem(t) : d && draftItem(d, o.head, index.sourceHead)) as Item;
+    if (t) setUnfolded(pr, t.id, true);
     const i = fileOf(index.files, item.spot.path);
     const f = index.files[i];
     if (!f) {
@@ -579,30 +601,7 @@ function CardView({ c, ctx }: { c: Card; ctx: DiffCtx }) {
   const text = `dc-${cardKey(c)}`;
   if (c.kind === "thread") {
     const t = ctx.threads.find((x) => x.id === c.id);
-    if (!t) return null;
-    const last = t.last;
-    const reply = ctx.replies.get(t.id);
-    const drafted = !!reply?.body.trim() && reply.status !== "discarded";
-    return (
-      <div className="rl-dc">
-        {last ? <Avatar p={last.who} /> : <MessageSquare aria-hidden className={cn(icon, "text-muted-foreground")} />}
-        <span id={text} className="min-w-0 flex-1 truncate text-ink-2">
-          <b className="font-semibold text-foreground">{last ? (last.who.me ? "You" : firstName(last.who)) : "Thread"}</b>:{" "}
-          {last ? snippet(last.text, 160) : `Deleted on ${ctx.meta.forge.name}`}
-        </span>
-        {t.turn === "resolved" && <span className="shrink-0 text-muted-foreground">Resolved</span>}
-        {drafted && (
-          <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
-            <Bot aria-hidden className={icon} />
-            Reply draft
-          </span>
-        )}
-        {t.fresh > 0 && <NewMark text={`${t.fresh} new`} />}
-        <button type="button" className={linkish} aria-describedby={text} onClick={() => ctx.onThread(t.id)}>
-          Go to thread
-        </button>
-      </div>
-    );
+    return t ? <ThreadCard t={t} text={text} ctx={ctx} /> : null;
   }
   const it = ctx.drafts.find((x) => x.id === c.id);
   if (!it) return null;
@@ -624,6 +623,61 @@ function CardView({ c, ctx }: { c: Card; ctx: DiffCtx }) {
       <button type="button" className={linkish} aria-describedby={text} onClick={() => ctx.onDraft(it.id)}>
         Go to draft
       </button>
+    </div>
+  );
+}
+
+// A resolved thread folds to one line: the mark, the first author, and the first words. The toggle stays the first child, so it keeps
+// the focus when the card opens.
+function ThreadCard({ t, text, ctx }: { t: ThreadModel; text: string; ctx: DiffCtx }) {
+  const resolved = t.turn === "resolved";
+  const open = useUnfolded(ctx.pr, t.id) || !resolved;
+  const last = t.last;
+  const root = t.root;
+  const reply = ctx.replies.get(t.id);
+  const drafted = !!reply?.body.trim() && reply.status !== "discarded";
+  const forge = ctx.meta.forge.name;
+  return (
+    <div className={cn("rl-dc", resolved && "flex-wrap")} data-folded={!open || undefined}>
+      {resolved && (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setUnfolded(ctx.pr, t.id, !open)}
+          className={cn(
+            "-mx-1 flex min-w-0 cursor-pointer items-center gap-2 rounded px-1 text-left hover:bg-hover",
+            open ? "basis-full" : "flex-1",
+          )}
+        >
+          <ChevronRight aria-hidden className={cn("rl-chev text-muted-foreground", icon)} />
+          <ResolvedMark t={t} hints={ctx.hints} now={ctx.now} />
+          {!open && (
+            <span className="min-w-0 flex-1 truncate text-ink-2">
+              <b className="font-semibold text-foreground">{root.who.me ? "You" : firstName(root.who)}</b>:{" "}
+              {root.deleted ? `Deleted on ${forge}` : snippet(root.text, 160)}
+            </span>
+          )}
+        </button>
+      )}
+      {open && (
+        <div className={cn("flex min-w-0 flex-1 items-center gap-2", resolved && "rl-fade basis-full")}>
+          {last ? <Avatar p={last.who} /> : <MessageSquare aria-hidden className={cn(icon, "text-muted-foreground")} />}
+          <span id={text} className="min-w-0 flex-1 truncate text-ink-2">
+            <b className="font-semibold text-foreground">{last ? (last.who.me ? "You" : firstName(last.who)) : "Thread"}</b>:{" "}
+            {last ? snippet(last.text, 160) : `Deleted on ${forge}`}
+          </span>
+          {drafted && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
+              <Bot aria-hidden className={icon} />
+              Reply draft
+            </span>
+          )}
+          {t.fresh > 0 && <NewMark text={`${t.fresh} new`} />}
+          <button type="button" className={linkish} aria-describedby={text} onClick={() => ctx.onThread(t.id)}>
+            Go to thread
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -16,7 +16,7 @@ import {
   type ValidatedResult,
 } from "./review";
 import type { RunErrorKind, RunEvent, RunStatus } from "./run-log";
-import type { ExcerptLine, IncompleteReason, Reviewer, Role } from "./types";
+import type { ExcerptLine, IncompleteReason, Reviewer, Role, User } from "./types";
 
 export type { ExcerptLine };
 
@@ -298,6 +298,9 @@ export type CommentDto = {
   text: string | null;
   anchor: unknown;
   threadResolved: boolean;
+  // Root comments of resolved threads only, when the forge sent them (integration-check.md U56).
+  resolver?: User;
+  resolvedAt?: number;
   createdAt: number;
   updatedAt: number;
   unread: boolean;

@@ -16,7 +16,7 @@ import type {
   PrTask,
 } from "../../shared/dto";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
-import type { Reviewer, Role } from "../../shared/types";
+import type { Reviewer, Role, User } from "../../shared/types";
 import { byArchive, byInbox } from "../../shared/views";
 
 const CLAIMED_TTL_MS = 30 * 86_400_000;
@@ -53,7 +53,8 @@ const SCOPE = { listed: scoped(LISTED), archived: scoped(ARCHIVED), any: scoped(
 
 const SQL = {
   comments: `SELECT comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json, thread_resolved, created_at, updated_at,
-      ack_version, tombstoned_at, severity, task_state, excerpt_json FROM comment WHERE pr = $pr ORDER BY created_at, comment_id`,
+      ack_version, tombstoned_at, severity, task_state, excerpt_json, thread_resolver_json, thread_resolved_at
+    FROM comment WHERE pr = $pr ORDER BY created_at, comment_id`,
   commits: "SELECT hash, message, author_name AS author, ts AS at FROM pr_commit WHERE pr = $pr ORDER BY ord",
   files: "SELECT path, src_path AS srcPath, type FROM pr_change WHERE pr = $pr ORDER BY path",
   // A2: the ack never rises above the stored version, and never falls.
@@ -274,6 +275,8 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
     severity: string | null;
     task_state: string | null;
     excerpt_json: string | null;
+    thread_resolver_json: string | null;
+    thread_resolved_at: number | null;
   };
   const posted = new Map(
     (db.query(SQL.posted).all({ pr: id }) as { remote_id: number; run: number }[]).map(
@@ -294,6 +297,8 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
       text: deleted ? null : c.text,
       anchor: c.anchor_json === null ? null : JSON.parse(c.anchor_json),
       threadResolved: c.thread_resolved === 1,
+      ...(c.thread_resolved === 1 && c.thread_resolver_json !== null && { resolver: JSON.parse(c.thread_resolver_json) as User }),
+      ...(c.thread_resolved === 1 && c.thread_resolved_at !== null && { resolvedAt: c.thread_resolved_at }),
       createdAt: c.created_at,
       updatedAt: c.updated_at,
       unread: pr.followed && !deleted && (c.ack_version === null || c.ack_version < c.version),
