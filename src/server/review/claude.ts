@@ -1,7 +1,7 @@
 // Starts, watches, and stops one Claude Code review process. The flags, env, and cwd rules come from integration-check.md, "Gate v3, local".
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { EFFORTS, type Effort, modelName } from "../../shared/dto";
 import type { RunErrorKind, RunEvent, SDKResultMessage, SDKSystemMessage } from "../../shared/run-log";
 import { log } from "../log";
@@ -49,6 +49,18 @@ export type RunSpec = {
   mcpServers: Record<string, McpServerSpec>;
   // No built-in tool and no MCP server: the model can only answer. agents and mcpServers must be empty.
   noTools?: boolean;
+};
+
+// docs/plans/session-consult.md part C: a fork of the user's own session. resume: the absolute path of its transcript.
+// The run gets no agent, no MCP server, and only the read tools. timeoutMs: lower than the runner limit.
+export type ResumeSpec = {
+  cwd: string;
+  appDir: string;
+  prompt: string;
+  schema: Record<string, unknown>;
+  maxTurns: number;
+  resume: string;
+  timeoutMs?: number;
 };
 
 export type RunnerCheck =
@@ -231,6 +243,41 @@ function prepare(spec: RunSpec) {
   return { args, allowed };
 }
 
+// The CLI arguments of a session fork. Resume does not restore the launch flags, so each one is passed again (session-consult.md
+// section 1). --fork-session is always present: without it, a running background session attaches, or the CLI exits with code 1.
+// No --permission-mode, as for review runs: --restricted ignores the settings files, and 2.1.295 has no "default" choice.
+// No --no-session-persistence until gate B16 shows that it works with --fork-session. So the CLI writes a fork transcript. The run end
+// deletes the per-cwd folder of the run (removeCwdFolders). A fork file in another folder stays (gate B16 records the folder).
+export function resumeArgs(spec: ResumeSpec) {
+  if (!isAbsolute(spec.resume) || !spec.resume.endsWith(".jsonl")) throw new Error("The session path must be an absolute .jsonl path.");
+  mkdirSync(spec.appDir, { recursive: true });
+  const mcpFile = join(spec.appDir, "mcp.json");
+  writeFileSync(mcpFile, JSON.stringify({ mcpServers: {} }));
+  const tools = READ_TOOLS.join(",");
+  const args = [
+    "-p",
+    "--resume",
+    spec.resume,
+    "--fork-session",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--restricted",
+    "--strict-mcp-config",
+    "--mcp-config",
+    mcpFile,
+    "--tools",
+    tools,
+    "--allowedTools",
+    tools,
+    "--json-schema",
+    JSON.stringify(spec.schema),
+    "--max-turns",
+    String(spec.maxTurns),
+  ];
+  return { args, allowed: new Set([...READ_TOOLS, "StructuredOutput"]) };
+}
+
 export function createClaudeRunner(opts: RunnerOptions = {}) {
   let active: { cancelled: boolean; pid?: number } | undefined;
 
@@ -266,7 +313,7 @@ export function createClaudeRunner(opts: RunnerOptions = {}) {
   }
 
   // Runs one review. onEvents gets each new or changed run_event. Only one run is active at a time.
-  async function run(spec: RunSpec, onEvents: (events: RunEvent[]) => void = () => {}): Promise<RunOutcome> {
+  async function run(spec: RunSpec | ResumeSpec, onEvents: (events: RunEvent[]) => void = () => {}): Promise<RunOutcome> {
     if (active) throw new Error("A review run is active.");
     const self: { cancelled: boolean; pid?: number } = { cancelled: false };
     active = self;
@@ -290,7 +337,8 @@ export function createClaudeRunner(opts: RunnerOptions = {}) {
       // Gate B9: an 8.3 short cwd makes the CLI refuse Reads inside it.
       cwd = realpathSync.native(spec.cwd);
       projectsDir = c.projectsDir;
-      const { args, allowed } = prepare(spec);
+      const { args, allowed } = "resume" in spec ? resumeArgs(spec) : prepare(spec);
+      const limit = Math.min(opts.timeoutMs ?? RUN_TIMEOUT_MS, ("resume" in spec ? spec.timeoutMs : undefined) ?? RUN_TIMEOUT_MS);
       const parser = createStreamParser({ cwd, allowedTools: allowed });
       const p = Bun.spawn([...c.command, ...args], {
         cwd,
@@ -310,7 +358,7 @@ export function createClaudeRunner(opts: RunnerOptions = {}) {
       const timer = setTimeout(() => {
         timedOut = true;
         void killTree(p.pid);
-      }, opts.timeoutMs ?? RUN_TIMEOUT_MS);
+      }, limit);
       const handle = (line: string) => {
         if (stopped || self.cancelled || !line.trim()) return;
         const changed = parser.line(line);

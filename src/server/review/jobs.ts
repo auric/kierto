@@ -1,9 +1,10 @@
-// Review jobs (plan v3 WP10), re-reviews (r2 S-RR), ask runs (r2 S-ASK), reply-draft jobs (replies.md WP17), and fix runs (r3 S-FIX):
-// one run from the stored brief to stored drafts or edits. One run at a time.
+// Review jobs (plan v3 WP10), re-reviews (r2 S-RR), ask runs (r2 S-ASK), reply-draft jobs (replies.md WP17), fix runs (r3 S-FIX), and
+// session runs (session-consult.md part C): one run from the stored brief to stored drafts, edits, or answers. One run at a time.
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type ConsultGroup, consultJsonSchema, consultOutput, SESSION_MAX_TURNS, sessionTokens } from "../../shared/consult";
 import {
   type AskDto,
   alwaysSkillError,
@@ -112,6 +113,8 @@ import {
 const RAW_MAX = 2 * 1024 * 1024;
 // Plan v3 WP10: at most 2 `changed` events with runs per second.
 const NOTIFY_MS = 500;
+// A session run makes at most SESSION_MAX_TURNS read-only turns.
+const SESSION_TIMEOUT_MS = 20 * 60_000;
 // The git MCP server runs `bun <main.ts> --git-mcp`. Bun.main is another file under bun test and in serve.ts.
 const MAIN_ENTRY = join(import.meta.dir, "..", "main.ts");
 
@@ -193,8 +196,26 @@ type RunRow = {
   instructions_json: string | null;
   // null for runs made before the run skills were stored.
   skills_json: string | null;
+  // A session run only: SessionRecord.
+  consult_json: string | null;
   findings: number;
 };
+
+// docs/plans/session-consult.md part C. path: the transcript; it stays on the server and out of the database. prompt: the text of
+// part A with SESSION_RULES. snapshot: the item keys of the text at the start, for the change check of the preview.
+export type SessionStart = {
+  path: string;
+  id: string;
+  title: string | null;
+  bytes: number;
+  prompt: string;
+  snapshot: Record<string, string>;
+  groups: ConsultGroup[];
+  items: number;
+  textBytes: number;
+};
+// consult_json of a session run. No transcript text.
+type SessionRecord = Omit<SessionStart, "path" | "prompt" | "id"> & { session: string; tokens: number };
 
 export type ItemRow = {
   id: number;
@@ -249,6 +270,8 @@ type Job = {
   findings: number[];
   carry: Carry | null;
   question: string | null;
+  // A session run only.
+  session: SessionStart | null;
   cancelled: boolean;
   done: Promise<void>;
   // The step before the CLI starts. RunDto.phase shows it.
@@ -282,6 +305,7 @@ const SQL = {
   run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.effort, r.effort_default, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
       p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer, r.fix_json, r.tasks_json, r.instructions_json, r.skills_json,
+      r.consult_json,
       (SELECT COUNT(*) FROM review_item i WHERE i.run = r.id AND i.kind = 'finding'
         AND COALESCE(json_extract(i.payload_json, '$.carried.verdict'), 'open') = 'open') AS findings
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
@@ -330,6 +354,10 @@ const SQL = {
   historyAsks:
     "WHERE r.pr = $pr AND r.kind = 'ask' AND r.status IN ('completed', 'incomplete') AND r.answer IS NOT NULL ORDER BY r.id DESC",
   historyItems: "SELECT * FROM review_item WHERE run = $run AND kind = 'finding' ORDER BY id",
+  // A session run uses no profile and no --model or --effort flag.
+  sessionInsert: `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, started_at, effort, consult_json)
+    VALUES ($pr, 'session', '', '', $key, $source, $target, 'running', $now, 'default', $consult) RETURNING id`,
+  sessionAnswer: "SELECT answer, consult_json FROM review_run WHERE id = $run AND pr = $pr AND kind = 'session' AND answer IS NOT NULL",
 };
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -775,6 +803,34 @@ function judgeAsk(o: RunOutcome, servers: string[], gaps: string[]): Ending {
   });
 }
 
+// docs/plans/session-consult.md part C: a session run makes no items. Its entries go to answer. The preview of part B checks each
+// entry again, and nothing changes before the user clicks Apply.
+function judgeSession(o: RunOutcome): Ending {
+  const raw = rawOutput(o);
+  if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
+  const parsed = consultOutput.safeParse(o.result?.structured_output);
+  if (!parsed.success) return schemaFailure(parsed.error.issues, "session answer", raw, o);
+  const n = parsed.data.answers.length;
+  return ended(raw, o, {
+    summary: {
+      summary: `${n} ${n === 1 ? "answer" : "answers"}`,
+      risks: [],
+      coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+      dropped: [],
+    },
+    items: [],
+    answer: JSON.stringify(parsed.data.answers),
+  });
+}
+
+const cancelledEnding = (o?: RunOutcome): Ending => ({
+  status: "cancelled",
+  kind: null,
+  text: null,
+  raw: o ? rawOutput(o) : "Cancelled before the runner started.",
+  outcome: o,
+});
+
 const BLOB_TIMEOUT_MS = 60_000;
 
 // git() decodes stdout as text. That drops a BOM and hides invalid UTF-8, so the edit rules read the blob bytes here.
@@ -914,8 +970,19 @@ function toRunDto(r: RunRow, resolve = effortsNow()): RunDto {
     ...(r.instructions_json !== null && { instructions: JSON.parse(r.instructions_json) as NonNullable<RunDto["instructions"]> }),
     ...(r.skills_json !== null && { skills: JSON.parse(r.skills_json) as NonNullable<RunDto["skills"]> }),
     findings: r.findings,
+    ...(r.consult_json !== null && { consult: sessionOf(JSON.parse(r.consult_json) as SessionRecord) }),
   };
 }
+
+// The item keys of the snapshot stay on the server: only the answer route sends them.
+const sessionOf = (s: SessionRecord): NonNullable<RunDto["consult"]> => ({
+  session: s.session,
+  title: s.title,
+  bytes: s.bytes,
+  tokens: s.tokens,
+  items: s.items,
+  textBytes: s.textBytes,
+});
 
 export function toItemDto(r: ItemRow): ReviewItemDto {
   const stored = JSON.parse(r.payload_json) as AnchoredFinding | Question | ReplyPayload;
@@ -1024,6 +1091,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const o = e.outcome;
     const r = o?.result;
     const usage: RunUsage | null = r ? { costUsd: r.total_cost_usd, turns: r.num_turns, durationMs: r.duration_ms, tokens: r.usage } : null;
+    // A session run has no --effort flag.
+    const flagged = j.session ? null : j.profile.effort;
     const ok = j.db.transaction(() => {
       if (o) upsertEvents(j.db, j.id, o.events);
       const done = j.db.query(SQL.end).run({
@@ -1035,8 +1104,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         cli: o?.init?.claude_code_version ?? null,
         model: o?.init?.model ?? null,
         // The init event names the model that ran. Its default effort replaces the one from the run start.
-        init_effort: !j.profile.effort && !!o?.init?.model,
-        effort_default: !j.profile.effort && o?.init?.model ? runEffort(o.init.model) : null,
+        init_effort: !flagged && !!o?.init?.model,
+        effort_default: !flagged && o?.init?.model ? runEffort(o.init.model) : null,
         usage: usage ? JSON.stringify(usage) : null,
         summary: e.result ? JSON.stringify(e.result.summary) : null,
         answer: e.result?.answer ?? null,
@@ -1083,13 +1152,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   }
 
   async function steps(j: Job, pr: Heads, brief: BriefInput, held: { ws?: Workspace }) {
-    const cancelled = (o?: RunOutcome): Ending => ({
-      status: "cancelled",
-      kind: null,
-      text: null,
-      raw: o ? rawOutput(o) : "Cancelled before the runner started.",
-      outcome: o,
-    });
+    const cancelled = cancelledEnding;
     const c = await check();
     if (!c.ok) return failure(c.kind === "auth" ? "auth" : "process", c.message);
     if (j.cancelled) return cancelled();
@@ -1305,6 +1368,48 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     return noted(await judge(o, ws, profile, servers, gaps, rereview));
   }
 
+  // docs/plans/session-consult.md part C: a fork of the user's session in a fresh sanitized snapshot of the PR head, never in the
+  // user's clone. The stored text, entries, and run log hold no transcript text.
+  async function sessionSteps(j: Job, s: SessionStart, pr: Heads, held: { ws?: Workspace }): Promise<Ending> {
+    const c = await check();
+    if (!c.ok) return failure(c.kind === "auth" ? "auth" : "process", c.message);
+    if (j.cancelled) return cancelledEnding();
+    await prune();
+    try {
+      held.ws = await prepareWorkspace({
+        dataDir,
+        runId: String(j.id),
+        pr: toPullRequest(pr),
+        comments: commentsOf(j.db, j.pr),
+        remote: await remote({ project: pr.project, repo: pr.repo, id: pr.pr_id }),
+      });
+    } catch (e) {
+      return failure("workspace", noUrl((e as Error).message));
+    }
+    const ws = held.ws;
+    j.db.query(SQL.workspace).run({ id: j.id, base: ws.mergeBase, range: ws.rangeBase, via: ws.via });
+    notify(j.id);
+    if (j.cancelled) return cancelledEnding();
+    log(`Session run ${j.id}: forks a session of ${s.bytes} bytes with ${s.items} review points.`);
+    const o = await runner.run(
+      {
+        cwd: ws.work,
+        appDir: ws.app,
+        prompt: s.prompt,
+        schema: consultJsonSchema(),
+        maxTurns: SESSION_MAX_TURNS,
+        resume: s.path,
+        timeoutMs: SESSION_TIMEOUT_MS,
+      },
+      (events) => {
+        j.db.transaction(() => upsertEvents(j.db, j.id, events))();
+        notify(j.id);
+      },
+    );
+    if (j.cancelled) return cancelledEnding(o);
+    return judgeSession(o);
+  }
+
   // The git remote of a PR: the test remote, else the forge provider.
   async function remote(ref: PrRef): Promise<GitRemote> {
     if (opts.gitRemote) return opts.gitRemote(ref);
@@ -1317,7 +1422,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const held: { ws?: Workspace } = {};
     let e: Ending;
     try {
-      e = await steps(j, pr, brief, held);
+      e = j.session ? await sessionSteps(j, j.session, pr, held) : await steps(j, pr, brief, held);
       // A later re-review merges from the reviewed head, and an apply builds the patch on the head of the fix run. The ref keeps it after a force push.
       const ref = j.kind === "fix" ? `fix/${j.id}` : j.kind === "review" && !j.profile.explain ? "reviewed" : null;
       if (e.result && ref)
@@ -1354,7 +1459,24 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     cancelActive();
   });
 
-  // The one run slot (A14). The same key returns the running run.
+  // The one run slot (A14). The same key returns the running run. null: the slot is free.
+  function taken(db: Database, key: string): StartResult | null {
+    if (!job) return null;
+    const running = runRow(job.db, job.id);
+    if (job.key === key && job.db === db && running) return { status: 200, run: toRunDto(running) };
+    return { status: 409, conflict: { error: "Another review is running.", running: { run: job.id, pr: job.pr } } };
+  }
+
+  // Takes the slot and starts the run in the background.
+  function begin(j: Job, pr: Heads, brief: BriefInput): StartResult {
+    job = j;
+    j.done = execute(j, pr, brief).finally(() => {
+      if (job === j) job = null;
+    });
+    notify(j.id, pr.id);
+    return { status: 202, run: toRunDto(runRow(j.db, j.id) as RunRow) };
+  }
+
   function launch(
     db: Database,
     pr: Heads,
@@ -1364,11 +1486,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     kind: RunKind,
     o: { threads?: ReplyThread[]; findings?: number[]; carry?: Carry; question?: string } = {},
   ): StartResult {
-    if (job) {
-      const running = runRow(job.db, job.id);
-      if (job.key === key && job.db === db && running) return { status: 200, run: toRunDto(running) };
-      return { status: 409, conflict: { error: "Another review is running.", running: { run: job.id, pr: job.pr } } };
-    }
+    const busy = taken(db, key);
+    if (busy) return busy;
     // A missing always-use skill refuses the start, so no failed run is stored.
     const missing = alwaysProblems(profile.alwaysSkills, opts.claudeConfigDir ?? claudeConfigDir());
     if (missing.length) return { status: 409, error: missing.join(" ") };
@@ -1392,26 +1511,25 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       effort: profile.effort ?? "default",
       effort_default: profile.effort ? null : runEffort(profile.model),
     }) as { id: number };
-    const j: Job = {
-      id: runId,
-      pr: pr.id,
-      kind,
-      key,
-      db,
-      profile,
-      threads,
-      findings,
-      carry,
-      question,
-      cancelled: false,
-      done: Promise.resolve(),
-    };
-    job = j;
-    j.done = execute(j, pr, brief).finally(() => {
-      if (job === j) job = null;
-    });
-    notify(runId, pr.id);
-    return { status: 202, run: toRunDto(runRow(db, runId) as RunRow) };
+    return begin(
+      {
+        id: runId,
+        pr: pr.id,
+        kind,
+        key,
+        db,
+        profile,
+        threads,
+        findings,
+        carry,
+        question,
+        session: null,
+        cancelled: false,
+        done: Promise.resolve(),
+      },
+      pr,
+      brief,
+    );
   }
 
   // The messages of each thread of a PR, by root comment ID.
@@ -1620,6 +1738,61 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const at = [...threads.map((t) => `${t.thread}@${t.replyTo}`), ...findings.map((f) => `finding${f}`)];
       const key = [id, "fix", source_head, target_head, profile.id, profileRevision(profile), ...at].join(":");
       return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "fix", { threads, findings });
+    },
+
+    // docs/plans/session-consult.md part C: forks the user's own session with the text of part A. Own PRs only. It shares the run slot.
+    session(db: Database, id: number, s: SessionStart): StartResult {
+      const pr = prRow(db, id);
+      if (!pr) return { status: 404, error: "Pull request not found." };
+      const { source_head, target_head } = pr;
+      if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
+      if (pr.my_role !== "AUTHOR") return { status: 409, error: "Ask your session works only on your own pull requests." };
+      const key = [id, "session", source_head, target_head, s.id, sha256(s.prompt)].join(":");
+      const busy = taken(db, key);
+      if (busy) return busy;
+      const record: SessionRecord = {
+        session: s.id,
+        title: s.title,
+        bytes: s.bytes,
+        tokens: sessionTokens(s.bytes),
+        groups: s.groups,
+        items: s.items,
+        textBytes: s.textBytes,
+        snapshot: s.snapshot,
+      };
+      const { id: runId } = db.query(SQL.sessionInsert).get({
+        pr: id,
+        key,
+        source: source_head,
+        target: target_head,
+        now: now(),
+        consult: JSON.stringify(record),
+      }) as { id: number };
+      const profile = profileOf(settings.profiles(), DEFAULT_PROFILE);
+      const heads = { ...pr, source_head, target_head };
+      const j: Job = {
+        id: runId,
+        pr: id,
+        kind: "session",
+        key,
+        db,
+        profile,
+        threads: null,
+        findings: [],
+        carry: null,
+        question: null,
+        session: s,
+        cancelled: false,
+        done: Promise.resolve(),
+      };
+      return begin(j, heads, { note: "", profile: profile.id });
+    },
+
+    // The answer of an ended session run and the item keys at its start. null: no such run of the PR, or no answer.
+    sessionAnswer(db: Database, pr: number, run: number): { entries: unknown[]; snapshot: Record<string, string> } | null {
+      const r = db.query(SQL.sessionAnswer).get({ run, pr }) as { answer: string; consult_json: string } | null;
+      if (!r) return null;
+      return { entries: JSON.parse(r.answer) as unknown[], snapshot: (JSON.parse(r.consult_json) as SessionRecord).snapshot };
     },
 
     // The newest fix runs of a PR with their notes, edits, and commits. null for an unknown PR.

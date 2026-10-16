@@ -1,8 +1,18 @@
-// Session consult server state and per-viewer storage (docs/plans/session-consult.md parts A and B). Key ['pr', pr, 'consult']:
+// Session consult server state and per-viewer storage (docs/plans/session-consult.md parts A, B, and C). Key ['pr', pr, 'consult']:
 // live.ts invalidates it with the PR. Storage can be off or full, so each read and write has a fallback.
 import { useQuery } from "@tanstack/react-query";
-import { type ConsultData, type ConsultGroup, type ConsultImportDto, type ConsultUndoDto, consultGroups } from "../../shared/consult";
+import {
+  type ConsultData,
+  type ConsultGroup,
+  type ConsultImportDto,
+  type ConsultUndoDto,
+  consultGroups,
+  type SessionAnswerDto,
+  type SessionListDto,
+  type SessionStartInput,
+} from "../../shared/consult";
 import { api } from "../api";
+import { started, useStart } from "../review/data";
 import { read } from "../shell/data";
 
 const param = (id: number) => ({ param: { id: String(id) } });
@@ -23,6 +33,33 @@ export const postImport = async (pr: number, entries: unknown[], snapshot: Recor
 
 export const postUndo = async (pr: number, run: number) =>
   read<ConsultUndoDto>(await api.api.prs[":id"].consult[":run"].undo.$post({ param: { id: String(pr), run: String(run) } }));
+
+// ---------- Part C ----------
+
+// GET /api/prs/:id/consult/sessions reads the transcript folder, so it runs only while the picker shows. Its key is outside
+// ['pr', pr]: a PR change does not read the folder again.
+export const useSessions = (pr: number, enabled: boolean) =>
+  useQuery({
+    queryKey: ["sessions", pr],
+    enabled,
+    staleTime: 0,
+    gcTime: 0,
+    queryFn: async () => read<SessionListDto>(await api.api.prs[":id"].consult.sessions.$get(param(pr))),
+  });
+
+// The answer of an ended session run does not change.
+export const useSessionAnswer = (pr: number, run: number | null) =>
+  useQuery({
+    queryKey: ["pr", pr, "consult", "session", run],
+    enabled: run !== null,
+    staleTime: Number.POSITIVE_INFINITY,
+    queryFn: async () =>
+      read<SessionAnswerDto>(await api.api.prs[":id"].consult.session[":run"].$get({ param: { id: String(pr), run: String(run ?? 0) } })),
+  });
+
+// POST /api/prs/:id/consult/session. 202 starts a run. 409 with `running` names the run that holds the slot.
+export const useStartSession = (pr: number) =>
+  useStart(pr, async (json: SessionStartInput) => started(await api.api.prs[":id"].consult.session.$post({ ...param(pr), json })));
 
 // ---------- Per viewer ----------
 

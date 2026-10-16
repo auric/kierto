@@ -174,6 +174,8 @@ export const settingsInput = z.object({
     .optional(),
   // Absent keeps the stored profiles. null restores the shipped profiles.
   profiles: profileList.nullable().optional(),
+  // Absent keeps the stored value. docs/plans/session-consult.md part C: while it is off, the app reads no transcript.
+  sessions: z.boolean().optional(),
 });
 
 export type SettingsInput = z.infer<typeof settingsInput>;
@@ -197,6 +199,8 @@ export type SettingsDto = {
   profiles: ProfileInput[];
   // baseUrl: null when Jira is not connected.
   jira: { baseUrl: string | null; caFile: string | null; tokenStored: boolean };
+  // The opt-in of "Ask your session" (docs/plans/session-consult.md part C). Default off.
+  sessions: boolean;
 };
 
 export type ApiError = { error: string };
@@ -370,7 +374,8 @@ export type RunUsage = { costUsd: number; turns: number; durationMs: number; tok
 // dropped: findings that the validator could not anchor. They show as coverage only.
 export type RunSummary = Pick<ValidatedResult, "summary" | "risks" | "coverage" | "dropped">;
 
-export type RunKind = "review" | "reply" | "ask" | "fix";
+// session: a direct consult of the user's own session (docs/plans/session-consult.md part C).
+export type RunKind = "review" | "reply" | "ask" | "fix" | "session";
 
 export type RunDto = {
   id: number;
@@ -421,6 +426,8 @@ export type RunDto = {
   findings: number;
   // A running run before the CLI starts: indexing builds the codegraph index of the snapshot.
   phase?: "indexing";
+  // A session run only: the transcript that it forked and the text that it got, with no transcript text. tokens: sessionTokens(bytes).
+  consult?: { session: string; title: string | null; bytes: number; tokens: number; items: number; textBytes: number };
 };
 
 export type ItemStatus = "new" | "accepted" | "discarded" | "posted";

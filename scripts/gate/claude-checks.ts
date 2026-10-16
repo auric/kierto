@@ -1,9 +1,11 @@
 // Gate B: local Claude Code checks B1 to B9 (docs/plans/v3.md section 5), B11 and B12 (docs/plans/r3.md WP-G3),
 // B13 (the model and effort fields of an --agents definition, and the --effort flag), B14 (the default effort of a run without --effort),
-// B15 (work/CLAUDE.md loads under the runner flag set).
+// B15 (work/CLAUDE.md loads under the runner flag set), B16 (a session fork with the flags of docs/plans/session-consult.md part C).
 // Usage: bun scripts/gate/claude-checks.ts [--only B1,B3] [--dry-run]
 // --dry-run builds every fixture and prints the planned argv. It starts no `claude -p` process and needs no `claude` on PATH.
 // Raw output goes to .gate0/v3-local/raw/ (gitignored). Raw files hold local paths and account data.
+
+import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -30,15 +32,15 @@ const STUB = join(import.meta.dir, "stub-mcp-server.ts");
 const BUN = process.execPath;
 const MAX_CALLS = 14;
 const MAX_TURNS = 4;
-// B9, B11, B12, B13, B14, and B15 have their own call caps. They do not count against MAX_CALLS.
-const OWN_MAX_CALLS: Record<string, number> = { b9: 2, b11: 2, b12: 1, b13: 2, b14: 2, b15: 2 };
+// B9 and B11 to B16 have their own call caps. They do not count against MAX_CALLS.
+const OWN_MAX_CALLS: Record<string, number> = { b9: 2, b11: 2, b12: 1, b13: 2, b14: 2, b15: 2, b16: 3 };
 const B9_MAX_TURNS = 8;
 const MAX_COST_USD = 0.6;
 const RUN_TIMEOUT_MS = 180_000;
 // Every temp folder name holds TAG. Claude Code keeps the name in its encoded per-cwd folders.
 const TAG = "rl-gb-";
 const FACT = "STUBFACT-5150";
-const CHECKS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B11", "B12", "B13", "B14", "B15"] as const;
+const CHECKS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B11", "B12", "B13", "B14", "B15", "B16"] as const;
 type CheckId = (typeof CHECKS)[number];
 
 // ---------- arguments ----------
@@ -126,6 +128,7 @@ interface Ev {
   agents?: string[];
   mcp_servers?: { name: string; status: string }[];
   claude_code_version?: string;
+  session_id?: string;
   permissionMode?: string;
   memory_paths?: Record<string, string>;
   structured_output?: unknown;
@@ -1590,6 +1593,139 @@ async function b15() {
   }
 }
 
+// ---------- B16: a session fork with the flags of the app (docs/plans/session-consult.md part C) ----------
+// It never touches a real session. Run 1 makes a throwaway session in a TAG folder with persistence on. Run 2 forks it from another
+// TAG folder with the app flags (src/server/review/claude.ts resumeArgs) and no --model, as the app does. Run 3 adds
+// --no-session-persistence. Checks: (a) the original file keeps its hash; (b) init lists only the read tools and StructuredOutput and
+// no MCP server; (c) structured output works with --resume; (d, INFO) run 3 leaves no new transcript; (e) a resume from another cwd
+// loads the history. INFO: where the fork transcript goes, init.permissionMode, init.model, hook events, and history replay.
+const B16_ORIGIN = "B16-ORIGIN-4417";
+const B16_FILE = "B16-FILE-9902";
+const B16_TOOLS = ["Read", "Grep", "Glob"];
+async function b16() {
+  const base = realpathSync.native(tmp("b16"));
+  const origin = join(base, "origin");
+  const other = join(base, "other");
+  const third = join(base, "third");
+  for (const d of [origin, other, third]) mkdirSync(d);
+  writeFileSync(join(other, "b16.txt"), `${B16_FILE}\n`);
+  writeFileSync(join(third, "b16.txt"), `${B16_FILE}\n`);
+  const mcp = join(base, "mcp.json");
+  writeJson(mcp, { mcpServers: {} });
+  const mine = () => tagged().filter((d) => d.includes(basename(base)));
+  // The transcripts directly in the per-cwd folders of this check, with their hashes.
+  const transcripts = () =>
+    new Map(
+      mine().flatMap((d) =>
+        readdirSync(join(projectsDir, d))
+          .filter((f) => f.endsWith(".jsonl"))
+          .map((f) => {
+            const p = join(projectsDir, d, f);
+            return [p, createHash("sha256").update(readFileSync(p)).digest("hex")] as const;
+          }),
+      ),
+    );
+  const schema = {
+    type: "object",
+    properties: { word: { type: "string" }, origin: { type: "string" } },
+    required: ["word", "origin"],
+    additionalProperties: false,
+  };
+  const forkArgs = (path: string, extra: string[] = []) => [
+    "--resume",
+    path,
+    "--fork-session",
+    "--restricted",
+    "--strict-mcp-config",
+    "--mcp-config",
+    mcp,
+    "--tools",
+    B16_TOOLS.join(","),
+    "--allowedTools",
+    B16_TOOLS.join(","),
+    "--json-schema",
+    JSON.stringify(schema),
+    ...extra,
+  ];
+  const ask =
+    "This is a format test. Read the file b16.txt in the current folder with the Read tool. Return word = the word in that file, and origin = the word that you replied with in the first message of this session.";
+  try {
+    const created = await runClaude(
+      "b16-create",
+      ["--strict-mcp-config", "--tools", "Read"],
+      `Reply with exactly this word and nothing else: ${B16_ORIGIN}`,
+      origin,
+      { env: runnerEnv(), keepProjects: true, maxTurns: 1 },
+    );
+    const sid = created.init?.session_id;
+    const before = transcripts();
+    const file = DRY
+      ? join(projectsDir, origin.replace(/[^a-zA-Z0-9]/g, "-"), "dry-run.jsonl")
+      : [...before.keys()].find((p) => basename(p) === `${sid}.jsonl`);
+    if (!DRY && !file) {
+      push("B16", "FAIL", `run 1 left no transcript: exit=${created.exit} session=${sid ?? "none"} files=${before.size}`);
+      return;
+    }
+    const fork = await runClaude("b16-fork", forkArgs(file as string), ask, other, { env: runnerEnv(), keepProjects: true, model: null });
+    const afterFork = transcripts();
+    const quiet = await runClaude("b16-fork-nopersist", forkArgs(file as string, ["--no-session-persistence"]), ask, third, {
+      env: runnerEnv(),
+      keepProjects: true,
+      model: null,
+    });
+    const afterQuiet = transcripts();
+    if (DRY) return dry("B16", `fork flags=${JSON.stringify(forkArgs("<session>.jsonl").filter((a) => a.length < 60))}`);
+    const path = file as string;
+    // The per-cwd folder name ends with the last part of its cwd: origin, other, or third.
+    const where = (p: string) =>
+      dirname(p) === dirname(path)
+        ? "original folder"
+        : basename(dirname(p)).endsWith("-other")
+          ? "fork cwd folder"
+          : basename(dirname(p)).endsWith("-third")
+            ? "no-persistence cwd folder"
+            : "other folder";
+    const forkFiles = [...afterFork.keys()].filter((p) => !before.has(p));
+    const quietFiles = [...afterQuiet.keys()].filter((p) => !afterFork.has(p));
+    const a = afterFork.get(path) === before.get(path) && afterQuiet.get(path) === before.get(path);
+    const tools = fork.init?.tools ?? [];
+    const servers = fork.init?.mcp_servers ?? [];
+    const b =
+      !!fork.init && tools.includes("Read") && tools.every((t) => [...B16_TOOLS, "StructuredOutput"].includes(t)) && servers.length === 0;
+    const so = fork.results.find((e) => e.structured_output !== undefined)?.structured_output as
+      | { word?: unknown; origin?: unknown }
+      | undefined;
+    const c = so?.word === B16_FILE;
+    const e = fork.exit === 0 && so?.origin === B16_ORIGIN;
+    const d = quiet.exit === 0 && quietFiles.length === 0;
+    const replay = fork.events.some((x) => x.type === "user" && JSON.stringify(x).includes("Reply with exactly this word"));
+    const forkCall = perCall.find((x) => x.name === "b16-fork");
+    push(
+      "B16",
+      a && b && c && e ? "PASS" : "FAIL",
+      `(a) original hash unchanged=${a}; (b) init.tools=${tools.join(",") || "none"} mcp_servers=${servers.map((s) => s.name).join(",") || "none"}; (c) structured word=${JSON.stringify(so?.word ?? null)}; (e) exit=${fork.exit} origin=${JSON.stringify(so?.origin ?? null)} from another cwd; (d, INFO) no-persistence exit=${quiet.exit} new transcripts=${quietFiles.length} (${quietFiles.map(where).join(", ") || "none"}); INFO: fork transcripts=${forkFiles.length} (${forkFiles.map(where).join(", ") || "none"}) fork session=${fork.init?.session_id === sid ? "same as original" : "new"} init.model=${String((fork.init as { model?: unknown } | undefined)?.model ?? "none")} hook events=${forkCall?.hookEvents ?? "?"} history replay in stdout=${replay}`,
+      {
+        a,
+        b,
+        c,
+        d,
+        e,
+        tools,
+        servers,
+        forkFiles: forkFiles.map(where),
+        quietFiles: quietFiles.map(where),
+        replay,
+        permissionMode: fork.init?.permissionMode,
+      },
+    );
+  } finally {
+    for (const d of mine()) rmSync(join(projectsDir, d), { recursive: true, force: true });
+    for (const d of [origin, other, third])
+      rmSync(join(tmpdir(), "claude", d.replace(/[^a-zA-Z0-9]/g, "-")), { recursive: true, force: true });
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
 // ---------- main ----------
 const RUNNERS: Record<CheckId, () => Promise<unknown>> = {
   B1: b1,
@@ -1606,6 +1742,7 @@ const RUNNERS: Record<CheckId, () => Promise<unknown>> = {
   B13: b13,
   B14: b14,
   B15: b15,
+  B16: b16,
 };
 {
   for (const id of selected) await check(id, RUNNERS[id]);

@@ -10,7 +10,7 @@ Status: Releases 1, 2, and 3 are code complete. Project instructions, always-use
 |---|---|
 | `BRIEF.md` | The spec and the source of truth. If another file disagrees, BRIEF.md wins. |
 | `prototype/index.html` | Visual spec for the UI: three panes, color tokens, keyboard model. Sample data only. It is also a published artifact. |
-| `docs/plans/` | Milestone plans: m1.md, v3.md (M2, M3), replies.md, m4.md, r2.md (Release 2), r3.md (Release 3), pr-view-v4.md (PR detail layout, URL, panels), fix-ux.md (Fix list, Fix for findings). |
+| `docs/plans/` | Milestone plans: m1.md, v3.md (M2, M3), replies.md, m4.md, r2.md (Release 2), r3.md (Release 3), pr-view-v4.md (PR detail layout, URL, panels), fix-ux.md (Fix list, Fix for findings), session-consult.md (consult the implementation session). |
 | `docs/smoke-m1.md`, `docs/smoke-v3.md`, `docs/smoke-m4.md`, `docs/smoke-r2.md`, `docs/smoke-r3.md` | Manual smoke tests with the real server and CLI. The user runs them. The smoke-v3.md last table maps A1 to A17 to their tests. |
 | `PROJECT_BRIEF_GPT_ASTRA_6.md` | Reference for edge cases and acceptance scenarios. |
 | `IMPLEMENTATION_PROMPTS_GPT_ASTRA_6.md` | Alternative spec-kit prompt set. Prompt 0 drives Gate 0. Its two-pane and general-comments-only rules do not apply. |

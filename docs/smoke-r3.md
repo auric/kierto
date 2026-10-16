@@ -1,6 +1,6 @@
 # Release 3 manual smoke test: Fix it, Jira Markdown, and Jira attachments
 
-This test checks the Release 3 features against a real Bitbucket Server, a real Jira server, your own git clone, and the real `claude` CLI. The user runs it. The automated suites use fixtures, the fake CLI, the fake Bitbucket, the fake Jira, and temp clones only. The results fill the "Release 3 (not run)" rows in integration-check.md: U21 to U29, B11, B12, and B15. Part I checks the prompt features that came after Release 3.
+This test checks the Release 3 features against a real Bitbucket Server, a real Jira server, your own git clone, and the real `claude` CLI. The user runs it. The automated suites use fixtures, the fake CLI, the fake Bitbucket, the fake Jira, and temp clones only. The results fill the "Release 3 (not run)" rows in integration-check.md: U21 to U29, B11, B12, B15, and B16. Part I checks the prompt features that came after Release 3.
 
 ## Rules
 
@@ -11,7 +11,7 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 - Use a new, empty data folder. Never use the data folder of your daily instance.
 - The app never pushes. Each push in this test is your own `git push`.
 - Do not copy tokens, host names, code, comment text, issue text, or file names into files, issues, or chat. Record payload shapes (key names and types), counts, and tag names only.
-- Expect about twelve runs on your Claude subscription quota: five in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, one in part I, two in part J, and one interactive session in part K.
+- Expect about seventeen runs on your Claude subscription quota: eight in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, one in part I, two in part J, and in part K one interactive session and two session runs. A session run loads the full history of the session, so it can cost more than a review.
 - Part I sends your project instructions to Claude. Turn on the global CLAUDE.md only when it holds nothing that the approval does not cover.
 - In this document, `<BITBUCKET_URL>` is the base URL of the Bitbucket server, `<JIRA_URL>` is the base URL of the Jira server, `<TEST_PR_URL>` is the URL of the test pull request, `<KEY>` is a Jira issue key that the test pull request names, and `<CLONE>` is the absolute path of your test clone.
 
@@ -28,12 +28,13 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 9. Open the URL. Enter `<BITBUCKET_URL>` and your access token. Click Save. Click "Check now". If the test pull request is not in the list, paste `<TEST_PR_URL>` into the filter and click "Follow this pull request".
 10. Open Settings. Enter `<JIRA_URL>` and a Jira personal access token. Click "Save Jira settings". Expect "Saved. Jira accepted the token."
 
-## Gate B11, B12, and B15
+## Gate B11, B12, B15, and B16
 
 1. Run `bun scripts/gate/claude-checks.ts --only B11,B12`. Expect PASS for B11 and B12 in the output and in `.gate0/v3-local/results*.json`. B11 checks U21 with a null judgement and a 2 KB `new` string. B12 checks U23 with a PNG under `--restricted`. The color answer of B12 is INFO only.
 2. Run `bun scripts/gate/sanitize-claude.ts`. Expect exit code 0 and counts only.
 3. Record each result. A B12 FAIL means that runs list images in task.md only. Record it and go on.
 4. Run `bun scripts/gate/claude-checks.ts --only B15`. B15 checks whether the CLI loads `work/CLAUDE.md` by itself. Expect FAIL. Since e217a62, runs do not rely on it: the prompt holds the project instructions (part I). The FAIL records the CLI behaviour. A PASS means that the CLI now loads the file, so the main agent gets the text twice. Record a PASS and report it.
+5. Run `bun scripts/gate/claude-checks.ts --only B16 --dry-run`. Expect "DRY-RUN B16 calls=3" and no model call. Then run `bun scripts/gate/claude-checks.ts --only B16`. It makes a throwaway session in a temp folder and forks it twice. It never opens one of your sessions. Expect PASS: (a) the original file keeps its hash, (b) init lists only Read, Grep, Glob, and StructuredOutput and no MCP server, (c) the structured word, and (e) the origin word from another folder. Record the INFO parts: (d) the new transcripts with `--no-session-persistence`, the folder of the fork transcript, `init.permissionMode`, `init.model`, the hook events, and the history replay. A FAIL blocks part K steps 12 to 19. Record it and report it.
 
 ## A. Fix one comment and commit it in your clone
 
@@ -156,7 +157,7 @@ Fix for threads and for review findings ships with docs/plans/fix-ux.md WP2 to W
 
 ## K. Consult the session that wrote the code
 
-Parts A and B of docs/plans/session-consult.md (package S1). Part C waits for gate B16.
+Parts A and B (package S1) and part C (package S2) of docs/plans/session-consult.md. Run steps 12 to 19 only after a B16 PASS.
 
 1. Use the test pull request after part J. Keep at least one open reviewer thread, one thread of your own, one resolved thread, and one review finding that is not posted. If Files offers "Get the code", click it.
 2. Open More (…) in the action bar. Click "Copy for your session…". Expect four groups, all ticked, each with its count, and the line "N items, X KB."
@@ -169,6 +170,14 @@ Parts A and B of docs/plans/session-consult.md (package S1). Part C waits for ga
 9. Ask the second user to reply in one thread of the answer. Click "Check now". Paste the same answer again. Expect that thread row "Skipped. Changed since the copy."
 10. Click Apply, then Undo in the result view. Expect the new session drafts gone and the findings back in their earlier status.
 11. Discard the remaining session drafts.
+12. Open Settings, Clones. Expect the switch "Let Review Loop find and consult your Claude Code sessions" off, and its text about the folder, branch, time, and title lines and the plan quota. Open the test pull request and open More. Expect no "Ask your session…".
+13. List the files in the projects folder of the session of step 5 (`~/.claude/projects/<folder>`). Record the count of `.jsonl` files only.
+14. Turn the switch on. Open More and click "Ask your session…". Expect the four groups and, under "Session on branch <source branch>", the sessions of that branch. Expect a session in `<CLONE>` first, with "In your clone". Each row shows a title, the folder name, the last use, the size, and a token estimate. Expect the cost line. Expect no message text of a transcript anywhere in the dialog.
+15. Pick the session of step 5. Click "Ask the session". Expect "Your session is answering…" and a "Session" row under the review with a tool call count. Run `git -C <CLONE> status` meanwhile. Expect no change.
+16. Wait for the end. Expect the dialog "Answer of your session" with one preview row per entry, and no change before Apply. Click "Apply N changes". Expect the result line, and nothing new on the pull request in Bitbucket. Click Close. Click "Show the answer" in the Session row. Expect the preview again. Close it.
+17. List the projects folder of step 13 again. Record the count of new `.jsonl` files. Resume the session of step 5 in a terminal. Expect no message of the session run in its history. Exit without a prompt.
+18. Start a second session run, then click "Cancel the run". Expect "The session run was cancelled." and the Session row "Cancelled". Click "Ask again". Expect the list. Click Cancel.
+19. Turn the switch off. Expect no "Ask your session…" in More. Discard the remaining session drafts.
 
 ## H. Record
 
@@ -178,5 +187,5 @@ Parts A and B of docs/plans/session-consult.md (package S1). Part C waits for ga
 - The judgement chip of each thread T1 to T7.
 - For each fix run: the proposed edits and the skipped edits. This gives the rate of dropped edits.
 - From part J: the reason that the fix run gave for T9 in step 4.
-- From part K: the item count and the size of the copy, the count of entries per verdict, and the count of skipped rows. Record no text.
-- B11, B12, and B15, the tag names from E5, and the shapes from F1. From part I: the languages of step 4, the severity counts of step 6, and any coverage line from step 5. Update the "Release 3 (not run)" rows in integration-check.md.
+- From part K: the item count and the size of the copy, the count of entries per verdict, and the count of skipped rows. From steps 14 to 17: the count of listed sessions, the size and the token estimate of the picked session, the token count of the session run (hint of its time), and the count of new transcripts. Record no text and no path.
+- B11, B12, B15, and B16, the tag names from E5, and the shapes from F1. From part I: the languages of step 4, the severity counts of step 6, and any coverage line from step 5. Update the "Release 3 (not run)" rows in integration-check.md.

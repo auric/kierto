@@ -1,6 +1,6 @@
 # Session consult plan: ask the session that wrote the code
 
-Status: parts A and B are code complete (package S1, 2026-10-15). Part C waits for gate B16. The user runs docs/smoke-r3.md part K.
+Status: parts A and B are code complete (package S1, 2026-10-15). Part C is code complete behind its opt-in (package S2, 2026-10-16). Gate B16 is written and not run yet. The user runs gate B16 and docs/smoke-r3.md part K.
 
 ## 0. Sources and user decisions
 
@@ -10,7 +10,7 @@ Status: parts A and B are code complete (package S1, 2026-10-15). Part C waits f
 
 ## 1. CLI facts for part C
 
-Source: a scout run on CLI 2.1.300 and its docs, 2026-10-14. These facts are not used in parts A and B.
+Source: a scout run on CLI 2.1.300 and its docs, 2026-10-14. Part C uses them. Gate B16 checks the unverified ones.
 
 - Verified: `claude -p --resume <id or absolute .jsonl path> --fork-session` leaves the original session unchanged.
 - Verified: resume works from any working folder since 2.1.223. So C can run in the sanitized run snapshot, with no exception for the clone.
@@ -53,14 +53,55 @@ Source: a scout run on CLI 2.1.300 and its docs, 2026-10-14. These facts are not
 - Resolved items never change.
 - Routes: GET /api/prs/:id/consult, POST /api/prs/:id/consult/import, POST /api/prs/:id/consult/:run/undo. Own PRs only.
 
-## 4. Part C (later, behind gate B16)
+## 4. Part C: Ask your session (as built, package S2)
 
-- A session picker: transcripts whose gitBranch is the PR source branch, newest first, with title, size, and last time.
-- The run forks the session (`--resume <id> --fork-session`), read-only and restricted, in the run snapshot. The prompt is the text of part A. The JSON schema is the answer format of part B. The result goes through the import of part B.
-- The dialog shows the estimated size before the start.
-- Gate B16: check that `--tools`, `--restricted`, `--strict-mcp-config`, `--mcp-config`, and `--add-dir` apply on resume. Build C only after a PASS.
+### Opt-in
+
+- Settings, Clones has the switch "Let Review Loop find and consult your <runner> sessions". It is off by default. The config key is `sessions`.
+- While it is off, the More menu and the copy dialog show no session action, and the session routes refuse with 409. Nothing reads the transcript folder.
+- The switch text says what the app reads (folder, branch, time, title lines), that it never shows or stores message text, and that each question uses plan quota.
+
+### Session finder (`src/server/review/sessions.ts`)
+
+- It lists `<config>/projects/<folder>/<id>.jsonl`, with `<config>` from `claudeConfigDir()`, the folder of the runs. It follows no link and skips subfolders, such as the subagent transcripts.
+- It reads the 300 newest files by modification time. Per file, it reads at most the first 64 KB and the last 256 KB. A line that a cap edge cuts is dropped. A 93 MB file costs 320 KB.
+- Caps basis: in 54 local transcripts (2026-10-16), the first cwd line started within 2 KB, the last branch line within 23 KB, and the last title line within 37 KB of the end.
+- The CLI writes compact JSON, so a top-level key shows as `"key":value`. Only lines with a wanted key get parsed, and the parse confirms the key at the top level. A nested key or escaped text in a message does not count.
+- Keys: `cwd`, `timestamp`, and `gitBranch` from the message lines; `{"type":"ai-title","aiTitle"}` and `{"type":"custom-title","customTitle"}`; `{"type":"continued-in","continuedInSessionId"}`. A custom title wins over the generated title.
+- Match: a line of the head or the tail has `gitBranch` equal to the PR source branch, so a session that switched to the branch also matches.
+- Rank: a session whose newest cwd is the clone folder of Settings, Clones, or in it, comes first. Then newest first. At most 25 sessions.
+- continued-in: when the target is listed and newer, the source leaves the list and gives the target its branch match and its title. A missing or older target keeps the source. A total time order stops a cycle.
+- A transcript whose newest cwd is in `<data>/runs` is a fork of an app run. It is left out.
+- The route returns ID, title, size, token estimate, last time, folder name, branch, and the clone mark. The path stays on the server. To start, the client sends only the session ID, and the server finds the file again.
+- Token estimate: bytes / 4, labeled an upper estimate. The file also holds JSON keys and tool output, and resume loads only the history after the last compaction.
+
+### Run (`jobs.ts` session run, kind `session`, migration 025)
+
+- Start: More, "Ask your session…", or "Ask your session instead…" in the copy dialog. The dialog has the groups of part A, the session list (best match picked), and the cost line. "Ask the session" starts the run.
+- cwd: a fresh sanitized snapshot of the PR head from the workspace builder. Never the user's clone.
+- Command (`claude.ts` `resumeArgs`): `-p --resume <absolute path> --fork-session --output-format stream-json --verbose --restricted --strict-mcp-config --mcp-config <empty> --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --json-schema <answer schema> --max-turns 12`. Same auth check and child env as review runs.
+- Decision: no `--permission-mode`, the same as review runs. `--restricted` ignores the settings files, and 2.1.295 has no "default" choice. B16 records `init.permissionMode` on resume.
+- Decision: no `--no-session-persistence` until B16 (d) shows that it leaves no transcript with `--fork-session`. So the CLI writes a fork transcript. The run end deletes the per-cwd folder of the run cwd. A fork file in another folder, for example next to the original, stays in the user's projects folder. B16 records the folder. The finder leaves out a fork whose newest cwd is a run folder.
+- Safety net: the init check stops the run when init lists a tool outside Read, Grep, Glob, and StructuredOutput. So a resume that ignores `--tools` or `--strict-mcp-config` makes no tool call.
+- stdin: the text of the ticked groups (part A, with its 200 KB cap) and `SESSION_RULES`, which ends with "Answer only with the json block in the schema".
+- Schema: `{"answers": [part B entries]}`, because `--json-schema` needs an object. The parse keeps bad entries, and the preview of part B skips them with the reason.
+- One run at a time: the session run takes the review slot. Timeout 20 minutes. Cancel kills the process tree.
+- Result: the entries go to `answer`. `consult_json` holds the session ID, title, size, token estimate, groups, item count, text size, and the item keys at the start. No transcript text and no path reach the database, the run log, or the server log.
+- Preview: the dialog shows the answer in the preview of part B, with the item keys at the start as the snapshot. Nothing applies by itself. Apply, Undo, and the Fix list work as in part B.
+- The run row "Session" names the session title and the answer count. "Show the answer" opens the preview again.
+- Routes: GET /api/prs/:id/consult/sessions, POST /api/prs/:id/consult/session, GET /api/prs/:id/consult/session/:run. Own PRs only. Cancel uses POST /api/runs/:id/cancel.
+
+### Gate B16 (`scripts/gate/claude-checks.ts`, own cap of 3 calls)
+
+- It never touches a real session. Run 1 makes a throwaway session with persistence on, in a temp folder. Run 2 forks it from another temp folder with the app flags and no `--model`. Run 3 adds `--no-session-persistence`.
+- PASS needs: (a) the original file hash stays the same; (b) init lists only the read tools and StructuredOutput, and no MCP server; (c) structured output works with `--resume`; (e) the resume from another cwd knows the first reply of the original.
+- INFO: (d) run 3 leaves no new transcript; the folder of the fork transcript; `init.permissionMode`; `init.model`; hook events; history replay in stdout.
+- `--dry-run` prints the planned argv and starts no model call.
 
 ## 5. Known limits
 
 - The snapshot for the change check lives in the browser that copied. A paste in another browser checks only the current state, and the preview says so.
 - The code quote needs the git cache. Without it, threads quote the stored excerpt.
+- Part C reads only the 300 newest transcripts. An older session on the branch does not show.
+- The transcript format is internal to the CLI. A format change can hide sessions or titles. The finder then shows fewer sessions, never message text.
+- Unverified until B16 runs: the launch flags on resume, structured output with `--resume`, the folder of the fork transcript, and history replay in stdout.

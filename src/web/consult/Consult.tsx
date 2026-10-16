@@ -1,9 +1,11 @@
-// Session consult dialogs (docs/plans/session-consult.md parts A and B). "Copy for your session" copies the text of the ticked groups.
-// "Paste the answer" reads the answer of that session, shows what each entry does, and applies it after a click. Nothing posts.
+// Session consult dialogs (docs/plans/session-consult.md parts A, B, and C). "Copy for your session" copies the text of the ticked
+// groups. "Paste the answer" reads the answer of that session, shows what each entry does, and applies it after a click.
+// "Ask your session" forks the session directly; its answer goes through the same preview. Nothing posts.
 import { useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, ClipboardCopy, ClipboardPaste, Info, Undo2, Wrench } from "lucide-react";
+import { CircleAlert, CircleStop, ClipboardCopy, ClipboardPaste, History, Info, LoaderCircle, Send, Undo2, Wrench } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
@@ -17,6 +19,7 @@ import {
   CONSULT_MAX_BYTES,
   type ConsultGroup,
   type ConsultImportDto,
+  type ConsultText,
   type ConsultVerdict,
   consultGroups,
   consultText,
@@ -24,15 +27,34 @@ import {
   type PlanRow,
   parseAnswer,
   planAnswer,
+  type SessionDto,
 } from "../../shared/consult";
 import type { PrRow } from "../../shared/dto";
+import { busyText } from "../ask/model";
 import { dialogKeys } from "../fix/CloneDialog";
 import type { FixTarget } from "../fix/model";
+import { useMeta } from "../meta";
+import { agoLong } from "../pr/threads";
 import { planKey } from "../publish/data";
-import { replyKey } from "../review/data";
+import { replyKey, useCancelRun, usePrRuns, useRun } from "../review/data";
 import { plural } from "../review/model";
+import { sizeText } from "../review/tasks";
+import { useSettings } from "../shell/data";
 import { prKey } from "../shell/model";
-import { consultKey, loadGroups, loadSnapshot, postImport, postUndo, saveGroups, saveSnapshot, useConsultData } from "./data";
+import { useNow } from "../shell/Sidebar";
+import {
+  consultKey,
+  loadGroups,
+  loadSnapshot,
+  postImport,
+  postUndo,
+  saveGroups,
+  saveSnapshot,
+  useConsultData,
+  useSessionAnswer,
+  useSessions,
+  useStartSession,
+} from "./data";
 
 export const CONSULT_OWN_ONLY = "Copy for your session works only on your own pull requests.";
 
@@ -40,13 +62,17 @@ const kb = (bytes: number) => (bytes < 1000 ? plural(bytes, "byte") : `${(bytes 
 const VERDICT: Record<ConsultVerdict, string> = { accept: "Accept", reject: "Reject", question: "Question" };
 const rowBox = "grid cursor-pointer grid-cols-[18px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-0.5 rounded px-1 py-2 hover:bg-hover";
 
-// from: the ID of the element that takes the focus after the dialog.
-type Open = { mode: "copy" | "paste"; from: string };
+// from: the ID of the element that takes the focus after the dialog. run: a session run to show (part C).
+type Open = { mode: "copy" | "paste" | "session"; from: string; run?: number };
 
 export type ConsultUi = {
   // from: the element that gets the focus back. Default: the More button.
   copy: (from?: string) => void;
   paste: (from?: string) => void;
+  // Part C. run: show this session run. Absent: the running session run of the PR, else the session list.
+  session: (from?: string, run?: number) => void;
+  // The opt-in of part C is on.
+  sessions: boolean;
   dialog: ReactNode;
 };
 
@@ -54,12 +80,13 @@ export type ConsultUi = {
 export function useConsult(pr: PrRow, o: { announce: (text: string) => void; openFix: (targets: FixTarget[]) => void }): ConsultUi {
   const [open, setOpen] = useState<Open | null>(null);
   const author = pr.role === "AUTHOR";
+  const sessions = useSettings().data?.sessions === true;
   const qc = useQueryClient();
   const show =
     (mode: Open["mode"]) =>
-    (from = "more-btn") => {
+    (from = "more-btn", run?: number) => {
       if (!author) return void toast.add({ title: CONSULT_OWN_ONLY });
-      setOpen({ mode, from });
+      setOpen({ mode, from, run });
     };
   const close = () => setOpen(null);
   // The import changes reply drafts, findings, and the post plan.
@@ -70,40 +97,47 @@ export function useConsult(pr: PrRow, o: { announce: (text: string) => void; ope
     void qc.invalidateQueries({ queryKey: ["run"] });
   };
   const finalFocus = () => (open && document.getElementById(open.from)) || true;
+  const onFix = (t: FixTarget[]) => {
+    close();
+    o.openFix(t);
+  };
+  const body = (b: Open) => {
+    if (b.mode === "copy")
+      return (
+        <CopyBody
+          pr={pr}
+          announce={o.announce}
+          onClose={close}
+          finalFocus={finalFocus}
+          onSession={sessions ? () => setOpen({ mode: "session", from: b.from }) : undefined}
+        />
+      );
+    if (b.mode === "paste")
+      return <PasteBody pr={pr} announce={o.announce} onClose={close} onChanged={changed} finalFocus={finalFocus} onFix={onFix} />;
+    return (
+      <SessionBody pr={pr} run={b.run} announce={o.announce} onClose={close} onChanged={changed} finalFocus={finalFocus} onFix={onFix} />
+    );
+  };
   const dialog =
     author && open ? (
       <Dialog open onOpenChange={(on) => !on && close()}>
-        {open.mode === "copy" ? (
-          <CopyBody pr={pr} announce={o.announce} onClose={close} finalFocus={finalFocus} />
-        ) : (
-          <PasteBody
-            pr={pr}
-            announce={o.announce}
-            onClose={close}
-            onChanged={changed}
-            finalFocus={finalFocus}
-            onFix={(t) => {
-              close();
-              o.openFix(t);
-            }}
-          />
-        )}
+        {body(open)}
       </Dialog>
     ) : null;
-  return { copy: show("copy"), paste: show("paste"), dialog };
+  return { copy: show("copy"), paste: show("paste"), session: show("session"), sessions, dialog };
 }
 
 type Body = { pr: PrRow; announce: (text: string) => void; onClose: () => void; finalFocus: () => HTMLElement | true };
 
-function Loading({ error }: { error: Error | null }) {
+function Loading({ error, what = "the review points" }: { error: Error | null; what?: string }) {
   return error ? (
     <Alert variant="destructive">
       <CircleAlert aria-hidden />
-      <AlertTitle>Cannot read the review points</AlertTitle>
+      <AlertTitle>Cannot read {what}</AlertTitle>
       <AlertDescription>{error.message}</AlertDescription>
     </Alert>
   ) : (
-    <div role="status" aria-label="Loading the review points" className="grid gap-2">
+    <div role="status" aria-label={`Loading ${what}`} className="grid gap-2">
       <Skeleton className="h-8 w-full" />
       <Skeleton className="h-8 w-full" />
       <Skeleton className="h-8 w-2/3" />
@@ -113,11 +147,9 @@ function Loading({ error }: { error: Error | null }) {
 
 // ---------- Part A ----------
 
-function CopyBody({ pr, announce, onClose, finalFocus }: Body) {
-  const q = useConsultData(pr.id, true);
+// The groups of part A with their counts, and the note of the size cap. The ticks stay per viewer.
+function useGroups() {
   const [groups, setGroups] = useState(loadGroups);
-  const copyBtn = useRef<HTMLButtonElement>(null);
-  const t = useMemo(() => q.data && consultText(q.data, groups), [q.data, groups]);
   const tick = (g: ConsultGroup, on: boolean) => {
     const next = new Set(groups);
     if (on) next.add(g);
@@ -125,6 +157,61 @@ function CopyBody({ pr, announce, onClose, finalFocus }: Body) {
     setGroups(next);
     saveGroups(next);
   };
+  return { groups, tick };
+}
+
+function GroupBoxes({
+  t,
+  groups,
+  tick,
+}: {
+  t: ConsultText;
+  groups: ReadonlySet<ConsultGroup>;
+  tick: (g: ConsultGroup, on: boolean) => void;
+}) {
+  return (
+    <>
+      <FieldSet className="gap-0">
+        <FieldLegend variant="label">Groups</FieldLegend>
+        {consultGroups.map((g) => (
+          <label key={g} className={rowBox} data-consult-group={g}>
+            <input
+              type="checkbox"
+              className="m-0 mt-[3px] accent-foreground"
+              checked={groups.has(g)}
+              aria-describedby={`cg-${g}-about`}
+              onChange={(e) => tick(g, e.target.checked)}
+            />
+            <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm">
+              <b className="font-semibold">{CONSULT_GROUP[g]}</b>
+              <span className="text-muted-foreground">{t.counts[g]}</span>
+            </span>
+            <span id={`cg-${g}-about`} className="col-start-2 text-xs text-muted-foreground">
+              {needsVerdict(g) ? "Needs a verdict." : "Context only. No verdict."}
+            </span>
+          </label>
+        ))}
+      </FieldSet>
+      {t.left.length > 0 && (
+        <Alert role="note">
+          <Info aria-hidden />
+          <AlertTitle>The text reached its size cap of {kb(CONSULT_MAX_BYTES)}.</AlertTitle>
+          <AlertDescription>
+            {plural(t.left.length, "item")} stay out: <span translate="no">{t.left.join(", ")}</span>. Untick a group to make room, or copy
+            again after this answer.
+          </AlertDescription>
+        </Alert>
+      )}
+    </>
+  );
+}
+
+// onSession: opens part C instead. Absent while its opt-in is off.
+function CopyBody({ pr, announce, onClose, finalFocus, onSession }: Body & { onSession?: () => void }) {
+  const q = useConsultData(pr.id, true);
+  const { groups, tick } = useGroups();
+  const copyBtn = useRef<HTMLButtonElement>(null);
+  const t = useMemo(() => q.data && consultText(q.data, groups), [q.data, groups]);
   const copy = async () => {
     const data = q.data;
     if (!t || !data || !t.ids.length) return;
@@ -153,43 +240,19 @@ function CopyBody({ pr, announce, onClose, finalFocus }: Body) {
         <Loading error={q.error} />
       ) : (
         <>
-          <FieldSet className="gap-0">
-            <FieldLegend variant="label">Groups</FieldLegend>
-            {consultGroups.map((g) => (
-              <label key={g} className={rowBox} data-consult-group={g}>
-                <input
-                  type="checkbox"
-                  className="m-0 mt-[3px] accent-foreground"
-                  checked={groups.has(g)}
-                  aria-describedby={`cg-${g}-about`}
-                  onChange={(e) => tick(g, e.target.checked)}
-                />
-                <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm">
-                  <b className="font-semibold">{CONSULT_GROUP[g]}</b>
-                  <span className="text-muted-foreground">{t.counts[g]}</span>
-                </span>
-                <span id={`cg-${g}-about`} className="col-start-2 text-xs text-muted-foreground">
-                  {needsVerdict(g) ? "Needs a verdict." : "Context only. No verdict."}
-                </span>
-              </label>
-            ))}
-          </FieldSet>
-          {t.left.length > 0 && (
-            <Alert role="note">
-              <Info aria-hidden />
-              <AlertTitle>The text reached its size cap of {kb(CONSULT_MAX_BYTES)}.</AlertTitle>
-              <AlertDescription>
-                {plural(t.left.length, "item")} stay out: <span translate="no">{t.left.join(", ")}</span>. Untick a group to make room, or
-                copy again after this answer.
-              </AlertDescription>
-            </Alert>
-          )}
+          <GroupBoxes t={t} groups={groups} tick={tick} />
           <p id="consult-size" className="m-0 text-sm text-ink-2">
             {t.ids.length ? `${plural(t.ids.length, "item")}, ${kb(t.bytes)}.` : "Nothing to copy. Tick a group with items."}
           </p>
         </>
       )}
       <DialogFooter>
+        {onSession && (
+          <Button variant="ghost" className="sm:mr-auto" onClick={onSession}>
+            <History aria-hidden data-icon="inline-start" />
+            Ask your session instead…
+          </Button>
+        )}
         <Button variant="outline" onClick={onClose}>
           Cancel
         </Button>
@@ -256,20 +319,18 @@ const resultText = (d: ConsultImportDto) => {
   return parts.length ? parts.join(" ") : "Nothing changed.";
 };
 
-function PasteBody({
-  pr,
-  announce,
-  onClose,
-  onChanged,
-  onFix,
-  finalFocus,
-}: Body & { onChanged: () => void; onFix: (t: FixTarget[]) => void }) {
+type Changes = { onChanged: () => void; onFix: (t: FixTarget[]) => void };
+// given: the answer of a session run (part C) with the item keys at its start. The paste box does not show then.
+type Given = { entries: unknown[]; snapshot: Record<string, string>; title: string };
+
+function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given }: Body & Changes & { given?: Given }) {
   const q = useConsultData(pr.id, true);
   const [raw, setRaw] = useState("");
   const [done, setDone] = useState<ConsultImportDto | null>(null);
   const [busy, setBusy] = useState(false);
-  const [snapshot] = useState(() => loadSnapshot(pr.id));
-  const parsed = raw.trim() ? parseAnswer(raw) : null;
+  const [stored] = useState(() => loadSnapshot(pr.id));
+  const snapshot = given ? given.snapshot : stored;
+  const parsed = given ? { entries: given.entries } : raw.trim() ? parseAnswer(raw) : null;
   const rows = parsed && "entries" in parsed && q.data ? planAnswer(q.data.items, parsed.entries, snapshot) : null;
   const changes = rows?.filter((r) => r.act).length ?? 0;
   const error = parsed && "error" in parsed ? parsed.error : null;
@@ -317,10 +378,16 @@ function PasteBody({
       finalFocus={finalFocus}
     >
       <DialogHeader>
-        <DialogTitle>Paste the answer</DialogTitle>
+        <DialogTitle>{given ? "Answer of your session" : "Paste the answer"}</DialogTitle>
         <DialogDescription>
-          <span translate="no">{prKey(pr)}</span>. Paste the answer of your session with its json block. Nothing changes before Apply.
-          Nothing posts.
+          <span translate="no">{prKey(pr)}</span>.{" "}
+          {given ? (
+            <>
+              The answer of <span className="font-medium text-foreground">{given.title}</span>. Nothing changes before Apply. Nothing posts.
+            </>
+          ) : (
+            "Paste the answer of your session with its json block. Nothing changes before Apply. Nothing posts."
+          )}
         </DialogDescription>
       </DialogHeader>
       {done ? (
@@ -335,36 +402,40 @@ function PasteBody({
         </>
       ) : (
         <>
-          <Field data-invalid={error ? true : undefined}>
-            <FieldLabel htmlFor="consult-answer">Answer of your session</FieldLabel>
-            <Textarea
-              id="consult-answer"
-              rows={7}
-              value={raw}
-              spellCheck={false}
-              aria-invalid={error ? true : undefined}
-              aria-describedby="consult-answer-note"
-              placeholder={'```json\n[{"id": "T123", "verdict": "reject", "reason": "…"}]\n```'}
-              className="max-h-[30dvh] font-mono text-xs"
-              onChange={(e) => setRaw(e.target.value)}
-            />
-            {error ? (
-              <FieldError id="consult-answer-note">{error}</FieldError>
-            ) : (
-              <FieldDescription id="consult-answer-note">
-                {snapshot
-                  ? "The app skips each item that changed after your copy."
-                  : "No copy from this browser. The app checks only the current state of each item."}
-              </FieldDescription>
-            )}
-          </Field>
-          {raw.trim() && !q.data && <Loading error={q.error} />}
+          {given ? (
+            <p className="m-0 text-sm text-ink-2">The app skips each item that changed after the run started.</p>
+          ) : (
+            <Field data-invalid={error ? true : undefined}>
+              <FieldLabel htmlFor="consult-answer">Answer of your session</FieldLabel>
+              <Textarea
+                id="consult-answer"
+                rows={7}
+                value={raw}
+                spellCheck={false}
+                aria-invalid={error ? true : undefined}
+                aria-describedby="consult-answer-note"
+                placeholder={'```json\n[{"id": "T123", "verdict": "reject", "reason": "…"}]\n```'}
+                className="max-h-[30dvh] font-mono text-xs"
+                onChange={(e) => setRaw(e.target.value)}
+              />
+              {error ? (
+                <FieldError id="consult-answer-note">{error}</FieldError>
+              ) : (
+                <FieldDescription id="consult-answer-note">
+                  {snapshot
+                    ? "The app skips each item that changed after your copy."
+                    : "No copy from this browser. The app checks only the current state of each item."}
+                </FieldDescription>
+              )}
+            </Field>
+          )}
+          {(given || raw.trim()) && !q.data && <Loading error={q.error} />}
           {rows && (
             <>
               <p id="consult-plan" className="m-0 text-sm text-ink-2">
                 {plural(changes, "change")}, {rows.length - changes} skipped.
               </p>
-              <PlanTable rows={rows} />
+              {rows.length > 0 && <PlanTable rows={rows} />}
             </>
           )}
         </>
@@ -389,7 +460,7 @@ function PasteBody({
         ) : (
           <>
             <Button variant="outline" onClick={onClose}>
-              Cancel
+              {given ? "Close" : "Cancel"}
             </Button>
             <Button
               id="consult-apply"
@@ -404,5 +475,239 @@ function PasteBody({
         )}
       </DialogFooter>
     </DialogContent>
+  );
+}
+
+// ---------- Part C ----------
+
+const NO_TITLE = "Session without a title";
+const titleOf = (title: string | null) => title ?? NO_TITLE;
+
+// run: a session run to show. Absent: the running session run of the PR, else the session list.
+function SessionBody({ pr, run, announce, onClose, onChanged, onFix, finalFocus }: Body & Changes & { run?: number }) {
+  const meta = useMeta().data;
+  const runner = meta?.runner.short ?? "";
+  const [picked, setPicked] = useState<number | null>(run ?? null);
+  // true: the user asked for the list again, so a running run does not take over the view.
+  const [listAgain, setListAgain] = useState(false);
+  const runs = usePrRuns(pr.id).data;
+  const active = runs?.find((r) => r.kind === "session" && r.status === "running") ?? null;
+  const current = picked ?? (listAgain ? null : (active?.id ?? null));
+  const detail = useRun(current).data;
+  const shown = detail?.run.id === current ? detail.run : (runs?.find((r) => r.id === current) ?? null);
+  const done = shown && (shown.status === "completed" || shown.status === "incomplete") ? shown : null;
+  const answer = useSessionAnswer(pr.id, done?.id ?? null);
+  const again = () => {
+    setPicked(null);
+    setListAgain(true);
+  };
+  const frame = (children: ReactNode, footer: ReactNode) => (
+    <DialogContent
+      className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[640px]"
+      onKeyDown={dialogKeys(onClose)}
+      finalFocus={finalFocus}
+    >
+      <DialogHeader>
+        <DialogTitle>Ask your session</DialogTitle>
+        <DialogDescription>
+          <span translate="no">{prKey(pr)}</span>. {runner} resumes a copy of the session that wrote the code and asks it about the review
+          points. Your session stays as it was. Nothing posts.
+        </DialogDescription>
+      </DialogHeader>
+      {children}
+      <DialogFooter>{footer}</DialogFooter>
+    </DialogContent>
+  );
+
+  if (current === null)
+    return <SessionPicker pr={pr} frame={frame} onStarted={(id) => setPicked(id)} onClose={onClose} announce={announce} runner={runner} />;
+  if (done && answer.data)
+    return (
+      <PasteBody
+        pr={pr}
+        announce={announce}
+        onClose={onClose}
+        onChanged={onChanged}
+        onFix={onFix}
+        finalFocus={finalFocus}
+        given={{ ...answer.data, title: titleOf(done.consult?.title ?? null) }}
+      />
+    );
+  if (!shown || done)
+    return frame(
+      <Loading error={answer.error} what="the answer" />,
+      <Button variant="outline" onClick={onClose}>
+        Close
+      </Button>,
+    );
+  if (shown.status === "running")
+    return frame(<SessionRunning run={shown.id} startedAt={shown.startedAt} />, <RunningFooter id={shown.id} onClose={onClose} />);
+  return frame(
+    <Alert variant={shown.status === "failed" ? "destructive" : "default"} role="status">
+      {shown.status === "failed" ? <CircleAlert aria-hidden /> : <CircleStop aria-hidden />}
+      <AlertTitle>{shown.status === "failed" ? "The session run failed." : "The session run was cancelled."}</AlertTitle>
+      {shown.errorText && <AlertDescription className="[overflow-wrap:anywhere]">{shown.errorText}</AlertDescription>}
+    </Alert>,
+    <>
+      <Button variant="outline" onClick={onClose}>
+        Close
+      </Button>
+      <Button id="session-again" onClick={again}>
+        <History aria-hidden data-icon="inline-start" />
+        Ask again
+      </Button>
+    </>,
+  );
+}
+
+function SessionRunning({ run, startedAt }: { run: number; startedAt: number }) {
+  const now = useNow(true);
+  const calls = useRun(run).data?.events.length ?? 0;
+  const s = Math.max(0, Math.floor((now - startedAt) / 1000));
+  return (
+    <div className="grid gap-2">
+      <p id="session-state" role="status" className="m-0 flex items-center gap-2 text-sm font-medium">
+        <LoaderCircle aria-hidden className="size-[15px] animate-spin motion-reduce:animate-none" />
+        Your session is answering…
+      </p>
+      <p className="m-0 text-sm text-ink-2">
+        {plural(calls, "tool call")}, {Math.floor(s / 60)}:{String(s % 60).padStart(2, "0")}.
+      </p>
+      <p className="m-0 text-xs text-muted-foreground">
+        You can close this dialog. The run goes on. Its row under the review shows the answer when it ends.
+      </p>
+    </div>
+  );
+}
+
+function RunningFooter({ id, onClose }: { id: number; onClose: () => void }) {
+  const cancel = useCancelRun();
+  return (
+    <>
+      <Button
+        id="session-cancel"
+        variant="ghost"
+        className="sm:mr-auto"
+        disabled={cancel.isPending}
+        onClick={() => cancel.mutate(id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
+      >
+        <CircleStop aria-hidden data-icon="inline-start" />
+        {cancel.isPending ? "Cancelling…" : "Cancel the run"}
+      </Button>
+      <Button variant="outline" onClick={onClose}>
+        Close
+      </Button>
+    </>
+  );
+}
+
+type Frame = (children: ReactNode, footer: ReactNode) => ReactNode;
+
+function SessionPicker({
+  pr,
+  frame,
+  onStarted,
+  onClose,
+  announce,
+  runner,
+}: {
+  pr: PrRow;
+  frame: Frame;
+  onStarted: (run: number) => void;
+  onClose: () => void;
+  announce: (text: string) => void;
+  runner: string;
+}) {
+  const q = useConsultData(pr.id, true);
+  const list = useSessions(pr.id, true);
+  const { groups, tick } = useGroups();
+  const [choice, setChoice] = useState<string | null>(null);
+  const start = useStartSession(pr.id);
+  const runs = usePrRuns(pr.id).data;
+  const t = useMemo(() => q.data && consultText(q.data, groups), [q.data, groups]);
+  const sessions = list.data?.sessions ?? [];
+  // The first session is the best match: in the clone, else the newest.
+  const pick: SessionDto | null = sessions.find((s) => s.id === choice) ?? sessions[0] ?? null;
+  const now = Date.now();
+  const ready = !!pick && !!t?.ids.length && !start.isPending;
+  const ask = () => {
+    if (!pick || !ready) return;
+    start.mutate(
+      { session: pick.id, groups: consultGroups.filter((g) => groups.has(g)) },
+      {
+        onSuccess: (r) => {
+          if ("conflict" in r) {
+            const kind = runs?.find((x) => x.id === r.conflict.running.run)?.kind ?? "review";
+            toast.add({ title: "The session was not asked", description: busyText(runner, kind, "a pull request") });
+            return;
+          }
+          announce(`Asked ${titleOf(pick.title)}. Your session is answering.`);
+          onStarted(r.run.id);
+        },
+        onError: (e) => toast.add({ title: "The session was not asked", description: e.message }),
+      },
+    );
+  };
+  return frame(
+    <>
+      {!t ? <Loading error={q.error} /> : <GroupBoxes t={t} groups={groups} tick={tick} />}
+      {!list.data ? (
+        <Loading error={list.error} what="your sessions" />
+      ) : (
+        <FieldSet className="gap-0">
+          <FieldLegend variant="label">
+            Session on branch{" "}
+            <code translate="no" className="font-mono text-xs">
+              {list.data.branch}
+            </code>
+          </FieldLegend>
+          {sessions.length ? (
+            sessions.map((s) => (
+              <label key={s.id} className={rowBox} data-session={s.id}>
+                <input
+                  type="radio"
+                  name="session"
+                  className="m-0 mt-[3px] accent-foreground"
+                  checked={pick?.id === s.id}
+                  aria-describedby={`ss-${s.id}-about`}
+                  onChange={() => setChoice(s.id)}
+                />
+                <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm">
+                  <b className="font-semibold [overflow-wrap:anywhere]">{titleOf(s.title)}</b>
+                  {s.inClone && <Badge variant="soft">In your clone</Badge>}
+                </span>
+                <span id={`ss-${s.id}-about`} className="col-start-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  <span translate="no">{s.folder || "unknown folder"}</span>, last used {agoLong(s.lastAt, now)}, {sizeText(s.bytes)}, about{" "}
+                  {s.tokens.toLocaleString()} tokens
+                </span>
+              </label>
+            ))
+          ) : (
+            <p className="m-0 py-2 text-sm text-muted-foreground">
+              No session of yours is on this branch. The app looks only at your newest transcripts.
+            </p>
+          )}
+        </FieldSet>
+      )}
+      <p id="session-cost" className="m-0 text-sm text-ink-2">
+        {!pick
+          ? "Pick a session first."
+          : t && !t.ids.length
+            ? "Nothing to ask. Tick a group with items."
+            : `The resume loads the whole history of this session: ${sizeText(pick.bytes)}, up to about ${pick.tokens.toLocaleString()} tokens of your plan quota. The review points add ${t ? kb(t.bytes) : "some text"}.`}
+      </p>
+      <p className="m-0 text-xs text-muted-foreground">
+        The app reads only the folder, branch, time, and title lines of your transcripts. It never shows or stores their message text.
+      </p>
+    </>,
+    <>
+      <Button variant="outline" onClick={onClose}>
+        Cancel
+      </Button>
+      <Button id="session-ask" disabled={!ready} aria-describedby="session-cost" onClick={ask}>
+        <Send aria-hidden data-icon="inline-start" />
+        {start.isPending ? "Asking…" : "Ask the session"}
+      </Button>
+    </>,
   );
 }

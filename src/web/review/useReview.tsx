@@ -104,7 +104,7 @@ export type ReviewUi = {
   diff: { drafts: ReviewItemDto[]; head: string | null; replies: ReadonlyMap<number, ReviewItemDto> };
   // Plan pr-view-v4 2.11 and 2.12: the fix parts of the bottom bar, the Fix list and the apply dialog, and the runner prompt.
   fix: { bar: ReactNode; dialog: ReactNode; copyPrompt: (thread: number) => Promise<string | null> };
-  // docs/plans/session-consult.md parts A and B: the More menu items, the Fix list footer link, and their dialogs.
+  // docs/plans/session-consult.md parts A to C: the More menu items, the Fix list footer link, the session run row, and their dialogs.
   consult: ConsultUi;
 };
 
@@ -168,6 +168,7 @@ export function useReview(
   const replyRun = useRun(newestOf("reply"));
   const fixRun = useRun(newestOf("fix"));
   const askRun = useRun(newestOf("ask"));
+  const sessionRun = useRun(newestOf("session"));
   // The review row can show a cancelled or failed run that is newer than latest.
   const reviewRun = useRun(newestOf("review"));
   const replies = useReplyDrafts(pr.id);
@@ -565,7 +566,7 @@ export function useReview(
 
   const head = latest?.sourceHead ?? null;
   const forDiff = useMemo(() => ({ drafts: ds, head, replies: byThread }), [ds, head, byThread]);
-  const details = [run.data, reviewRun.data, replyRun.data, fixRun.data, askRun.data, pinned.data];
+  const details = [run.data, reviewRun.data, replyRun.data, fixRun.data, askRun.data, sessionRun.data, pinned.data];
   const tracker = trackerOf(meta);
   // The task text that a run read, as the run setup names it.
   const taskText = (r: RunDto) => {
@@ -644,6 +645,7 @@ export function useReview(
         cancelling={cancel.isPending}
         onLog={(id, raw) => openLog(null, raw, id)}
         onCancel={(id) => cancel.mutate(id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
+        onAnswer={(id) => consult.session("session-answer-btn", id)}
       />
     ),
     reviewed: latest !== null,

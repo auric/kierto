@@ -123,6 +123,8 @@ const STREAMS: Record<ClaudeScenario["stream"], string> = {
     },
     ["deepwiki"],
   ),
+  // A session fork (docs/plans/session-consult.md part C): the read tools only, one Read, and the structured answer.
+  session: resolve(import.meta.dir, "../../fixtures/claude-synthetic/session-resume.jsonl"),
 };
 function setClaude(c: ClaudeScenario) {
   runner.write({
@@ -134,8 +136,33 @@ function setClaude(c: ClaudeScenario) {
     answer: c.answer,
     fix: c.fix,
     improve: c.improve,
+    consult: c.consult,
     authMethod: c.login,
   });
+}
+
+// ---------- Ask your session (docs/plans/session-consult.md part C): synthetic transcripts ----------
+// The finder reads <CLAUDE_CONFIG_DIR>/projects. SESSION_CANARY is message text: it must never reach the page.
+const sessionsDir = join(claudeConfig, "projects");
+const SESSION_CANARY = "E2E-TRANSCRIPT-CANARY";
+function writeSessions() {
+  const line = (o: Record<string, unknown>) => JSON.stringify(o);
+  const msg = (cwd: string, branch: string, at: string) =>
+    line({ type: "user", message: { role: "user", content: SESSION_CANARY }, timestamp: at, cwd, sessionId: "x", gitBranch: branch });
+  const write = (folder: string, id: string, lines: string[]) => {
+    mkdirSync(join(sessionsDir, folder), { recursive: true });
+    writeFileSync(join(sessionsDir, folder, `${id}.jsonl`), `${lines.join("\n")}\n`);
+  };
+  const work = join(claudeDir, "work", "sample-repo-4");
+  const at = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+  write("e2e-sample-repo-4", "aaaaaaaa-0000-4000-8000-000000000001", [
+    msg(work, "fix/flush-lock", at),
+    line({ type: "ai-title", aiTitle: "Fix the flush lock", sessionId: "x" }),
+  ]);
+  write("e2e-sample-repo-4", "bbbbbbbb-0000-4000-8000-000000000002", [
+    msg(work, "main", at),
+    line({ type: "ai-title", aiTitle: "Other branch work", sessionId: "x" }),
+  ]);
 }
 setClaude({ stream: "tree" });
 
@@ -571,8 +598,14 @@ r[key("POST", "/__control/reset")] = async () => {
   Object.assign(postA, { fail: null, hide: false });
   setClaude({ stream: "tree" });
   showTestCheck(true);
+  rmSync(sessionsDir, { recursive: true, force: true });
   app = boot();
   return NO_CONTENT;
+};
+// Writes the synthetic transcripts: one on the source branch of PR 1004, one on main. A reset deletes them.
+r[key("POST", "/__control/sessions")] = () => {
+  writeSessions();
+  return ok({ canary: SESSION_CANARY });
 };
 // Removes or restores the user skill test-check, as a disabled plugin or a removed folder would.
 r[key("POST", "/__control/skill")] = async (req) => {
@@ -652,6 +685,11 @@ function runArgv() {
     : undefined;
 }
 const argvFlag = (argv: string[], name: string) => (argv.includes(name) ? (argv[argv.indexOf(name) + 1] ?? null) : null);
+// The argv, the cwd, and the stdin of the newest fake CLI run. null: no run.
+r[key("POST", "/__control/run-argv")] = () => {
+  const run = lastRun();
+  return ok({ run: run ? { argv: run.argv ?? [], cwd: run.cwd ?? "", stdin: run.stdin ?? "" } : null });
+};
 // The server names in mcp.json and the --allowedTools, --disallowedTools, and --tools values of the newest fake CLI run. null: no run.
 r[key("POST", "/__control/run-mcp")] = () => {
   const argv = runArgv();

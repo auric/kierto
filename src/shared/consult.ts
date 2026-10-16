@@ -1,5 +1,5 @@
-// Session consult (docs/plans/session-consult.md parts A and B): the groups, the text with its size cap, the answer parser, and the
-// import plan. Pure, so the server, the UI, and bun test share it.
+// Session consult (docs/plans/session-consult.md parts A, B, and C): the groups, the text with its size cap, the answer parser, the
+// import plan, and the answer schema of a direct run. Pure, so the server, the UI, and bun test share it.
 import { z } from "zod";
 
 export const consultGroups = ["reviewers", "findings", "own", "resolved"] as const;
@@ -294,3 +294,57 @@ export type ConsultImportDto = {
 };
 // drafts: the session drafts that the undo discarded. replaced: the drafts that it brought back. findings: the findings that it reset.
 export type ConsultUndoDto = { drafts: number; replaced: number; findings: number };
+
+// ---------- Part C: ask the session directly ----------
+
+// The file name of a transcript without ".jsonl". The CLI names each file after its session ID.
+export const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/;
+export const SESSION_MAX_TURNS = 12;
+// An upper estimate: about 4 bytes of text per token. The file also holds JSON keys and tool output, and a resume loads only the
+// history after the last compaction.
+const BYTES_PER_TOKEN = 4;
+export const sessionTokens = (bytes: number) => Math.ceil(bytes / BYTES_PER_TOKEN);
+
+// The run appends this to the text of part A. The answer comes back as structured output, so no fence is needed.
+export const SESSION_RULES = [
+  "## How to answer in this run",
+  "",
+  "- Review Loop sent this text to you directly. You run in a copy of this session.",
+  "- The current folder holds a clean copy of the pull request at the head commit. The code is in ./repo.",
+  "- You can read files with Read, Grep, and Glob. You cannot change files or run commands.",
+  "- Answer only with the json block in the schema: put the JSON array of the answer into answers.",
+].join("\n");
+export const sessionPrompt = (text: string) => `${text}\n${SESSION_RULES}\n`;
+
+const answerEntry = z.object({
+  id: z.string().regex(CONSULT_ID).describe("The ID of the item, for example T123 or F45."),
+  verdict: z.enum(consultVerdicts),
+  reason: z.string().min(1).max(MAX_REASON).describe("One line: why."),
+  reply: z.string().max(MAX_REPLY).optional().describe("Optional reply text, written as the author of the pull request."),
+});
+// --json-schema needs an object at the top. planAnswer checks each entry again, so the parse below keeps bad entries as rows.
+export const consultJsonSchema = (): Record<string, unknown> =>
+  z.toJSONSchema(z.object({ answers: z.array(answerEntry).max(MAX_CONSULT_ENTRIES) }), { target: "draft-07" });
+export const consultOutput = z.object({ answers: z.array(z.unknown()).max(MAX_CONSULT_ENTRIES) });
+
+// GET /api/prs/:id/consult/sessions. The transcript path stays on the server. lastAt: the newest timestamp, else the file time.
+// folder: the last part of the working folder of the session. inClone: that folder is the clone folder of the repository or in it.
+export type SessionDto = {
+  id: string;
+  title: string | null;
+  bytes: number;
+  tokens: number;
+  lastAt: number;
+  folder: string;
+  branch: string;
+  inClone: boolean;
+};
+export type SessionListDto = { branch: string; clone: boolean; sessions: SessionDto[] };
+// POST /api/prs/:id/consult/session starts a run. groups: the ticked groups of part A.
+export const sessionStartInput = z.object({
+  session: z.string().regex(SESSION_ID),
+  groups: z.array(z.enum(consultGroups)).min(1).max(consultGroups.length),
+});
+export type SessionStartInput = z.infer<typeof sessionStartInput>;
+// GET /api/prs/:id/consult/session/:run: the answer of an ended run and the item keys at its start, for the preview of part B.
+export type SessionAnswerDto = { entries: unknown[]; snapshot: Record<string, string> };

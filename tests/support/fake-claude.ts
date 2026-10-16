@@ -1,6 +1,6 @@
 // Fake `claude` CLI for tests. It replays a recorded stream-json fixture and never calls a model.
 // Usage: bun tests/support/fake-claude.ts <scenario.json> <claude arguments>
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,12 +19,13 @@ export type FakeScenario = {
   hang?: boolean;
   // The structured_output of the result, by the --json-schema shape. Absent: the echo of the stdin.
   // replies: a reply run (properties.replies). rereview: a re-review (properties.earlier). answer: an ask run (properties.answer).
-  // fix: a fix run (properties.edits). improve: a prompt proposal (properties.reasons).
+  // fix: a fix run (properties.edits). improve: a prompt proposal (properties.reasons). consult: a session run (properties.answers).
   replies?: unknown;
   rereview?: unknown;
   answer?: unknown;
   fix?: unknown;
   improve?: unknown;
+  consult?: unknown;
 };
 
 const CHILD = "process.stdin.on('end', () => {}); process.stdin.resume(); setInterval(() => {}, 1000);";
@@ -104,6 +105,18 @@ export function echoAnswer(stdin: string) {
   return { answer: `Echo: ${question}`, coverage: NO_COVERAGE };
 }
 
+// A session answer (docs/plans/session-consult.md part C): one reject per item under a "needs a verdict" heading of the stdin.
+export function echoConsult(stdin: string) {
+  let verdict = false;
+  const answers: { id: string; verdict: string; reason: string }[] = [];
+  for (const l of stdin.split(/\r?\n/)) {
+    if (l.startsWith("## ")) verdict = l.endsWith("needs a verdict");
+    const id = /^### ([TF]\d+)$/.exec(l)?.[1];
+    if (id && verdict) answers.push({ id, verdict: "reject", reason: `Echo: the session rejects ${id}.` });
+  }
+  return { answers };
+}
+
 async function main() {
   const [scenarioPath = "", ...args] = process.argv.slice(2);
   const s: FakeScenario = JSON.parse(readFileSync(scenarioPath, "utf8"));
@@ -124,6 +137,13 @@ async function main() {
   if (!run || !s.fixture) {
     console.error(`fake-claude: no answer for ${args.join(" ")}`);
     process.exitCode = 2;
+    return;
+  }
+  // docs/plans/session-consult.md section 1: a resume without --fork-session attaches to a running session or exits with code 1.
+  const resume = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : undefined;
+  if (resume !== undefined && (!args.includes("--fork-session") || !existsSync(resume))) {
+    console.error(args.includes("--fork-session") ? `No conversation found at ${resume}` : "fake-claude: --resume needs --fork-session");
+    process.exitCode = 1;
     return;
   }
 
@@ -156,10 +176,14 @@ async function main() {
     if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);
     if (props.edits !== undefined) return s.fix ?? echoFix(stdin);
     if (props.reasons !== undefined) return s.improve ?? echoImprove(stdin);
+    if (props.answers !== undefined) return s.consult ?? echoConsult(stdin);
     return undefined;
   };
   const rewrite = (l: string) => {
     const e = JSON.parse(l);
+    // A resume with --tools and --strict-mcp-config: init lists those tools and StructuredOutput. Gate B16 checks the real CLI.
+    if (e.type === "system" && e.subtype === "init" && resume !== undefined)
+      return JSON.stringify({ ...e, tools: [...(flag("--tools") ?? "").split(",").filter(Boolean), "StructuredOutput"], mcp_servers: [] });
     // Gate B8: init lists the agent tool as Task. The real CLI lists it only when --tools names Agent.
     if (e.type === "system" && e.subtype === "init" && Array.isArray(e.tools) && noTools)
       return JSON.stringify({ ...e, tools: e.tools.filter((t: unknown) => t === "StructuredOutput"), mcp_servers: [] });

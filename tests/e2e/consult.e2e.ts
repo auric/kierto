@@ -1,8 +1,8 @@
-// Session consult (docs/plans/session-consult.md parts A and B): the copy dialog with its groups, the remembered choice, the copied
-// text, the paste of a crafted answer with its preview, Apply (reply drafts, a discard, marks, Fix list ticks), Undo, and no post.
+// Session consult (docs/plans/session-consult.md parts A to C): the copy dialog with its groups, the remembered choice, the copied
+// text, the paste of a crafted answer with its preview, Apply, Undo, the direct session run with its opt-in and cancel, and no post.
 // Runs against serve.ts only: the fake Bitbucket with the author PR 1004, the temp git remote, and the fake CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, writes } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, runArgv, sessions, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Release the write lock after each entry";
@@ -246,4 +246,113 @@ test("a paste that is not an answer shows the reason, and Apply stays off", asyn
   await expect(box.getByRole("button", { name: "Apply" })).toBeDisabled();
   await box.getByRole("button", { name: "Cancel" }).click();
   await expect(box).toBeHidden();
+});
+
+// ---------- Part C: ask the session directly ----------
+
+const SESSION_ID = "aaaaaaaa-0000-4000-8000-000000000001";
+const sessionDialog = (page: Page) => page.getByRole("dialog", { name: "Ask your session" });
+const answerDialog = (page: Page) => page.getByRole("dialog", { name: "Answer of your session" });
+
+// Settings, Clones: the opt-in switch. Escape leaves Settings.
+async function optIn(page: Page) {
+  await page.locator("nav[aria-label='Views']").getByRole("button", { name: "Settings" }).click();
+  const on = page
+    .getByRole("region", { name: "Clones" })
+    .getByRole("switch", { name: /^Let Review Loop find and consult your .+ sessions$/ });
+  await expect(on).not.toBeChecked();
+  await expect(page.locator("#sessions-on-help")).toContainText("It never shows or stores their message text.");
+  await on.click();
+  await expect(on).toBeChecked();
+  await page.keyboard.press("Escape");
+  await openPr(page);
+}
+
+test("Ask your session: off hides it; on lists the branch session with its cost, forks it in a run folder, previews, and applies", async ({
+  page,
+}) => {
+  await connect(page);
+  const canary = await sessions();
+  // Off: no menu item and no link in the copy dialog.
+  await page.locator("#more-btn").click();
+  await expect(page.getByRole("menuitem", { name: "Copy for your session…" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Ask your session…" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await more(page, "Copy for your session…");
+  await expect(copyDialog(page).getByRole("button", { name: "Ask your session instead…" })).toHaveCount(0);
+  await copyDialog(page).getByRole("button", { name: "Cancel" }).click();
+
+  await optIn(page);
+  await control("claude", { stream: "session" });
+  await more(page, "Ask your session…");
+  const box = sessionDialog(page);
+  // Only the session on the PR source branch shows. It is picked, with its folder, size, and token estimate.
+  await expect(box.locator("[data-session]")).toHaveCount(1);
+  const row = box.locator(`[data-session='${SESSION_ID}']`);
+  await expect(row).toContainText("Fix the flush lock");
+  await expect(row).toContainText(/sample-repo-4, last used 2 hours ago, \d+ B, about \d+ tokens/);
+  await expect(row.getByRole("radio")).toBeChecked();
+  await expect(box.locator("#session-cost")).toHaveText(
+    /^The resume loads the whole history of this session: \d+ B, up to about \d+ tokens of your plan quota\. The review points add \d+\.\d KB\.$/,
+  );
+  await expect(box).not.toContainText(canary);
+  await expect(box).not.toContainText("Other branch work");
+  await box.getByRole("button", { name: "Ask the session" }).click();
+
+  // The answer goes through the preview of part B. The fake session rejects each item that needs a verdict.
+  const answer = answerDialog(page);
+  await expect(answer.locator("#consult-plan")).toHaveText("4 changes, 0 skipped.", { timeout: RUN_MS });
+  await expect(answer.locator(`[data-consult-row='T${LOCK}']`)).toContainText("Reply draft “Not valid” with the reason.");
+  await expect(answer.locator(`[data-consult-row='T${LOCK}']`)).toContainText(`Reason: Echo: the session rejects T${LOCK}.`);
+  await expect(answer.locator(`[data-consult-row='T${DONE}']`)).toHaveCount(0);
+  // Nothing changes before Apply.
+  await expect(page.locator(`#t-${LOCK} [data-reply-draft]`)).toHaveCount(0);
+  await answer.getByRole("button", { name: "Apply 4 changes" }).click();
+  await expect(answer.locator("#consult-result")).toHaveText("Applied. Made 4 reply drafts.");
+  await answer.getByRole("button", { name: "Close" }).first().click();
+  await openRow(page, `#th-${LOCK}`);
+  await expect(page.locator(`#t-${LOCK} [data-reply-draft]`)).toContainText(`Echo: the session rejects T${LOCK}.`);
+
+  // The run row keeps the answer. It names the session, not a profile.
+  const run = page.locator("#runline [data-run-kind='session']");
+  await expect(run).toHaveAttribute("data-run-state", "done");
+  await expect(run).toContainText("Session done");
+  await expect(run).toContainText("4 answers");
+  await expect(run).toContainText("Fix the flush lock");
+  await run.getByRole("button", { name: "Show the answer" }).click();
+  await expect(answerDialog(page).locator("#consult-plan")).toBeVisible();
+  await answerDialog(page).getByRole("button", { name: "Close" }).first().click();
+
+  // The CLI forked the session file in a run folder, never in a clone, with the read tools only.
+  const a = await runArgv();
+  expect(a?.argv).toContain("--fork-session");
+  expect(a?.argv[a.argv.indexOf("--resume") + 1]).toMatch(new RegExp(`${SESSION_ID}.jsonl$`));
+  expect(a?.argv[a.argv.indexOf("--tools") + 1]).toBe("Read,Grep,Glob");
+  expect(a?.argv).not.toContain("--no-session-persistence");
+  // "." stands for the path separator of either OS.
+  expect(a?.cwd).toMatch(/.runs.\d+.work$/);
+  expect(a?.stdin).toContain(`### T${LOCK}\n`);
+  expect(a?.stdin).toContain("## How to answer in this run");
+  expect(a?.stdin).not.toContain(canary);
+});
+
+test("Ask your session: the copy dialog links to it; Cancel ends a running run; Ask again shows the list", async ({ page }) => {
+  await connect(page);
+  await sessions();
+  await optIn(page);
+  await control("claude", { stream: "session", hang: true });
+  await more(page, "Copy for your session…");
+  await copyDialog(page).getByRole("button", { name: "Ask your session instead…" }).click();
+  const box = sessionDialog(page);
+  await box.getByRole("button", { name: "Ask the session" }).click();
+  await expect(box.locator("#session-state")).toHaveText("Your session is answering…");
+  // The run takes the only slot. Its row shows it too.
+  await expect(page.locator("#runline [data-run-kind='session']")).toHaveAttribute("data-run-state", "running");
+  await box.getByRole("button", { name: "Cancel the run" }).click();
+  await expect(box.getByText("The session run was cancelled.")).toBeVisible({ timeout: RUN_MS });
+  await box.getByRole("button", { name: "Ask again" }).click();
+  await expect(box.locator(`[data-session='${SESSION_ID}']`)).toBeVisible();
+  await box.getByRole("button", { name: "Cancel" }).click();
+  await expect(box).toBeHidden();
+  await expect(page.locator("#runline [data-run-kind='session']")).toHaveAttribute("data-run-state", "cancelled");
 });

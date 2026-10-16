@@ -365,7 +365,7 @@ export function Settings({
         {settings.baseUrl !== null && <ReviewProfiles settings={settings} target={target} />}
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
         {settings.baseUrl !== null && <JiraSettings settings={settings} />}
-        {settings.baseUrl !== null && <Clones />}
+        {settings.baseUrl !== null && <Clones settings={settings} />}
         {settings.baseUrl !== null && <ProjectInstructions />}
         <div ref={spy.end} aria-hidden className="h-px" />
       </div>

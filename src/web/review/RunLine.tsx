@@ -26,6 +26,7 @@ import {
   shortHash,
   skillsText,
 } from "./model";
+import { sizeText } from "./tasks";
 
 const icon = "size-[15px] shrink-0";
 const linkish =
@@ -139,6 +140,8 @@ type RowProps = {
   cancelling: boolean;
   onLog: (run: number, raw?: boolean) => void;
   onCancel: (run: number) => void;
+  // A session run (docs/plans/session-consult.md part C): opens its answer in the preview.
+  onAnswer: (run: number) => void;
 };
 
 export function RunRecord({ rows, ...props }: RowProps & { rows: KindRun[] }) {
@@ -229,7 +232,7 @@ const revealList = "m-0 grid list-none gap-1.5 p-0";
 const revealItem = "grid grid-cols-[16px_minmax(0,1fr)] gap-2 [overflow-wrap:anywhere]";
 
 // first: the newest run. Only it can run, so only its state is a live region. Key 3 opens its log.
-function RunRow({ row, first, meta, now, cancelling, onLog, onCancel }: RowProps & { row: KindRun; first: boolean }) {
+function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }: RowProps & { row: KindRun; first: boolean }) {
   const { run, state: s } = row;
   const review = run.kind === "review";
   const [open, setOpen] = useState<ReadonlyMap<string, boolean>>(new Map());
@@ -290,7 +293,14 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel }: RowProps
           <span className={review ? "font-semibold text-foreground" : undefined}>{s.result || "Done"}</span>
         </RunStatus>
       );
-      rest = !review && ncButton;
+      rest =
+        run.kind === "session" ? (
+          <button id="session-answer-btn" type="button" className={linkish} onClick={() => onAnswer(run.id)}>
+            Show the answer
+          </button>
+        ) : (
+          !review && ncButton
+        );
       break;
     case "failed":
       lead = (
@@ -343,7 +353,13 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel }: RowProps
           <span className="min-w-0">
             <Joined
               parts={[
-                `${run.profileName} profile`,
+                run.kind === "session" ? (
+                  <span key="session" className="[overflow-wrap:anywhere]">
+                    {run.consult?.title ?? "Session without a title"}
+                  </span>
+                ) : (
+                  `${run.profileName} profile`
+                ),
                 // What the run read: the commit or the range of a re-review.
                 <span key="head">
                   <span className="sr-only">{range ? "Changes " : "Commit "}</span>
@@ -484,6 +500,13 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel }: RowProps
           <li data-run-setup>
             <span className="text-muted-foreground">Model and effort:</span> {setupText(run, meta.runner.defaults)}
           </li>
+          {run.consult && (
+            <li data-run-session className="[overflow-wrap:anywhere]">
+              <span className="text-muted-foreground">Session:</span> {run.consult.title ?? "no title"}, {sizeText(run.consult.bytes)} of
+              history, up to about {run.consult.tokens.toLocaleString()} tokens. It got {plural(run.consult.items, "review point")} (
+              {sizeText(run.consult.textBytes)}).
+            </li>
+          )}
           {instructions?.short && (
             <li title={`Project instructions of this run:\n${instructions.long}`} data-run-instructions>
               <span className="text-muted-foreground">Project instructions:</span> {instructions.short}

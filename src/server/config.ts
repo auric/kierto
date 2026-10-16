@@ -33,6 +33,8 @@ const config = z.object({
   jira: z.object({ baseUrl: z.string(), caFile: z.string().optional() }).optional().catch(undefined),
   // Absent: off. On: each run reads the global CLAUDE.md of the Claude config folder (src/server/review/instructions.ts).
   globalInstructions: z.boolean().optional().catch(undefined),
+  // Absent: off. On: "Ask your session" lists the transcripts of the Claude config folder (src/server/review/sessions.ts).
+  sessions: z.boolean().optional().catch(undefined),
 });
 
 export type Config = z.infer<typeof config>;

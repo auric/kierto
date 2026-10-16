@@ -10,6 +10,7 @@ import {
   Ellipsis,
   ExternalLink,
   FileDiff,
+  History,
   Link,
   LoaderCircle,
   Maximize2,
@@ -176,7 +177,7 @@ function TaskChip({ t, onTaskIds }: { t: PrRow["tasks"][number]; onTaskIds: () =
   );
 }
 
-// Plan pr-view-v4 2.2 and section 9: More holds the PR link actions and, on your own PR, the session consult (session-consult.md).
+// Plan pr-view-v4 2.2 and section 9: More holds the PR link actions and, on your own PR, the session consult (session-consult.md parts A to C).
 function MoreMenu({
   pr,
   forge,
@@ -186,7 +187,7 @@ function MoreMenu({
   pr: PrRow;
   forge: string;
   announce: (text: string) => void;
-  consult: Pick<ConsultUi, "copy" | "paste">;
+  consult: Pick<ConsultUi, "copy" | "paste" | "session" | "sessions">;
 }) {
   const web = webLink(pr.webUrl);
   const own = pr.role === "AUTHOR";
@@ -234,6 +235,11 @@ function MoreMenu({
                 consult.copy(),
               )}
               {item("Paste the answer…", "Turn its verdicts into reply drafts and Fix ticks.", ClipboardPaste, () => consult.paste())}
+              {/* docs/plans/session-consult.md part C. It shows only while its opt-in in Settings, Clones is on. */}
+              {consult.sessions &&
+                item("Ask your session…", "Resume a copy of the session that wrote the code and ask it directly.", History, () =>
+                  consult.session(),
+                )}
             </DropdownMenuGroup>
           </>
         )}
@@ -398,7 +404,7 @@ export function Header(props: {
   onFull: () => void;
   onTaskIds: () => void;
   announce: (text: string) => void;
-  consult: Pick<ConsultUi, "copy" | "paste">;
+  consult: Pick<ConsultUi, "copy" | "paste" | "session" | "sessions">;
   action: ReactNode;
   slot: ReactNode;
 }) {

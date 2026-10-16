@@ -47,14 +47,16 @@ export type Scenario = {
 // hang: the CLI stops before its result and waits for a cancel. replies: the result of a reply run; absent, the CLI answers each thread.
 // rereview: the result of a re-review; absent, the CLI gives one verdict per earlier finding. answer: the result of an ask run; absent, an echo.
 // fix: the result of a fix run; absent, one note per thread and no edit. login: the authMethod of `claude auth status`. Absent: claude.ai.
+// session: a session fork (docs/plans/session-consult.md part C). consult: its answer; absent, one reject per item that needs a verdict.
 export type ClaudeScenario = {
-  stream: "tree" | "schema" | "limit" | "gaps";
+  stream: "tree" | "schema" | "limit" | "gaps" | "session";
   hang?: boolean;
   replies?: unknown;
   rereview?: unknown;
   answer?: unknown;
   fix?: unknown;
   improve?: unknown;
+  consult?: unknown;
   login?: string;
 };
 
@@ -185,4 +187,21 @@ export async function runMcp(): Promise<RunMcp | null> {
   const res = await fetch(`${FAKE_URL}/__control/run-mcp`, { method: "POST", headers: auth });
   if (!res.ok) throw new Error(`control run-mcp: ${res.status}`);
   return ((await res.json()) as { run: RunMcp | null }).run;
+}
+
+// ---------- Ask your session (docs/plans/session-consult.md part C) ----------
+
+// Writes the synthetic transcripts of serve.ts: one on fix/flush-lock (PR 1004), one on main. Answers with the message text canary.
+export async function sessions(): Promise<string> {
+  const res = await fetch(`${FAKE_URL}/__control/sessions`, { method: "POST", headers: auth });
+  if (!res.ok) throw new Error(`control sessions: ${res.status}`);
+  return ((await res.json()) as { canary: string }).canary;
+}
+
+export type RunArgv = { argv: string[]; cwd: string; stdin: string };
+// The argv, the cwd, and the stdin of the newest fake CLI run, or null before the first run.
+export async function runArgv(): Promise<RunArgv | null> {
+  const res = await fetch(`${FAKE_URL}/__control/run-argv`, { method: "POST", headers: auth });
+  if (!res.ok) throw new Error(`control run-argv: ${res.status}`);
+  return ((await res.json()) as { run: RunArgv | null }).run;
 }

@@ -76,6 +76,7 @@ describe("settings API", () => {
       checkSeconds: 60,
       profiles: SHIPPED_PROFILES,
       jira: { baseUrl: null, caFile: null, tokenStored: false },
+      sessions: false,
     });
     expect(existsSync(dir)).toBe(false);
   });
@@ -100,6 +101,7 @@ describe("settings API", () => {
       checkSeconds: 60,
       profiles: SHIPPED_PROFILES,
       jira: { baseUrl: null, caFile: null, tokenStored: false },
+      sessions: false,
     };
     expect(await res.json()).toEqual(expected);
     expect(await s.get()).toEqual(expected);
@@ -190,6 +192,23 @@ describe("settings API", () => {
     const again = setup();
     expect(await again.get()).toMatchObject({ markSeverity: false, markAi: false });
     expect(again.settings.config()?.markSeverity).toBe(false);
+  });
+
+  test("the session opt-in starts off, saves without a Bitbucket request, and a PUT without it keeps it", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
+    expect((await s.get()).sessions).toBe(false);
+    expect(s.settings.sessions()).toBe(false);
+    const before = fake.requests.length;
+    expect(await (await s.put({ baseUrl: fake.url, sessions: true })).json()).toMatchObject({ sessions: true });
+    expect(fake.requests.length).toBe(before);
+    expect(s.settings.sessions()).toBe(true);
+    expect((await s.put({ baseUrl: fake.url, markAi: false })).status).toBe(200);
+    expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).sessions).toBe(true);
+    expect((await s.put({ baseUrl: fake.url, sessions: "yes" })).status).toBe(400);
+    // Off removes the key, as for the other default-off switches.
+    expect(await (await s.put({ baseUrl: fake.url, sessions: false })).json()).toMatchObject({ sessions: false });
+    expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).sessions).toBeUndefined();
   });
 
   test("GET gives the four shipped profiles with their full prompts", async () => {

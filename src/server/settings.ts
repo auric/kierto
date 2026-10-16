@@ -121,6 +121,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets; jiraSecr
         caFile: c?.jira?.caFile ?? null,
         tokenStored: c?.jira !== undefined && (await jiraSecrets.get()) !== null,
       },
+      sessions: c?.sessions === true,
     };
   }
 
@@ -295,6 +296,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets; jiraSecr
             profiles: input.profiles === undefined ? prev?.profiles : (input.profiles ?? undefined),
             jira: prev?.jira,
             globalInstructions: prev?.globalInstructions,
+            sessions: input.sessions === undefined ? prev?.sessions : input.sessions || undefined,
           };
           const caFile = input.caFile || undefined;
           const notifications = input.notifications ?? prev?.notifications ?? false;
@@ -410,6 +412,8 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets; jiraSecr
     saveJira,
     // The global instruction switch. Off without a config.
     globalInstructions: () => current()?.globalInstructions === true,
+    // The opt-in of "Ask your session" (docs/plans/session-consult.md part C). Off without a config.
+    sessions: () => current()?.sessions === true,
     // false: no config yet.
     saveGlobalInstructions: (on: boolean) =>
       serial(async () => {

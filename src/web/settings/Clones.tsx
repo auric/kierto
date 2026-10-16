@@ -1,17 +1,49 @@
 // The clone folders of Fix it (plan r3): one per repository. Change and Remove use the clone routes of a PR in that repository.
+// The opt-in of "Ask your session" (docs/plans/session-consult.md part C) lives here too.
 import { useQueryClient } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Field, FieldContent, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
-import type { CloneRowDto } from "../../shared/dto";
+import type { CloneRowDto, SettingsDto } from "../../shared/dto";
 import { CloneDialog, CloneFolder } from "../fix/CloneDialog";
 import { clonesChanged, dropClone, useClones } from "../fix/data";
+import { useMeta } from "../meta";
+import { useSaveSettings } from "../shell/data";
 
 const name = (c: Pick<CloneRowDto, "project" | "repo">) => `${c.project}/${c.repo}`;
 
-export function Clones() {
+// docs/plans/session-consult.md part C: the opt-in of "Ask your session". Off by default. While it is off, the app reads no
+// transcript. A clone folder of the list above ranks the sessions in it first.
+function SessionSwitch({ settings }: { settings: SettingsDto }) {
+  const save = useSaveSettings();
+  const runner = useMeta().data?.runner.short ?? "";
+  return (
+    <Field orientation="horizontal" className="border-t pt-3" data-sessions-switch>
+      <Switch
+        id="sessions-on"
+        aria-describedby="sessions-on-help"
+        checked={settings.sessions}
+        disabled={save.isPending}
+        onCheckedChange={(sessions) => save.mutate({ baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", sessions })}
+      />
+      <FieldContent>
+        <FieldLabel htmlFor="sessions-on">Let Review Loop find and consult your {runner} sessions</FieldLabel>
+        <FieldDescription id="sessions-on-help">
+          Off by default. When on, “Ask your session” lists your transcripts on the branch of your own pull request. The app reads only
+          their folder, branch, time, and title lines. It never shows or stores their message text. Each question resumes a copy of the
+          session with its full history, so it uses your plan quota.
+        </FieldDescription>
+        {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
+      </FieldContent>
+    </Field>
+  );
+}
+
+export function Clones({ settings }: { settings: SettingsDto }) {
   const qc = useQueryClient();
   const q = useClones();
   const [editing, setEditing] = useState<CloneRowDto | null>(null);
@@ -87,6 +119,7 @@ export function Clones() {
       ) : (
         <p className="m-0 text-sm text-muted-foreground">No clone folder is set.</p>
       )}
+      <SessionSwitch settings={settings} />
       <p role="status" className="sr-only">
         <span key={said.n}>{said.text}</span>
       </p>

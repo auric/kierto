@@ -1,17 +1,23 @@
-// Session consult (docs/plans/session-consult.md parts A and B): the header and the item blocks of the copied text, and the import
-// and undo of a session answer. The text holds only what the app shows: no token, no setting, no host.
+// Session consult (docs/plans/session-consult.md parts A, B, and C): the header and the item blocks of the copied text, the import
+// and undo of a session answer, and the start of a direct session run. The text holds only what the app shows: no token, no setting, no host.
 import type { Database } from "bun:sqlite";
+import { join } from "node:path";
 import {
   type ConsultData,
   type ConsultGroup,
   type ConsultImportDto,
   type ConsultItem,
   type ConsultUndoDto,
+  consultText,
   findingKey,
   indentBlock,
   oneLine,
   type PlanRow,
   planAnswer,
+  type SessionListDto,
+  type SessionStartInput,
+  sessionPrompt,
+  sessionTokens,
   threadKey,
 } from "../../shared/consult";
 import type { ChangedFile, CommentDto, FixDto, ReviewItemDto } from "../../shared/dto";
@@ -22,7 +28,9 @@ import { type ExcerptLine as CommentLine, threadSpot } from "../../shared/types"
 import { prDetail } from "../inbox/queries";
 import { cachedHeads } from "./diff";
 import { git } from "./git";
-import { type ItemRow, type ReviewJobs, toItemDto } from "./jobs";
+import { type ItemRow, type ReviewJobs, type StartResult, toItemDto } from "./jobs";
+import type { FindInput, FoundSession } from "./sessions";
+import { longPath } from "./workspace";
 
 export const OWN_ONLY = "Copy for your session works only on your own pull requests.";
 // The git diff context of the diff viewer (workspace.ts diffArgs -U3).
@@ -467,6 +475,90 @@ export async function importAnswer(
   })();
   const runs = (db.query(SQL.markedRuns).all({ run }) as { run: number }[]).map((x) => x.run);
   return { status: 200, dto: { run, rows, ...out }, runs };
+}
+
+// ---------- Part C: ask the session directly ----------
+
+export const SESSIONS_OFF = "Ask your session is off. Turn it on in Settings, Clones.";
+export const SESSION_OWN_ONLY = "Ask your session works only on your own pull requests.";
+const SESSION_SQL = {
+  pr: `SELECT p.source_branch, p.my_role, c.path AS clone FROM pull_request p
+    LEFT JOIN repo_clone c ON c.project = p.project AND c.repo = p.repo WHERE p.id = $id`,
+};
+const CHANGED = { status: 409 as const, error: "The settings changed. Open the dialog again." };
+
+export type FindSessions = (o: FindInput) => Promise<FoundSession[]>;
+type Sessions = { branch: string; clone: boolean; found: FoundSession[] };
+
+// The sessions of the PR source branch. The caller checks the opt-in first: this reads the transcript folder.
+async function sessionsOf(s: ConsultSource, prId: number, find: FindSessions): Promise<Sessions | Fail> {
+  const r = s.db.query(SESSION_SQL.pr).get({ id: prId }) as {
+    source_branch: string | null;
+    my_role: string | null;
+    clone: string | null;
+  } | null;
+  if (!r) return { status: 404, error: "Pull request not found." };
+  if (r.my_role !== "AUTHOR") return { status: 409, error: SESSION_OWN_ONLY };
+  if (!r.source_branch) return { status: 409, error: "Sync the pull request first." };
+  const found = await find({
+    projectsDir: join(s.review.configDir(), "projects"),
+    branch: r.source_branch,
+    clone: r.clone,
+    // workspace.ts: every run folder is <long data folder>/runs/<id>.
+    exclude: [join(longPath(s.review.dataDir), "runs")],
+  });
+  return { branch: r.source_branch, clone: r.clone !== null, found };
+}
+
+export async function listSessions(s: ConsultSource, prId: number, find: FindSessions): Promise<SessionListDto | Fail> {
+  const r = await sessionsOf(s, prId, find);
+  if ("error" in r) return r;
+  return {
+    branch: r.branch,
+    clone: r.clone,
+    sessions: r.found.map((x) => ({
+      id: x.id,
+      title: x.title,
+      bytes: x.bytes,
+      tokens: sessionTokens(x.bytes),
+      lastAt: x.lastAt,
+      folder: x.folder,
+      branch: x.branch,
+      inClone: x.inClone,
+    })),
+  };
+}
+
+// Finds the picked session again, builds the text of the ticked groups, and starts the run. The client never names a path.
+export async function startSession(
+  s: ConsultSource,
+  prId: number,
+  input: SessionStartInput,
+  find: FindSessions,
+): Promise<StartResult | Fail | { status: 400; error: string }> {
+  const r = await sessionsOf(s, prId, find);
+  if ("error" in r) return r;
+  const picked = r.found.find((x) => x.id === input.session);
+  if (!picked) return { status: 404, error: "The session is not in the list now. Open the list again." };
+  // A settings change can close the database during an await.
+  if (s.review.open() !== s.db) return CHANGED;
+  const data = await consultData(s, prId);
+  if ("error" in data) return data;
+  if (s.review.open() !== s.db) return CHANGED;
+  const t = consultText(data, new Set(input.groups));
+  if (!t.ids.length) return { status: 400, error: "Nothing to ask. Tick a group with items." };
+  const keys = new Map(data.items.map((it) => [it.id, it.key]));
+  return s.review.session(s.db, prId, {
+    path: picked.path,
+    id: picked.id,
+    title: picked.title,
+    bytes: picked.bytes,
+    prompt: sessionPrompt(t.text),
+    snapshot: Object.fromEntries(t.ids.map((id) => [id, keys.get(id) ?? ""])),
+    groups: input.groups,
+    items: t.ids.length,
+    textBytes: t.bytes,
+  });
 }
 
 // ---------- Undo ----------

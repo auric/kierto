@@ -177,6 +177,8 @@ export function newCommits(r: RunDto, commits: CommitDto[] | undefined): number 
 // The outcome of an ended run. items, edits: undefined while they load.
 function doneText(r: RunDto, items: ReviewItemDto[] | undefined, edits: number | undefined, profiles: ProfileDto[]): string {
   if (r.kind === "ask") return "Answered";
+  // jobs.ts judgeSession: "N answers".
+  if (r.kind === "session") return r.summary?.summary ?? "";
   if (r.kind === "fix") return edits === undefined ? "" : edits ? plural(edits, "edit") : "No edits";
   // The flag stored at the start wins over the current profile. null falls back to the current profile.
   if (r.kind === "review" && (r.explain ?? profiles.find((p) => p.id === r.profile)?.explain)) {
@@ -249,6 +251,13 @@ export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancel
     doing: "proposing fixes for",
     now: "proposing fixes",
   },
+  session: {
+    running: "Your session is answering…",
+    failed: "The session run failed.",
+    cancelled: "the session run",
+    doing: "asking your session about",
+    now: "asking your session",
+  },
 };
 
 // R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, the brief,
@@ -260,7 +269,13 @@ export const latestReview = (runs: RunDto[] | undefined) =>
 
 // ---------- One row per run kind ----------
 
-export const KIND_LABEL: Record<RunKind, string> = { review: "Review", reply: "Reply drafts", fix: "Fixes", ask: "Ask" };
+export const KIND_LABEL: Record<RunKind, string> = {
+  review: "Review",
+  reply: "Reply drafts",
+  fix: "Fixes",
+  ask: "Ask",
+  session: "Session",
+};
 
 // The newest run of each kind, newest first. runs: newest first.
 export function kindRuns(runs: RunDto[] | undefined): RunDto[] {
