@@ -133,9 +133,8 @@ export function RunLog(props: {
     ol.scrollTop += row.getBoundingClientRect().top - ol.getBoundingClientRect().top - 8;
     atEnd.current = false;
     row.focus({ preventScroll: true });
-    row.classList.remove("rl-flash");
-    void row.offsetWidth;
-    row.classList.add("rl-flash");
+    row.setAttribute("data-jump", "");
+    row.addEventListener("blur", () => row.removeAttribute("data-jump"), { once: true });
   });
 
   // Live updates follow the end only while the reader is at the end.

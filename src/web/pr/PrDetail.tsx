@@ -85,16 +85,10 @@ const toggled = <T,>(s: ReadonlySet<T>, v: T) => {
   return out;
 };
 
-// A jump target shows a short highlight. Reduced motion keeps only the focus ring.
-// The highlight has no end keyframe, so it ends on the own background of the target, such as the fill of a diff line.
-function flash(el: HTMLElement) {
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const css = getComputedStyle(el);
-  const from = css.getPropertyValue("--sel").trim();
-  el.animate([{ backgroundColor: from, offset: 0 }], {
-    duration: 900,
-    easing: css.getPropertyValue("--ease-out").trim(),
-  });
+// A jump target keeps a static highlight while it holds the focus ([data-jump]:focus in index.css). Jumps repeat often, so no animation.
+function markJump(el: HTMLElement) {
+  el.setAttribute("data-jump", "");
+  el.addEventListener("blur", () => el.removeAttribute("data-jump"), { once: true });
 }
 
 // full, onFull: full width (plan pr-view-v4 4.3), for the action bar button.
@@ -186,7 +180,7 @@ export function PrDetail({
     if (!f || !el) return;
     el.scrollIntoView({ block: f.block });
     el.focus({ preventScroll: true });
-    if (f.flash) flash(el);
+    if (f.flash) markJump(el);
   });
 
   // focus false: Back and Forward open the thread and leave the scroll position to the saved one.

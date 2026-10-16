@@ -203,21 +203,28 @@
   }
 }
 
+/* Reduced motion keeps fades and color changes. It removes movement: transform transitions, the slide and zoom of popups, and spinner turns. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over component animations. */
-    animation: none !important;
-    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over component animations. */
-    transition: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over the transition lists of components. */
+    transition-property: opacity, color, background-color, border-color, outline-color, box-shadow !important;
+    --tw-enter-scale: 1;
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-enter-rotate: 0;
+    --tw-exit-scale: 1;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
+    --tw-exit-rotate: 0;
+  }
+  .animate-spin {
+    animation: none;
   }
 }
 
-/* Disclosure chevron: right when closed, down when open (prototype/v3:80-84). */
-.rl-chev {
-  transition: transform 150ms var(--ease-out);
-}
+/* Disclosure chevron: right when closed, down when open (prototype/v3:80-84). Keys open rows, so the chevron turns at once. */
 [aria-expanded="true"] > .rl-chev,
 details[open] > summary .rl-chev {
   transform: rotate(90deg);
@@ -494,7 +501,7 @@ details[open] > summary .rl-chev {
   color: var(--foreground);
   font-weight: 600;
 }
-/* A row that "Show in diff" focused keeps its ring after the flash. The scroll box clips an outer ring. */
+/* A focused row shows an inner ring. The scroll box clips an outer ring. */
 .rl-dr:focus {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
@@ -719,14 +726,6 @@ details[open] > summary .rl-chev {
     grid-template-columns: minmax(0, 1fr) minmax(200px, 250px);
   }
 }
-/* Profile menu of a run button: the chevron points down, and up while the menu is open. */
-.rl-chev-d {
-  transition: transform 150ms var(--ease-out);
-}
-[aria-expanded="true"] > .rl-chev-d {
-  transform: rotate(180deg);
-}
-
 /* Run log sheet (prototype/v3:460-500). The detail pane is the containing block of a fixed box, because its container query applies layout containment. */
 .rl-sheet {
   position: fixed;
@@ -774,7 +773,6 @@ details[open] > summary .rl-chev {
   width: 14px;
   height: 14px;
   color: var(--muted-foreground);
-  transition: transform 150ms var(--ease-out);
 }
 [aria-expanded="true"] > .rl-lchev {
   transform: rotate(90deg);
@@ -857,15 +855,10 @@ button.rl-ll:hover {
     gap: 0 6px;
   }
 }
-/* A jump target shows a short highlight. Reduced motion removes it and keeps the focus ring.
-   No "to" keyframe: the highlight ends on the own background of the row. */
-.rl-flash {
-  animation: rl-flash 900ms var(--ease-out) 1;
-}
-@keyframes rl-flash {
-  from {
-    background-color: var(--sel);
-  }
+/* A jump target keeps a static highlight while it holds the focus. The jump code sets data-jump and removes it on blur.
+   :focus, not :focus-visible: a jump from a mouse click must show the target too. */
+[data-jump]:focus {
+  background: var(--sel);
 }
 /* Feedback for a change that the user causes or watches: a new card or row, a new state mark, a new answer, the copy check.
    Content that mounts with the detail, an opened thread, the run line, or the shown answers is inside [data-mounting] for one frame, so it does not move. */
@@ -878,7 +871,6 @@ button.rl-ll:hover {
   transition: opacity 150ms var(--ease-out);
 }
 .rl-pop {
-  transform-origin: center;
   transition:
     opacity 150ms var(--ease-out),
     transform 150ms var(--ease-out);
@@ -893,7 +885,7 @@ button.rl-ll:hover {
   }
   .rl-pop:not([data-mounting] *) {
     opacity: 0;
-    transform: scale(0.6);
+    transform: scale(0.95);
   }
 }
 

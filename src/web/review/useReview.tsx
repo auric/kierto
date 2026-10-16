@@ -58,6 +58,7 @@ import { TaskChips, useTaskContext } from "./TaskChips";
 import { storedEdit, type TriageAction, type TriageCtx, writeEdit } from "./Triage";
 import { contextLines, trackerOf } from "./tasks";
 
+// flash: mark the target as a jump target. It gets a static highlight while it holds the focus, with no animation.
 export type Focus = { id: string; block: ScrollLogicalPosition; flash: boolean };
 
 export type ReviewApi = {

@@ -244,7 +244,7 @@ All other keys stay: j, k, Enter, Right, Esc, Left, /, ?, n, N, y, o, g c, g d, 
 - One live region per detail, as today. It says: fetch start and end, run start, triage results, "Copied ...", and the list width.
 - Status never by color alone: Blocker has an icon and the word, "Not checked" has an icon and words, "Accepted" has an icon and the word, "Your turn" has an icon and words, an unlinked chip has a dashed border and an accessible name.
 - Dialogs: `role=dialog`, `aria-modal`, a title, a focus trap, Esc, and the focus goes back to the opener.
-- Reduced motion: no spinner turn, no smooth scroll, no jump flash, no chevron transition.
+- Reduced motion: no spinner turn, no smooth scroll, no slide or zoom. Fades and color changes stay. Jump targets and chevrons never animate.
 
 ## 8. Data needs
 - N1: none for the key link (`webUrl`), the branch links (`sourceBranchUrl`, `targetBranchUrl`), and the task links (`tasks[].url`). They exist in PrRow.
@@ -256,7 +256,7 @@ All other keys stay: j, k, Enter, Right, Esc, Left, /, ?, n, N, y, o, g c, g d, 
 ## 9. Consult the session that wrote the code (S1 done)
 - Places: the More menu of an own PR ("Copy for your session...", "Paste the answer...") and a link in the Fix list footer. In the prototype they show a "Planned" tag and a toast.
 - docs/plans/session-consult.md applies: items in groups with IDs (T<thread>, F<finding>), a JSON answer, and a paste that maps verdicts to reply drafts, finding marks, and Fix ticks. Nothing posts.
-- Package S1 built parts A and B. Part C waits for gate B16.
+- Package S1 built parts A and B. Package S2 built part C (0bd573c) after gate B16 passed.
 
 ## 10. Implementation packages
 

@@ -3,8 +3,24 @@ import { cn } from "cn";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import * as React from "react";
 
-function DropdownMenu({ ...props }: MenuPrimitive.Root.Props) {
-  return <MenuPrimitive.Root data-slot="dropdown-menu" {...props} />;
+// Base UI 1.8 sets data-instant on a keyboard Enter or Space open, but not on an ArrowDown or ArrowUp open of the trigger.
+// This flag marks those opens, so keyboard opens show no animation.
+const KeyOpen = React.createContext(false);
+
+function DropdownMenu({ onOpenChange, ...props }: MenuPrimitive.Root.Props) {
+  const [keyOpen, setKeyOpen] = React.useState(false);
+  return (
+    <KeyOpen value={keyOpen}>
+      <MenuPrimitive.Root
+        data-slot="dropdown-menu"
+        onOpenChange={(open, details) => {
+          setKeyOpen(open && details.reason === "list-navigation");
+          onOpenChange?.(open, details);
+        }}
+        {...props}
+      />
+    </KeyOpen>
+  );
 }
 
 function DropdownMenuPortal({ ...props }: MenuPrimitive.Portal.Props) {
@@ -23,6 +39,7 @@ function DropdownMenuContent({
   className,
   ...props
 }: MenuPrimitive.Popup.Props & Pick<MenuPrimitive.Positioner.Props, "align" | "alignOffset" | "side" | "sideOffset">) {
+  const keyOpen = React.useContext(KeyOpen);
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
@@ -34,8 +51,9 @@ function DropdownMenuContent({
       >
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-content"
+          data-key-open={keyOpen || undefined}
           className={cn(
-            "z-50 max-h-(--available-height) w-(--anchor-width) min-w-32 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 outline-none data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:overflow-hidden data-closed:fade-out-0 data-closed:zoom-out-95",
+            "z-50 max-h-(--available-height) w-(--anchor-width) min-w-32 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 ease-(--ease-out) outline-none data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:overflow-hidden data-closed:fade-out-0 data-closed:duration-75 data-instant:animate-none data-key-open:animate-none",
             className,
           )}
           {...props}
@@ -128,10 +146,8 @@ function DropdownMenuSubContent({
   return (
     <DropdownMenuContent
       data-slot="dropdown-menu-sub-content"
-      className={cn(
-        "w-auto min-w-[96px] rounded-lg bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/10 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-        className,
-      )}
+      // DropdownMenuContent gives the origin, the slide of each side, the curve, and the instant rules.
+      className={cn("w-auto min-w-[96px] shadow-lg", className)}
       align={align}
       alignOffset={alignOffset}
       side={side}

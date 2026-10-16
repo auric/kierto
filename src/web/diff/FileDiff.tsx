@@ -660,7 +660,7 @@ function ThreadCard({ t, text, ctx }: { t: ThreadModel; text: string; ctx: DiffC
         </button>
       )}
       {open && (
-        <div className={cn("flex min-w-0 flex-1 items-center gap-2", resolved && "rl-fade basis-full")}>
+        <div className={cn("flex min-w-0 flex-1 items-center gap-2", resolved && "basis-full")}>
           {last ? <Avatar p={last.who} /> : <MessageSquare aria-hidden className={cn(icon, "text-muted-foreground")} />}
           <span id={text} className="min-w-0 flex-1 truncate text-ink-2">
             <b className="font-semibold text-foreground">{last ? (last.who.me ? "You" : firstName(last.who)) : "Thread"}</b>:{" "}

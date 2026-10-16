@@ -119,7 +119,7 @@ function Edit({ e, ticked, free, ctx }: { e: FixEditDto; ticked: boolean; free: 
           {counts}
         </p>
       )}
-      <div className={cn("transition-opacity duration-150", free && !ticked && "opacity-55")}>
+      <div className={cn(free && !ticked && "opacity-55")}>
         <Rows rows={e.rows} label={`Proposed change in ${e.path}`} />
       </div>
     </section>

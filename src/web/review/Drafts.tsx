@@ -176,7 +176,7 @@ export const Draft = memo(function Draft({
         ) : closed ? (
           <span className="text-xs whitespace-nowrap text-muted-foreground">{closed}</span>
         ) : accepted ? (
-          <span className="rl-fade inline-flex items-center gap-1 text-xs font-semibold whitespace-nowrap text-ink-2">
+          <span className="inline-flex items-center gap-1 text-xs font-semibold whitespace-nowrap text-ink-2">
             <Check aria-hidden className="size-[13px] shrink-0" />
             Accepted
           </span>

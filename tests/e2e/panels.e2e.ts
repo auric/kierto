@@ -276,6 +276,10 @@ test("the Full width button in the action bar is pressed in full width, toggles 
   await expect(btn).toBeFocused();
   await expect(list(page)).toBeHidden();
   expect(await width(detail(page))).toBe(1440);
+  // The click closes the tooltip at once, with no exit animation. The next hover shows the new label.
+  await expect(tip(page)).toHaveCount(0);
+  await detail(page).locator("h1").hover();
+  await btn.hover();
   await expect(tip(page)).toHaveText("Back to three panes. Keys: z or Esc");
 
   // A second click leaves full width. z turns it on again, and the button follows.

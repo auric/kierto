@@ -1,7 +1,7 @@
 // Detail header (Group 1a, plan pr-view-v4 2.1 and 2.2): the sticky action bar, the key, author, branch, and task links, the plain
 // run buttons, the More menu, and the Ask button. Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake
 // Claude Code CLI.
-import { test as base, expect, type Page } from "@playwright/test";
+import { test as base, expect, type Locator, type Page } from "@playwright/test";
 import { APP_PORT, control, E2E_TOKEN, FAKE_URL, JIRA_ISSUE, openApp, type Scenario } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
@@ -75,15 +75,15 @@ test("the action bar sticks with the key and the title, scroll targets stop belo
   const focused = await page.locator(":focus").boundingBox();
   expect(focused && focused.y >= b.y + b.height - 1).toBe(true);
 
-  // Reduced motion: the title in the bar shows without a transition.
+  // Reduced motion: the title in the bar keeps its fade and has no movement.
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pane(page).evaluate((e) => e.scrollTo(0, e.scrollHeight));
   await expect(bar(page)).toHaveAttribute("data-stuck");
-  expect(
-    await bar(page)
-      .locator("p")
-      .evaluate((e) => getComputedStyle(e).transitionDuration),
-  ).toBe("0s");
+  const props = await bar(page)
+    .locator("p")
+    .evaluate((e) => getComputedStyle(e).transitionProperty);
+  expect(props).toContain("opacity");
+  expect(props).not.toContain("transform");
 
   // Ask in the bar does what q does: the Ask section opens with the focus in its box.
   await expect(page.locator("#ask-btn")).toHaveAccessibleName("Ask Claude");
@@ -178,6 +178,95 @@ test("the key opens the PR on the server, the author name opens the user page, a
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(A);
   await expect(author).toContainText("Alex");
   await expect(author.getByRole("link")).toHaveCount(0);
+});
+
+// The animation name and the running animations of an element.
+const motion = (l: Locator) => l.evaluate((e) => ({ name: getComputedStyle(e).animationName, running: e.getAnimations().length }));
+
+test("motion: keyboard opens and jumps do not animate, chevrons turn at once, and reduced motion keeps only fades", async ({ page }) => {
+  await connect(page, B, { tall: 2 });
+  await expect(page.locator(".rl-chev").first()).toHaveCSS("transition-duration", "0s");
+
+  // A delayed hover open of a tooltip fades and zooms in. The tooltip of the previous trigger can still play its exit.
+  const tip = page.locator("[data-slot='tooltip-content']", { hasText: "More actions" });
+  await page.locator("#more-btn").hover();
+  await expect(tip).toBeVisible();
+  await expect(tip).not.toHaveAttribute("data-instant");
+  expect((await motion(tip)).name).toBe("enter");
+  await page.mouse.move(0, 0);
+  await expect(tip).toHaveCount(0);
+
+  // A keyboard focus open of a tooltip shows at once.
+  await page.locator("#more-btn").focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#more-btn")).toBeFocused();
+  await expect(tip).toBeVisible();
+  await expect(tip).toHaveAttribute("data-instant");
+  expect(await motion(tip)).toEqual({ name: "none", running: 0 });
+
+  // Menu: Enter and ArrowDown open it at once, a click animates it.
+  const menu = page.locator("[data-slot='dropdown-menu-content']");
+  for (const key of ["Enter", "ArrowDown"]) {
+    await page.keyboard.press(key);
+    await expect(menu).toBeVisible();
+    expect(await motion(menu), key).toEqual({ name: "none", running: 0 });
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(page.locator("#more-btn")).toBeFocused();
+  }
+  await page.locator("#more-btn").click();
+  await expect(menu).toBeVisible();
+  expect((await motion(menu)).name).toBe("enter");
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+
+  // n jumps to the next new message. The target gets a static highlight while it holds the focus.
+  const sel = () =>
+    page.evaluate(() => {
+      const probe = document.createElement("div");
+      probe.style.background = "var(--sel)";
+      document.body.append(probe);
+      const bg = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return bg;
+    });
+  await page.keyboard.press("n");
+  const first = page.locator(":focus");
+  await expect(first).toHaveAttribute("data-jump", "");
+  const id = await first.getAttribute("id");
+  await expect(first).toHaveCSS("background-color", await sel());
+  expect(await first.evaluate((e) => e.getAnimations().length)).toBe(0);
+  await page.keyboard.press("n");
+  await expect(page.locator(":focus")).not.toHaveAttribute("id", id ?? "");
+  await expect(page.locator(`#${id}`)).not.toHaveAttribute("data-jump");
+
+  // Reduced motion: fades stay, movement goes, and spinners stop.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reduced = await page.evaluate(() => {
+    const make = (cls: string) => {
+      const el = document.createElement("div");
+      el.className = cls;
+      el.setAttribute("data-open", "");
+      document.body.append(el);
+      return el;
+    };
+    const enter = make("rl-enter");
+    const pop = make("data-open:zoom-in-95 data-[side=bottom]:slide-in-from-top-2");
+    pop.setAttribute("data-side", "bottom");
+    const spin = make("animate-spin");
+    const out = {
+      enter: getComputedStyle(enter).transitionProperty,
+      scale: getComputedStyle(pop).getPropertyValue("--tw-enter-scale"),
+      shift: getComputedStyle(pop).getPropertyValue("--tw-enter-translate-y"),
+      spin: getComputedStyle(spin).animationName,
+    };
+    for (const el of [enter, pop, spin]) el.remove();
+    return out;
+  });
+  expect(reduced.enter).toContain("opacity");
+  expect(reduced.enter).not.toContain("transform");
+  expect(reduced).toMatchObject({ scale: "1", shift: "0", spin: "none" });
 });
 
 // The brief of a PR without a task ID offers "Set up task IDs". It opens the same section as a chip without a link pattern.

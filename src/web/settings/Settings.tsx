@@ -25,11 +25,12 @@ const saveNote = "m-0 text-xs text-muted-foreground";
 const AT_ONCE = "Changes save at once.";
 
 // A section link focuses its heading. The shell pushes the section URL (plan pr-view-v4 section 5).
+// A keyboard activation has detail 0. It scrolls at once, as keyboard actions do not animate.
 function jump(e: MouseEvent<HTMLAnchorElement>, id: string) {
   e.preventDefault();
   const el = document.getElementById(id);
   const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  el?.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
+  el?.scrollIntoView({ block: "start", behavior: still || e.detail === 0 ? "auto" : "smooth" });
   el?.focus({ preventScroll: true });
 }
 
