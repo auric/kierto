@@ -426,8 +426,12 @@ test("an MCP server picked in the dialog gets only its ticked tools in the run",
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
-  await expect.poll(async () => (await runMcp())?.servers?.includes("fake-docs") ?? false, { timeout: RUN_MS }).toBe(true);
+  // The record of this run names the picked tool. Then both its mcp.json and its argv are current.
+  await expect
+    .poll(async () => (await runMcp())?.allowed?.split(",").includes("mcp__fake-docs__search") ?? false, { timeout: RUN_MS })
+    .toBe(true);
   const run = await runMcp();
+  expect(run?.servers).toContain("fake-docs");
   expect(run?.allowed?.split(",")).toEqual(expect.arrayContaining(["mcp__fake-docs__search", "mcp__fake-docs__note_tool"]));
   expect(run?.allowed).not.toContain("mcp__fake-docs__lookup");
   expect(run?.denied?.split(",").sort()).toEqual(["mcp__fake-docs__delete_item", "mcp__fake-docs__lookup"]);

@@ -613,6 +613,8 @@ r[key("POST", "/__control/reset")] = async () => {
   setClaude({ stream: "tree" });
   showTestCheck(true);
   rmSync(sessionsDir, { recursive: true, force: true });
+  // Run IDs start at 1 again, so an old record can name the run folder of a new run. halt() waits for the end of each fake CLI.
+  rmSync(join(claudeDir, "calls.jsonl"), { force: true });
   app = boot();
   return NO_CONTENT;
 };
