@@ -2,6 +2,8 @@
 
 A local-first inbox for Bitbucket Server pull requests, with AI reviews by your own Claude Code CLI.
 
+Repository: https://github.com/OWNER/revido
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/inbox-dark.webp">
   <img alt="Revido: the inbox, a pull request, and its AI review with a severity count and a Not checked list" src="docs/screenshots/inbox-light.webp">
@@ -37,19 +39,21 @@ Revido is Esperanto for "review, seeing again".
 
 ## Install
 
-Release binary: download the binary for your system and start it. Releases come from `bun run release`. It writes one binary per target to `dist/release/<version>-<commit>/`, with `SHA256SUMS` and the license files.
-
-```sh
-./revido-0.2.0-linux-x64          # Linux: chmod +x it first
-revido-0.2.0-windows-x64.exe      # Windows
-```
-
-From source:
+No release is published yet. Build Revido from source with Bun 1.x:
 
 ```sh
 bun install
 bun run build
 bun run start
+```
+
+For one self-contained binary, run `bun run compile`. It writes `dist/bin/revido-<os>-<arch>` for this host.
+
+Release binaries: when a release is published on the GitHub Releases page, download the binary for your system and start it. Each release holds one binary per target, `SHA256SUMS`, and the license files. `bun run release` makes them.
+
+```sh
+./revido-0.2.0-linux-x64          # Linux: chmod +x it first
+revido-0.2.0-windows-x64.exe      # Windows
 ```
 
 ## First run
@@ -107,7 +111,7 @@ Each run can read the CLAUDE.md files of your clone, extra text from Settings, a
 
 ### Consult your session
 
-You wrote the code with Claude Code, so your session knows why. Turn on the session switch in Settings, Clones. Revido then lists your sessions on the branch of your own pull request. Each question resumes a copy of the session with the review points. Its verdicts tick the Fix list and draft replies. "Copy for your session" gives the same points as text.
+You wrote the code with Claude Code, so your session knows why. Turn on the session switch in Settings, Clones. Revido then lists your sessions on the branch of your own pull request. Each question resumes a copy of the session with the review points. Its verdicts tick the Fix list and draft replies. "Copy for your session" gives the same points as text. On your own pull request, "Judge and propose fixes" lets the forked, read-only session judge each item and propose edits for the ones it accepts. Revido checks the edits, and their fix cards show "from your session". Nothing applies until you click.
 
 ### Narrow screens
 

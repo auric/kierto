@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Ihor Lifanov
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.4.3
+      # The typecheck scripts run tsc with Node.
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.21.0
+      - run: bun install --frozen-lockfile
+      # The compiled-binary test skips, because dist/bin does not exist on a fresh checkout.
+      - run: bun run check
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.4.3
+      # The Playwright runner needs Node 20 or later.
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.21.0
+      - run: bun install --frozen-lockfile
+      # The repo pins @playwright/test. Its own CLI installs the matching Chromium.
+      - run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - run: bun run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: e2e-results
+          path: test-results/
+          retention-days: 7
