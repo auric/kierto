@@ -13,6 +13,7 @@ import { writeConfig } from "../../src/server/config";
 import { createLive } from "../../src/server/live";
 import { createClaudeRunner, resumeArgs } from "../../src/server/review/claude";
 import { createConsultRoutes } from "../../src/server/review/consult-routes";
+import { git, gitEnv } from "../../src/server/review/git";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import { type FindInput, findSessions, HEAD_BYTES, readMeta, TAIL_BYTES } from "../../src/server/review/sessions";
 import { createSecrets } from "../../src/server/secrets";
@@ -20,15 +21,18 @@ import { createSettings } from "../../src/server/settings";
 import {
   type ConsultData,
   type ConsultImportDto,
+  type ConsultUndoDto,
   consultJsonSchema,
   planAnswer,
+  SESSION_FIX_MAX_TURNS,
+  SESSION_FIX_RULES,
   SESSION_MAX_TURNS,
   SESSION_RULES,
   type SessionAnswerDto,
   type SessionListDto,
   sessionTokens,
 } from "../../src/shared/consult";
-import type { ApiError, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
+import type { ApiError, FixCommitDto, FixDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
 import { FAKE_TOKEN, FAKE_USER, startFakeBitbucket } from "../support/fake-bitbucket";
 import type { FakeScenario } from "../support/fake-claude";
 import { fakeRunner, reviewRemote, stubListTools } from "../support/review-fixture";
@@ -432,7 +436,7 @@ async function setup(o: { sessions?: boolean; role?: string } = {}) {
     readFileSync(record, "utf8")
       .split("\n")
       .some((l) => l.includes("childPid"));
-  return { root, db, pr, dir, clone, session, scenario, call, finish, runCalls, hung, found, review };
+  return { root, db, pr, dir, clone, session, scenario, call, finish, runCalls, hung, found, review, remote };
 }
 
 type Start = RunDto & RunConflict & ApiError;
@@ -561,6 +565,141 @@ describe("session routes and runs", () => {
       expect(dump).not.toContain(CANARY);
       expect(dump).not.toContain(h.session);
       expect(logs.join("\n")).not.toContain(CANARY);
+    },
+    SLOW,
+  );
+
+  test(
+    "judge and propose fixes: the run validates the edits of accepted items; Apply copies them into a fix run; commit and Undo",
+    async () => {
+      const h = await setup();
+      const comment = (id: number, root: number, resolved: number, at: number) =>
+        h.db
+          .query(
+            `INSERT INTO comment (pr, comment_id, version, parent_id, root_id, author_slug, author_name, text, thread_resolved, created_at,
+              updated_at) VALUES ($pr, $id, 0, $parent, $root, 'asmith', 'Alex Smith', $text, $resolved, $at, $at)`,
+          )
+          .run({ pr: h.pr, id, parent: id === root ? null : root, root, text: `Point ${id}.`, resolved, at });
+      comment(102, 102, 0, 2);
+      comment(103, 103, 1, 3);
+      comment(104, 104, 0, 4);
+      const LOCK_OLD = "    write(entry);\n    lock.release();\n";
+      const LOCK_NEW = "    try {\n      write(entry);\n    } finally {\n      lock.release();\n    }\n";
+      const note = (thread: number) => ({ thread, fixed: true, reason: `Fix ${thread}.` });
+      h.scenario({
+        consult: {
+          answers: [
+            { id: "T101", verdict: "accept", reason: "Valid." },
+            { id: "T102", verdict: "reject", reason: "Not valid." },
+            { id: "T103", verdict: "accept", reason: "Resolved." },
+            { id: "T104", verdict: "accept", reason: "Valid too." },
+          ],
+          fix: {
+            summary: "Two fixes.",
+            threads: [note(101), note(102), note(104), note(103)],
+            edits: [
+              { thread: 101, path: "src/cache/flush.ts", old: LOCK_OLD, new: LOCK_NEW },
+              { thread: 101, path: "src/cache/flush.ts", old: "not in the file", new: "x" },
+              { thread: 101, path: ".claude/settings.json", old: "", new: "{}" },
+              { thread: 102, path: "README.md", old: "# Sample\n", new: "# Rejected\n" },
+              { thread: 104, path: "README.md", old: "# Sample\n", new: "# Sample\n\nThe flush locks each entry.\n" },
+              { thread: 103, path: "README.md", old: "# Sample\n", new: "# Resolved\n" },
+            ],
+            coverage: { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] },
+          },
+        },
+      });
+      const start = await h.call<Start>(`/api/prs/${h.pr}/consult/session`, {
+        body: { session: "11111111-2222-4333-8444-555555555555", groups: ["reviewers", "resolved"], mode: "fix" },
+      });
+      expect(start.status).toBe(202);
+      const d = await h.finish(start.body.id);
+      // Only the accepted items that need a verdict count. Every drop shows in the coverage.
+      expect(d.run).toMatchObject({
+        kind: "session",
+        status: "incomplete",
+        summary: { summary: "4 answers, 2 edits" },
+        consult: { mode: "fix", items: 4 },
+      });
+      expect(d.run.summary?.coverage.skipped).toEqual([
+        "Note for thread 102 dropped: the thread was not requested.",
+        "Note for thread 103 dropped: the thread was not requested.",
+        "Edit 2 (thread 101, src/cache/flush.ts) dropped: old does not match the file.",
+        "Edit 3 (thread 101, .claude/settings.json) dropped: the app never edits this path.",
+        "Edit 4 (thread 102, README.md) dropped: the thread was not requested.",
+        "Edit 6 (thread 103, README.md) dropped: the thread was not requested.",
+      ]);
+      const [c] = h.runCalls() as [Call];
+      expect(flagOf(c.argv, "--max-turns")).toBe(String(SESSION_FIX_MAX_TURNS));
+      expect(flagOf(c.argv, "--json-schema")).toBe(JSON.stringify(consultJsonSchema("fix")));
+      expect(flagOf(c.argv, "--tools")).toBe("Read,Grep,Glob");
+      expect(c.argv).toContain("--fork-session");
+      expect(c.stdin.endsWith(`${SESSION_FIX_RULES}\n`)).toBe(true);
+      // The head stays in the cache for the apply, also after a force push.
+      const cache = join(h.dir, "git", "PROJ", "repo.git");
+      const env = gitEnv(join(h.root, "empty.gitconfig"));
+      const kept = await git([`--git-dir=${cache}`, "rev-parse", `refs/rl/2/fix/${d.run.id}`], { env });
+      expect(kept.trim()).toBe(h.remote.source);
+
+      // Before Apply, no fix card shows: GET fixes lists no run.
+      const fixes = async () => (await h.call<FixDto[]>(`/api/prs/${h.pr}/fixes`)).body;
+      expect(await fixes()).toEqual([]);
+      const answer = await h.call<SessionAnswerDto>(`/api/prs/${h.pr}/consult/session/${d.run.id}`);
+      expect(answer.body).toMatchObject({ mode: "fix", edits: { T101: 1, T104: 1 } });
+
+      // A new message changes thread 104 after the start, so Apply skips it, and its edit stays out.
+      comment(105, 104, 0, 5);
+      const imported = await h.call<ConsultImportDto>(`/api/prs/${h.pr}/consult/import`, { body: { session: d.run.id } });
+      expect(imported.status).toBe(200);
+      expect(imported.body.rows.map((r) => [r.id, r.act])).toEqual([
+        ["T101", "accept"],
+        ["T102", "reject"],
+        ["T103", null],
+        ["T104", null],
+      ]);
+      expect(imported.body.ticks).toEqual({ threads: [101], findings: [] });
+      const first = imported.body.fix?.run as number;
+      expect(imported.body.fix).toEqual({ run: first, edits: 1, items: 1 });
+      const [f] = await fixes();
+      expect(f?.run).toMatchObject({ id: first, kind: "fix", status: "completed", sourceHead: h.remote.source });
+      expect(f?.run.consult).toMatchObject({ run: d.run.id, mode: "fix", title: "Lock each entry" });
+      expect(f?.threads).toEqual([note(101)]);
+      expect(f?.edits.map((e) => [e.thread, e.path, e.added, e.removed])).toEqual([[101, "src/cache/flush.ts", 5, 2]]);
+      // No run list shows the fix run of an import. A session import needs a known session run.
+      expect((await h.call<RunDto[]>(`/api/prs/${h.pr}/runs`)).body.map((r) => r.id)).not.toContain(first);
+      expect((await h.call<ApiError>(`/api/prs/${h.pr}/consult/import`, { body: { session: 999 } })).status).toBe(404);
+
+      // Undo deletes the unused fix run with its edits.
+      const undo = await h.call<ConsultUndoDto>(`/api/prs/${h.pr}/consult/${imported.body.run}/undo`, { method: "POST" });
+      expect(undo.body).toMatchObject({ drafts: 2, fix: { removed: true } });
+      expect(await fixes()).toEqual([]);
+      expect(h.db.query("SELECT COUNT(*) AS n FROM fix_edit WHERE run = $run").get({ run: first })).toEqual({ n: 0 });
+
+      // Apply again, then commit the edit to an app branch. The commit takes the identity of the clone.
+      const again = await h.call<ConsultImportDto>(`/api/prs/${h.pr}/consult/import`, { body: { session: d.run.id } });
+      const second = again.body.fix?.run as number;
+      expect(second).toBeGreaterThan(first);
+      await git(["init", "-q", h.clone], { env });
+      await git(["-C", h.clone, "config", "user.name", "Clone User"], { env });
+      await git(["-C", h.clone, "config", "user.email", "clone@example.test"], { env });
+      const [g] = await fixes();
+      const commit = await h.call<FixCommitDto>(`/api/fix-runs/${second}/commit`, {
+        body: { edits: [g?.edits[0]?.id], message: "Fix review comment 101 on PR 2", mode: "cache" },
+      });
+      expect(commit.status).toBe(201);
+      expect(commit.body).toMatchObject({ run: second, mode: "cache", state: "committed" });
+      const fixed = h.db.query("SELECT body, thread FROM review_item WHERE kind = 'reply' AND run = $run").all({ run: second });
+      expect(fixed).toEqual([{ body: `Fixed in ${commit.body.short}.`, thread: 101 }]);
+      // A fix commit holds the edit, so Undo of the import keeps the fix run.
+      const undoImport = () => h.call<ConsultUndoDto>(`/api/prs/${h.pr}/consult/${again.body.run}/undo`, { method: "POST" });
+      expect((await undoImport()).body.fix).toEqual({ removed: false });
+      expect((await fixes()).map((x) => x.run.id)).toEqual([second]);
+      // After the undo of the commit, a second Undo of the import deletes the fix run, its commit row, and its discarded draft.
+      expect((await h.call<FixCommitDto>(`/api/fix-commits/${commit.body.id}/undo`, { method: "POST" })).body.state).toBe("undone");
+      expect((await undoImport()).body.fix).toEqual({ removed: true });
+      expect(await fixes()).toEqual([]);
+      const left = (table: string) => h.db.query(`SELECT COUNT(*) AS n FROM ${table} WHERE run = $run`).get({ run: second });
+      for (const table of ["fix_edit", "fix_commit", "review_item"]) expect(left(table)).toEqual({ n: 0 });
     },
     SLOW,
   );

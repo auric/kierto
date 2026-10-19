@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Session consult server state and per-viewer storage (docs/plans/session-consult.md parts A, B, and C). Key ['pr', pr, 'consult']:
+// Session consult server state and per-viewer storage (docs/plans/session-consult.md parts A to D). Key ['pr', pr, 'consult']:
 // live.ts invalidates it with the PR. Storage can be off or full, so each read and write has a fallback.
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -12,7 +12,9 @@ import {
   consultGroups,
   type SessionAnswerDto,
   type SessionListDto,
+  type SessionMode,
   type SessionStartInput,
+  sessionModes,
 } from "../../shared/consult";
 import { api } from "../api";
 import { started, useStart } from "../review/data";
@@ -33,6 +35,10 @@ export const useConsultData = (pr: number, enabled: boolean) =>
 
 export const postImport = async (pr: number, entries: unknown[], snapshot: Record<string, string> | null) =>
   read<ConsultImportDto>(await api.api.prs[":id"].consult.import.$post({ ...param(pr), json: { entries, snapshot } }));
+
+// Part C: the server reads the entries and the item keys of the session run. Part D: it also adds the proposed fix of the run.
+export const postSessionImport = async (pr: number, session: number) =>
+  read<ConsultImportDto>(await api.api.prs[":id"].consult.import.$post({ ...param(pr), json: { session } }));
 
 export const postUndo = async (pr: number, run: number) =>
   read<ConsultUndoDto>(await api.api.prs[":id"].consult[":run"].undo.$post({ param: { id: String(pr), run: String(run) } }));
@@ -67,7 +73,22 @@ export const useStartSession = (pr: number) =>
 // ---------- Per viewer ----------
 
 const GROUPS = "rl:consult-groups";
+const MODE = "rl:consult-mode";
 const snapKey = (pr: number) => `rl:consult:${pr}`;
+
+// Part D: the mode of the last session run that this viewer started. Default: judge.
+export function loadMode(): SessionMode {
+  try {
+    const raw = localStorage.getItem(MODE);
+    if (sessionModes.includes(raw as SessionMode)) return raw as SessionMode;
+  } catch {}
+  return "judge";
+}
+export function saveMode(mode: SessionMode) {
+  try {
+    localStorage.setItem(MODE, mode);
+  } catch {}
+}
 
 // The ticked groups of the copy dialog. Default: all.
 export function loadGroups(): Set<ConsultGroup> {

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Session consult (docs/plans/session-consult.md parts A to C): the copy dialog with its groups, the remembered choice, the copied
-// text, the paste of a crafted answer with its preview, Apply, Undo, the direct session run with its opt-in and cancel, and no post.
+// Session consult (docs/plans/session-consult.md parts A to D): the copy dialog with its groups, the remembered choice, the copied
+// text, the paste of a crafted answer with its preview, Apply, Undo, the direct session run with its opt-in and cancel, the session
+// fixes with their fix cards and the commit in the clone, and no post.
 // Runs against serve.ts only: the fake Bitbucket with the author PR 1004, the temp git remote, and the fake CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp, runArgv, sessions, writes } from "./control";
+import { APP_PORT, cloneState, control, E2E_TOKEN, FAKE_URL, makeClone, openApp, runArgv, sessions, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Release the write lock after each entry";
@@ -336,6 +337,116 @@ test("Ask your session: off hides it; on lists the branch session with its cost,
   expect(a?.stdin).toContain(`### T${LOCK}\n`);
   expect(a?.stdin).toContain("## How to answer in this run");
   expect(a?.stdin).not.toContain(canary);
+});
+
+// ---------- Part D: the session proposes fixes ----------
+
+const LOCK_OLD = "    write(entry);\n    lock.release();\n";
+const LOCK_NEW = "    try {\n      write(entry);\n    } finally {\n      lock.release();\n    }\n";
+// The answer of the fake session: accept LOCK and OWN with one edit each, reject LOOP. Each old text is unique at the head of PR 1004.
+const SESSION_FIX = {
+  answers: [
+    { id: `T${LOCK}`, verdict: "accept", reason: "A throw leaves the lock held." },
+    { id: `T${LOOP}`, verdict: "reject", reason: "Each entry is independent." },
+    { id: `T${OWN}`, verdict: "accept", reason: "The README must say it." },
+  ],
+  fix: {
+    summary: "Two fixes.",
+    threads: [
+      { thread: LOCK, fixed: true, reason: "Release the lock in a `finally` block." },
+      { thread: OWN, fixed: true, reason: "Document the lock order." },
+    ],
+    edits: [
+      { thread: LOCK, path: "src/cache/flush.ts", old: LOCK_OLD, new: LOCK_NEW },
+      { thread: OWN, path: "README.md", old: "# Sample\n", new: "# Sample\n\nThe flush takes the lock once per entry.\n" },
+    ],
+    coverage: { read: ["src/cache/flush.ts", "README.md"], skipped: [], unavailable: [], notChecked: [] },
+  },
+};
+const applyDialog = (page: Page) => page.getByRole("dialog", { name: /^Apply \d+ edits? from \d+ comments?$/ });
+
+test("Ask your session to propose fixes: the mode and its cost, the preview, Apply, fix cards from your session, and a commit in the clone", async ({
+  page,
+}) => {
+  await connect(page);
+  await sessions();
+  await optIn(page);
+  await control("claude", { stream: "session", consult: SESSION_FIX });
+  await more(page, "Ask your session…");
+  const box = sessionDialog(page);
+  const judge = box.getByRole("radio", { name: "Judge only" });
+  const fixMode = box.getByRole("radio", { name: "Judge and propose fixes" });
+  await expect(judge).toBeChecked();
+  await expect(box.locator("#session-cost")).not.toContainText("turns");
+  await fixMode.check();
+  await expect(box.locator("#session-cost")).toContainText(
+    "Judge and propose fixes allows up to 62 turns instead of 12. Each turn sends the history again, so this mode uses more quota.",
+  );
+  await box.getByRole("button", { name: "Ask the session" }).click();
+
+  // The preview names the proposed edits of each accepted item. Nothing changes before Apply.
+  const answer = answerDialog(page);
+  await expect(answer.locator("#consult-plan")).toHaveText("3 changes, 0 skipped.", { timeout: RUN_MS });
+  await expect(answer.locator(`[data-consult-row='T${LOCK}']`)).toContainText(
+    "Tick in the Fix list. Judgement “Valid”. Adds 1 proposed edit from your session.",
+  );
+  await expect(answer.locator(`[data-consult-row='T${LOOP}']`)).not.toContainText("proposed edit");
+  await expect(page.locator(`#t-${LOCK} [data-fix]`)).toHaveCount(0);
+  await expect(page.locator("[data-fixbar]")).toHaveCount(0);
+  await answer.getByRole("button", { name: "Apply 3 changes" }).click();
+  await expect(answer.locator("#consult-result")).toHaveText(
+    "Applied. Made 3 reply drafts. 2 items ticked for a fix. Added the fix of your session: 2 edits for 2 items.",
+  );
+  await expect(answer.locator("#consult-fix")).toHaveCount(0);
+  await answer.getByRole("button", { name: "Close" }).first().click();
+
+  // The fix cards say that the edits come from your session. The bar names them too.
+  const run = page.locator("#runline [data-run-kind='session']");
+  await expect(run).toContainText("3 answers, 2 edits");
+  const bar = page.locator("[data-fixbar]");
+  await expect(bar).toHaveText(/^Fix from your session: 2 edits proposed/);
+  await bar.getByRole("button", { name: "Review edits" }).click();
+  const card = page.locator(`#fx-${LOCK}`);
+  await expect(card).toBeFocused();
+  await expect(card).toHaveAttribute("data-fix-session", "true");
+  await expect(card).toContainText("Proposed fix, 1 edit");
+  await expect(card).toContainText("from your session");
+  await expect(card).toContainText("Release the lock in a finally block.");
+  await expect(card.getByRole("figure", { name: "Proposed change in src/cache/flush.ts" })).toContainText("} finally {");
+  // The Log of the card is the log of the session run.
+  await card.getByRole("button", { name: "Log" }).click();
+  const log = page.getByRole("dialog", { name: "Session run log" });
+  await expect(log).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(log).toBeHidden();
+
+  // Apply commits both edits in the clone with one commit, and each thread gets a "Fixed in" draft.
+  const path = await makeClone(1004);
+  const before = (await cloneState(path)).head;
+  await bar.getByRole("button", { name: "Apply 2 edits from 2 comments" }).click();
+  const apply = applyDialog(page);
+  await apply.getByRole("button", { name: "Set the folder" }).click();
+  const form = page.getByRole("dialog", { name: "Your clone of PROJ1/sample-repo-4" });
+  await form.getByLabel("Clone folder").fill(path);
+  await form.getByRole("button", { name: "Save folder" }).click();
+  await expect(form).toBeHidden();
+  await expect(apply).toContainText("On fix/flush-lock at");
+  await apply.getByRole("button", { name: "Apply and commit" }).click();
+  await expect(apply).toBeHidden();
+  const after = await cloneState(path);
+  expect(after).toMatchObject({ branch: "fix/flush-lock", subject: "Fix 2 review comments on PR 1004" });
+  expect(after.head).not.toBe(before);
+  const short = new RegExp(`${after.head.slice(0, 7)}[0-9a-f]*`).source;
+  await expect(card).toContainText(new RegExp(`Committed ${short} on fix/flush-lock in your clone\\.`));
+  await expect(page.locator(`#t-${LOCK} [data-reply-draft]`)).toContainText(new RegExp(`Fixed in ${short}\\.`));
+
+  // The CLI got the larger turn cap and the fix rules. The mode stays for the next ask.
+  const a = await runArgv();
+  expect(a?.argv[a.argv.indexOf("--max-turns") + 1]).toBe("62");
+  expect(a?.stdin).toContain("## How to propose fixes");
+  await more(page, "Ask your session…");
+  await expect(sessionDialog(page).getByRole("radio", { name: "Judge and propose fixes" })).toBeChecked();
+  await sessionDialog(page).getByRole("button", { name: "Cancel" }).click();
 });
 
 test("Ask your session: the copy dialog links to it; Cancel ends a running run; Ask again shows the list", async ({ page }) => {

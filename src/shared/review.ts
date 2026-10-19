@@ -98,7 +98,7 @@ export const replyJsonSchema = (): Record<string, unknown> => z.toJSONSchema(rep
 export const MAX_FIX_EDITS = 50;
 // The UTF-8 bytes of all old and new texts of one fix result.
 export const MAX_FIX_BYTES = 200_000;
-const MAX_EDIT_TEXT = 20_000;
+export const MAX_EDIT_TEXT = 20_000;
 
 // docs/plans/fix-ux.md WP3: each note and each edit names exactly one thread or one finding. validateFix checks it.
 const fixTarget = {
@@ -134,6 +134,15 @@ export type FixThread = z.infer<typeof fixThread>;
 export type FixResult = z.infer<typeof fixResult>;
 
 export const fixJsonSchema = (): Record<string, unknown> => z.toJSONSchema(fixResult, { target: "draft-07" });
+
+// The edit rules of every run that proposes edits: the fix agent (catalog.ts) and a session run that proposes fixes (consult.ts).
+// edits.ts deniedPath enforces the path rules. workspace.ts sanitize gives the *.untrusted.md names.
+export const FIX_EDIT_RULES = [
+  "Copy old verbatim from the file in ./repo. old must match exactly one place in the file. Add nearby lines to old when the text occurs more than once.",
+  "Leave old empty only for a new file.",
+  "Never edit .claude folders, .mcp.json, CLAUDE.md, CLAUDE.local.md, AGENTS.md, .gitmodules, or the sources of git hooks: .githooks, .husky, and the pre-commit, lefthook, lint-staged, and commitlint configs.",
+  "./repo shows CLAUDE.md, CLAUDE.local.md, and AGENTS.md as *.untrusted.md files. Never edit them under either name.",
+];
 
 // ---------- Re-review (plan r2 S-RR) ----------
 

@@ -342,7 +342,7 @@ export function useFix(
         <span key={f.run.id} data-fixbar className={part}>
           <span className="inline-flex items-center gap-1.5 text-ink-2">
             <Wrench aria-hidden className={icon} />
-            Fix: {plural(f.edits.length, "edit")} proposed
+            {f.run.consult ? "Fix from your session" : "Fix"}: {plural(f.edits.length, "edit")} proposed
           </span>
           {s.first && (
             <Button variant="link" size="sm" className="h-auto px-0" onClick={() => reviewEdits(s)}>

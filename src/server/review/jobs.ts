@@ -7,7 +7,16 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type ConsultGroup, consultJsonSchema, consultOutput, SESSION_MAX_TURNS, sessionTokens } from "../../shared/consult";
+import {
+  acceptedTargets,
+  type ConsultGroup,
+  consultJsonSchema,
+  consultOutput,
+  type SessionAnswerDto,
+  type SessionMode,
+  sessionMaxTurns,
+  sessionTokens,
+} from "../../shared/consult";
 import {
   type AskDto,
   alwaysSkillError,
@@ -116,7 +125,7 @@ import {
 const RAW_MAX = 2 * 1024 * 1024;
 // Plan v3 WP10: at most 2 `changed` events with runs per second.
 const NOTIFY_MS = 500;
-// A session run makes at most SESSION_MAX_TURNS read-only turns.
+// A judge session run makes at most SESSION_MAX_TURNS read-only turns. A fix session run gets the runner limit (claude.ts).
 const SESSION_TIMEOUT_MS = 20 * 60_000;
 // The git MCP server runs `bun <main.ts> --git-mcp`. Bun.main is another file under bun test and in serve.ts.
 const MAIN_ENTRY = join(import.meta.dir, "..", "main.ts");
@@ -206,6 +215,7 @@ type RunRow = {
 
 // docs/plans/session-consult.md part C. path: the transcript; it stays on the server and out of the database. prompt: the text of
 // part A with SESSION_RULES. snapshot: the item keys of the text at the start, for the change check of the preview.
+// Part D: mode fix also proposes edits. asked: the IDs of the items in the text that need a verdict.
 export type SessionStart = {
   path: string;
   id: string;
@@ -216,9 +226,18 @@ export type SessionStart = {
   groups: ConsultGroup[];
   items: number;
   textBytes: number;
+  mode: SessionMode;
+  asked: string[];
 };
-// consult_json of a session run. No transcript text.
-type SessionRecord = Omit<SessionStart, "path" | "prompt" | "id"> & { session: string; tokens: number };
+// consult_json of a session run. No transcript text. mode: absent before part D. A fix run that an import made from the proposal of a
+// session run (consult.ts) holds a copy with run: the session run, and paste: the consult run of the import.
+export type SessionRecord = Omit<SessionStart, "path" | "prompt" | "id" | "asked" | "mode"> & {
+  session: string;
+  tokens: number;
+  mode?: SessionMode;
+  run?: number;
+  paste?: number;
+};
 
 export type ItemRow = {
   id: number;
@@ -808,22 +827,39 @@ function judgeAsk(o: RunOutcome, servers: string[], gaps: string[]): Ending {
 
 // docs/plans/session-consult.md part C: a session run makes no items. Its entries go to answer. The preview of part B checks each
 // entry again, and nothing changes before the user clicks Apply.
-function judgeSession(o: RunOutcome): Ending {
+// Part D: fix holds the workspace and the items that need a verdict. validateFix keeps only the edits for accepted items. The notes
+// go to fix_json and the edits to fix_edit of the session run. Only an import copies them into a fix run, so no fix card shows before.
+async function judgeSession(o: RunOutcome, fix: { ws: Workspace; asked: string[] } | null): Promise<Ending> {
   const raw = rawOutput(o);
   if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
   const parsed = consultOutput.safeParse(o.result?.structured_output);
   if (!parsed.success) return schemaFailure(parsed.error.issues, "session answer", raw, o);
   const n = parsed.data.answers.length;
-  return ended(raw, o, {
-    summary: {
-      summary: `${n} ${n === 1 ? "answer" : "answers"}`,
-      risks: [],
-      coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
-      dropped: [],
-    },
-    items: [],
-    answer: JSON.stringify(parsed.data.answers),
-  });
+  const answers = `${n} ${n === 1 ? "answer" : "answers"}`;
+  const none = { read: [], skipped: [], unavailable: [], notChecked: [] };
+  const result = (summary: string, coverage: RunSummary["coverage"], edits?: { threads: FixThread[]; edits: ValidEdit[] }) =>
+    ended(raw, o, {
+      summary: { summary, risks: [], coverage, dropped: [] },
+      items: [],
+      answer: JSON.stringify(parsed.data.answers),
+      ...(edits && { fix: edits }),
+    });
+  if (!fix) return result(answers, none);
+  const proposal = fixResult.safeParse(parsed.data.fix);
+  if (!proposal.success) {
+    const issues = proposal.error.issues
+      .slice(0, 5)
+      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+      .join("; ");
+    return result(answers, { ...none, skipped: [`The fix does not match the fix schema, so the run keeps no edit. ${issues}`] });
+  }
+  const files = await readFixFiles(
+    fix.ws,
+    proposal.data.edits.map((e) => e.path),
+  );
+  const v = validateFix(proposal.data, acceptedTargets(parsed.data.answers, fix.asked), files);
+  const m = v.edits.length;
+  return result(`${answers}, ${m} ${m === 1 ? "edit" : "edits"}`, v.coverage, { threads: v.threads, edits: v.edits });
 }
 
 const cancelledEnding = (o?: RunOutcome): Ending => ({
@@ -985,6 +1021,8 @@ const sessionOf = (s: SessionRecord): NonNullable<RunDto["consult"]> => ({
   tokens: s.tokens,
   items: s.items,
   textBytes: s.textBytes,
+  ...(s.mode && { mode: s.mode }),
+  ...(s.run !== undefined && { run: s.run }),
 });
 
 export function toItemDto(r: ItemRow): ReviewItemDto {
@@ -1393,16 +1431,18 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     j.db.query(SQL.workspace).run({ id: j.id, base: ws.mergeBase, range: ws.rangeBase, via: ws.via });
     notify(j.id);
     if (j.cancelled) return cancelledEnding();
-    log(`Session run ${j.id}: forks a session of ${s.bytes} bytes with ${s.items} review points.`);
+    const fix = s.mode === "fix";
+    log(`Session run ${j.id}: forks a session of ${s.bytes} bytes with ${s.items} review points${fix ? " and asks for fixes" : ""}.`);
     const o = await runner.run(
       {
         cwd: ws.work,
         appDir: ws.app,
         prompt: s.prompt,
-        schema: consultJsonSchema(),
-        maxTurns: SESSION_MAX_TURNS,
+        schema: consultJsonSchema(s.mode),
+        maxTurns: sessionMaxTurns(s.mode),
         resume: s.path,
-        timeoutMs: SESSION_TIMEOUT_MS,
+        // A fix session gets the limit of an app fix run.
+        ...(!fix && { timeoutMs: SESSION_TIMEOUT_MS }),
       },
       (events) => {
         j.db.transaction(() => upsertEvents(j.db, j.id, events))();
@@ -1410,7 +1450,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       },
     );
     if (j.cancelled) return cancelledEnding(o);
-    return judgeSession(o);
+    return judgeSession(o, fix ? { ws, asked: s.asked } : null);
   }
 
   // The git remote of a PR: the test remote, else the forge provider.
@@ -1427,7 +1467,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     try {
       e = j.session ? await sessionSteps(j, j.session, pr, held) : await steps(j, pr, brief, held);
       // A later re-review merges from the reviewed head, and an apply builds the patch on the head of the fix run. The ref keeps it after a force push.
-      const ref = j.kind === "fix" ? `fix/${j.id}` : j.kind === "review" && !j.profile.explain ? "reviewed" : null;
+      // The fix run of a session import (part D) builds on the head of the session run.
+      const proposes = j.kind === "fix" || (j.kind === "session" && (e.result?.fix?.edits.length ?? 0) > 0);
+      const ref = proposes ? `fix/${j.id}` : j.kind === "review" && !j.profile.explain ? "reviewed" : null;
       if (e.result && ref)
         await held.ws?.keep(ref).catch((err) => log(`Could not keep the head of review run ${j.id}: ${noUrl((err as Error).message)}`));
     } catch (err) {
@@ -1762,6 +1804,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         items: s.items,
         textBytes: s.textBytes,
         snapshot: s.snapshot,
+        mode: s.mode,
       };
       const { id: runId } = db.query(SQL.sessionInsert).get({
         pr: id,
@@ -1791,11 +1834,18 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       return begin(j, heads, { note: "", profile: profile.id });
     },
 
-    // The answer of an ended session run and the item keys at its start. null: no such run of the PR, or no answer.
-    sessionAnswer(db: Database, pr: number, run: number): { entries: unknown[]; snapshot: Record<string, string> } | null {
+    // The answer of an ended session run, the item keys at its start, and the count of its proposed edits per item ID (part D).
+    // null: no such run of the PR, or no answer.
+    sessionAnswer(db: Database, pr: number, run: number): SessionAnswerDto | null {
       const r = db.query(SQL.sessionAnswer).get({ run, pr }) as { answer: string; consult_json: string } | null;
       if (!r) return null;
-      return { entries: JSON.parse(r.answer) as unknown[], snapshot: (JSON.parse(r.consult_json) as SessionRecord).snapshot };
+      const record = JSON.parse(r.consult_json) as SessionRecord;
+      const edits: Record<string, number> = {};
+      for (const e of db.query(SQL.fixEdits).all({ run }) as FixEditRow[]) {
+        const id = e.thread !== null ? `T${e.thread}` : `F${e.item}`;
+        edits[id] = (edits[id] ?? 0) + 1;
+      }
+      return { entries: JSON.parse(r.answer) as unknown[], snapshot: record.snapshot, mode: record.mode ?? "judge", edits };
     },
 
     // The newest fix runs of a PR with their notes, edits, and commits. null for an unknown PR.
@@ -1831,15 +1881,16 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       return job?.id === run && job.db === db && cancelActive() ? "cancelled" : "not_running";
     },
 
-    // pr: the runs of one PR. null: the runs of all PRs. Newest first. A consult run (session-consult.md part B) starts no process, so
-    // no run list shows it.
+    // pr: the runs of one PR. null: the runs of all PRs. Newest first. A consult run (session-consult.md part B) and the fix run of a
+    // session import (part D) start no process, so no run list shows them. The fix cards show the fix run of an import.
     // R14: the list of one PR also keeps its newest review run, and its newest review run with a result, when newer runs fill the limit.
     // The UI shows the drafts of the newest review run with a result after a cancelled or failed one.
     runs(db: Database, pr: number | null, limit: number): RunDto[] {
+      const listed = "kind <> 'consult' AND NOT (kind = 'fix' AND consult_json IS NOT NULL)";
       const sql =
         pr === null
-          ? `${SQL.run} WHERE r.kind <> 'consult' ORDER BY r.id DESC LIMIT $limit`
-          : `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE pr = $pr AND kind <> 'consult' ORDER BY id DESC LIMIT $limit)
+          ? `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE ${listed} ORDER BY id DESC LIMIT $limit) ORDER BY r.id DESC`
+          : `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE pr = $pr AND ${listed} ORDER BY id DESC LIMIT $limit)
               OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review')
               OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review' AND status IN ('completed', 'incomplete'))
               ORDER BY r.id DESC`;

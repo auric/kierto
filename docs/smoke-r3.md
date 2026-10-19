@@ -157,7 +157,7 @@ Fix for threads and for review findings ships with docs/plans/fix-ux.md WP2 to W
 
 ## K. Consult the session that wrote the code
 
-Parts A and B (package S1) and part C (package S2) of docs/plans/session-consult.md. Run steps 12 to 19 only after a B16 PASS.
+Parts A and B (package S1), part C (package S2), and part D (package S3) of docs/plans/session-consult.md. Run steps 12 to 27 only after a B16 PASS.
 
 1. Use the test pull request after part J. Keep at least one open reviewer thread, one thread of your own, one resolved thread, and one review finding that is not posted. If Files offers "Get the code", click it.
 2. Open More (…) in the action bar. Click "Copy for your session…". Expect four groups, all ticked, each with its count, and the line "N items, X KB."
@@ -178,6 +178,17 @@ Parts A and B (package S1) and part C (package S2) of docs/plans/session-consult
 17. List the projects folder of step 13 again. Expect no new `.jsonl` file: the run passes `--no-session-persistence` (gate B16 (d)). Record the count. Resume the session of step 5 in a terminal. Expect no message of the session run in its history. Exit without a prompt.
 18. Start a second session run, then click "Cancel the run". Expect "The session run was cancelled." and the Session row "Cancelled". Click "Ask again". Expect the list. Click Cancel.
 19. Turn the switch off. Expect no "Ask your session…" in More. Discard the remaining session drafts.
+
+Part D (package S3): steps 20 to 27. Run them after step 19 and a B16 PASS. The real CLI has not shown the edit volume of this mode yet (integration-check.md U61).
+
+20. Turn the switch on again. Keep one open reviewer thread that asks for a small code change. Open More and click "Ask your session…". Expect "Your session" with "Judge only" picked, and the cost line without a turn count.
+21. Pick "Judge and propose fixes". Expect the cost line to add "Judge and propose fixes allows up to 62 turns instead of 12." Close the dialog and open it again. Expect "Judge and propose fixes" still picked.
+22. Pick the session of step 5. Click "Ask the session". Expect "Your session is answering and proposing fixes…". Run `git -C <CLONE> status` meanwhile. Expect no change.
+23. Wait for the end. Expect the Session row "N answers, M edits". Expect the preview row of each accepted item with an edit to say "Adds K proposed edits from your session." Expect no fix card and no Fix bar before Apply. Record N, M, the turn count from the log, and the run time.
+24. Click "Apply N changes". Expect the result line with "Added the fix of your session". Expect no "Open the Fix list" button. Click Close. Expect a fix card "from your session" under each accepted thread or finding with an edit, and the bar "Fix from your session: M edits proposed". Expect nothing new on the pull request in Bitbucket.
+25. Click Log on a fix card. Expect the log of the Session run. Click "Review edits". Expect the focus on the first card. Read each edit. Untick one edit if it is wrong.
+26. Click "Apply …" in the bar. Commit in your clone. Expect one new commit with only the ticked edits, and a "Fixed in <short>" draft under each fixed thread. Do not push. Click Undo on the card. Expect the clone back at its earlier head.
+27. Open "Show the answer" in the Session row and click Apply again, then Undo in the result view. Expect the announcement "Removed the fix of your session." and no fix card from that run. Discard the remaining session drafts. Turn the switch off.
 
 ## H. Record
 

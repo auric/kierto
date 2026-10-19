@@ -22,7 +22,8 @@ export type FakeScenario = {
   hang?: boolean;
   // The structured_output of the result, by the --json-schema shape. Absent: the echo of the stdin.
   // replies: a reply run (properties.replies). rereview: a re-review (properties.earlier). answer: an ask run (properties.answer).
-  // fix: a fix run (properties.edits). improve: a prompt proposal (properties.reasons). consult: a session run (properties.answers).
+  // fix: a fix run (properties.edits). improve: a prompt proposal (properties.reasons). consult: a session run (properties.answers),
+  // with properties.fix when the run also asks for fixes (session-consult.md part D).
   replies?: unknown;
   rereview?: unknown;
   answer?: unknown;
@@ -109,7 +110,8 @@ export function echoAnswer(stdin: string) {
 }
 
 // A session answer (docs/plans/session-consult.md part C): one reject per item under a "needs a verdict" heading of the stdin.
-export function echoConsult(stdin: string) {
+// fix: the schema asks for fixes too (part D). A reject needs no fix, so the fix has no note and no edit.
+export function echoConsult(stdin: string, fix = false) {
   let verdict = false;
   const answers: { id: string; verdict: string; reason: string }[] = [];
   for (const l of stdin.split(/\r?\n/)) {
@@ -117,7 +119,7 @@ export function echoConsult(stdin: string) {
     const id = /^### ([TF]\d+)$/.exec(l)?.[1];
     if (id && verdict) answers.push({ id, verdict: "reject", reason: `Echo: the session rejects ${id}.` });
   }
-  return { answers };
+  return fix ? { answers, fix: { summary: "Echo: no fix.", threads: [], edits: [], coverage: NO_COVERAGE } } : { answers };
 }
 
 async function main() {
@@ -179,7 +181,7 @@ async function main() {
     if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);
     if (props.edits !== undefined) return s.fix ?? echoFix(stdin);
     if (props.reasons !== undefined) return s.improve ?? echoImprove(stdin);
-    if (props.answers !== undefined) return s.consult ?? echoConsult(stdin);
+    if (props.answers !== undefined) return s.consult ?? echoConsult(stdin, props.fix !== undefined);
     return undefined;
   };
   const rewrite = (l: string) => {

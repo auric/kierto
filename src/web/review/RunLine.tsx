@@ -507,7 +507,7 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }
             <li data-run-session className="[overflow-wrap:anywhere]">
               <span className="text-muted-foreground">Session:</span> {run.consult.title ?? "no title"}, {sizeText(run.consult.bytes)} of
               history, up to about {run.consult.tokens.toLocaleString()} tokens. It got {plural(run.consult.items, "review point")} (
-              {sizeText(run.consult.textBytes)}).
+              {sizeText(run.consult.textBytes)}).{run.consult.mode === "fix" && " Mode: judge and propose fixes."}
             </li>
           )}
           {instructions?.short && (

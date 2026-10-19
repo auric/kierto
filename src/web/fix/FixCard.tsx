@@ -202,21 +202,24 @@ export const FixCard = memo(function FixCard(props: {
   const { fix, note, edits, commit, newest } = s;
   const held = new Set(fix.commits.filter((c) => c.state !== "undone").flatMap((c) => c.edits));
   const fixed = edits.length > 0;
+  // session-consult.md part D: the fix run of a session import. Its log is the log of the session run.
+  const session = fix.run.consult?.run;
   return (
     <article
       id={`fx-${key}`}
       data-fix={key}
+      data-fix-session={session !== undefined ? true : undefined}
       tabIndex={-1}
-      aria-label={`Proposed fix from ${short}: ${plural(edits.length, "edit")}.${commit ? ` ${commit.state === "staged" ? "Staged" : "Committed"}.` : ""}`}
+      aria-label={`Proposed fix from ${session !== undefined ? "your session" : short}: ${plural(edits.length, "edit")}.${commit ? ` ${commit.state === "staged" ? "Staged" : "Committed"}.` : ""}`}
       className={cn(box, commit && "border-solid")}
     >
       <div className="flex min-h-(--av) flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-muted-foreground">
         <AiAvatar meta={ctx.meta} />
         <b className="font-semibold text-foreground">{short}</b>
         <span>{fixed ? `Proposed fix, ${plural(edits.length, "edit")}` : "No fix proposed"}</span>
-        {!newest && <span>from an earlier fix run</span>}
+        {session !== undefined ? <span>from your session</span> : !newest && <span>from an earlier fix run</span>}
         <span className="ml-auto flex items-center">
-          <LogButton run={fix.run.id} ctx={ctx} />
+          <LogButton run={session ?? fix.run.id} ctx={ctx} />
         </span>
       </div>
       {note && (

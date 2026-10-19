@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Session consult dialogs (docs/plans/session-consult.md parts A, B, and C). "Copy for your session" copies the text of the ticked
+// Session consult dialogs (docs/plans/session-consult.md parts A to D). "Copy for your session" copies the text of the ticked
 // groups. "Paste the answer" reads the answer of that session, shows what each entry does, and applies it after a click.
-// "Ask your session" forks the session directly; its answer goes through the same preview. Nothing posts.
+// "Ask your session" forks the session directly; its answer goes through the same preview. In part D the session also proposes
+// edits, and Apply adds them as fix cards. Nothing posts.
 import { useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, CircleStop, ClipboardCopy, ClipboardPaste, History, Info, LoaderCircle, Send, Undo2, Wrench } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
@@ -30,11 +31,16 @@ import {
   type PlanRow,
   parseAnswer,
   planAnswer,
+  SESSION_FIX_MAX_TURNS,
+  SESSION_MAX_TURNS,
   type SessionDto,
+  type SessionMode,
+  sessionModes,
 } from "../../shared/consult";
 import type { PrRow } from "../../shared/dto";
 import { busyText } from "../ask/model";
 import { dialogKeys } from "../fix/CloneDialog";
+import { fixesKey } from "../fix/data";
 import type { FixTarget } from "../fix/model";
 import { useMeta } from "../meta";
 import { agoLong } from "../pr/threads";
@@ -48,10 +54,13 @@ import { useNow } from "../shell/Sidebar";
 import {
   consultKey,
   loadGroups,
+  loadMode,
   loadSnapshot,
   postImport,
+  postSessionImport,
   postUndo,
   saveGroups,
+  saveMode,
   saveSnapshot,
   useConsultData,
   useSessionAnswer,
@@ -63,6 +72,14 @@ export const CONSULT_OWN_ONLY = "Copy for your session works only on your own pu
 
 const kb = (bytes: number) => (bytes < 1000 ? plural(bytes, "byte") : `${(bytes / 1000).toFixed(1)} KB`);
 const VERDICT: Record<ConsultVerdict, string> = { accept: "Accept", reject: "Reject", question: "Question" };
+// Part D. The turn caps come from consult.ts sessionMaxTurns.
+const MODE: Record<SessionMode, { name: string; about: string }> = {
+  judge: { name: "Judge only", about: `A verdict for each review point. At most ${SESSION_MAX_TURNS} turns.` },
+  fix: {
+    name: "Judge and propose fixes",
+    about: `A verdict for each point, and code edits for each point that it accepts. You review each edit before Apply. At most ${SESSION_FIX_MAX_TURNS} turns.`,
+  },
+};
 const rowBox = "grid cursor-pointer grid-cols-[18px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-0.5 rounded px-1 py-2 hover:bg-hover";
 
 // from: the ID of the element that takes the focus after the dialog. run: a session run to show (part C).
@@ -92,11 +109,12 @@ export function useConsult(pr: PrRow, o: { announce: (text: string) => void; ope
       setOpen({ mode, from, run });
     };
   const close = () => setOpen(null);
-  // The import changes reply drafts, findings, and the post plan.
+  // The import changes reply drafts, findings, the post plan, and with a session fix (part D) the fix runs.
   const changed = () => {
     void qc.invalidateQueries({ queryKey: replyKey(pr.id) });
     void qc.invalidateQueries({ queryKey: planKey(pr.id) });
     void qc.invalidateQueries({ queryKey: consultKey(pr.id) });
+    void qc.invalidateQueries({ queryKey: fixesKey(pr.id) });
     void qc.invalidateQueries({ queryKey: ["run"] });
   };
   const finalFocus = () => (open && document.getElementById(open.from)) || true;
@@ -318,13 +336,22 @@ const resultText = (d: ConsultImportDto) => {
     d.discarded && `Discarded ${plural(d.discarded, "finding")}.`,
     d.marked && `Marked ${plural(d.marked, "finding")}.`,
     ticks && `${plural(ticks, "item")} ticked for a fix.`,
+    d.fix && `Added the fix of your session: ${plural(d.fix.edits, "edit")} for ${plural(d.fix.items, "item")}.`,
   ].filter(Boolean);
   return parts.length ? parts.join(" ") : "Nothing changed.";
 };
 
+// Part D: an accepted item also gets the edits that the session proposed for it.
+const withFix = (rows: PlanRow[], edits: Readonly<Record<string, number>>): PlanRow[] =>
+  rows.map((r) => {
+    const n = r.act === "accept" ? (edits[r.id] ?? 0) : 0;
+    return n ? { ...r, text: `${r.text} Adds ${plural(n, "proposed edit")} from your session.` } : r;
+  });
+
 type Changes = { onChanged: () => void; onFix: (t: FixTarget[]) => void };
 // given: the answer of a session run (part C) with the item keys at its start. The paste box does not show then.
-type Given = { entries: unknown[]; snapshot: Record<string, string>; title: string };
+// edits: part D, the count of proposed edits per item ID.
+type Given = { run: number; entries: unknown[]; snapshot: Record<string, string>; edits: Record<string, number>; title: string };
 
 function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given }: Body & Changes & { given?: Given }) {
   const q = useConsultData(pr.id, true);
@@ -334,7 +361,8 @@ function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given 
   const [stored] = useState(() => loadSnapshot(pr.id));
   const snapshot = given ? given.snapshot : stored;
   const parsed = given ? { entries: given.entries } : raw.trim() ? parseAnswer(raw) : null;
-  const rows = parsed && "entries" in parsed && q.data ? planAnswer(q.data.items, parsed.entries, snapshot) : null;
+  const planned = parsed && "entries" in parsed && q.data ? planAnswer(q.data.items, parsed.entries, snapshot) : null;
+  const rows = planned && given ? withFix(planned, given.edits) : planned;
   const changes = rows?.filter((r) => r.act).length ?? 0;
   const error = parsed && "error" in parsed ? parsed.error : null;
 
@@ -342,7 +370,7 @@ function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given 
     if (!parsed || !("entries" in parsed) || !changes || busy) return;
     setBusy(true);
     try {
-      const d = await postImport(pr.id, parsed.entries, snapshot);
+      const d = given ? await postSessionImport(pr.id, given.run) : await postImport(pr.id, parsed.entries, snapshot);
       setDone(d);
       onChanged();
       announce(`Applied. ${resultText(d)}`);
@@ -358,8 +386,10 @@ function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given 
     try {
       const u = await postUndo(pr.id, done.run);
       onChanged();
+      const fix =
+        u.fix && (u.fix.removed ? "Removed the fix of your session." : "The fix of your session stays: a fix commit holds its edits.");
       announce(
-        `Undone. ${[u.drafts && `Removed ${plural(u.drafts, "reply draft")}.`, u.replaced && `Brought back ${plural(u.replaced, "earlier draft")}.`, u.findings && `Reset ${plural(u.findings, "finding")}.`].filter(Boolean).join(" ")}`,
+        `Undone. ${[u.drafts && `Removed ${plural(u.drafts, "reply draft")}.`, u.replaced && `Brought back ${plural(u.replaced, "earlier draft")}.`, u.findings && `Reset ${plural(u.findings, "finding")}.`, fix].filter(Boolean).join(" ")}`,
       );
       onClose();
     } catch (e) {
@@ -398,9 +428,12 @@ function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given 
           <p id="consult-result" role="status" className="m-0 text-sm font-medium">
             Applied. {resultText(done)}
           </p>
-          <PlanTable rows={done.rows} done />
+          <PlanTable rows={given && done.fix ? withFix(done.rows, given.edits) : done.rows} done />
           <p className="m-0 text-xs text-muted-foreground">
-            The reply drafts wait under their threads. Accept them to put them in Ready to post. A Fix list tick stays as the default tick.
+            The reply drafts wait under their threads. Accept them to put them in Ready to post.{" "}
+            {done.fix
+              ? "The proposed edits wait under their threads and findings. Review them, then click Apply in the bar at the bottom. Nothing is written before that."
+              : "A Fix list tick stays as the default tick."}
           </p>
         </>
       ) : (
@@ -453,7 +486,7 @@ function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given 
             <Button variant="outline" onClick={onClose}>
               Close
             </Button>
-            {ticks.length > 0 && (
+            {ticks.length > 0 && !done.fix && (
               <Button id="consult-fix" onClick={() => onFix(ticks)}>
                 <Wrench aria-hidden data-icon="inline-start" />
                 Open the Fix list ({ticks.length} ticked)
@@ -533,7 +566,7 @@ function SessionBody({ pr, run, announce, onClose, onChanged, onFix, finalFocus 
         onChanged={onChanged}
         onFix={onFix}
         finalFocus={finalFocus}
-        given={{ ...answer.data, title: titleOf(done.consult?.title ?? null) }}
+        given={{ ...answer.data, run: done.id, title: titleOf(done.consult?.title ?? null) }}
       />
     );
   if (!shown || done)
@@ -544,7 +577,10 @@ function SessionBody({ pr, run, announce, onClose, onChanged, onFix, finalFocus 
       </Button>,
     );
   if (shown.status === "running")
-    return frame(<SessionRunning run={shown.id} startedAt={shown.startedAt} />, <RunningFooter id={shown.id} onClose={onClose} />);
+    return frame(
+      <SessionRunning run={shown.id} startedAt={shown.startedAt} fix={shown.consult?.mode === "fix"} />,
+      <RunningFooter id={shown.id} onClose={onClose} />,
+    );
   return frame(
     <Alert variant={shown.status === "failed" ? "destructive" : "default"} role="status">
       {shown.status === "failed" ? <CircleAlert aria-hidden /> : <CircleStop aria-hidden />}
@@ -563,7 +599,7 @@ function SessionBody({ pr, run, announce, onClose, onChanged, onFix, finalFocus 
   );
 }
 
-function SessionRunning({ run, startedAt }: { run: number; startedAt: number }) {
+function SessionRunning({ run, startedAt, fix }: { run: number; startedAt: number; fix: boolean }) {
   const now = useNow(true);
   const calls = useRun(run).data?.events.length ?? 0;
   const s = Math.max(0, Math.floor((now - startedAt) / 1000));
@@ -571,7 +607,7 @@ function SessionRunning({ run, startedAt }: { run: number; startedAt: number }) 
     <div className="grid gap-2">
       <p id="session-state" role="status" className="m-0 flex items-center gap-2 text-sm font-medium">
         <LoaderCircle aria-hidden className="size-[15px] animate-spin motion-reduce:animate-none" />
-        Your session is answering…
+        {fix ? "Your session is answering and proposing fixes…" : "Your session is answering…"}
       </p>
       <p className="m-0 text-sm text-ink-2">
         {plural(calls, "tool call")}, {Math.floor(s / 60)}:{String(s % 60).padStart(2, "0")}.
@@ -625,6 +661,7 @@ function SessionPicker({
   const list = useSessions(pr.id, true);
   const { groups, tick } = useGroups();
   const [choice, setChoice] = useState<string | null>(null);
+  const [mode, setMode] = useState(loadMode);
   const start = useStartSession(pr.id);
   const runs = usePrRuns(pr.id).data;
   const t = useMemo(() => q.data && consultText(q.data, groups), [q.data, groups]);
@@ -633,10 +670,14 @@ function SessionPicker({
   const pick: SessionDto | null = sessions.find((s) => s.id === choice) ?? sessions[0] ?? null;
   const now = Date.now();
   const ready = !!pick && !!t?.ids.length && !start.isPending;
+  const pickMode = (m: SessionMode) => {
+    setMode(m);
+    saveMode(m);
+  };
   const ask = () => {
     if (!pick || !ready) return;
     start.mutate(
-      { session: pick.id, groups: consultGroups.filter((g) => groups.has(g)) },
+      { session: pick.id, groups: consultGroups.filter((g) => groups.has(g)), mode },
       {
         onSuccess: (r) => {
           if ("conflict" in r) {
@@ -644,7 +685,7 @@ function SessionPicker({
             toast.add({ title: "The session was not asked", description: busyText(runner, kind, "a pull request") });
             return;
           }
-          announce(`Asked ${titleOf(pick.title)}. Your session is answering.`);
+          announce(`Asked ${titleOf(pick.title)}. Your session is answering${mode === "fix" ? " and proposing fixes" : ""}.`);
           onStarted(r.run.id);
         },
         onError: (e) => toast.add({ title: "The session was not asked", description: e.message }),
@@ -692,12 +733,31 @@ function SessionPicker({
           )}
         </FieldSet>
       )}
+      <FieldSet className="gap-0">
+        <FieldLegend variant="label">Your session</FieldLegend>
+        {sessionModes.map((m) => (
+          <label key={m} className={rowBox} data-session-mode={m}>
+            <input
+              type="radio"
+              name="session-mode"
+              className="m-0 mt-[3px] accent-foreground"
+              checked={mode === m}
+              aria-describedby={`sm-${m}-about`}
+              onChange={() => pickMode(m)}
+            />
+            <b className="text-sm font-semibold">{MODE[m].name}</b>
+            <span id={`sm-${m}-about`} className="col-start-2 text-xs text-muted-foreground">
+              {MODE[m].about}
+            </span>
+          </label>
+        ))}
+      </FieldSet>
       <p id="session-cost" className="m-0 text-sm text-ink-2">
         {!pick
           ? "Pick a session first."
           : t && !t.ids.length
             ? "Nothing to ask. Tick a group with items."
-            : `The resume loads the whole history of this session: ${sizeText(pick.bytes)}, up to about ${pick.tokens.toLocaleString()} tokens of your plan quota. The review points add ${t ? kb(t.bytes) : "some text"}.`}
+            : `The resume loads the whole history of this session: ${sizeText(pick.bytes)}, up to about ${pick.tokens.toLocaleString()} tokens of your plan quota. The review points add ${t ? kb(t.bytes) : "some text"}.${mode === "fix" ? ` Judge and propose fixes allows up to ${SESSION_FIX_MAX_TURNS} turns instead of ${SESSION_MAX_TURNS}. Each turn sends the history again, so this mode uses more quota.` : ""}`}
       </p>
       <p className="m-0 text-xs text-muted-foreground">
         The app reads only the folder, branch, time, and title lines of your transcripts. It never shows or stores their message text.

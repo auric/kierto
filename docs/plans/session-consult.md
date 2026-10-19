@@ -1,12 +1,13 @@
 # Session consult plan: ask the session that wrote the code
 
-Status: parts A and B are code complete (package S1, 2026-10-15). Part C is code complete behind its opt-in (package S2, 2026-10-16). Gate B16 passed on CLI 2.1.301 (2026-10-16, integration-check.md). The user runs docs/smoke-r3.md part K.
+Status: parts A and B are code complete (package S1, 2026-10-15). Part C is code complete behind its opt-in (package S2, 2026-10-16). Gate B16 passed on CLI 2.1.301 (2026-10-16, integration-check.md). Part D is code complete (package S3, 2026-10-19). The user runs docs/smoke-r3.md part K.
 
 ## 0. Sources and user decisions
 
 - Design notes of 2026-10-14 (session scratchpad), docs/plans/pr-view-v4.md section 9, docs/plans/fix-ux.md.
 - User decision (2026-10-14): build A (copy) and B (paste the answer back) now. Build C (direct consult) after the gate.
 - User decision: the copy holds all four groups: open reviewer comments, Review Loop findings, your own open threads, and resolved threads. The user asked for the best outcome on item selection.
+- User decision (2026-10-19): "Ask your session" gets a second mode, "Judge and propose fixes" (part D). The session that wrote the code also writes the fixes, because it knows the code.
 
 ## 1. CLI facts for part C
 
@@ -101,10 +102,47 @@ Source: a scout run on CLI 2.1.300 and its docs, 2026-10-14. Part C uses them. G
 - INFO: (d) run 3 leaves no new transcript; the folder of the fork transcript; `init.permissionMode`; `init.model`; hook events; history replay in stdout.
 - `--dry-run` prints the planned argv and starts no model call.
 
-## 5. Known limits
+## 5. Part D: Judge and propose fixes (as built, package S3)
+
+### Mode
+
+- The dialog of part C has "Your session" with two modes: "Judge only" (part C) and "Judge and propose fixes". The choice stays per viewer in localStorage `rl:consult-mode` (try/catch). Default: Judge only.
+- Fix rules apply: "Ask your session" works on own pull requests only, so the mode shows only there.
+- The cost line adds the higher turn cap in the fix mode: "Judge and propose fixes allows up to 62 turns instead of 12. Each turn sends the history again, so this mode uses more quota." The resume cost stays the same.
+- POST /api/prs/:id/consult/session takes `mode` (`judge` or `fix`, absent for judge). `consult_json` stores it, and the run setup line names it.
+
+### Run
+
+- Same run as part C: the fork with `--fork-session` and `--no-session-persistence`, the sanitized snapshot of the PR head as cwd, `--restricted`, `--strict-mcp-config` with an empty MCP config, the read tools Read, Grep, and Glob, and the same auth check and child env.
+- Decision: `--max-turns` is 62 (`SESSION_FIX_MAX_TURNS`): the 12 judge turns plus one Read per edit for the exact old text, with at most 50 edits (`MAX_FIX_EDITS`). Why: the session knows the code, but its memory can be older than the head, so each edit needs a Read of the file.
+- Decision: the run timeout is the runner limit of an app fix run (60 minutes), not the 20 minutes of a judge run.
+- stdin: the text of part A and `SESSION_FIX_RULES`. Resume reuses the system prompt of the session, so the fix rules go into stdin: judge each item first; give notes and edits only for accepted items; read the whole thread; fix only the named problem; the item ID mapping (T123 to thread 123, F45 to finding 45); paths from the repository root; read the file before writing old; the edit rules of the app fix agent (`FIX_EDIT_RULES` in src/shared/review.ts, one source for both); the size caps (25 notes, 50 edits, 20,000 characters per text, 200,000 bytes in all).
+- Schema: `{"answers": [...], "fix": <fix result>}`. The fix result has the shape of `fixResult` (summary, notes with thread or finding, fixed, and reason, edits with thread or finding, path, old, and new, coverage). Only the descriptions of thread and finding name the item IDs.
+
+### Validation and storage
+
+- Decision: the session run owns its proposal. `validateFix` (src/server/review/fix.ts) checks the edits against the files at the head of the snapshot, read from the cache (`readFixFiles`). The requested targets are the accepted entries for items that need a verdict, once each (`acceptedTargets`). A note or an edit for another item drops, with the reason in the coverage.
+- The notes go to `fix_json` and the valid edits to `fix_edit` of the session run. The run keeps the head in `refs/rl/<PR>/fix/<run>`. A fix that does not match the schema drops, and the answers stay.
+- The run summary is "N answers, M edits". A drop makes the run incomplete, so the run row shows the coverage.
+- No fix card shows before Apply: GET /api/prs/:id/fixes lists fix runs only.
+- GET /api/prs/:id/consult/session/:run adds `mode` and the edit count per item ID. The preview row of an accepted item says "Adds K proposed edits from your session."
+
+### Apply and Undo
+
+- The preview and Apply of part B stay. Apply of a session answer sends only the run ID. The server reads the entries and the item keys of that run.
+- Decision: Apply copies the notes and edits of the items that it accepts into a new fix run (kind fix, no migration). The fix run takes the heads, the merge base, and the model of the session run. `consult_json` holds a copy of the session record with `run` (the session run) and `paste` (the consult run). Edits for items that Apply skips or does not accept stay out. Why: the fix pipeline then works unchanged: fix cards under threads and findings, Review edits, Apply to the clone or an app branch with one commit, "Fixed in" drafts, fixed marks on findings, and Undo of the commit.
+- One fix run per session run. A second Apply of the same answer adds no second fix run.
+- The fix cards say "from your session". Their Log opens the log of the session run. The bar says "Fix from your session: M edits proposed". No run list shows the fix run of an import, because it starts no process.
+- The result view says "Added the fix of your session: M edits for K items." It shows no "Open the Fix list" button then, because the edits already wait under their items.
+- Undo of the import deletes its fix run, unless a fix commit that is not undone holds its edits. Then the fix run stays, and the commit keeps its own Undo.
+- Nothing is written to the clone, committed, or posted without the clicks of part B and of the fix pipeline.
+
+## 6. Known limits
 
 - The snapshot for the change check lives in the browser that copied. A paste in another browser checks only the current state, and the preview says so.
 - The code quote needs the git cache. Without it, threads quote the stored excerpt.
 - Part C reads only the 300 newest transcripts. An older session on the branch does not show.
 - The transcript format is internal to the CLI. A format change can hide sessions or titles. The finder then shows fewer sessions, never message text.
 - Gate B16 ran on CLI 2.1.301 only. A newer CLI can change the resume behavior. The init tool check still stops a run with another tool.
+- Part D: B16 covers the resume and the structured output. The larger schema, the edit volume, and the 62-turn cap are not verified on the real CLI (integration-check.md U61).
+- Part D: the preview has no per-row choice. Apply carries out every row that it can, so each accepted item with an edit gets its fix card. A wrong edit stays unticked in the fix card, or the user skips its Apply.

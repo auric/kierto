@@ -433,7 +433,18 @@ export type RunDto = {
   // A running run before the CLI starts: indexing builds the codegraph index of the snapshot.
   phase?: "indexing";
   // A session run only: the transcript that it forked and the text that it got, with no transcript text. tokens: sessionTokens(bytes).
-  consult?: { session: string; title: string | null; bytes: number; tokens: number; items: number; textBytes: number };
+  // mode: consult.ts sessionModes, absent for runs made before part D. run: on a fix run that an import made from the proposal of a
+  // session run (session-consult.md part D), that session run.
+  consult?: {
+    session: string;
+    title: string | null;
+    bytes: number;
+    tokens: number;
+    items: number;
+    textBytes: number;
+    mode?: "judge" | "fix";
+    run?: number;
+  };
 };
 
 export type ItemStatus = "new" | "accepted" | "discarded" | "posted";

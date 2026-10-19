@@ -346,6 +346,7 @@ Result format: one line `<PASS|FAIL> B16 calls=3 (a) original hash unchanged=<bo
 | U59. A fork without `--no-session-persistence` writes its transcript in the project folder of the fork cwd, with a new session ID | OBSERVED (2.1.301) | B16 INFO: fork transcripts=1 (fork cwd folder), fork session=new. The original folder gets no file. |
 | U60. A resumed `-p` run with `--restricted` fires no hooks | OBSERVED (2.1.301) | B16 INFO: hook events=0 on the fork. |
 | B16. Throwaway session, then two forks with the app flags from another cwd: (a) to (e) above | PASS (2.1.301, 2026-10-16) | Own cap 3 calls. It never opened a real session. (a), (b), (c), and (e) pass. (d) INFO: no new transcript. |
+| U61. A fork in the mode "Judge and propose fixes" (docs/plans/session-consult.md part D) returns the answers and the edits as `structured_output`, with up to 62 turns | PARTLY COVERED | The flags, the resume, and `structured_output` with `--resume` are the same as in B16 (b) and (c). The larger schema, the edit volume, and the turn count are not verified on the real CLI. The fake CLI covers them in the tests. Smoke r3 part K steps 20 to 27 check them. |
 
 ## Thread resolver (not verified)
 

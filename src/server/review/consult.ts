@@ -9,11 +9,13 @@ import {
   type ConsultData,
   type ConsultGroup,
   type ConsultImportDto,
+  type ConsultImportInput,
   type ConsultItem,
   type ConsultUndoDto,
   consultText,
   findingKey,
   indentBlock,
+  needsVerdict,
   oneLine,
   type PlanRow,
   planAnswer,
@@ -23,15 +25,15 @@ import {
   sessionTokens,
   threadKey,
 } from "../../shared/consult";
-import type { ChangedFile, CommentDto, FixDto, ReviewItemDto } from "../../shared/dto";
+import type { ChangedFile, CommentDto, FixDto, ReviewItemDto, RunSummary } from "../../shared/dto";
 import { isMe } from "../../shared/me";
-import type { AnchoredFinding, ReplyPayload, SessionMark } from "../../shared/review";
+import type { AnchoredFinding, FixThread, ReplyPayload, SessionMark } from "../../shared/review";
 import { byThread, newestLive, threadTurn } from "../../shared/turn";
 import { type ExcerptLine as CommentLine, threadSpot } from "../../shared/types";
 import { prDetail } from "../inbox/queries";
 import { cachedHeads } from "./diff";
 import { git } from "./git";
-import { type ItemRow, type ReviewJobs, type StartResult, toItemDto } from "./jobs";
+import { type ItemRow, type ReviewJobs, type SessionRecord, type StartResult, toItemDto } from "./jobs";
 import type { FindInput, FoundSession } from "./sessions";
 import { longPath } from "./workspace";
 
@@ -86,6 +88,26 @@ const SQL = {
     WHERE kind = 'finding' AND status <> 'posted' AND json_extract(payload_json, '$.session.run') = $run
       AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
   markedRuns: `SELECT DISTINCT run FROM review_item WHERE kind = 'finding' AND json_extract(payload_json, '$.session.run') = $run`,
+  // Part D: the proposal of a session run (jobs.ts judgeSession) and the fix run that an import makes from it.
+  proposal: "SELECT fix_json, consult_json FROM review_run WHERE id = $run AND pr = $pr AND kind = 'session'",
+  proposed: "SELECT id, thread, item FROM fix_edit WHERE run = $run ORDER BY ord",
+  fixRun: `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, merge_base, fetch_via, status, session_id,
+      cli_version, model, effort, effort_default, summary_json, fix_json, consult_json, started_at, finished_at)
+    SELECT pr, 'fix', '', '', $key, source_head, target_head, merge_base, fetch_via, 'completed', session_id, cli_version, model, effort,
+      effort_default, $summary, $fix, $consult, $now, $now FROM review_run WHERE id = $session RETURNING id`,
+  copyEdit: `INSERT INTO fix_edit (run, ord, thread, item, path, old, new, start, rows_json)
+    SELECT $run, ord, thread, item, path, old, new, start, rows_json FROM fix_edit WHERE id = $id`,
+  linkedFix: "SELECT id FROM review_run WHERE pr = $pr AND kind = 'fix' AND json_extract(consult_json, '$.paste') = $run",
+  fromSession: "SELECT 1 FROM review_run WHERE pr = $pr AND kind = 'fix' AND json_extract(consult_json, '$.run') = $session",
+  // An undone commit freed its edits and discarded its "Fixed in" drafts. A post of such a draft needs the commit on the PR, and then
+  // fix-routes.ts refuses the undo.
+  fixUsed: "SELECT 1 FROM fix_commit WHERE run = $run AND state <> 'undone' LIMIT 1",
+  dropFix: [
+    "DELETE FROM review_item WHERE run = $run",
+    "DELETE FROM fix_commit WHERE run = $run",
+    "DELETE FROM fix_edit WHERE run = $run",
+    "DELETE FROM review_run WHERE id = $run",
+  ],
 };
 
 type Heads = { project: string; repo: string; pr_id: number; source_head: string | null; target_head: string | null };
@@ -411,16 +433,52 @@ export async function consultData(s: ConsultSource, prId: number, code = true): 
 
 type ImportOut = { status: 200; dto: ConsultImportDto; runs: number[] } | { status: 400 | 404 | 409; error: string };
 
+// Part D: the notes and edits of a session run for the items that the import accepted, copied into a new fix run. The fix pipeline
+// then shows, applies, and undoes them as the result of an app fix run. Edits for the other items stay out.
+function fixFromSession(db: Database, o: { pr: number; session: number; paste: number; ticks: ConsultImportDto["ticks"]; now: number }) {
+  const p = db.query(SQL.proposal).get({ run: o.session, pr: o.pr }) as { fix_json: string | null; consult_json: string } | null;
+  // One fix run per session run. An undo that keeps a used fix run keeps its edits on screen.
+  if (!p || db.query(SQL.fromSession).get({ pr: o.pr, session: o.session })) return null;
+  const key = (thread: number | null | undefined, finding: number | null | undefined) => (thread != null ? `T${thread}` : `F${finding}`);
+  const ticked = new Set([...o.ticks.threads.map((t) => `T${t}`), ...o.ticks.findings.map((f) => `F${f}`)]);
+  const notes = (JSON.parse(p.fix_json ?? "[]") as FixThread[]).filter((n) => ticked.has(key(n.thread, n.finding)));
+  const rows = db.query(SQL.proposed).all({ run: o.session }) as { id: number; thread: number | null; item: number | null }[];
+  const edits = rows.filter((e) => ticked.has(key(e.thread, e.item)));
+  if (!notes.length && !edits.length) return null;
+  const consult: SessionRecord = { ...(JSON.parse(p.consult_json) as SessionRecord), run: o.session, paste: o.paste };
+  const summary: RunSummary = {
+    summary: `${plural(edits.length, "edit")} from your session`,
+    risks: [],
+    coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+    dropped: [],
+  };
+  const run = (
+    db.query(SQL.fixRun).get({
+      key: `consult:${o.pr}:${o.paste}:fix`,
+      summary: JSON.stringify(summary),
+      fix: JSON.stringify(notes),
+      consult: JSON.stringify(consult),
+      now: o.now,
+      session: o.session,
+    }) as { id: number }
+  ).id;
+  for (const e of edits) db.query(SQL.copyEdit).run({ run, id: e.id });
+  const items = new Set([...notes.map((n) => key(n.thread, n.finding)), ...edits.map((e) => key(e.thread, e.item))]);
+  return { run, edits: edits.length, items: items.size };
+}
+
 // One transaction. Each row of the plan with an act changes the database. The other rows change nothing.
-export async function importAnswer(
-  s: ConsultSource,
-  prId: number,
-  input: { entries: unknown[]; snapshot: Record<string, string> | null },
-  now = Date.now(),
-): Promise<ImportOut> {
+// A session import reads the entries and the item keys of its run on the server.
+export async function importAnswer(s: ConsultSource, prId: number, input: ConsultImportInput, now = Date.now()): Promise<ImportOut> {
+  let given: { entries: unknown[]; snapshot: Record<string, string> | null; session: number | null };
+  if ("session" in input) {
+    const a = s.review.sessionAnswer(s.db, prId, input.session);
+    if (!a) return { status: 404, error: "Answer not found." };
+    given = { entries: a.entries, snapshot: a.snapshot, session: input.session };
+  } else given = { ...input, session: null };
   const data = await consultData(s, prId, false);
   if ("error" in data) return data;
-  const rows = planAnswer(data.items, input.entries, input.snapshot);
+  const rows = planAnswer(data.items, given.entries, given.snapshot);
   const acts = rows.filter(
     (r): r is PlanRow & { item: ConsultItem; verdict: NonNullable<PlanRow["verdict"]> } => r.act !== null && r.item !== null,
   );
@@ -436,7 +494,7 @@ export async function importAnswer(
         key: `consult:${prId}:${now}`,
         source: h.source_head ?? "",
         target: h.target_head ?? "",
-        raw: JSON.stringify(input.entries),
+        raw: JSON.stringify(given.entries),
         now,
       }) as { id: number }
     ).id;
@@ -474,10 +532,11 @@ export async function importAnswer(
         if (n && r.verdict === "accept") out.ticks.findings.push(target);
       }
     }
-    return id;
+    const fix = given.session === null ? null : fixFromSession(db, { pr: prId, session: given.session, paste: id, ticks: out.ticks, now });
+    return { id, fix };
   })();
-  const runs = (db.query(SQL.markedRuns).all({ run }) as { run: number }[]).map((x) => x.run);
-  return { status: 200, dto: { run, rows, ...out }, runs };
+  const runs = (db.query(SQL.markedRuns).all({ run: run.id }) as { run: number }[]).map((x) => x.run);
+  return { status: 200, dto: { run: run.id, rows, ...out, fix: run.fix }, runs: run.fix ? [...runs, run.fix.run] : runs };
 }
 
 // ---------- Part C: ask the session directly ----------
@@ -550,17 +609,23 @@ export async function startSession(
   if (s.review.open() !== s.db) return CHANGED;
   const t = consultText(data, new Set(input.groups));
   if (!t.ids.length) return { status: 400, error: "Nothing to ask. Tick a group with items." };
-  const keys = new Map(data.items.map((it) => [it.id, it.key]));
+  const byId = new Map(data.items.map((it) => [it.id, it]));
+  const mode = input.mode ?? "judge";
   return s.review.session(s.db, prId, {
     path: picked.path,
     id: picked.id,
     title: picked.title,
     bytes: picked.bytes,
-    prompt: sessionPrompt(t.text),
-    snapshot: Object.fromEntries(t.ids.map((id) => [id, keys.get(id) ?? ""])),
+    prompt: sessionPrompt(t.text, mode),
+    snapshot: Object.fromEntries(t.ids.map((id) => [id, byId.get(id)?.key ?? ""])),
     groups: input.groups,
     items: t.ids.length,
     textBytes: t.bytes,
+    mode,
+    asked: t.ids.filter((id) => {
+      const it = byId.get(id);
+      return it !== undefined && needsVerdict(it.group);
+    }),
   });
 }
 
@@ -569,12 +634,20 @@ export async function startSession(
 type UndoOut = { status: 200; dto: ConsultUndoDto; runs: number[] } | { status: 404; error: string };
 
 // Discards the session drafts that are not posted, brings back the drafts that they replaced while no newer draft exists, and resets
-// the findings that the run marked.
+// the findings that the run marked. Part D: deletes the fix run of the import, unless a fix commit holds its edits.
 export function undoImport(db: Database, prId: number, run: number): UndoOut {
   if (!db.query(SQL.consultRun).get({ run, pr: prId })) return { status: 404, error: "Paste not found." };
   const runs = (db.query(SQL.markedRuns).all({ run }) as { run: number }[]).map((x) => x.run);
+  const linked = db.query(SQL.linkedFix).get({ pr: prId, run }) as { id: number } | null;
+  if (linked) runs.push(linked.id);
   const dto = db.transaction((): ConsultUndoDto => {
-    const out = { drafts: 0, replaced: 0, findings: 0 };
+    let fix: ConsultUndoDto["fix"] = null;
+    if (linked) {
+      const used = db.query(SQL.fixUsed).get({ run: linked.id }) !== null;
+      if (!used) for (const sql of SQL.dropFix) db.query(sql).run({ run: linked.id });
+      fix = { removed: !used };
+    }
+    const out = { drafts: 0, replaced: 0, findings: 0, fix };
     for (const r of db.query(SQL.drafts).all({ run }) as ItemRow[]) {
       if (!db.query(SQL.discard).run({ id: r.id }).changes) continue;
       out.drafts++;

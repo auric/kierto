@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Session consult (docs/plans/session-consult.md parts A and B): the text, the answer parser, the import plan, the import, and the undo.
+// Session consult (docs/plans/session-consult.md parts A, B, and D): the text, the answer parser, the import plan, the import, the undo,
+// and the prompt, schema, and targets of a session run that proposes fixes.
 // The tests seed a temp database and a temp git cache. No test reaches a forge or the real CLI.
 import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
@@ -11,6 +12,7 @@ import { join } from "node:path";
 import { createApp } from "../../src/server/app";
 import { writeConfig } from "../../src/server/config";
 import { createLive } from "../../src/server/live";
+import { fixAgent, type Profile, SHIPPED_PROFILES } from "../../src/server/review/catalog";
 import { git, gitEnv } from "../../src/server/review/git";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import { cachePath } from "../../src/server/review/workspace";
@@ -18,18 +20,26 @@ import { createSecrets } from "../../src/server/secrets";
 import { createSettings, type Settings } from "../../src/server/settings";
 import {
   ANSWER_RULES,
+  acceptedTargets,
   type ConsultData,
   type ConsultImportDto,
   type ConsultItem,
   type ConsultUndoDto,
   consultGroups,
+  consultJsonSchema,
   consultText,
   findingKey,
   parseAnswer,
   planAnswer,
+  SESSION_FIX_RULES,
+  SESSION_MAX_TURNS,
+  SESSION_RULES,
+  sessionMaxTurns,
+  sessionPrompt,
   threadKey,
 } from "../../src/shared/consult";
 import type { ReviewItemDto, RunDto } from "../../src/shared/dto";
+import { FIX_EDIT_RULES, fixResult, MAX_FIX_EDITS } from "../../src/shared/review";
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
 const root = mkdtempSync(join(tmpdir(), "rl-consult-"));
@@ -197,6 +207,84 @@ describe("planAnswer", () => {
     expect(findingKey("discarded", "x")).not.toBe(findingKey("new", "x"));
     expect(threadKey(false, 5)).not.toBe(threadKey(false, 6));
     expect(threadKey(false, 5)).not.toBe(threadKey(true, 5));
+  });
+});
+
+// ---------- Part D: the session proposes fixes ----------
+
+describe("part D: judge and propose fixes", () => {
+  test("the fix prompt holds the fix rules of the app fix run; the judge prompt does not", () => {
+    const fix = sessionPrompt("TEXT", "fix");
+    const judge = sessionPrompt("TEXT");
+    expect(judge).toBe(`TEXT\n${SESSION_RULES}\n`);
+    expect(sessionPrompt("TEXT", "judge")).toBe(judge);
+    expect(fix).toBe(`TEXT\n${SESSION_FIX_RULES}\n`);
+    expect(judge).not.toContain("## How to propose fixes");
+    for (const rule of FIX_EDIT_RULES) {
+      expect(fix).toContain(`- ${rule}\n`);
+      // One source: the app fix agent gets the same lines.
+      expect(fixAgent(SHIPPED_PROFILES[0] as Profile).prompt).toContain(rule);
+    }
+    expect(fix).toContain("Judge each item first, and put each verdict into answers. Give no note and no edit for an item that you reject");
+    expect(fix).toContain("Read the whole conversation of each thread, not only its newest message.");
+    expect(fix).toContain("For item T123, set thread to 123 and leave out finding. For item F45, set finding to 45 and leave out thread.");
+    expect(fix).toContain("not repo/src/app.ts");
+    expect(fix).toContain(
+      "Give notes for at most 25 items and at most 50 edits. Each old and each new text holds at most 20,000 characters. All old and new texts together hold at most 200,000 bytes.",
+    );
+    expect(fix.trimEnd().endsWith("and the notes and edits into fix.")).toBe(true);
+  });
+
+  test("the fix schema adds the fix result of an app fix run, with targets named by item IDs", () => {
+    type Obj = { required: string[]; properties: Record<string, Obj & { items: Obj; maxItems?: number; description?: string }> };
+    const judge = consultJsonSchema() as unknown as Obj;
+    expect(judge.required).toEqual(["answers"]);
+    expect(consultJsonSchema("judge")).toEqual(consultJsonSchema());
+    const s = consultJsonSchema("fix") as unknown as Obj;
+    expect(s.required).toEqual(["answers", "fix"]);
+    const fix = s.properties.fix as Obj;
+    expect(fix.required).toEqual(["summary", "threads", "edits", "coverage"]);
+    const note = fix.properties.threads?.items as Obj;
+    const edit = fix.properties.edits?.items as Obj;
+    expect(fix.properties.edits?.maxItems).toBe(50);
+    expect(fix.properties.threads?.maxItems).toBe(25);
+    expect(note.required).toEqual(["fixed", "reason"]);
+    expect(edit.required).toEqual(["path", "old", "new"]);
+    expect(note.properties.thread?.description).toBe("For item T123: 123. Leave it out for a finding.");
+    expect(edit.properties.finding?.description).toBe("For item F45: 45. Leave it out for a thread.");
+    // The server parses the same shape with the app fix schema.
+    const out = {
+      summary: "s",
+      threads: [{ thread: 1, fixed: true, reason: "r" }],
+      edits: [{ finding: 2, path: "a", old: "x", new: "y" }],
+    };
+    expect(fixResult.safeParse({ ...out, coverage: { read: [], skipped: [], unavailable: [], notChecked: [] } }).success).toBe(true);
+    expect(sessionMaxTurns("judge")).toBe(SESSION_MAX_TURNS);
+    expect(sessionMaxTurns("fix")).toBe(SESSION_MAX_TURNS + MAX_FIX_EDITS);
+  });
+
+  test("acceptedTargets: accepted items that need a verdict, once; bad entries and duplicates do not count", () => {
+    const asked = ["T1", "F2", "T3", "F4", "T5"];
+    expect(
+      acceptedTargets(
+        [
+          { id: "T1", verdict: "accept", reason: "r" },
+          { id: "F2", verdict: "accept", reason: "r" },
+          { id: "T3", verdict: "reject", reason: "r" },
+          { id: "F4", verdict: "question", reason: "r" },
+          // Not in the text, or context only.
+          { id: "T9", verdict: "accept", reason: "r" },
+          // Two entries, one of them bad: planAnswer skips both.
+          { id: "T5", verdict: "accept", reason: "r" },
+          { id: "T5", verdict: "maybe" },
+          { id: " F2x", verdict: "accept", reason: "r" },
+          "text",
+        ],
+        asked,
+      ),
+    ).toEqual({ threads: [1], findings: [2] });
+    expect(acceptedTargets([{ id: " T3 ", verdict: "accept", reason: "r" }], asked)).toEqual({ threads: [3], findings: [] });
+    expect(acceptedTargets([], asked)).toEqual({ threads: [], findings: [] });
   });
 });
 
@@ -540,7 +628,7 @@ describe("POST /prs/:id/consult/import and undo", () => {
 
     const undo = await s.call("POST", `/prs/1/consult/${dto.run}/undo`);
     expect(undo.status).toBe(200);
-    expect((await undo.json()) as ConsultUndoDto).toEqual({ drafts: 3, replaced: 1, findings: 2 });
+    expect((await undo.json()) as ConsultUndoDto).toEqual({ drafts: 3, replaced: 1, findings: 2, fix: null });
     expect(s.item(30).status).toBe("accepted");
     expect(s.item(21).status).toBe("new");
     expect(JSON.parse(s.item(21).payload_json).session).toBeUndefined();
