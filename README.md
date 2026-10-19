@@ -13,7 +13,13 @@ Repository: https://github.com/auric/kierto
   <img alt="Kierto: the inbox, a pull request, and its AI review with a severity count and a Not checked list" src="docs/screenshots/inbox-light.webp">
 </picture>
 
-Kierto is Finnish for "cycle, round".
+## Why "Kierto"
+
+Kierto is Finnish for "cycle" or "round". Say it roughly as "KYER-toh".
+
+A pull request review is a loop. You review the change. The author changes the code and replies. You check again. The loop ends when every thread is resolved. Kierto keeps that loop in one place and runs each round with your own Claude Code CLI.
+
+The project started as "Review Loop". The new name keeps the same idea in one short word.
 
 ## What it does
 
