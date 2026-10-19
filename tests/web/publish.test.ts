@@ -14,6 +14,8 @@ import {
   parseDraft,
   planItems,
   postView,
+  resolveLabel,
+  resolveNote,
   shownPosts,
   splitPosts,
 } from "../../src/web/publish/model";
@@ -60,11 +62,14 @@ const comment = (id: number, o: Partial<CommentDto> = {}): CommentDto => ({
 
 describe("confirm text", () => {
   test("destText names each destination with its count", () => {
-    const planned = (d: PostDestination) => ({ destination: d });
+    const planned = (d: PostDestination, body = "Text") => ({ destination: d, body });
     expect(destText([planned(inline), planned(inline), planned(general)])).toBe("2 inline comments and 1 general comment");
     expect(destText([planned(general)])).toBe("1 general comment");
     expect(destText([planned(reply(5)), planned(reply(6))])).toBe("2 replies");
     expect(destText([planned(inline), planned(general), planned(reply(5))])).toBe("1 inline comment, 1 general comment and 1 reply");
+    // A reply post without a body only resolves its thread.
+    expect(destText([planned(reply(5)), planned(reply(6), "")])).toBe("1 reply and 1 thread resolve");
+    expect(destText([planned(reply(6), "")])).toBe("1 thread resolve");
   });
 
   test("a reply names the author of its parent and the place of the thread", () => {
@@ -147,6 +152,36 @@ describe("post states", () => {
   test("confirmed shows Posted", () => {
     expect(postView(post(1, inline, { state: "confirmed", remoteId: 9 }))).toMatchObject({ kind: "posted", actions: [] });
   });
+
+  test("a confirmed row with a resolve step shows Resolving, Resolve failed with Resolve again, or Resolved", () => {
+    const step = (state: "pending" | "done" | "failed", body = "Body", error: string | null = null) =>
+      postView(post(1, reply(5), { state: "confirmed", remoteId: 9, body, resolve: { root: 4, state, error } }));
+    expect(step("pending")).toEqual({ kind: "posting", text: "Posted. Resolving the thread…", reason: null, actions: [] });
+    expect(step("pending", "")).toMatchObject({ text: "Resolving the thread…" });
+    expect(step("failed", "Body", "Bitbucket refused.")).toEqual({
+      kind: "failed",
+      text: "Posted. Resolve failed.",
+      reason: "Bitbucket refused.",
+      actions: ["resolve"],
+    });
+    expect(step("failed", "")).toMatchObject({ text: "Resolve failed.", reason: "No reason was recorded." });
+    expect(step("done")).toEqual({ kind: "resolved", text: "Posted and resolved.", reason: null, actions: [] });
+    expect(step("done", "")).toMatchObject({ kind: "resolved", text: "Resolved." });
+    // The comment step comes first: a failed comment shows its own retry, never Resolve again.
+    expect(postView(post(1, reply(5), { state: "failed", resolve: { root: 4, state: "pending", error: null } })).actions).toEqual([
+      "again",
+      "drop",
+    ]);
+  });
+
+  test("a resolve-only post names the thread; the confirm line says what happens", () => {
+    const root = comment(100, { anchor: { path: "src/cache/flush.ts", line: 3 } });
+    expect(resolveLabel(reply(100), [root])).toBe("Resolve the thread in src/cache/flush.ts:3");
+    expect(resolveLabel(reply(999), [root])).toBe("Resolve the thread");
+    expect(resolveNote({ body: "Text", resolve: 100 })).toBe("Then resolves the thread.");
+    expect(resolveNote({ body: "", resolve: 100 })).toBe("Resolves the thread. No reply is posted.");
+    expect(resolveNote({ body: "Text" })).toBeNull();
+  });
 });
 
 describe("outbox rows", () => {
@@ -159,6 +194,16 @@ describe("outbox rows", () => {
     expect(shownPosts(rows, [comment(50)]).map((p) => p.id)).toEqual([2, 3]);
     // A deleted comment still counts as synced.
     expect(shownPosts(rows, [comment(50), comment(51, { deleted: true })]).map((p) => p.id)).toEqual([3]);
+  });
+
+  test("a row with a resolve step stays until the thread shows resolved; a resolve-only row then hides", () => {
+    const step = (id: number, state: "pending" | "done" | "failed", body = "Body") =>
+      post(id, reply(101), { state: "confirmed", remoteId: body ? 50 + id : null, body, resolve: { root: 100, state, error: null } });
+    const rows = [step(1, "pending"), step(2, "failed"), step(3, "done"), step(4, "done", ""), step(5, "failed", "")];
+    const open = [comment(100), comment(51), comment(52), comment(53)];
+    expect(shownPosts(rows, open).map((p) => p.id)).toEqual([1, 2, 5]);
+    const resolved = [comment(100, { threadResolved: true }), comment(51), comment(52), comment(53)];
+    expect(shownPosts(rows, resolved).map((p) => p.id)).toEqual([]);
   });
 
   test("a reply row goes to the thread of its parent; other rows and unknown parents go to the posts group", () => {

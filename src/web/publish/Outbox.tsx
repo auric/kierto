@@ -2,9 +2,10 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Outbox rows (plan v3 section 7, replies.md step 4): Posting, "Outcome unknown. Checking.", Failed with the reason, and Posted.
+// A row with a resolve step then shows Resolving, Resolve failed with "Resolve again", or Resolved. Resolve again never reposts the reply.
 // Reply rows show in the thread of their parent. Other rows show in the Posts group above the drafts.
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, CircleAlert, CircleHelp, LoaderCircle, RotateCw, Send, Trash2 } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, CircleHelp, LoaderCircle, RotateCw, Send, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
@@ -15,7 +16,7 @@ import { restoreDraft } from "../pr/ReplyComposer";
 import { ForgeLink, Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
 import type { Hints } from "../shell/Hint";
-import { dropPost, planKey, postsKey, retryPost, usePosts } from "./data";
+import { dropPost, planKey, postsKey, retryPost, retryResolve, usePosts } from "./data";
 import { destLabel, mergePosts, type PostView, postView, shownPosts, splitPosts } from "./model";
 
 const icon = "size-[15px] shrink-0";
@@ -24,6 +25,7 @@ const icon = "size-[15px] shrink-0";
 export type PostCtx = {
   again: (p: PostDto) => Promise<void>;
   drop: (p: PostDto, general: boolean) => Promise<void>;
+  resolve: (p: PostDto) => Promise<void>;
 };
 
 // The rows of one PR, split by place. Rows of earlier visits stay until their synced comment arrives.
@@ -32,7 +34,7 @@ export function useOutbox(pr: number, comments: CommentDto[], forge: string) {
   const posts = usePosts(pr);
   const data = posts.data;
   // A post changes item states, but the outbox names only the PR in SSE. Each new state reloads the run items.
-  const sig = data?.map((p) => `${p.id}:${p.state}`).join() ?? "";
+  const sig = data?.map((p) => `${p.id}:${p.state}:${p.resolve?.state ?? ""}`).join() ?? "";
   useEffect(() => {
     if (sig) void qc.invalidateQueries({ queryKey: ["run"] });
   }, [sig, qc]);
@@ -53,6 +55,16 @@ export function useOutbox(pr: number, comments: CommentDto[], forge: string) {
           if (row.state === "confirmed") toast.add({ title: `The comment is on ${forge} already. Nothing was posted again.` });
         } catch (e) {
           toast.add({ title: "The post did not start", description: (e as Error).message });
+        } finally {
+          done();
+        }
+      },
+      async resolve(p) {
+        try {
+          const row = await retryResolve(p.id);
+          qc.setQueryData<PostDto[]>(postsKey(pr), (old) => mergePosts(old, [row]));
+        } catch (e) {
+          toast.add({ title: "The resolve did not start", description: (e as Error).message });
         } finally {
           done();
         }
@@ -80,14 +92,21 @@ export function useOutbox(pr: number, comments: CommentDto[], forge: string) {
 
 // The outer span is a live region that stays, so a screen reader reads each later state. The key gives each state a new node.
 function StateMark({ v }: { v: PostView }) {
-  const Icon = { posting: LoaderCircle, checking: LoaderCircle, unknown: CircleHelp, failed: CircleAlert, posted: Check }[v.kind];
+  const Icon = {
+    posting: LoaderCircle,
+    checking: LoaderCircle,
+    unknown: CircleHelp,
+    failed: CircleAlert,
+    posted: Check,
+    resolved: CircleCheck,
+  }[v.kind];
   return (
     <span role="status" className="inline-flex shrink-0">
       <span
         key={v.kind}
         className={cn(
           "rl-fade inline-flex items-center gap-1 font-medium whitespace-nowrap",
-          v.kind === "failed" ? "text-destructive" : v.kind === "posted" ? "text-ink-2" : "text-foreground",
+          v.kind === "failed" ? "text-destructive" : v.kind === "posted" || v.kind === "resolved" ? "text-ink-2" : "text-foreground",
         )}
       >
         <Icon
@@ -110,6 +129,12 @@ function Actions({ p, v, ctx }: { p: PostDto; v: PostView; ctx: PostCtx }) {
   };
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {v.actions.includes("resolve") && (
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => ctx.resolve(p))}>
+          <RotateCw aria-hidden data-icon="inline-start" />
+          Resolve again
+        </Button>
+      )}
       {v.actions.includes("again") && (
         <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => ctx.again(p))}>
           <RotateCw aria-hidden data-icon="inline-start" />
@@ -132,8 +157,12 @@ function Actions({ p, v, ctx }: { p: PostDto; v: PostView; ctx: PostCtx }) {
 }
 
 // Plan v3 WP13b: a posted row links to its comment on the forge. web: the PR link of the server.
+// A failed resolve links to its thread, so the user can resolve it there.
 function PostedLink({ p, v, web, forge, hints }: { p: PostDto; v: PostView; web: string | null; forge: string; hints: Hints }) {
-  if (v.kind !== "posted" || p.remoteId === null || !web) return null;
+  if (!web) return null;
+  if (p.resolve && v.actions.includes("resolve"))
+    return <ForgeLink href={commentUrl(web, p.resolve.root)} label={`Open the thread in ${forge}`} hints={hints} />;
+  if ((v.kind !== "posted" && v.kind !== "resolved") || p.remoteId === null) return null;
   return <ForgeLink href={commentUrl(web, p.remoteId)} label={`Open in ${forge}`} hints={hints} />;
 }
 
@@ -217,7 +246,7 @@ export function ReplyPosts(props: { posts: readonly PostDto[]; avatar: ReactNode
         id={`p-${p.id}`}
         data-post={p.id}
         tabIndex={-1}
-        aria-label={`Your reply. ${v.text}`}
+        aria-label={`${p.body ? "Your reply" : "Resolve the thread"}. ${v.text}`}
         className="rl-msg rl-enter mt-3.5"
       >
         <div className="flex min-h-(--av) flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-muted-foreground">
@@ -229,7 +258,7 @@ export function ReplyPosts(props: { posts: readonly PostDto[]; avatar: ReactNode
           </span>
         </div>
         <div className="rl-indent mt-px max-w-[72ch] [overflow-wrap:anywhere]">
-          <Text text={p.body} />
+          {p.body ? <Text text={p.body} /> : <p className="m-0 text-ink-2">Resolve the thread. No reply.</p>}
           <Reason v={v} forge={forge} />
           <Actions p={p} v={v} ctx={ctx} />
         </div>

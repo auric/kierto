@@ -2,14 +2,15 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // The confirm step (prototype/v3 postBar confirm): the destination and the exact text of each comment. Nothing posts without it.
-import { CircleAlert, LoaderCircle, Send } from "lucide-react";
+import { CircleAlert, CircleCheck, LoaderCircle, Send } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { Text } from "../pr/Thread";
 
-export type ConfirmEntry = { key: string; code: string | null; dest: string; body: string; warning: string | null };
+// resolve: the resolve step of the post, as words. null: none.
+export type ConfirmEntry = { key: string; code: string | null; dest: string; body: string; warning: string | null; resolve: string | null };
 
 // entries: null while the plan loads. error: the answer of the last post, shown in the dialog.
 export function Confirm(props: {
@@ -65,7 +66,13 @@ export function Confirm(props: {
                 {e.dest}
               </span>
               <div className="max-w-[72ch] text-sm [overflow-wrap:anywhere]">
-                <Text text={e.body} />
+                {e.body && <Text text={e.body} />}
+                {e.resolve && (
+                  <p data-resolve className="m-0 mt-1 flex items-center gap-1.5 text-xs font-medium text-ink-2">
+                    <CircleCheck aria-hidden className="size-[13px] shrink-0" />
+                    {e.resolve}
+                  </p>
+                )}
               </div>
               {e.warning && (
                 <p className="m-0 text-xs text-ink-2 @min-[560px]/detail:col-start-2">

@@ -123,17 +123,21 @@ export function countText(items: ReviewItemDto[], incomplete: boolean, kind: Run
   // An ask run has no items. Its answer shows in the Ask panel. A fix run keeps its edits apart from the items.
   if (kind === "ask" || kind === "fix") return "";
   if (kind === "reply") {
-    const none = items.filter((i) => (i.payload as ReplyPayload).action === "none").length;
-    const r = items.length - none;
+    const p = (i: ReviewItemDto) => i.payload as ReplyPayload;
+    const r = items.filter((i) => p(i).action !== "none").length;
+    const resolve = items.filter((i) => p(i).resolve).length;
+    const none = items.filter((i) => p(i).action === "none" && !p(i).resolve).length;
     return [
-      r ? plural(r, "reply draft") : "No reply drafts",
+      r ? plural(r, "reply draft") : resolve ? "" : "No reply drafts",
+      resolve ? `${plural(resolve, "thread")} to resolve` : "",
       none ? `${plural(none, "thread")} ${none === 1 ? "needs" : "need"} no reply` : "",
     ]
       .filter(Boolean)
       .join(", ");
   }
+  // A re-review can add reply drafts that resolve the threads of posted findings. They show under their threads.
   const f = items.filter((i) => i.kind === "finding").length;
-  const q = items.length - f;
+  const q = items.filter((i) => i.kind === "question").length;
   const none = incomplete ? "No findings in what it read" : q ? "" : "No findings";
   return [f ? plural(f, "finding") : none, q ? plural(q, "question") : ""].filter(Boolean).join(", ");
 }
@@ -144,14 +148,22 @@ export function rereviewCount(items: ReviewItemDto[]): string {
   let open = 0;
   let closed = 0;
   let q = 0;
+  // Reply items: the resolve proposals for the threads of posted findings that the new commits fix.
+  let resolve = 0;
   for (const i of items) {
     if (i.kind === "question") q++;
-    else if (i.kind !== "finding") continue;
+    else if (i.kind === "reply") resolve++;
     else if (!i.payload.carried) fresh++;
     else if (i.payload.carried.verdict === "open") open++;
     else closed++;
   }
-  return [`${fresh} new, ${open} carried, ${closed} fixed or outdated`, q ? plural(q, "question") : ""].filter(Boolean).join(", ");
+  return [
+    `${fresh} new, ${open} carried, ${closed} fixed or outdated`,
+    resolve ? `${plural(resolve, "posted thread")} to resolve` : "",
+    q ? plural(q, "question") : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 // result: the outcome in a few words. It is empty while the items or the edits load.
@@ -505,6 +517,8 @@ export function triageText(before: ReviewItemDto, after: ReviewItemDto, action: 
       return "Saved and accepted.";
     case "move":
       return after.anchor ? `Moved to line ${lineText(after.anchor)}.` : "Moved.";
+    case "resolve":
+      return replyOf(after).resolveTick ? "The thread resolves after the post." : "The thread stays open after the post.";
   }
 }
 
@@ -520,6 +534,7 @@ export function replyMap(items: ReviewItemDto[] | undefined): Map<number, Review
 }
 
 // none: action none, or no body yet. Accept needs a body (WP17), so it offers only a reply of your own.
+// A draft without a body that proposes or ticks a resolve is a draft: Accept with the tick resolves the thread without a reply.
 // stale: the draft answers a message that is no longer the newest live message of the thread.
 export type ReplyCard =
   | { kind: "pending" }
@@ -531,8 +546,9 @@ export type ReplyCard =
 export function replyCard(it: ReviewItemDto | undefined, newest: number | null, pending: boolean): ReplyCard | null {
   if (pending) return { kind: "pending" };
   if (!it) return null;
-  const stale = newest !== null && replyOf(it).replyTo !== newest;
-  if (!it.body.trim()) return { kind: "none", it, stale };
+  const p = replyOf(it);
+  const stale = newest !== null && p.replyTo !== newest;
+  if (!it.body.trim() && !p.resolve && !p.resolveTick) return { kind: "none", it, stale };
   return it.status === "discarded" ? { kind: "discarded", it } : { kind: "draft", it, stale };
 }
 

@@ -4,6 +4,7 @@
 // Reply drafts (docs/plans/replies.md step 6): the Draft replies button and the draft card under each thread tree.
 // A draft is a draft only. It posts after Accept and the post confirm, as one reply to the message it answers.
 // Plan r3 UI-FIX: the judgement chip and the wait for a "Fixed in" commit. Fix sits in the thread footer (plan pr-view-v4 2.8).
+// "Resolve after posting": the tick and the proof of a resolve proposal. A ticked draft resolves its thread after the post.
 import {
   Check,
   CircleCheck,
@@ -21,8 +22,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import type { MetaDto } from "../../shared/dto";
-import type { Judgement } from "../../shared/review";
+import type { MetaDto, ReviewItemDto } from "../../shared/dto";
+import type { Judgement, ReplyPayload } from "../../shared/review";
 import type { Turn } from "../../shared/turn";
 import { JUDGEMENT } from "../fix/model";
 import { CopyButton, Text } from "../pr/Thread";
@@ -109,12 +110,13 @@ function Head({ meta, who, children }: { meta: MetaDto; who: string; children?: 
   );
 }
 
-// thread: the root comment ID. to: the author of the message that the draft answers.
+// thread: the root comment ID. mine: the user started the thread. to: the author of the message that the draft answers.
 // mode: the open editor of this draft. busy: a triage request of this draft is out.
 // waiting: the short hash of a "Fixed in" commit that the PR commits do not list yet.
 export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   card: ReplyCard;
   thread: number;
+  mine: boolean;
   to: string | null;
   mode: TriageMode;
   busy: boolean;
@@ -147,7 +149,9 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
         aria-label="Discarded reply draft"
         className="mt-3.5 flex max-w-[72ch] scroll-mt-3 items-center gap-2"
       >
-        <p className="rl-fade m-0 min-w-0 flex-1 truncate text-sm text-muted-foreground">Discarded reply draft: {snippet(it.body, 140)}</p>
+        <p className="rl-fade m-0 min-w-0 flex-1 truncate text-sm text-muted-foreground">
+          {it.body.trim() ? `Discarded reply draft: ${snippet(it.body, 140)}` : "Discarded resolve proposal"}
+        </p>
         <RestoreButton it={it} busy={props.busy} ctx={ctx.triage} />
       </article>
     );
@@ -195,17 +199,19 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
     );
   }
   const accepted = it.status === "accepted";
+  const text = it.body.trim() !== "";
+  const resolves = p.resolveTick === true;
   return (
     <article
       id={id}
       data-item={it.id}
       data-reply-draft={thread}
       tabIndex={-1}
-      aria-label={`Reply draft from ${session ? "your session" : short}${props.to ? ` to ${props.to}` : ""}.${judged}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}`}
+      aria-label={`${text ? "Reply draft" : "Resolve proposal"} from ${session ? "your session" : short}${text && props.to ? ` to ${props.to}` : ""}.${judged}${resolves ? " Resolves the thread after the post." : ""}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}`}
       className={cn(box, accepted && "border-solid")}
     >
       <Head meta={ctx.meta} who={who}>
-        <span>Reply draft{props.to && <> to {props.to}</>}</span>
+        <span>{text ? <>Reply draft{props.to && <> to {props.to}</>}</> : "Resolve proposal"}</span>
         {chip}
         {accepted && (
           <span className="rl-fade inline-flex items-center gap-1 font-medium text-ink-2">
@@ -214,17 +220,21 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
           </span>
         )}
         {it.edited && <span>edited by you</span>}
-        <span className="ml-auto flex items-center">
-          <CopyButton text={it.body} ctx={ctx} />
-        </span>
+        <span className="ml-auto flex items-center">{text && <CopyButton text={it.body} ctx={ctx} />}</span>
       </Head>
       {props.mode === "edit" ? (
         <Editor it={it} busy={props.busy} ctx={ctx.triage} />
       ) : (
         <>
-          <div className="rl-indent mt-px [overflow-wrap:anywhere]">
-            <Text text={it.body} />
-          </div>
+          {text ? (
+            <div className="rl-indent mt-px [overflow-wrap:anywhere]">
+              <Text text={it.body} />
+            </div>
+          ) : (
+            <p className="rl-indent m-0 mt-px text-ink-2">
+              {resolves ? "No reply. The thread resolves after the post." : "No reply. Tick the box to resolve the thread without one."}
+            </p>
+          )}
           <p className="rl-indent m-0 mt-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {session ? "From your session." : `${EVIDENCE[p.evidenceStatus]}.`}{" "}
             {/* A session draft without reply text holds the reason as its body. */}
@@ -242,6 +252,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
               </span>
             </p>
           )}
+          <ResolveTick it={it} p={p} mine={props.mine} who={who} busy={props.busy} ctx={ctx} />
           {stale}
           <Acts it={it} busy={props.busy} ctx={ctx.triage} />
         </>
@@ -249,3 +260,35 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
     </article>
   );
 });
+
+// The tick shows on every open draft, so a plain reply can resolve too. The proof shows only for a proposal.
+// A thread that another person started never gets the tick by default (jobs.ts, validate.ts).
+function ResolveTick(props: { it: ReviewItemDto; p: ReplyPayload; mine: boolean; who: string; busy: boolean; ctx: ReplyCtx }) {
+  const { it, p } = props;
+  const proof = p.resolve && p.resolveEvidence ? p.resolveEvidence : null;
+  return (
+    <div className="rl-indent mt-2 text-sm">
+      <label className="inline-flex cursor-pointer items-center gap-2 font-medium">
+        <input
+          type="checkbox"
+          className="m-0 shrink-0 accent-foreground"
+          checked={p.resolveTick === true}
+          disabled={props.busy}
+          onChange={(e) => props.ctx.triage.tick(it, e.target.checked)}
+        />
+        <CircleCheck aria-hidden className="size-[13px] shrink-0 text-ink-2" />
+        Resolve after posting
+      </label>
+      {(proof || (!props.mine && (p.resolve || p.resolveTick))) && (
+        <p className="m-0 mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+          {proof && (
+            <>
+              {props.who} proposes it: <Inline text={proof} />{" "}
+            </>
+          )}
+          {!props.mine && "Another person started this thread."}
+        </p>
+      )}
+    </div>
+  );
+}

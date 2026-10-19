@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Triage of review items (plan v3 WP12): accept, discard, restore, edit, and move.
+// Triage of review items (plan v3 WP12): accept, discard, restore, edit, move, and the resolve tick of a reply draft.
 import type { Database } from "bun:sqlite";
 import type { ItemActionInput, ItemConflict, ReviewItemDto } from "../../shared/dto";
 import {
@@ -11,6 +11,7 @@ import {
   type ExcerptLine,
   type FixedMark,
   moveChoices,
+  type ReplyPayload,
   type SessionMark,
 } from "../../shared/review";
 import { type ItemRow, toItemDto } from "./jobs";
@@ -42,10 +43,12 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
   if (row.kind === "finding" && input.action !== "discard" && (row.path === null || row.side === null || row.line === null))
     return { status: 400, error: "The finding has no place in the code." };
   const next = { ...row };
+  const ticked = row.kind === "reply" && (JSON.parse(row.payload_json) as ReplyPayload).resolveTick === true;
   switch (input.action) {
     case "accept":
-      // A reply draft with action none has no body.
-      if (row.kind === "reply" && !row.body.trim()) return { status: 400, error: "Write the reply first." };
+      // A reply draft with action none has no body. A ticked draft without a body only resolves the thread.
+      if (row.kind === "reply" && !row.body.trim() && !ticked)
+        return { status: 400, error: "Write the reply first, or tick Resolve after posting." };
       next.status = "accepted";
       break;
     case "discard":
@@ -85,6 +88,13 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
       next.line = input.line;
       next.line_end = input.line;
       next.anchor_state = state;
+      break;
+    }
+    case "resolve": {
+      if (row.kind !== "reply") return { status: 400, error: "Only a reply draft can resolve its thread." };
+      next.payload_json = JSON.stringify({ ...(JSON.parse(row.payload_json) as ReplyPayload), resolveTick: input.resolve });
+      // An accepted draft without a body has nothing to post once the tick is off.
+      if (!input.resolve && !row.body.trim() && row.status === "accepted") next.status = "new";
       break;
     }
   }

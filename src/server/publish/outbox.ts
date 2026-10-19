@@ -5,13 +5,22 @@
 // A row goes pending, then sent (committed before the request), then confirmed, failed, or unknown.
 // An unknown row is checked against the remote comments before any new send. Without a match, the user decides.
 import type { Database } from "bun:sqlite";
-import type { PlannedPost, PostDestination, PostDto, PostState, ReplyConflict, ReplyPostInput } from "../../shared/dto";
+import type {
+  PlannedPost,
+  PostDestination,
+  PostDto,
+  PostState,
+  ReplyConflict,
+  ReplyPostInput,
+  ThreadResolveError,
+  ThreadResolveInput,
+} from "../../shared/dto";
 import { isMe } from "../../shared/me";
 import type { ReplyPayload } from "../../shared/review";
 import { newestLive, type TurnMsg } from "../../shared/turn";
 import type { Comment, PrRef } from "../../shared/types";
 import { ForgeError } from "../bitbucket/client";
-import type { ForgeProvider, NewAnchor } from "../bitbucket/provider";
+import type { ForgeProvider, NewAnchor, ResolveResult, ThreadState } from "../bitbucket/provider";
 import type { Live } from "../live";
 import { log } from "../log";
 import type { Settings } from "../settings";
@@ -34,15 +43,46 @@ type PostRow = {
   last_error: string | null;
   created_at: number;
   updated_at: number;
+  resolve_root: number | null;
+  resolve_state: "pending" | "done" | "failed" | null;
+  resolve_error: string | null;
 };
 
 const UNCONFIGURED = "Configure the Bitbucket URL and token first.";
 const NO_MATCH = "No matching comment on Bitbucket. Post again or drop.";
 
+// The reason of a resolve or reopen that did not end in the wanted state.
+function resolveText(status: Exclude<ResolveResult["status"], "done">, resolved: boolean): string {
+  const act = resolved ? "resolve" : "reopen";
+  switch (status) {
+    case "changed":
+      return `The thread changed on Bitbucket. Read it, then ${act} it again.`;
+    case "forbidden":
+      return `Bitbucket refused to ${act} the thread. Only the comment author, the PR author, or a repository admin may do it. Open the thread on Bitbucket.`;
+    case "gone":
+      return "The thread was deleted on Bitbucket.";
+    case "ignored":
+      return `Bitbucket took the request, but the thread did not ${act}. Open the thread on Bitbucket.`;
+  }
+}
+
 const SQL = {
   recover: "UPDATE post SET state = 'unknown', last_error = $text, updated_at = $now WHERE state = 'sent'",
   unknown: "SELECT id FROM post WHERE state = 'unknown' ORDER BY id",
   next: "SELECT * FROM post WHERE state = 'pending' ORDER BY id LIMIT 1",
+  // The resolve step runs only after the comment step confirmed the row.
+  resolveNext: "SELECT * FROM post WHERE state = 'confirmed' AND resolve_state = 'pending' ORDER BY id LIMIT 1",
+  resolveEnd:
+    "UPDATE post SET resolve_state = $state, resolve_error = $text, updated_at = $now WHERE id = $id AND resolve_state = 'pending'",
+  resolveAgain: `UPDATE post SET resolve_state = 'pending', resolve_error = NULL, updated_at = $now
+    WHERE id = $id AND state = 'confirmed' AND resolve_state = 'failed'`,
+  // The thread state that a resolve or reopen read back. A newer synced version wins. The read mark moves on when it covered the old version.
+  // In SQLite, SET reads the old values.
+  threadState: `UPDATE comment SET thread_resolved = $resolved, thread_resolver_json = $resolver, thread_resolved_at = $at,
+      ack_version = IIF(ack_version >= version, MAX(version, $version), ack_version), version = MAX(version, $version)
+    WHERE pr = $pr AND comment_id = $root AND parent_id IS NULL AND version <= $version`,
+  // The turn rule reads the flag of every message of a thread (shared/turn.ts), so the replies follow the root.
+  threadReplies: "UPDATE comment SET thread_resolved = $resolved WHERE pr = $pr AND root_id = $root AND parent_id IS NOT NULL",
   get: "SELECT * FROM post WHERE id = $id",
   byPr: "SELECT * FROM post WHERE pr = $pr ORDER BY id",
   byKey: "SELECT * FROM post WHERE idem_key = $key",
@@ -58,8 +98,9 @@ const SQL = {
   fixShort: "SELECT short_hash FROM fix_commit WHERE id = $id",
   thread: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr AND root_id = $root`,
-  insert: `INSERT INTO post (pr, run, kind, idem_key, body, destination_json, items_json, state, created_at, updated_at)
-    VALUES ($pr, $run, $kind, $key, $body, $destination, $items, 'pending', $now, $now) RETURNING *`,
+  insert: `INSERT INTO post (pr, run, kind, idem_key, body, destination_json, items_json, state, created_at, updated_at, resolve_root, resolve_state)
+    VALUES ($pr, $run, $kind, $key, $body, $destination, $items, 'pending', $now, $now, $resolve, IIF($resolve IS NULL, NULL, 'pending'))
+    RETURNING *`,
   // `from` makes each step a compare-and-set, so two pages or a page and the sender never both win.
   move: `UPDATE post SET state = $to, last_error = $text, remote_id = COALESCE($remoteId, remote_id),
       remote_version = COALESCE($remoteVersion, remote_version), updated_at = $now WHERE id = $id AND state = $from`,
@@ -117,6 +158,10 @@ export type ReplyResult =
 export type RetryResult = { status: 200 | 202; post: PostDto } | { status: 404 | 409 | 502; error: string };
 export type DropResult = { status: 200; items: Ref[] } | { status: 400 | 404 | 409; error: string };
 export type HeadCheck = { warning: string | null } | { status: 409 | 502; error: string };
+export type ResolveRetry = { status: 202; post: PostDto } | { status: 404 | 409; error: string };
+export type ThreadResolveResult =
+  | { status: 200; thread: number; resolved: boolean }
+  | { status: 403 | 404 | 409 | 502; error: string; reason?: ThreadResolveError["reason"] };
 
 export function createOutbox(opts: { settings: Settings; live: Live; now?: () => number }) {
   const { settings, live } = opts;
@@ -152,7 +197,24 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
       checking: r.state === "unknown" && checking.has(r.id),
       createdAt: r.created_at,
       updatedAt: r.updated_at,
+      ...(r.resolve_root !== null &&
+        r.resolve_state !== null && { resolve: { root: r.resolve_root, state: r.resolve_state, error: r.resolve_error } }),
     };
+  }
+
+  function applyState(db: Database, pr: number, root: number, s: ThreadState) {
+    const resolved = s.threadResolved ? 1 : 0;
+    db.transaction(() => {
+      const moved = db.query(SQL.threadState).run({
+        pr,
+        root,
+        resolved,
+        resolver: s.threadResolver ? JSON.stringify(s.threadResolver) : null,
+        at: s.threadResolvedAt ?? null,
+        version: s.version,
+      });
+      if (moved.changes) db.query(SQL.threadReplies).run({ pr, root, resolved });
+    })();
   }
 
   // The database of the configured origin. Its first use turns sent rows into unknown rows and resumes the outbox.
@@ -169,6 +231,11 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
 
   // ---------- Sender ----------
   async function send(db: Database, r: PostRow) {
+    // A resolve-only row posts no comment. Its resolve step runs next.
+    if (!r.body) {
+      move(db, r.id, "pending", "confirmed", null);
+      return notify(r.pr);
+    }
     const dest = JSON.parse(r.destination_json) as PostDestination;
     const fail = (text: string) => {
       move(db, r.id, "pending", "failed", text);
@@ -258,6 +325,27 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     return "confirmed";
   }
 
+  // Runs after the comment step. Each end leaves the pending state, so the drain loop cannot repeat a row.
+  async function resolveStep(db: Database, r: PostRow) {
+    const end = (state: "done" | "failed", text: string | null) => {
+      db.query(SQL.resolveEnd).run({ id: r.id, state, text, now: now() });
+      notify(r.pr);
+    };
+    const ref = refOf(db, r.pr);
+    const forge = await provider();
+    if (!ref || !forge || r.resolve_root === null) return end("failed", UNCONFIGURED);
+    let res: ResolveResult;
+    try {
+      res = await forge.setThreadResolved(ref, r.resolve_root, true);
+    } catch (e) {
+      if (!(e instanceof ForgeError)) log(`Post ${r.id} resolve: ${(e as Error).message}`);
+      return end("failed", `No clear answer from Bitbucket (${reason(e)}). Resolve again reads the thread first.`);
+    }
+    if (res.status !== "done") return end("failed", resolveText(res.status, true));
+    applyState(db, r.pr, r.resolve_root, res.state);
+    end("done", null);
+  }
+
   async function drain() {
     for (;;) {
       const db = stopped ? null : open();
@@ -265,6 +353,11 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
       const next = db.query(SQL.next).get() as PostRow | null;
       if (next) {
         await send(db, next);
+        continue;
+      }
+      const resolving = db.query(SQL.resolveNext).get() as PostRow | null;
+      if (resolving) {
+        await resolveStep(db, resolving);
         continue;
       }
       const [id] = checking;
@@ -398,6 +491,7 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
                 destination: JSON.stringify(p.destination),
                 items: JSON.stringify(p.items),
                 now: now(),
+                resolve: p.resolve ?? null,
               }) as PostRow,
             );
           });
@@ -441,6 +535,7 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
         destination: JSON.stringify(destination),
         items: "[]",
         now: now(),
+        resolve: null,
       }) as PostRow;
       notify(pr);
       void kick();
@@ -472,6 +567,44 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
       notify(r.pr);
       void kick();
       return { status: 202, post: toDto(row(db, id) as PostRow) };
+    },
+
+    // "Resolve again" after a failed resolve step. The comment of the row is posted already, so only the resolve runs again.
+    retryResolve(db: Database, id: number): ResolveRetry {
+      const r = row(db, id);
+      if (!r) return { status: 404, error: "Post not found." };
+      if (!db.query(SQL.resolveAgain).run({ id, now: now() }).changes)
+        return { status: 409, error: "Only a failed resolve can run again." };
+      notify(r.pr);
+      void kick();
+      return { status: 202, post: toDto(row(db, id) as PostRow) };
+    },
+
+    // A manual resolve or reopen: one immediate user action, never queued. seen: the newest live message on screen.
+    async setResolved(db: Database, pr: number, input: ThreadResolveInput): Promise<ThreadResolveResult> {
+      const ref = refOf(db, pr);
+      if (!ref) return { status: 404, error: "Pull request not found." };
+      const root = db.query(SQL.parent).get({ pr, id: input.thread }) as { root_id: number } | null;
+      if (root?.root_id !== input.thread) return { status: 404, error: "Thread not found." };
+      const newest = newestLive(db.query(SQL.thread).all({ pr, root: input.thread }) as TurnMsg[]);
+      if (newest && newest.id !== input.seen)
+        return { status: 409, error: "New messages arrived in the thread. Read them first.", reason: "messages" };
+      const forge = await provider();
+      if (!forge) return { status: 409, error: UNCONFIGURED };
+      let res: ResolveResult;
+      try {
+        res = await forge.setThreadResolved(ref, input.thread, input.resolved);
+      } catch (e) {
+        if (!(e instanceof ForgeError)) log(`Thread ${input.thread} resolve: ${(e as Error).message}`);
+        return { status: 502, error: `No clear answer from Bitbucket (${reason(e)}). Try again: the app reads the thread first.` };
+      }
+      if (res.status === "done") {
+        applyState(db, pr, input.thread, res.state);
+        notify(pr);
+        return { status: 200, thread: input.thread, resolved: input.resolved };
+      }
+      const status = { changed: 409, forbidden: 403, gone: 404, ignored: 502 } as const;
+      return { status: status[res.status], error: resolveText(res.status, input.resolved), reason: res.status };
     },
 
     // The user gives up an unknown or failed post. Its items return to accepted with a new revision.

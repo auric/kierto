@@ -5,7 +5,16 @@
 // live.ts invalidates ['pr', pr] when SSE `changed` names the PR, and the prefix covers both keys.
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import type { ConfirmDto, PlannedPost, PostDto, PostPlanDto, ReplyConflict, ReplyPostInput } from "../../shared/dto";
+import type {
+  ConfirmDto,
+  PlannedPost,
+  PostDto,
+  PostPlanDto,
+  ReplyConflict,
+  ReplyPostInput,
+  ThreadResolveError,
+  ThreadResolveInput,
+} from "../../shared/dto";
 import { api } from "../api";
 import { ApiError, read } from "../shell/data";
 
@@ -44,6 +53,24 @@ export async function postReply(pr: number, input: ReplyPostInput): Promise<Repl
 }
 
 export const retryPost = async (id: number) => read<PostDto>(await api.api.posts[":id"].retry.$post(param(id)));
+
+// "Resolve again" after a failed resolve step. The comment is not posted again.
+export const retryResolve = async (id: number) => read<PostDto>(await api.api.posts[":id"].resolve.$post(param(id)));
+
+// null: the thread has the wanted state now. Else the reason and the words to show.
+export type ResolveOutcome = { error: string; reason: ThreadResolveError["reason"] | null } | null;
+
+// POST /api/prs/:id/resolve: a manual resolve or reopen, sent now.
+export async function setThreadResolved(pr: number, input: ThreadResolveInput): Promise<ResolveOutcome> {
+  const res = await api.api.prs[":id"].resolve.$post({ ...param(pr), json: input });
+  if (res.ok) return null;
+  const text = await res.text();
+  let body: Partial<ThreadResolveError> = {};
+  try {
+    body = JSON.parse(text);
+  } catch {}
+  return { error: body.error ?? `The request failed (HTTP ${res.status}).`, reason: body.reason ?? null };
+}
 
 // general: the findings of a failed inline post go into the next general comment.
 export const dropPost = async (id: number, general: boolean) =>

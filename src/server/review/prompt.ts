@@ -28,11 +28,12 @@ export type PromptInput = {
   instructions?: string;
 };
 
-// thread: the root comment ID. replyTo: the message to answer.
-export type ReplyThread = { thread: number; replyTo: number };
+// thread: the root comment ID. replyTo: the message to answer. mine: the user wrote the root comment.
+export type ReplyThread = { thread: number; replyTo: number; mine?: boolean };
 
 // A re-review (plan r2 S-RR). since: the head that the base run reviewed. earlier: the IDs of the carried findings.
-export type RereviewInput = PromptInput & { since: string; rangeBase: string; earlier: number[] };
+// posted: the IDs in earlier of findings that the user posted. Each has an open thread.
+export type RereviewInput = PromptInput & { since: string; rangeBase: string; earlier: number[]; posted?: number[] };
 
 // The Tools, Skills, Project instructions, Your instructions, and Metadata sections.
 // The project instructions come right before the note: they are standing rules, and the note of this run comes last, so it is the newest word.
@@ -111,6 +112,12 @@ export function buildRereviewPrompt(i: RereviewInput): string {
     "",
     `Earlier findings: ${i.earlier.join(", ") || "none"}`,
     "",
+    ...(i.posted?.length
+      ? [
+          `Posted findings: ${i.posted.join(", ")}. The user posted each one as a review thread. A fixed verdict proposes to resolve that thread, so give fixed only when the new commits remove the problem.`,
+          "",
+        ]
+      : []),
     ...common(i, i),
   ].join("\n");
 }
@@ -136,7 +143,7 @@ export function buildReplyPrompt(i: PromptInput & { threads: ReplyThread[] }): s
     "",
     `Draft the user's replies in the review threads below. The change is ${i.mergeBase}..${i.head} in ./repo. Give one entry in replies per thread.`,
     "",
-    `Threads: ${i.threads.map((t) => `${t.thread} (answer message ${t.replyTo})`).join(", ")}`,
+    `Threads: ${i.threads.map((t) => `${t.thread} (answer message ${t.replyTo}, ${t.mine ? "the user started it" : "another person started it"})`).join(", ")}`,
     "",
     PR_HEADINGS,
     "",

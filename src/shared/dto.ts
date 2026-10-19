@@ -471,6 +471,8 @@ export const itemActionInput = z.discriminatedUnion("action", [
   z.object({ action: z.enum(["accept", "discard", "restore"]), revision: version }),
   z.object({ action: z.literal("edit"), revision: version, body: z.string().trim().min(1).max(MAX_NOTE) }),
   z.object({ action: z.literal("move"), revision: version, line: positiveInt }),
+  // Reply drafts only: the tick of "Resolve after posting".
+  z.object({ action: z.literal("resolve"), revision: version, resolve: z.boolean() }),
 ]);
 export type ItemActionInput = z.infer<typeof itemActionInput>;
 // item: the current item, for a reload.
@@ -494,6 +496,8 @@ export type PlannedPost = {
   items: { id: number; revision: number }[];
   // A live root comment by another user on the same path and line.
   duplicate: { commentId: number; author: string } | null;
+  // Reply posts only: the root comment of the thread to resolve after the post. An empty body resolves without a reply.
+  resolve?: number;
 };
 // posts: per run in run order, the inline comments and the replies in item order, then the general comment.
 export type PostPlanDto = { pr: number; posts: PlannedPost[] };
@@ -542,7 +546,16 @@ export type PostDto = {
   checking: boolean;
   createdAt: number;
   updatedAt: number;
+  // The resolve step after the comment step. pending: it waits for the comment or runs now. A failed step never posts the reply again.
+  resolve?: { root: number; state: "pending" | "done" | "failed"; error: string | null };
 };
+
+// POST /api/prs/:id/resolve: resolve or reopen a thread now. thread: the root comment. seen: the newest live message on screen.
+export const threadResolveInput = z.object({ thread: positiveInt, resolved: z.boolean(), seen: positiveInt });
+export type ThreadResolveInput = z.infer<typeof threadResolveInput>;
+// reason: messages: new messages arrived. changed: the comment changed on the forge (HTTP 409). forbidden: no permission.
+// gone: the thread is deleted. ignored: the forge took the change, but the thread state stayed.
+export type ThreadResolveError = ApiError & { reason: "messages" | "changed" | "forbidden" | "gone" | "ignored" };
 
 // warning: the target branch moved after the review (D2). The comments stay on the reviewed commits.
 export type ConfirmDto = { posts: PostDto[]; warning: string | null };

@@ -11,6 +11,7 @@ import {
   activities,
   byUser,
   clone,
+  commentPosts,
   DASHBOARD_PATH,
   findComment,
   PR_PATH,
@@ -235,6 +236,59 @@ describe("comments", () => {
     expect(await p.commentStatus(PR_REF, 1000003)).toBe("present");
     expect(await p.commentStatus(PR_REF, 1000004)).toBe("deleted");
     expect((await caught(p.commentStatus(PR_REF, 1000005))).kind).toBe("server");
+  });
+});
+
+describe("thread resolve", () => {
+  // The fake PUT handler checks the version, bumps it, and fills the resolver (tests/support/scenarios.ts commentPosts).
+  const ROOT = 1000003;
+  const V0 = findComment(activities("activities-nested-reply.json"), ROOT).version;
+  function world() {
+    const me = findComment(activities("activities-nested-reply.json"), ROOT).author;
+    const posts = commentPosts(PR_PATH, () => activities("activities-nested-reply.json"), me, 4_000_001);
+    return {
+      posts,
+      p: setup({ [key("GET", ACTIVITIES_PATH)]: () => ({ status: 200, body: { values: posts.activities() } }), ...posts.routes }),
+    };
+  }
+  const writes = () => fake.requests.filter((r) => !r.startsWith("GET "));
+
+  test("resolve: GET, PUT {version, threadResolved}, GET; reopen clears the resolver; a second resolve sends no PUT", async () => {
+    const { posts, p } = world();
+    const r = await p.setThreadResolved(PR_REF, ROOT, true);
+    expect(r).toMatchObject({ status: "done", state: { version: V0 + 1, threadResolved: true, threadResolver: { slug: "jdoe" } } });
+    expect(r.status === "done" && typeof r.state.threadResolvedAt).toBe("number");
+    expect(posts.puts).toEqual([{ id: ROOT, version: V0, threadResolved: true }]);
+    expect(fake.requests.filter((x) => x.includes(`/comments/${ROOT}`))).toEqual([
+      `GET ${PR_PATH}/comments/${ROOT}`,
+      `PUT ${PR_PATH}/comments/${ROOT}`,
+      `GET ${PR_PATH}/comments/${ROOT}`,
+    ]);
+    // The state is already resolved, so nothing is written.
+    expect(await p.setThreadResolved(PR_REF, ROOT, true)).toMatchObject({ status: "done", state: { version: V0 + 1 } });
+    expect(writes()).toHaveLength(1);
+    const back = await p.setThreadResolved(PR_REF, ROOT, false);
+    expect(back).toEqual({ status: "done", state: { version: V0 + 2, threadResolved: false } });
+    expect(posts.puts.at(-1)).toEqual({ id: ROOT, version: V0 + 1, threadResolved: false });
+  });
+
+  test("409 gives changed, 401 and 403 give forbidden, 404 gives gone, a PUT without effect gives ignored; nothing repeats", async () => {
+    const { posts, p } = world();
+    posts.conflict.add(ROOT);
+    expect(await p.setThreadResolved(PR_REF, ROOT, true)).toEqual({ status: "changed" });
+    posts.forbid.add(ROOT);
+    expect(await p.setThreadResolved(PR_REF, ROOT, true)).toEqual({ status: "forbidden" });
+    posts.forbid.clear();
+    posts.ignore.add(ROOT);
+    expect(await p.setThreadResolved(PR_REF, ROOT, true)).toEqual({ status: "ignored" });
+    expect(await p.setThreadResolved(PR_REF, 999, true)).toEqual({ status: "gone" });
+    expect(writes()).toHaveLength(3);
+    fake.routes[key("PUT", `${PR_PATH}/comments/*`)] = { status: 401, body: { errors: [] } };
+    posts.ignore.clear();
+    expect(await p.setThreadResolved(PR_REF, ROOT, true)).toEqual({ status: "forbidden" });
+    fake.routes[key("PUT", `${PR_PATH}/comments/*`)] = { status: 500, body: { errors: [] } };
+    expect((await caught(p.setThreadResolved(PR_REF, ROOT, true))).status).toBe(500);
+    expect(writes()).toHaveLength(5);
   });
 });
 

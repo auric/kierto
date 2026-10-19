@@ -283,7 +283,7 @@ test("the thread footer: Draft reply only on a your-turn thread without a draft,
   await expect(thread(page, 1000101).getByRole("button", { name: "Fix", exact: true })).toHaveCount(0);
   await thread(page, 1000101).getByRole("button", { name: "More for this thread" }).click();
   const menu = page.getByRole("menu");
-  await expect(menu.getByRole("menuitem")).toHaveText(["Copy the comment link", "Open on Bitbucket"]);
+  await expect(menu.getByRole("menuitem")).toHaveText(["Resolve thread", "Copy the comment link", "Open on Bitbucket"]);
   await expect(menu.getByRole("menuitem", { name: "Open on Bitbucket" })).toHaveAttribute(
     "href",
     `${FAKE_URL}/projects/PROJ1/repos/sample-repo-2/pull-requests/1001/overview?commentId=1000101`,

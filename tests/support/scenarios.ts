@@ -107,12 +107,24 @@ const findIn = (list: Activity[], id: number): RawComment | undefined => {
   }
 };
 
-// Comments that the app posts to one fake PR (plan v3 WP13a). routes: POST .../comments and GET .../comments/{id}.
-// list: the PR activities without the posted comments. author: the token owner. New comment IDs start at firstId.
-// drop: the next POST stores the comment, then resets the connection (A9, accept-then-drop).
+// Comments that the app posts to one fake PR (plan v3 WP13a). routes: POST .../comments, GET .../comments/{id}, and
+// PUT .../comments/{id} (thread resolve). list: the PR activities without the posted comments. author: the token owner.
+// New comment IDs start at firstId. drop: the next POST stores the comment, then resets the connection (A9, accept-then-drop).
+// A PUT needs the current version, else 409. forbid: the comment IDs that refuse a PUT with 403. conflict: one 409 per ID.
+// ignore: the IDs whose PUT gives 200 and changes nothing. threads: the resolve state of each changed root comment.
+// The version bump and the resolver fields copy the Data Center 8.15 docs shape. A real 9.4 server is UNVERIFIED (U62 to U66).
 export function commentPosts(path: string, list: () => Activity[], author: unknown, firstId: number) {
   type Body = { text: string; parent?: { id: number }; anchor?: Record<string, unknown> };
-  const state = { drop: false, bodies: [] as Body[], posted: [] as { parentId: number | null; comment: RawComment }[] };
+  const state = {
+    drop: false,
+    bodies: [] as Body[],
+    posted: [] as { parentId: number | null; comment: RawComment }[],
+    puts: [] as { id: number; version?: unknown; threadResolved?: unknown }[],
+    threads: new Map<number, { version: number; resolved: boolean; at: number }>(),
+    forbid: new Set<number>(),
+    conflict: new Set<number>(),
+    ignore: new Set<number>(),
+  };
   let next = firstId;
   // A root comment gets its own activity. A reply nests under its parent, which can be a posted comment too.
   const all = (): Activity[] => {
@@ -122,6 +134,17 @@ export function commentPosts(path: string, list: () => Activity[], author: unkno
       else if (findIn(out, parentId)) {
         out = addReply(out, parentId, c.id, c.author, c.text);
         Object.assign(findComment(out, c.id), { createdDate: c.createdDate, updatedDate: c.updatedDate });
+      }
+    }
+    if (state.threads.size) out = clone(out);
+    for (const [id, t] of state.threads) {
+      const c = findIn(out, id);
+      if (!c) continue;
+      Object.assign(c, { version: t.version, threadResolved: t.resolved });
+      if (t.resolved) Object.assign(c, { threadResolver: clone(author), threadResolvedDate: t.at });
+      else {
+        delete c.threadResolver;
+        delete c.threadResolvedDate;
       }
     }
     return out;
@@ -155,6 +178,19 @@ export function commentPosts(path: string, list: () => Activity[], author: unkno
       const c = findIn(all(), Number(new URL(req.url).pathname.split("/").pop()));
       return c ? { status: 200, body: c } : NOT_FOUND;
     },
+    [key("PUT", `${path}/comments/*`)]: async (req) => {
+      const id = Number(new URL(req.url).pathname.split("/").pop());
+      const body = (await req.json()) as { version?: unknown; threadResolved?: unknown };
+      state.puts.push({ id, ...body });
+      const c = findIn(all(), id);
+      if (!c) return NOT_FOUND;
+      if (state.forbid.has(id)) return { status: 403, body: { errors: [{ message: "You are not permitted to update this comment." }] } };
+      if (state.conflict.delete(id) || body.version !== c.version)
+        return { status: 409, body: { errors: [{ message: "The comment has been updated since you last saw it." }] } };
+      if (typeof body.threadResolved === "boolean" && !state.ignore.has(id))
+        state.threads.set(id, { version: c.version + 1, resolved: body.threadResolved, at: Date.now() });
+      return { status: 200, body: findIn(all(), id) };
+    },
   };
   return Object.assign(state, {
     routes,
@@ -163,6 +199,11 @@ export function commentPosts(path: string, list: () => Activity[], author: unkno
       state.drop = false;
       state.bodies = [];
       state.posted = [];
+      state.puts = [];
+      state.threads.clear();
+      state.forbid.clear();
+      state.conflict.clear();
+      state.ignore.clear();
       next = firstId;
     },
   });

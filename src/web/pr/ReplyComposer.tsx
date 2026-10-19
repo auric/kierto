@@ -276,7 +276,14 @@ export function ReplyComposer({
           title={`Post this reply to ${nameOf(confirm.parent)}?`}
           note="The app checks the thread for new messages before it posts."
           entries={[
-            { key: "reply", code: null, dest: replyText({ name: nameOf(confirm.parent), place }), body: confirm.text, warning: null },
+            {
+              key: "reply",
+              code: null,
+              dest: replyText({ name: nameOf(confirm.parent), place }),
+              body: confirm.text,
+              warning: null,
+              resolve: null,
+            },
           ]}
           posting={posting}
           error={null}

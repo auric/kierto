@@ -16,7 +16,7 @@ import { ApiError } from "../shell/data";
 import { prKey } from "../shell/model";
 import { Confirm, type ConfirmEntry } from "./Confirm";
 import { confirmPosts, fetchPlan, planKey, postsKey, usePostPlan } from "./data";
-import { destLabel, destText, mergePosts, planItems } from "./model";
+import { destLabel, destText, mergePosts, planItems, resolveLabel, resolveNote } from "./model";
 
 type Open = { plan: PostPlanDto | null; posting: boolean; error: string | null };
 
@@ -30,9 +30,10 @@ const entries = (plan: PostPlanDto, comments: CommentDto[]): ConfirmEntry[] =>
     return {
       key: `${p.run}:${i}`,
       code: d.code,
-      dest: d.text,
+      dest: p.body ? d.text : resolveLabel(p.destination, comments),
       body: p.body,
       warning: p.duplicate ? `${p.duplicate.author} raised a similar point on this line.` : null,
+      resolve: resolveNote(p),
     };
   });
 
@@ -105,7 +106,8 @@ export function usePostBar(
     if (!shown.length) return "Reading the comments to post…";
     const review = shown.filter((p) => p.destination.kind !== "reply");
     const replies = review.length < shown.length;
-    if (!review.length) return "Each reply goes under the message it answers. The app checks for newer messages when you post.";
+    if (!review.length)
+      return "Each reply goes under the message it answers. A resolve runs after its reply. The app checks for newer messages when you post.";
     const at = [...new Set(review.map((p) => p.sourceHead))].map(shortHash).join(", ");
     const reviewed = runs?.filter((r) => review.some((p) => p.run === r.id)) ?? [];
     if (reviewed.some((r) => r.stale?.source))

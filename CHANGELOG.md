@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Replies
+
+- Draft replies checks each thread against the new code and the answer in the thread. When the point is settled, it proposes to resolve the thread and shows its proof.
+- "Resolve after posting" on each reply draft. The reply posts first, then the thread resolves. A draft without text only resolves the thread. Claude ticks the box only on threads that you started.
+- "Review changes since" proposes to resolve the threads of your posted findings that the new commits fix. A Fix commit proposes it on its "Fixed in" reply.
+- Resolve or reopen any thread from its More menu. A thread that another person started asks first.
+- A resolve that fails after the reply keeps the reply and offers "Resolve again". It never posts the reply twice.
+
 ## 0.2.0
 
 The first public version. Kierto is a local-first inbox for Bitbucket Server and Data Center pull requests, with AI reviews by your own Claude Code CLI.

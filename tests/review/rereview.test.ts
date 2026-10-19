@@ -18,7 +18,7 @@ import { cachePath, type GitRemote, prepareWorkspace, UNTRUSTED } from "../../sr
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import type { PostPlanDto, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
-import type { Carried, EarlierVerdict, Finding } from "../../src/shared/review";
+import type { Carried, EarlierVerdict, Finding, ReplyPayload } from "../../src/shared/review";
 import type { PullRequest } from "../../src/shared/types";
 import { FAKE_TOKEN, FAKE_USER } from "../support/fake-bitbucket";
 import { claudeStream, fakeRunner, stubListTools } from "../support/review-fixture";
@@ -608,6 +608,101 @@ describe("re-review runs", () => {
       ]);
       expect(plan[0]?.destination).toMatchObject({ path: "src/app.ts", line: 5 });
       expect(await h.reviewed()).toBe(h.s2);
+    },
+    SLOW,
+  );
+});
+
+describe("resolve proposals", () => {
+  test(
+    "a fixed verdict on my posted finding proposes to resolve its thread; an open draft, a resolved thread, or another person's thread gets none",
+    async () => {
+      const h = await setup();
+      await h.brief("general");
+      const base = await h.finish((await h.post<RunDto>(`/api/prs/${h.pr}/review`)).body.id);
+      const at = (line: number) => base.items.find((i) => i.kind === "finding" && i.anchor?.line === line) as ReviewItemDto;
+      // Four posted inline findings. 9003 is resolved already. Another person started 9004 (a reply of mine cannot start a thread).
+      const posted: [number, number, string, number][] = [
+        [3, 9001, FAKE_USER, 0],
+        [10, 9002, FAKE_USER, 0],
+        [20, 9003, FAKE_USER, 1],
+        [30, 9004, "asmith", 0],
+      ];
+      for (const [line, root, author, resolved] of posted) {
+        const it = at(line);
+        h.db.query("UPDATE review_item SET status = 'posted' WHERE id = $id").run({ id: it.id });
+        h.db
+          .query(
+            `INSERT INTO post (pr, run, kind, idem_key, body, destination_json, items_json, state, remote_id, remote_version, created_at, updated_at)
+            VALUES ($pr, $run, 'inline', $key, $body, '{}', $items, 'confirmed', $root, 0, 1, 1)`,
+          )
+          .run({ pr: h.pr, run: base.run.id, key: `k${root}`, body: it.body, items: JSON.stringify([{ id: it.id, revision: 0 }]), root });
+        h.db
+          .query(
+            `INSERT INTO comment (pr, comment_id, version, parent_id, root_id, author_slug, author_name, text, thread_resolved, created_at, updated_at)
+            VALUES ($pr, $root, 0, NULL, $root, $author, $author, $body, $resolved, 5, 5)`,
+          )
+          .run({ pr: h.pr, root, author, body: it.body, resolved });
+      }
+      // An open reply draft of mine in thread 9002.
+      h.db
+        .query(
+          `INSERT INTO review_item (run, kind, payload_json, body, status, thread) VALUES ($run, 'reply', $payload, 'Mine.', 'new', 9002)`,
+        )
+        .run({
+          run: base.run.id,
+          payload: JSON.stringify({ thread: 9002, action: "reply", body: "Mine.", reason: "R.", evidenceStatus: "code", replyTo: 9002 }),
+        });
+
+      await h.push(h.s2);
+      const fixed = (line: number) => ({
+        id: at(line).id,
+        status: "fixed",
+        reason: `Line ${line} is fixed at src/app.ts:${line + 2}.`,
+        path: null,
+        line: null,
+      });
+      h.runner.write({
+        fixture: h.stream(BASE_RESULT),
+        rereview: {
+          summary: "No new findings.",
+          risks: [],
+          questions: [],
+          coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+          findings: [],
+          earlier: [fixed(3), fixed(10), fixed(30), { id: at(35).id, status: "open", reason: "Still there.", path: null, line: null }],
+        },
+      });
+      const d = await h.finish((await h.post<RunDto>(`/api/prs/${h.pr}/rereview`)).body.id);
+      const stdin = h.runCalls()[1]?.stdin ?? "";
+      expect(stdin).toContain(`Earlier findings: ${[35, 30, 10, 3].map((l) => at(l).id).join(", ")}\n`);
+      expect(stdin).toContain(
+        `Posted findings: ${[30, 10, 3].map((l) => at(l).id).join(", ")}. The user posted each one as a review thread.`,
+      );
+      expect(d.run.summary?.coverage.skipped).toEqual([]);
+
+      const replies = d.items.filter((i) => i.kind === "reply");
+      expect(replies.map((i) => [i.status, i.body, (i.payload as ReplyPayload).thread])).toEqual([["new", "", 9001]]);
+      expect(replies[0]?.payload).toMatchObject({
+        action: "none",
+        replyTo: 9001,
+        resolve: true,
+        resolveEvidence: "Line 3 is fixed at src/app.ts:5.",
+        resolveTick: true,
+      });
+      // The posted findings keep their status. Only the carried one gets a copy.
+      expect(d.items.filter((i) => i.kind === "finding").map((i) => carriedOf(i)?.from)).toEqual([at(35).id]);
+      const drafts = (await h.json<ReviewItemDto[]>(`/api/prs/${h.pr}/reply-drafts`)).body;
+      expect(drafts.map((i) => [(i.payload as ReplyPayload).thread, i.body])).toEqual([
+        [9001, ""],
+        [9002, "Mine."],
+      ]);
+
+      // Accept: the plan resolves thread 9001 without a reply.
+      const proposal = replies[0] as ReviewItemDto;
+      expect((await h.post(`/api/items/${proposal.id}`, { action: "accept", revision: 0 })).status).toBe(200);
+      const plan = (await h.json<PostPlanDto>(`/api/prs/${h.pr}/post-plan`)).body.posts;
+      expect(plan.map((p) => [p.destination, p.body, p.resolve])).toEqual([[{ kind: "reply", parentId: 9001 }, "", 9001]]);
     },
     SLOW,
   );

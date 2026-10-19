@@ -263,6 +263,7 @@ export type ValidatedReplies = { summary: string; coverage: Coverage; replies: V
 // Plan replies.md R11: only requested threads pass. Every drop and every unanswered thread goes to coverage.skipped.
 export function validateReplies(result: ReplyResult, requested: readonly ReplyThread[]): ValidatedReplies {
   const replyTo = new Map(requested.map((r) => [r.thread, r.replyTo]));
+  const mine = new Set(requested.filter((r) => r.mine).map((r) => r.thread));
   const answered = new Set<number>();
   const skipped = [...result.coverage.skipped];
   const replies: ValidatedReply[] = [];
@@ -284,7 +285,12 @@ export function validateReplies(result: ReplyResult, requested: readonly ReplyTh
       skipped.push(`Reply for thread ${r.thread} dropped: ${why}.`);
       continue;
     }
-    replies.push({ payload: { ...r, body, replyTo: to }, status: r.action === "none" ? "discarded" : "new" });
+    // Only a thread that the user started gets the tick by default. A resolve proposal without a reply stays a draft.
+    const resolveEvidence = r.resolve ? r.resolveEvidence.trim() : "";
+    replies.push({
+      payload: { ...r, body, replyTo: to, resolveEvidence, resolveTick: r.resolve && mine.has(r.thread) },
+      status: r.action === "none" && !r.resolve ? "discarded" : "new",
+    });
   }
   for (const r of requested) if (!answered.has(r.thread)) skipped.push(`Thread ${r.thread} has no reply.`);
   return { summary: result.summary, coverage: { ...result.coverage, skipped }, replies };

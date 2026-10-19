@@ -577,6 +577,23 @@ describe("reply drafts", () => {
     expect(replyCard(undefined, 105, false)).toBeNull();
   });
 
+  test("resolve: a proposal or a tick without text is a draft card; the counts name the threads to resolve; the tick has its own live text", () => {
+    const only = reply(1, 101, 105, { body: "" }, { action: "none", body: "", resolve: true, resolveTick: true });
+    const unticked = reply(2, 102, 205, { body: "" }, { action: "none", body: "", resolve: true, resolveTick: false });
+    const both = reply(3, 103, 305, {}, { resolve: true, resolveTick: true });
+    expect(replyCard(only, 105, false)).toEqual({ kind: "draft", it: only, stale: false });
+    expect(replyCard(unticked, 205, false)).toEqual({ kind: "draft", it: unticked, stale: false });
+    expect(replyCard({ ...only, status: "discarded" }, 105, false)).toMatchObject({ kind: "discarded" });
+    const none = reply(4, 104, 405, { body: "" }, { action: "none", body: "" });
+    expect(countText([only, unticked, both, none], false, "reply")).toBe("1 reply draft, 3 threads to resolve, 1 thread needs no reply");
+    expect(countText([only], false, "reply")).toBe("1 thread to resolve");
+    // A re-review counts its resolve proposals apart from the findings and the questions.
+    expect(rereviewCount([only, question(5)])).toBe("0 new, 0 carried, 0 fixed or outdated, 1 posted thread to resolve, 1 question");
+    expect(countText([finding(6), only], false)).toBe("1 finding");
+    expect(triageText(both, only, "resolve")).toBe("The thread resolves after the post.");
+    expect(triageText(only, unticked, "resolve")).toBe("The thread stays open after the post.");
+  });
+
   test("the Draft replies button: a run for your-turn threads, else the popover reason (plan pr-view-v4 2.2)", () => {
     const turns = (your: number, ...rest: Turn[]): Turn[] => [...Array<Turn>(your).fill("your"), ...rest];
     expect(repliesButton(turns(1, "wait", "resolved"))).toEqual({

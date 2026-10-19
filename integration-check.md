@@ -355,3 +355,17 @@ Status: NOT VERIFIED. The Bitbucket Data Center REST docs (8.15) show a resolved
 | Fact | Result | Evidence |
 |---|---|---|
 | U56. `threadResolver` and `threadResolvedDate` on a resolved root comment on 9.4 | UNVERIFIED | Capture with `scripts/gate0/capture-a.ts` after resolving a thread on the test PR. The schema reads both as optional. A missing or bad value shows "Resolved" without a name or a time, and the sync stays complete. A reopened thread (`threadResolved: false`) clears both. |
+
+## Thread resolve (not verified)
+
+Status: NOT VERIFIED. Scout, 2026-10-19: the Bitbucket Data Center REST docs (7.21, still listed in 9.0) show `PUT /rest/api/latest/projects/{key}/repos/{slug}/pull-requests/{id}/comments/{commentId}`. It updates a comment and needs the current `version`. Only the comment author, the PR author, or a repository admin may update a comment. A resolved thread takes no reply. Only a third-party source shows `threadResolved` in the PUT body. The app sends `{version, threadResolved}` with a version from a fresh GET, then reads the root comment again. Only that read decides the result, so a PUT without effect shows "did not resolve", never a false success. Nothing repeats a PUT. The tests use the synthetic PUT handler of `commentPosts` in tests/support/scenarios.ts.
+
+Run: `bun scripts/gate0/resolve-thread.ts --pr <TEST_PR_URL> --thread <ID>` on an open thread that you started on your test PR. Add `--forbidden <ID>` with a thread that you may not change. It WRITES: it resolves the thread, sends one PUT with the old version, and reopens the thread. Dry run: `--dry-run` runs the same steps against a loopback fake and reads no secret. The console and `.gate0/resolve/result.json` hold status codes, versions, booleans, key names, and enum-like strings only (docs/smoke-r3.md part L).
+
+| Fact | Result | Evidence |
+|---|---|---|
+| U62. The PUT body `{version, threadResolved: true}` resolves the thread, `false` reopens it, and the text stays. The single GET of a root comment carries `threadResolved` | UNVERIFIED | Third-party source only. Gate lines "resolve PUT", "after resolve", and "after reopen" with "text unchanged". A GET without `threadResolved` reads as open, so every resolve then shows "did not resolve". Stop using Resolve if "text unchanged=false". |
+| U63. A PUT with an old version gives 409 | UNVERIFIED | Gate line "stale PUT". The app maps 409 to "The thread changed on Bitbucket. Read it, then resolve it again." and never retries by itself. |
+| U64. A resolve raises the comment version | UNVERIFIED | Gate lines "before" and "after resolve". The app stores the read-back version and moves the read mark with it, so my own resolve does not mark the thread unread. Sync also follows `threadResolved` at an equal version. |
+| U65. A resolve adds a pull request activity | UNVERIFIED | Gate line "activities". The app does not depend on it. Sync reads the resolve from the comment. |
+| U66. The status for a user that may not change the comment | UNVERIFIED | Gate line "forbidden PUT" with `--forbidden`. The app maps 401 and 403 to "Bitbucket refused to resolve the thread" with a link to the thread. |

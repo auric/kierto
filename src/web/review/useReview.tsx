@@ -411,6 +411,7 @@ export function useReview(
       ),
     move: (it: ReviewItemDto | null) => openMode(it, "move"),
     moveTo: (it: ReviewItemDto, line: number) => void send(it, { action: "move", revision: it.revision, line }, true),
+    tick: (it: ReviewItemDto, on: boolean) => void send(it, { action: "resolve", revision: it.revision, resolve: on }),
   };
   const onTriage = useRef(triageFns);
   onTriage.current = triageFns;
@@ -426,6 +427,7 @@ export function useReview(
       save: (it, t) => onTriage.current.save(it, t),
       move: (it) => onTriage.current.move(it),
       moveTo: (it, l) => onTriage.current.moveTo(it, l),
+      tick: (it, on) => onTriage.current.tick(it, on),
       quiet: (id) => quiet.current === id,
     }),
     [prId],
@@ -504,6 +506,7 @@ export function useReview(
             <ReplyDraftCard
               card={card}
               thread={t.id}
+              mine={t.root.who.me}
               to={to ? (to.who.me ? "your message" : to.who.name) : null}
               mode={it ? modeOf(triage, it.id) : null}
               busy={!!it && triage.busy.has(it.id)}

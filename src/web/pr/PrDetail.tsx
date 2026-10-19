@@ -4,7 +4,7 @@
 // PR detail (plan v3 WP5, r2 UI-ASK, r2 UI-DIFF, pr-view-v4 section 2): header, status strip, and the panel slot (the brief or Ask),
 // then one column of the run record, Description, Drafts, Threads, Files, and Commits. The run record goes after the Description
 // until a review exists (decision D3).
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
@@ -18,6 +18,7 @@ import type { Card } from "../diff/model";
 import { detailStep, type Layer } from "../keys";
 import { type FileRef, restoreScroll } from "../lib/route";
 import { useMeta } from "../meta";
+import { setThreadResolved } from "../publish/data";
 import { PostsGroup, useOutbox } from "../publish/Outbox";
 import { usePostBar } from "../publish/PostBar";
 import { type Focus, useReview } from "../review/useReview";
@@ -207,6 +208,7 @@ export function PrDetail({
   );
 
   const outbox = useOutbox(row.id, comments, forge);
+  const qc = useQueryClient();
   // My avatar comes from my own messages. Without one, the slug stands in.
   const mine = useMemo<Person>(
     () => threads.flatMap((t) => t.msgs).find((m) => m.who.me)?.who ?? { slug: me ?? "", name: me ?? "You", me: true },
@@ -274,8 +276,14 @@ export function PrDetail({
       onFix: (tid) => fixRef.current.open(tid),
       copyPrompt: (tid) => fixRef.current.copy(tid),
       posts: outbox.ctx,
+      // A done change comes back through SSE. A refused one reloads the thread, so the user reads it before the next try.
+      setResolved: async (tid, resolved, seen) => {
+        const out = await setThreadResolved(row.id, { thread: tid, resolved, seen });
+        if (out) void qc.invalidateQueries({ queryKey: ["pr", row.id] });
+        return out;
+      },
     }),
-    [row.id, hints, now, forge, web, runner, mine, ackRef, focusAfter, jump, announce, onReply, outbox.ctx, role],
+    [row.id, hints, now, forge, web, runner, mine, ackRef, focusAfter, jump, announce, onReply, outbox.ctx, role, qc],
   );
 
   const review = useReview(pr, {

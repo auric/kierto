@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Publish API (plan v3 WP12, WP13a): the post plan, confirm, replies, and the outbox rows. Nothing posts without confirm or a reply call.
+// Publish API (plan v3 WP12, WP13a): the post plan, confirm, replies, the outbox rows, and thread resolve.
+// Nothing posts or resolves without confirm, a reply call, or a resolve call. A resolve call is one user click and goes out at once.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import { type ApiError, type ConfirmDto, confirmInput, type PostPlanDto, replyPostInput } from "../../shared/dto";
+import {
+  type ApiError,
+  type ConfirmDto,
+  confirmInput,
+  type PostPlanDto,
+  replyPostInput,
+  type ThreadResolveError,
+  threadResolveInput,
+} from "../../shared/dto";
 import { type ItemRow, type ReviewJobs, toItemDto } from "../review/jobs";
 import type { Settings } from "../settings";
 import { type Outbox, selectPosts } from "./outbox";
@@ -117,6 +126,24 @@ export function createPublishRoutes(opts: { review: ReviewJobs; settings: Settin
         return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
       },
     )
+    .post(
+      "/prs/:id/resolve",
+      prParam,
+      validator("json", (v, c) => {
+        const r = threadResolveInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid thread change." }, 400);
+      }),
+      async (c) => {
+        const db = outbox.open();
+        if (!db) return c.json(unconfigured, 409);
+        const r = await outbox.setResolved(db, c.req.valid("param").id, c.req.valid("json"));
+        if (r.status === 200) return c.json({ thread: r.thread, resolved: r.resolved }, 200);
+        const body: ApiError | ThreadResolveError = r.reason ? { error: r.error, reason: r.reason } : { error: r.error };
+        if (r.status === 403) return c.json(body, 403);
+        if (r.status === 404) return c.json(body, 404);
+        return r.status === 409 ? c.json(body, 409) : c.json(body, 502);
+      },
+    )
     .get("/prs/:id/posts", prParam, (c) => {
       const db = outbox.open();
       const posts = db && outbox.posts(db, c.req.valid("param").id);
@@ -131,6 +158,14 @@ export function createPublishRoutes(opts: { review: ReviewJobs; settings: Settin
       if ("post" in r) return r.status === 202 ? c.json(r.post, 202) : c.json(r.post, 200);
       if (r.status === 404) return c.json({ error: r.error }, 404);
       return r.status === 409 ? c.json({ error: r.error }, 409) : c.json({ error: r.error }, 502);
+    })
+    .post("/posts/:id/resolve", postParam, (c) => {
+      // "Resolve again" after a failed resolve step. It never posts the comment again.
+      const db = outbox.open();
+      if (!db) return c.json(unconfigured, 409);
+      const r = outbox.retryResolve(db, c.req.valid("param").id);
+      if (r.status === 202) return c.json(r.post, 202);
+      return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
     })
     .post(
       "/posts/:id/drop",

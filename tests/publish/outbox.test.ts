@@ -19,7 +19,7 @@ import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { createSyncEngine } from "../../src/server/sync/engine";
-import type { ConfirmDto, PostDto, PostPlanDto, PrDetail, ReplyConflict, ReviewItemDto } from "../../src/shared/dto";
+import type { ConfirmDto, PostDto, PostPlanDto, PrDetail, ReplyConflict, ReviewItemDto, ThreadResolveError } from "../../src/shared/dto";
 import type { ExcerptLine } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER, key, type Reply, type Route, startFakeBitbucket } from "../support/fake-bitbucket";
 import {
@@ -225,22 +225,28 @@ function seedRun(s: S, heads = { source: SOURCE, target: TARGET }) {
   return { run, item };
 }
 
-// A completed reply run with one reply draft to the given message.
-function seedReply(s: S, replyTo: number) {
+// A completed reply run with one reply draft to the given message. body "": a draft without reply text.
+function seedReply(s: S, replyTo: number, body = "Reply text.") {
   const { id: run } = s.db
     .query(
       `INSERT INTO review_run (pr, profile, note, idem_key, source_head, target_head, merge_base, status, started_at, finished_at, kind)
       VALUES ($pr, 'general', '', $k, $s, $t, $t, 'completed', 1, 2, 'reply') RETURNING id`,
     )
     .get({ pr: s.pr, k: `r${replyTo}`, s: SOURCE, t: TARGET }) as { id: number };
-  const payload = { thread: ROOT, action: "reply", body: "Reply text.", reason: "R.", evidenceStatus: "code", replyTo };
+  const payload = { thread: ROOT, action: body ? "reply" : "none", body, reason: "R.", evidenceStatus: "code", replyTo };
   return (
     s.db
       .query(
-        `INSERT INTO review_item (run, kind, payload_json, body, thread) VALUES ($run, 'reply', $payload, 'Reply text.', $thread) RETURNING id`,
+        `INSERT INTO review_item (run, kind, payload_json, body, thread) VALUES ($run, 'reply', $payload, $body, $thread) RETURNING id`,
       )
-      .get({ run, payload: JSON.stringify(payload), thread: ROOT }) as { id: number }
+      .get({ run, payload: JSON.stringify(payload), body, thread: ROOT }) as { id: number }
   ).id;
+}
+
+// Ticks "Resolve after posting" on a new draft, then accepts it. The item ends at revision 2.
+async function tick(s: S, id: number) {
+  expect((await s.call<ReviewItemDto>(`/api/items/${id}`, { action: "resolve", revision: 0, resolve: true })).status).toBe(200);
+  expect((await s.call<ReviewItemDto>(`/api/items/${id}`, { action: "accept", revision: 1 })).status).toBe(200);
 }
 
 async function accept(s: S, ...ids: number[]) {
@@ -418,10 +424,13 @@ describe("reply posts", () => {
       [`/api/prs/${s.pr}/confirm`, { items: [{ id: 1, revision: 0 }] }],
       ["/api/posts/1/retry", {}],
       ["/api/posts/1/drop", {}],
+      [`/api/prs/${s.pr}/resolve`, { thread: ROOT, resolved: true, seen: THEIRS }],
+      ["/api/posts/1/resolve", {}],
     ] as const)
       expect((await s.call(path, body, noSession)).status).toBe(403);
     await s.settle();
     expect(s.sent()).toBe(0);
+    expect(s.posts.puts).toEqual([]);
     expect(await s.list()).toEqual([]);
   });
 
@@ -699,6 +708,13 @@ describe("AI mark", () => {
     expect(s.posts.bodies.map((b) => b.text)).toEqual([TEXT]);
   });
 
+  test("a resolve-only post gets no mark and posts no comment", async () => {
+    const s = await setup(true);
+    const draft = seedReply(s, THEIRS, "");
+    await tick(s, draft);
+    expect((await s.plan()).map((p) => [p.body, p.resolve])).toEqual([["", ROOT]]);
+  });
+
   test("A9: the check matches a marked post after a dropped connection, with no second POST", async () => {
     const s = await setup(true);
     s.posts.drop = true;
@@ -711,5 +727,173 @@ describe("AI mark", () => {
     expect(post).toMatchObject({ state: "confirmed", remoteId: FIRST_ID, attempts: 1, lastError: null, body: `${AI_MARK}Reply text.` });
     expect(s.posts.bodies.map((b) => b.text)).toEqual([`${AI_MARK}Reply text.`]);
     expect(s.sent()).toBe(1);
+  });
+});
+
+describe("resolve after posting", () => {
+  const PUT = `PUT ${PR_PATH}/comments/${ROOT}`;
+  const V0 = findComment(activities("activities-nested-reply.json"), ROOT).version;
+  const root = (s: S) =>
+    s.db
+      .query("SELECT thread_resolved, version, ack_version, thread_resolver_json FROM comment WHERE comment_id = $id")
+      .get({ id: ROOT }) as {
+      thread_resolved: number;
+      version: number;
+      ack_version: number | null;
+      thread_resolver_json: string | null;
+    };
+  const writes = (s: S) => s.fake.requests.filter((r) => !r.startsWith("GET "));
+  const confirm = (s: S, id: number) => s.call<ConfirmDto>(`/api/prs/${s.pr}/confirm`, { items: [{ id, revision: 2 }] });
+
+  test("the reply posts first, then the thread resolves; the thread shows resolved before and after the sync", async () => {
+    const s = await setup();
+    const draft = seedReply(s, THEIRS);
+    await tick(s, draft);
+    const [planned] = await s.plan();
+    expect(planned).toMatchObject({ destination: { kind: "reply", parentId: THEIRS }, body: "Reply text.", resolve: ROOT });
+    const read = root(s).ack_version;
+    expect((await confirm(s, draft)).status).toBe(202);
+    await s.settle();
+    const [post] = await s.list();
+    expect(post).toMatchObject({ state: "confirmed", remoteId: FIRST_ID, resolve: { root: ROOT, state: "done", error: null } });
+    expect(writes(s)).toEqual([COMMENTS, PUT]);
+    expect(s.posts.puts).toEqual([{ id: ROOT, version: V0, threadResolved: true }]);
+    // The read mark follows my own resolve, so the thread does not turn unread.
+    expect(root(s)).toMatchObject({ thread_resolved: 1, version: V0 + 1, ack_version: read === null ? null : V0 + 1 });
+    expect(JSON.parse(root(s).thread_resolver_json ?? "{}")).toMatchObject({ slug: FAKE_USER });
+    await s.sync.syncNow();
+    const detail = (await s.call<PrDetail>(`/api/prs/${s.pr}`)).body;
+    expect(detail.comments.find((c) => c.id === ROOT)).toMatchObject({ threadResolved: true, resolver: { slug: FAKE_USER } });
+    expect(writes(s)).toEqual([COMMENTS, PUT]);
+  });
+
+  test("a resolve-only draft posts no comment and resolves the thread", async () => {
+    const s = await setup();
+    const draft = seedReply(s, THEIRS, "");
+    expect((await s.call<ReviewItemDto>(`/api/items/${draft}`, { action: "accept", revision: 0 })).status).toBe(400);
+    await tick(s, draft);
+    expect((await confirm(s, draft)).status).toBe(202);
+    await s.settle();
+    const [post] = await s.list();
+    expect(post).toMatchObject({ body: "", state: "confirmed", remoteId: null, attempts: 0, resolve: { state: "done" } });
+    expect(s.sent()).toBe(0);
+    expect(writes(s)).toEqual([PUT]);
+    expect(root(s).thread_resolved).toBe(1);
+  });
+
+  test("a refused resolve after the reply keeps the reply; Resolve again resolves and never posts the reply twice", async () => {
+    const s = await setup();
+    s.posts.forbid.add(ROOT);
+    const draft = seedReply(s, THEIRS);
+    await tick(s, draft);
+    await confirm(s, draft);
+    await s.settle();
+    const [post] = await s.list();
+    expect(post).toMatchObject({ state: "confirmed", remoteId: FIRST_ID, resolve: { root: ROOT, state: "failed" } });
+    expect(post?.resolve?.error).toContain("Bitbucket refused to resolve the thread.");
+    expect(root(s).thread_resolved).toBe(0);
+    // Post again is for the comment step only. The resolve has its own retry.
+    expect((await s.call(`/api/posts/${post?.id}/retry`, {})).status).toBe(409);
+    s.posts.forbid.clear();
+    const again = await s.call<PostDto>(`/api/posts/${post?.id}/resolve`, {});
+    expect([again.status, again.body.resolve?.state]).toEqual([202, "pending"]);
+    await s.settle();
+    expect((await s.list())[0]?.resolve).toEqual({ root: ROOT, state: "done", error: null });
+    expect(s.sent()).toBe(1);
+    expect(writes(s)).toEqual([COMMENTS, PUT, PUT]);
+    expect((await s.call(`/api/posts/${post?.id}/resolve`, {})).status).toBe(409);
+    expect((await s.call("/api/posts/999/resolve", {})).status).toBe(404);
+  });
+
+  test("a failed reply never resolves; a stale version or an unclear answer fails the resolve with its reason", async () => {
+    const s = await setup();
+    s.fake.routes[key("POST", `${PR_PATH}/comments`)] = refuse(400);
+    const draft = seedReply(s, THEIRS);
+    await tick(s, draft);
+    await confirm(s, draft);
+    await s.settle();
+    expect((await s.list())[0]).toMatchObject({ state: "failed", resolve: { state: "pending" } });
+    expect(s.posts.puts).toEqual([]);
+
+    const t = await setup();
+    t.posts.conflict.add(ROOT);
+    const d2 = seedReply(t, THEIRS);
+    await tick(t, d2);
+    await confirm(t, d2);
+    await t.settle();
+    expect((await t.list())[0]?.resolve?.error).toBe("The thread changed on Bitbucket. Read it, then resolve it again.");
+    t.fake.routes[key("PUT", `${PR_PATH}/comments/*`)] = refuse(500);
+    const [row] = await t.list();
+    await t.call(`/api/posts/${row?.id}/resolve`, {});
+    await t.settle();
+    expect((await t.list())[0]?.resolve).toMatchObject({
+      state: "failed",
+      error: expect.stringContaining("No clear answer from Bitbucket (HTTP 500)."),
+    });
+  });
+
+  test("a pending resolve resumes at the next start; a thread that is resolved already gets no second PUT", async () => {
+    const s = await setup();
+    const draft = seedReply(s, THEIRS);
+    await tick(s, draft);
+    const route = key("PUT", `${PR_PATH}/comments/*`);
+    s.fake.routes[route] = refuse(500);
+    await confirm(s, draft);
+    await s.settle();
+    expect((await s.list())[0]?.resolve?.state).toBe("failed");
+    // The app stopped after Bitbucket took the PUT and before the row changed: the thread is resolved, and the row still waits.
+    s.fake.routes[route] = s.posts.routes[route] as Route;
+    s.posts.threads.set(ROOT, { version: V0 + 1, resolved: true, at: 1 });
+    s.db.query("UPDATE post SET resolve_state = 'pending', resolve_error = NULL").run();
+    const before = writes(s).length;
+    await s.restart();
+    await s.settle();
+    expect((await s.list())[0]?.resolve).toEqual({ root: ROOT, state: "done", error: null });
+    expect(writes(s)).toHaveLength(before);
+    expect(s.sent()).toBe(1);
+  });
+
+  test("manual resolve and reopen go out at once; stale screens, refusals, and unknown threads give their reasons", async () => {
+    const s = await setup();
+    const set = (body: Record<string, unknown>) =>
+      s.call<{ thread?: number; resolved?: boolean } & Partial<ThreadResolveError>>(`/api/prs/${s.pr}/resolve`, {
+        thread: ROOT,
+        resolved: true,
+        seen: THEIRS,
+        ...body,
+      });
+    expect((await set({ seen: 1000001 })).body).toMatchObject({ reason: "messages" });
+    expect((await set({ thread: THEIRS })).status).toBe(404);
+    expect((await set({ thread: 999 })).status).toBe(404);
+    expect((await set({ resolved: "yes" })).status).toBe(400);
+    expect(s.posts.puts).toEqual([]);
+
+    s.posts.forbid.add(ROOT);
+    const no = await set({});
+    expect([no.status, no.body.reason]).toEqual([403, "forbidden"]);
+    s.posts.forbid.clear();
+    s.posts.conflict.add(ROOT);
+    expect((await set({})).body).toMatchObject({
+      reason: "changed",
+      error: "The thread changed on Bitbucket. Read it, then resolve it again.",
+    });
+    s.posts.ignore.add(ROOT);
+    expect((await set({})).body).toMatchObject({ reason: "ignored" });
+    s.posts.ignore.clear();
+
+    // The replies follow the root, because the turn rule reads every message of the thread.
+    const reply = () =>
+      (s.db.query("SELECT thread_resolved FROM comment WHERE comment_id = $id").get({ id: THEIRS }) as { thread_resolved: number })
+        .thread_resolved;
+    expect((await set({})).body).toEqual({ thread: ROOT, resolved: true });
+    expect([root(s).thread_resolved, reply()]).toEqual([1, 1]);
+    const back = await set({ resolved: false });
+    expect([back.status, back.body]).toEqual([200, { thread: ROOT, resolved: false }]);
+    expect(root(s)).toMatchObject({ thread_resolved: 0, thread_resolver_json: null });
+    expect(reply()).toBe(0);
+    expect(s.posts.puts.map((p) => p.threadResolved)).toEqual([true, true, true, true, false]);
+    // Nothing went to the outbox: a manual change is no post.
+    expect(await s.list()).toEqual([]);
+    expect(s.sent()).toBe(0);
   });
 });

@@ -40,7 +40,7 @@ const JUDGEMENTS = ["valid", "partly", "invalid", "question", null] as const;
 // The judgements cycle valid, partly, invalid, question, null.
 export function echoReplies(stdin: string) {
   const line = /^Threads: (.*)$/m.exec(stdin)?.[1] ?? "";
-  const threads = [...line.matchAll(/(\d+) \(answer message (\d+)\)/g)].map((m) => ({ thread: Number(m[1]), replyTo: Number(m[2]) }));
+  const threads = [...line.matchAll(/(\d+) \(answer message (\d+)[^)]*\)/g)].map((m) => ({ thread: Number(m[1]), replyTo: Number(m[2]) }));
   return {
     summary: `Drafted replies for ${threads.length} threads.`,
     replies: threads.map(({ thread, replyTo }, i) => ({

@@ -72,6 +72,15 @@ export const replyDraft = z.object({
     .describe(
       "valid: the review point is right. partly: only a part of it is right. invalid: the code is right as it is. question: the newest message asks a question. null: the newest message asks for no change and asks no question.",
     ),
+  // The defaults keep results without these keys valid. --json-schema still lists them as required.
+  resolve: z
+    .boolean()
+    .default(false)
+    .describe("true: the code at the head commit or the answer in the thread settles the review point, so the thread can be resolved."),
+  resolveEvidence: z
+    .string()
+    .default("")
+    .describe("For resolve true: the proof in one line, such as path:line at the head commit or the message that settles it. Else empty."),
 });
 
 export const replyResult = z.object({
@@ -85,10 +94,15 @@ export type ReplyResult = z.infer<typeof replyResult>;
 // replyTo: the message that the reply answers. The post uses it as the parent.
 // judgement: absent in drafts stored before Release 3. Read it as null.
 // fix: a "Fixed in" reply. It posts only when the PR commits hold the commit (plan r3).
-export type ReplyPayload = Omit<ReplyDraft, "judgement"> & {
+// resolve, resolveEvidence: the proposal to resolve the thread. Absent in drafts stored before it existed.
+// resolveTick: the user's choice to resolve the thread after the post. Only a ticked draft resolves.
+export type ReplyPayload = Omit<ReplyDraft, "judgement" | "resolve" | "resolveEvidence"> & {
   judgement?: Judgement | null;
   replyTo: number;
   fix?: { id: number; commit: string };
+  resolve?: boolean;
+  resolveEvidence?: string;
+  resolveTick?: boolean;
 };
 
 export const replyJsonSchema = (): Record<string, unknown> => z.toJSONSchema(replyResult, { target: "draft-07" });
@@ -159,7 +173,8 @@ export const earlierVerdict = z.object({
   line: lineNo.nullable().describe("The current first line of an open finding when the code moved, else null."),
 });
 
-export const rereviewResult = reviewResult.extend({ earlier: z.array(earlierVerdict).max(100) });
+export const MAX_EARLIER = 100;
+export const rereviewResult = reviewResult.extend({ earlier: z.array(earlierVerdict).max(MAX_EARLIER) });
 
 export type EarlierVerdict = z.infer<typeof earlierVerdict>;
 export type RereviewResult = z.infer<typeof rereviewResult>;

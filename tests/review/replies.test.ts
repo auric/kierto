@@ -61,6 +61,8 @@ const draft = (thread: number, o: Partial<ReplyDraft> = {}): ReplyDraft => ({
   reason: "The comment asks.",
   evidenceStatus: "code",
   judgement: null,
+  resolve: false,
+  resolveEvidence: "",
   ...o,
 });
 
@@ -212,7 +214,9 @@ describe("thread selection", () => {
       expect(r.body).toMatchObject({ kind: "reply", status: "running" });
       const d = await h.finish(r.body.id);
       expect(d.run).toMatchObject({ kind: "reply", status: "completed", errorKind: null });
-      expect(h.runCalls()[0]?.stdin).toContain("\nThreads: 101 (answer message 103), 501 (answer message 502)\n");
+      expect(h.runCalls()[0]?.stdin).toContain(
+        "\nThreads: 101 (answer message 103, another person started it), 501 (answer message 502, the user started it)\n",
+      );
       expect(d.items.map((i) => [i.kind, payload(i).thread, payload(i).replyTo, i.status, i.anchor])).toEqual([
         ["reply", 101, 103, "new", null],
         ["reply", 501, 502, "new", null],
@@ -222,7 +226,9 @@ describe("thread selection", () => {
       // As the PR author, a thread that only another user wrote is my turn too.
       h.db.query("UPDATE pull_request SET my_role = 'AUTHOR' WHERE id = $pr").run({ pr: h.pr });
       await h.run();
-      expect(h.runCalls()[1]?.stdin).toContain("\nThreads: 101 (answer message 103), 201 (answer message 201), 501 (answer message 502)\n");
+      expect(h.runCalls()[1]?.stdin).toContain(
+        "\nThreads: 101 (answer message 103, another person started it), 201 (answer message 201, another person started it), 501 (answer message 502, the user started it)\n",
+      );
     },
     SLOW,
   );
@@ -244,7 +250,9 @@ describe("thread selection", () => {
 
       // D13: a resolved thread and a wait thread take a per-thread draft. Duplicates collapse.
       const d = await h.run([601, 301, 301]);
-      expect(h.runCalls()[0]?.stdin).toContain("\nThreads: 301 (answer message 302), 601 (answer message 601)\n");
+      expect(h.runCalls()[0]?.stdin).toContain(
+        "\nThreads: 301 (answer message 302, the user started it), 601 (answer message 601, the user started it)\n",
+      );
       expect(d.items.map((i) => payload(i).thread)).toEqual([301, 601]);
 
       // D12: 26 your-turn threads give 409. No thread gives 409.
@@ -503,7 +511,7 @@ describe("drafts", () => {
       expect((await h.act(none.id, { action: "restore", revision: 0 })).status).toBe(200);
       const empty = await h.act(none.id, { action: "accept", revision: 1 });
       expect(empty.status).toBe(400);
-      expect(empty.body.error).toBe("Write the reply first.");
+      expect(empty.body.error).toBe("Write the reply first, or tick Resolve after posting.");
       expect((await h.act(none.id, { action: "edit", revision: 1, body: "I answer this later." })).body).toMatchObject({
         status: "accepted",
         body: "I answer this later.",
@@ -516,6 +524,59 @@ describe("drafts", () => {
         [{ kind: "reply", parentId: 103 }, "I answer this later.", [{ id: none.id, revision: 2 }]],
         [{ kind: "reply", parentId: 502 }, "Fixed in the next push.", [{ id: yes.id, revision: 1 }]],
       ]);
+    },
+    SLOW,
+  );
+
+  test(
+    "resolve: my thread gets the tick, another person's thread does not; the tick posts a resolve, with or without a reply",
+    async () => {
+      const h = await setup();
+      h.scenario({
+        replies: {
+          summary: "Two settled threads.",
+          replies: [
+            draft(101, { resolve: true, resolveEvidence: "src/a.ts:3 at the head.", body: "The rename is in." }),
+            draft(501, { action: "none", body: "", resolve: true, resolveEvidence: "  src/b.ts:9 releases the lock.  " }),
+          ],
+          coverage: emptyCoverage,
+        },
+      });
+      const d = await h.run();
+      const [theirs, mine] = d.items as [ReviewItemDto, ReviewItemDto];
+      expect(theirs).toMatchObject({ body: "The rename is in.", status: "new" });
+      expect(payload(theirs)).toMatchObject({ resolve: true, resolveEvidence: "src/a.ts:3 at the head.", resolveTick: false });
+      // A resolve without a reply stays a draft: no body, and the tick on my own thread.
+      expect(mine).toMatchObject({ body: "", status: "new" });
+      expect(payload(mine)).toMatchObject({
+        action: "none",
+        resolve: true,
+        resolveEvidence: "src/b.ts:9 releases the lock.",
+        resolveTick: true,
+      });
+
+      expect((await h.act(mine.id, { action: "accept", revision: 0 })).status).toBe(200);
+      const plan = async () => (await h.json<PostPlanDto>(`/api/prs/${h.pr}/post-plan`)).body.posts;
+      expect((await plan()).map((p) => [p.destination, p.body, p.resolve])).toEqual([[{ kind: "reply", parentId: 502 }, "", 501]]);
+
+      // The tick off: an accepted draft without a body goes back to new, so the plan is empty. Accept then needs the tick.
+      const off = await h.act(mine.id, { action: "resolve", revision: 1, resolve: false });
+      expect(off.body).toMatchObject({ status: "new", revision: 2 });
+      expect(payload(off.body as ReviewItemDto).resolveTick).toBe(false);
+      expect(await plan()).toEqual([]);
+      expect((await h.act(mine.id, { action: "accept", revision: 2 })).status).toBe(400);
+
+      // Another person's thread: the user ticks it, then accepts. The post resolves after the reply.
+      expect((await h.act(theirs.id, { action: "resolve", revision: 0, resolve: true })).body).toMatchObject({
+        status: "new",
+        revision: 1,
+      });
+      expect((await h.act(theirs.id, { action: "accept", revision: 1 })).status).toBe(200);
+      expect((await plan()).map((p) => [p.destination, p.body, p.resolve])).toEqual([
+        [{ kind: "reply", parentId: 103 }, "The rename is in.", 101],
+      ]);
+      // A stale revision gives 409. Only a reply draft takes the tick.
+      expect((await h.act(theirs.id, { action: "resolve", revision: 0, resolve: false })).status).toBe(409);
     },
     SLOW,
   );
@@ -540,7 +601,9 @@ describe("validateReplies", () => {
       ]),
       requested,
     );
-    expect(v.replies).toEqual([{ payload: { ...draft(101), body: "First.", replyTo: 103 }, status: "new" }]);
+    expect(v.replies).toEqual([
+      { payload: { ...draft(101), body: "First.", replyTo: 103, resolveEvidence: "", resolveTick: false }, status: "new" },
+    ]);
     expect(v.coverage.skipped).toEqual([
       "big.bin",
       "Reply for thread 999 dropped: the thread was not requested.",
@@ -549,6 +612,22 @@ describe("validateReplies", () => {
       `Reply for thread 801 dropped: the body is longer than ${MAX_NOTE} characters.`,
     ]);
     expect(v.summary).toBe("S.");
+  });
+
+  test("resolve: the tick needs a thread that the user started; evidence is trimmed and dropped without resolve", () => {
+    const v = validateReplies(
+      result([
+        draft(101, { action: "none", body: "", resolve: true, resolveEvidence: " a.ts:3 " }),
+        draft(501, { resolve: true, resolveEvidence: "b.ts:1" }),
+        draft(801, { resolveEvidence: "ignored" }),
+      ]),
+      requested.map((r) => ({ ...r, mine: r.thread !== 501 })),
+    );
+    expect(v.replies.map((r) => [r.payload.thread, r.status, r.payload.resolveTick, r.payload.resolveEvidence])).toEqual([
+      [101, "new", true, "a.ts:3"],
+      [501, "new", false, "b.ts:1"],
+      [801, "new", false, ""],
+    ]);
   });
 
   test("none keeps no body and is discarded; a reply at the cap is new; a thread without an entry is listed", () => {
@@ -582,6 +661,31 @@ test("R15: a reply item posts under its parent and never joins the general comme
   expect(posts.map((p) => [p.destination, p.body, p.items.map((i) => i.id)])).toEqual([
     [{ kind: "reply", parentId: 103 }, "Done.", [2]],
     [{ kind: "general" }, "Why? Unclear.", [1]],
+  ]);
+});
+
+test("resolve: a ticked reply names its thread; a ticked draft without text posts an empty body with no mark; an unticked one is skipped", () => {
+  const run = { id: 1, sourceHead: "a", targetHead: "b", mergeBase: "c" };
+  const base = { run: 1, anchor: null, status: "accepted" as const, revision: 0, edited: false };
+  const reply = (id: number, body: string, o: Partial<ReplyPayload>) =>
+    ({ ...base, id, kind: "reply", body, payload: { ...draft(100 + id, { body }), replyTo: 200 + id, ...o } }) as const;
+  const posts = buildPlan({
+    me: FAKE_USER,
+    mark: true,
+    severity: false,
+    runs: [run],
+    comments: [],
+    items: [
+      reply(1, "Done.", { resolveTick: true }),
+      reply(2, "", { action: "none", resolve: true, resolveTick: true }),
+      reply(3, "", { action: "none", resolve: true, resolveTick: false }),
+      reply(4, "Thanks.", { resolve: true, resolveTick: false }),
+    ],
+  });
+  expect(posts.map((p) => [p.destination, p.body, p.resolve])).toEqual([
+    [{ kind: "reply", parentId: 201 }, "🤖 Done.", 101],
+    [{ kind: "reply", parentId: 202 }, "", 102],
+    [{ kind: "reply", parentId: 204 }, "🤖 Thanks.", undefined],
   ]);
 });
 

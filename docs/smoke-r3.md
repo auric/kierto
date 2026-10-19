@@ -1,6 +1,6 @@
 # Release 3 manual smoke test: Fix it, Jira Markdown, and Jira attachments
 
-This test checks the Release 3 features against a real Bitbucket Server, a real Jira server, your own git clone, and the real `claude` CLI. The user runs it. The automated suites use fixtures, the fake CLI, the fake Bitbucket, the fake Jira, and temp clones only. The results fill the "Release 3 (not run)" rows in integration-check.md: U21 to U29, B11, B12, B15, and B16. Part I checks the prompt features that came after Release 3.
+This test checks the Release 3 features against a real Bitbucket Server, a real Jira server, your own git clone, and the real `claude` CLI. The user runs it. The automated suites use fixtures, the fake CLI, the fake Bitbucket, the fake Jira, and temp clones only. The results fill the "Release 3 (not run)" rows in integration-check.md: U21 to U29, B11, B12, B15, and B16. Part I checks the prompt features that came after Release 3. Part L checks thread resolve and fills U62 to U66.
 
 ## Rules
 
@@ -11,7 +11,7 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 - Use a new, empty data folder. Never use the data folder of your daily instance.
 - The app never pushes. Each push in this test is your own `git push`.
 - Do not copy tokens, host names, code, comment text, issue text, or file names into files, issues, or chat. Record payload shapes (key names and types), counts, and tag names only.
-- Expect about seventeen runs on your Claude subscription quota: eight in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, one in part I, two in part J, and in part K one interactive session and two session runs. A session run loads the full history of the session, so it can cost more than a review.
+- Expect about nineteen runs on your Claude subscription quota: eight in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, one in part I, two in part J, in part K one interactive session and two session runs, and two in part L. A session run loads the full history of the session, so it can cost more than a review.
 - Part I sends your project instructions to Claude. Turn on the global CLAUDE.md only when it holds nothing that the approval does not cover.
 - In this document, `<BITBUCKET_URL>` is the base URL of the Bitbucket server, `<JIRA_URL>` is the base URL of the Jira server, `<TEST_PR_URL>` is the URL of the test pull request, `<KEY>` is a Jira issue key that the test pull request names, and `<CLONE>` is the absolute path of your test clone.
 
@@ -190,6 +190,22 @@ Part D (package S3): steps 20 to 27. Run them after step 19 and a B16 PASS. The 
 26. Click "Apply …" in the bar. Commit in your clone. Expect one new commit with only the ticked edits, and a "Fixed in <short>" draft under each fixed thread. Do not push. Click Undo on the card. Expect the clone back at its earlier head.
 27. Open "Show the answer" in the Session row and click Apply again, then Undo in the result view. Expect the announcement "Removed the fix of your session." and no fix card from that run. Discard the remaining session drafts. Turn the switch off.
 
+## L. Resolve threads
+
+Part L writes to the test pull request: it resolves and reopens threads. Use only the test pull request.
+
+1. Run `bun scripts/gate0/resolve-thread.ts --dry-run`. Expect "dry run: PASS". It sends no request.
+2. Write a new general comment "Resolve gate." on the test pull request. Copy its comment ID from its link. Run `bun scripts/gate0/resolve-thread.ts --pr <TEST_PR_URL> --thread <ID>`. Expect the lines "resolve PUT", "after resolve", "activities", "stale PUT", "reopen PUT", and "after reopen". Expect "threadResolved=false" in the last line, so the thread is open again. Send back the full console output. It holds status codes, versions, and booleans only.
+3. If a line says "text unchanged=false", stop part L and report it. The PUT then changes the comment text, and Resolve must not ship.
+4. Optional: the second user runs step 2 with `--forbidden <ID>` and the ID of a thread that you started. They need their own token from `bun scripts/gate0/set-token.ts`. Record the status of the "forbidden PUT" line.
+5. Ask the second user to reply "Done?" in your "Resolve gate." thread. Click "Check now". Click Draft replies. Expect a draft card in that thread with the box "Resolve after posting". If Claude proposes the resolve, expect the box ticked and a line "Claude proposes it:" with its proof. Else tick the box yourself.
+6. Untick the box, then tick it again. Expect the live text "The thread resolves after the post." Accept the draft. Press p. Expect the line "Then resolves the thread." or, for a draft without text, "Resolves the thread. No reply is posted." Click Post.
+7. Expect "Posted and resolved." or "Resolved.", then the thread under "Resolved" with "Resolved by you". In Bitbucket, expect the reply first and the thread resolved.
+8. Open the thread. Open More (…) in its footer. Click "Reopen thread". Expect the thread open in the app and in Bitbucket. Click More, "Resolve thread". Expect it resolved again with no question.
+9. Open an open thread of the second user. Click More, "Resolve thread". Expect the question "<name> started this thread. Resolve it on Bitbucket?". Click Cancel. Expect no change in Bitbucket. Click "Resolve thread" again, then Resolve. As the PR author, expect the thread resolved. Reopen it.
+10. Optional, one run: post one finding of a review run as an inline comment. Push a commit that fixes it. Click "Check now", then "Review changes since". If the run finds the finding fixed, expect a "Resolve proposal" under its thread with the box ticked.
+11. Delete the "Resolve gate." comment by hand if the test branch needs it.
+
 ## H. Record
 
 - The build commit from the startup line.
@@ -199,4 +215,5 @@ Part D (package S3): steps 20 to 27. Run them after step 19 and a B16 PASS. The 
 - For each fix run: the proposed edits and the skipped edits. This gives the rate of dropped edits.
 - From part J: the reason that the fix run gave for T9 in step 4.
 - From part K: the item count and the size of the copy, the count of entries per verdict, and the count of skipped rows. From steps 14 to 17: the count of listed sessions, the size and the token estimate of the picked session, the token count of the session run (hint of its time), and the count of new transcripts. Record no text and no path.
+- From part L: the gate lines of steps 2 and 4. Update U62 to U66 in integration-check.md.
 - B11, B12, B15, and B16, the tag names from E5, and the shapes from F1. From part I: the languages of step 4, the severity counts of step 6, and any coverage line from step 5. Update the "Release 3 (not run)" rows in integration-check.md.

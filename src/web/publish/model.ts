@@ -8,13 +8,15 @@ import { lineText, plural } from "../review/model";
 
 const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
-// prototype/v3 destText: "2 inline comments and 1 general comment".
-export function destText(posts: { destination: PostDestination }[]): string {
-  const n = (k: PostDestination["kind"]) => posts.filter((p) => p.destination.kind === k).length;
+// prototype/v3 destText: "2 inline comments and 1 general comment". A reply post without a body only resolves its thread.
+export function destText(posts: { destination: PostDestination; body: string }[]): string {
+  const n = (k: PostDestination["kind"]) => posts.filter((p) => p.destination.kind === k && p.body).length;
+  const resolves = posts.filter((p) => !p.body).length;
   return [
     n("inline") ? plural(n("inline"), "inline comment") : "",
     n("general") ? plural(n("general"), "general comment") : "",
     n("reply") ? plural(n("reply"), "reply", "replies") : "",
+    resolves ? plural(resolves, "thread resolve") : "",
   ]
     .filter(Boolean)
     .join(" and ")
@@ -45,6 +47,16 @@ export function placeOf(root: Pick<CommentDto, "anchor" | "excerpt">): string {
 // replies.md step 4: "Reply to <name> in <place>".
 export const replyText = (who: Who) => `Reply to ${who.name} in ${who.place}`;
 
+// The destination words of a post without a body: it only resolves the thread of the reply parent.
+export function resolveLabel(d: PostDestination, comments: CommentDto[]): string {
+  const who = d.kind === "reply" ? parentOf(d.parentId, comments) : null;
+  return who ? `Resolve the thread in ${who.place}` : "Resolve the thread";
+}
+
+// The resolve line of a planned post. null: the post resolves nothing.
+export const resolveNote = (p: { body: string; resolve?: number }) =>
+  p.resolve === undefined ? null : p.body ? "Then resolves the thread." : "Resolves the thread. No reply is posted.";
+
 // The destination words of a planned post or an outbox row.
 export function destLabel(d: PostDestination, comments: CommentDto[]): { code: string | null; text: string } {
   switch (d.kind) {
@@ -60,12 +72,13 @@ export function destLabel(d: PostDestination, comments: CommentDto[]): { code: s
 }
 
 export type PostView = {
-  // posting: pending or sent. checking: unknown while the app reads the remote comments.
-  kind: "posting" | "checking" | "unknown" | "failed" | "posted";
+  // posting: pending or sent, or a resolve step that runs. checking: unknown while the app reads the remote comments.
+  // resolved: the resolve step after the comment step is done.
+  kind: "posting" | "checking" | "unknown" | "failed" | "posted" | "resolved";
   text: string;
   reason: string | null;
-  // again: retry. general: drop a failed inline post into the next general comment.
-  actions: ("again" | "drop" | "general")[];
+  // again: retry. general: drop a failed inline post into the next general comment. resolve: run a failed resolve step again.
+  actions: ("again" | "drop" | "general" | "resolve")[];
 };
 
 // Plan v3 section 7 and replies.md step 4: Posting, "Outcome unknown. Checking.", Failed with the reason, and Posted.
@@ -86,14 +99,37 @@ export function postView(p: PostDto): PostView {
         actions: p.destination.kind === "inline" ? ["again", "general", "drop"] : ["again", "drop"],
       };
     default:
+      return resolveView(p);
+  }
+}
+
+// A confirmed row: the resolve step after the comment step. A row without a body posted no comment.
+function resolveView(p: PostDto): PostView {
+  const posted = p.body ? "Posted. " : "";
+  switch (p.resolve?.state) {
+    case "pending":
+      return { kind: "posting", text: `${posted}Resolving the thread…`, reason: null, actions: [] };
+    case "failed":
+      return {
+        kind: "failed",
+        text: `${posted}Resolve failed.`,
+        reason: p.resolve.error ?? "No reason was recorded.",
+        actions: ["resolve"],
+      };
+    case "done":
+      return { kind: "resolved", text: p.body ? "Posted and resolved." : "Resolved.", reason: null, actions: [] };
+    default:
       return { kind: "posted", text: "Posted.", reason: null, actions: [] };
   }
 }
 
 // A confirmed row shows until the synced comment with its remote ID arrives. Then the thread shows the comment.
+// A resolve step that waits or failed keeps the row until the thread shows as resolved. A row without a body then hides.
 export function shownPosts(posts: PostDto[], comments: CommentDto[]): PostDto[] {
   const ids = new Set(comments.map((c) => c.id));
-  return posts.filter((p) => p.state !== "confirmed" || p.remoteId === null || !ids.has(p.remoteId));
+  const resolved = new Set(comments.filter((c) => c.threadResolved).map((c) => c.rootId));
+  const resolving = (p: PostDto) => !!p.resolve && p.resolve.state !== "done" && !resolved.has(p.resolve.root);
+  return posts.filter((p) => p.state !== "confirmed" || resolving(p) || (p.body !== "" && (p.remoteId === null || !ids.has(p.remoteId))));
 }
 
 // Reply rows go to the thread of their parent. Other rows, and replies to a comment that is not stored, go to the outbox group.

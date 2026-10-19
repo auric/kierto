@@ -6,6 +6,7 @@ import {
   Bot,
   Check,
   ChevronRight,
+  CircleAlert,
   CircleCheck,
   ClipboardCopy,
   Copy,
@@ -16,13 +17,15 @@ import {
   History,
   Hourglass,
   Link,
+  LoaderCircle,
   MessageSquare,
   Reply,
+  RotateCcw,
   SquareCheckBig,
   SquareDot,
   Wrench,
 } from "lucide-react";
-import { lazy, memo, type ReactNode, Suspense, useEffect, useState } from "react";
+import { lazy, memo, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -31,6 +34,7 @@ import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { ExcerptLine, PostDto } from "../../shared/dto";
 import { commentUrl } from "../../shared/links";
+import type { ResolveOutcome } from "../publish/data";
 import { type PostCtx, ReplyPosts } from "../publish/Outbox";
 import { lineText } from "../review/model";
 import { Hint, type Hints, HintTrigger } from "../shell/Hint";
@@ -94,6 +98,8 @@ export type ThreadCtx = {
   // Copies the runner prompt of the thread. Call it in the click handler. Resolves to the next step, or null.
   copyPrompt: (thread: number) => Promise<string | null>;
   posts: PostCtx;
+  // Resolves or reopens a thread on the forge now. seen: the newest live message on screen. null: done.
+  setResolved: (thread: number, resolved: boolean, seen: number) => Promise<ResolveOutcome>;
 };
 
 // False until one frame after `key` changes. Put data-mounting on a container while it is false: the motion classes of
@@ -300,12 +306,13 @@ export const Thread = memo(function Thread({
 });
 
 // Plan pr-view-v4 2.8: the reply box, Draft reply on a your-turn thread without a draft, Fix on an open thread of the own PR, and
-// More. The note after a prompt copy stays, so the user can read the next step.
+// More. The note after a prompt copy stays, so the user can read the next step. More also resolves or reopens the thread.
 function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean; target?: ReplyTarget; ctx: ThreadCtx }) {
   const [next, setNext] = useState<string | null>(null);
   const open = t.turn !== "resolved" && t.last !== null;
   const link = ctx.web && commentUrl(ctx.web, t.id);
   const prompt = ctx.author && t.last !== null;
+  const resolve = useResolve(t, ctx);
   const copyLink = (url: string) =>
     copyText(url).then((ok) =>
       ok
@@ -334,7 +341,7 @@ function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean;
                 </Button>
               </Hint>
             )}
-            {(t.anchor || prompt || link) && (
+            {(t.anchor || prompt || link || resolve.can) && (
               <DropdownMenu modal={false}>
                 <Hint label="More for this thread">
                   <DropdownMenuTrigger
@@ -349,6 +356,12 @@ function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean;
                       <DropdownMenuItem onClick={() => ctx.onShowInDiff(t.id)}>
                         <FileCode aria-hidden />
                         Show in diff
+                      </DropdownMenuItem>
+                    )}
+                    {resolve.can && (
+                      <DropdownMenuItem onClick={resolve.start}>
+                        {resolve.resolved ? <RotateCcw aria-hidden /> : <CircleCheck aria-hidden />}
+                        {resolve.resolved ? "Reopen thread" : "Resolve thread"}
                       </DropdownMenuItem>
                     )}
                     {prompt && (
@@ -382,8 +395,64 @@ function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean;
           {next}
         </p>
       )}
+      {resolve.panel}
     </>
   );
+}
+
+type ResolveState = { kind: "ask" } | { kind: "busy" } | { kind: "error"; out: NonNullable<ResolveOutcome> } | null;
+
+// A manual resolve or reopen goes to the forge at once. A thread that another person started asks first.
+// Errors stay inline: "changed" and "messages" ask to read the thread again; "forbidden" and "ignored" link to the forge.
+function useResolve(t: ThreadModel, ctx: ThreadCtx) {
+  const [state, setState] = useState<ResolveState>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
+  const resolved = t.turn === "resolved";
+  const can = t.last !== null;
+  const act = resolved ? "Reopen" : "Resolve";
+  const link = ctx.web && commentUrl(ctx.web, t.id);
+  useEffect(() => {
+    if (state?.kind === "ask") confirm.current?.focus({ preventScroll: true });
+  }, [state]);
+  const run = async () => {
+    if (!t.last || state?.kind === "busy") return;
+    setState({ kind: "busy" });
+    const out = await ctx.setResolved(t.id, !resolved, t.last.id).catch((e: unknown) => ({ error: (e as Error).message, reason: null }));
+    setState(out ? { kind: "error", out } : null);
+    // The alert reads an error. A done change moves the thread, so the live region says it.
+    if (!out) ctx.announce(resolved ? "Thread reopened." : "Thread resolved.");
+  };
+  const start = () => (t.root.who.me ? void run() : setState({ kind: "ask" }));
+  const panel =
+    state?.kind === "ask" ? (
+      <div className="rl-fade mt-2 flex max-w-[72ch] flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
+        <span className="[overflow-wrap:anywhere]">
+          {t.root.who.name} started this thread. {act} it on {ctx.forge}?
+        </span>
+        <Button ref={confirm} size="sm" onClick={() => void run()}>
+          {act}
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => setState(null)}>
+          Cancel
+        </Button>
+      </div>
+    ) : state?.kind === "busy" ? (
+      <p role="status" className="m-0 mt-2 inline-flex items-center gap-1.5 text-sm text-ink-2">
+        <LoaderCircle aria-hidden className="size-[15px] animate-spin motion-reduce:animate-none" />
+        {resolved ? "Reopening the thread…" : "Resolving the thread…"}
+      </p>
+    ) : state?.kind === "error" ? (
+      <p role="alert" className="m-0 mt-2 flex max-w-[72ch] flex-wrap items-start gap-x-1.5 gap-y-1 text-sm text-destructive">
+        <CircleAlert aria-hidden className="mt-0.5 size-[15px] shrink-0" />
+        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{state.out.error}</span>
+        {(state.out.reason === "forbidden" || state.out.reason === "ignored") && link && (
+          <a href={link} target="_blank" rel="noopener noreferrer" className="font-medium text-pen hover:underline">
+            Open on {ctx.forge}
+          </a>
+        )}
+      </p>
+    ) : null;
+  return { can, resolved, start, panel };
 }
 
 const SIGN = { add: "+", del: "−", ctx: " " } as const;

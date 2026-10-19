@@ -73,7 +73,8 @@ Release 3 (plan: docs/plans/r3.md):
 - Jira attachments: the brief lists the attachments of a fetched issue. I download each one on a click, save it, or open its folder. Inclusion in runs is an opt-in per file.
 - Jira Markdown: the brief shows the Jira text as Markdown. The server converts it from the rendered HTML.
 - Tasks for every run kind: reply drafts, Ask, and fix runs show the same task chips as the brief. Each run records the tasks it used.
-- Resolved threads: a resolved thread shows who resolved it and when, read from Bitbucket. The diff folds resolved threads to one line. The app never resolves or reopens a thread.
+- Resolved threads: a resolved thread shows who resolved it and when, read from Bitbucket. The diff folds resolved threads to one line.
+- Resolve threads (user decision, 2026-10-19): a reply draft with "Resolve after posting" ticked resolves its thread after the reply posts, or without a reply. Draft replies, "Review changes since" (for my posted findings that the new commits fix), and a Fix commit propose the resolve with proof. Only threads that I started get the tick by default. More, "Resolve thread" or "Reopen thread", acts at once and asks first on a thread that another person started. Nothing resolves without my click. The PUT body `{version, threadResolved}` is UNVERIFIED (integration-check.md U62 to U66).
 
 ## 3. Decisions
 

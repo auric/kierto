@@ -605,9 +605,13 @@ describe("fix run to commit", () => {
         .query("SELECT body, status, thread, payload_json FROM review_item WHERE kind = 'reply' AND run = $run")
         .all({ run: d.run.id }) as { body: string; status: string; thread: number; payload_json: string }[];
       expect(fixed.map((r) => [r.body, r.status, r.thread])).toEqual([[`Fixed in ${c.body.short}.`, "new", 101]]);
+      // The commit proposes to resolve the thread. Another person started thread 101, so the tick starts off.
       expect(JSON.parse(fixed[0]?.payload_json ?? "{}") as ReplyPayload).toMatchObject({
         replyTo: 103,
         fix: { id: c.body.id, commit: head },
+        resolve: true,
+        resolveEvidence: `Commit ${c.body.short} changes src/app.ts.`,
+        resolveTick: false,
       });
 
       const [after] = await h.fixes();

@@ -25,6 +25,7 @@ import {
   type InstructionsInput,
   instructionsInput,
 } from "../../shared/dto";
+import { isMe } from "../../shared/me";
 import type { ReplyPayload } from "../../shared/review";
 import { newestLive, type TurnMsg } from "../../shared/turn";
 import type { PullRequest } from "../../shared/types";
@@ -183,11 +184,16 @@ export function createFixRoutes(opts: {
       db.query(SQL.committed).run({ id, hash: made.commit, short: made.short, now: Date.now() });
       for (const item of new Set(edits.flatMap((e) => (e.item === null ? [] : [e.item]))))
         db.query(SQL.fixed).run({ item, pr: run.pr, id, commit: made.commit, short: made.short });
+      const me = settings.config()?.userSlug ?? null;
       for (const thread of new Set(edits.flatMap((e) => (e.thread === null ? [] : [e.thread])))) {
         db.query(SQL.supersede).run({ thread, pr: run.pr });
-        const last = newestLive(db.query(SQL.thread).all({ pr: run.pr, root: thread }) as TurnMsg[]);
+        const msgs = db.query(SQL.thread).all({ pr: run.pr, root: thread }) as TurnMsg[];
+        const last = newestLive(msgs);
         if (!last) continue;
+        const root = msgs.find((m) => m.id === thread);
         const body = `Fixed in ${made.short}.`;
+        const paths = [...new Set(edits.filter((e) => e.thread === thread).map((e) => e.path))];
+        // The commit proposes to resolve the thread. Only a thread that the user started gets the tick by default.
         const payload: ReplyPayload = {
           thread,
           action: "reply",
@@ -197,6 +203,9 @@ export function createFixRoutes(opts: {
           judgement: null,
           replyTo: last.id,
           fix: { id, commit: made.commit },
+          resolve: true,
+          resolveEvidence: `Commit ${made.short} changes ${paths.join(", ")}.`,
+          resolveTick: !!root && isMe({ slug: root.authorSlug, login: root.authorLogin }, me),
         };
         db.query(SQL.item).run({ run: run.run, payload: JSON.stringify(payload), body, thread });
       }

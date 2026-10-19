@@ -25,6 +25,8 @@ export type TriageCtx = {
   save: (it: ReviewItemDto, text: string) => void;
   move: (it: ReviewItemDto | null) => void;
   moveTo: (it: ReviewItemDto, line: number) => void;
+  // Reply drafts only: the "Resolve after posting" tick.
+  tick: (it: ReviewItemDto, on: boolean) => void;
   // true: the editor of this item opened again with its unsent text when the PR opened. It then leaves the focus where it is.
   quiet: (id: number) => boolean;
 };

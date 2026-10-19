@@ -95,9 +95,19 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
       const ref = { id: it.id, revision: it.revision };
       const a = it.anchor;
       // R15: a reply item has no anchor, but it never joins the general comment.
+      // A ticked draft resolves its thread after the post. A ticked draft without text only resolves, so it gets no AI mark.
       if (it.kind === "reply") {
-        const parentId = (it.payload as ReplyPayload).replyTo;
-        out.push({ ...heads, destination: { kind: "reply", parentId }, body: text(it.body), items: [ref], duplicate: null });
+        const p = it.payload as ReplyPayload;
+        const body = it.body.trim() ? text(it.body) : "";
+        if (!body && !p.resolveTick) continue;
+        out.push({
+          ...heads,
+          destination: { kind: "reply", parentId: p.replyTo },
+          body,
+          items: [ref],
+          duplicate: null,
+          ...(p.resolveTick && { resolve: p.thread }),
+        });
         continue;
       }
       if (it.kind === "question" || !a) {

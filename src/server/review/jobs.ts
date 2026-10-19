@@ -35,6 +35,7 @@ import {
   type RunSummary,
   type RunUsage,
 } from "../../shared/dto";
+import { isMe } from "../../shared/me";
 import {
   type AnchoredFinding,
   askJsonSchema,
@@ -45,6 +46,7 @@ import {
   type FixThread,
   fixJsonSchema,
   fixResult,
+  MAX_EARLIER,
   MAX_REPLY_THREADS,
   type Question,
   type ReplyPayload,
@@ -277,7 +279,9 @@ type Ending = {
 
 // A re-review (plan r2 S-RR). since: the source head of the base run. sinceBase: its merge base.
 // items: the findings and questions of the base run with status new or accepted at the start.
-type Carry = { base: number; since: string; sinceBase: string | null; incomplete: boolean; items: ItemRow[] };
+// posted: the posted inline findings of the PR with an open thread. root: the thread. run_head, run_base: the heads of their run.
+type PostedFinding = ItemRow & { root: number; run_head: string; run_base: string | null };
+type Carry = { base: number; since: string; sinceBase: string | null; incomplete: boolean; items: ItemRow[]; posted: PostedFinding[] };
 
 // threads: the threads of a reply or fix run, else null. findings: the review item IDs of a fix run.
 // question: the question of an ask run, else null. profile: the profile as it was at the start.
@@ -362,6 +366,15 @@ const SQL = {
   baseRun: `WHERE r.pr = $pr AND r.kind = 'review' AND r.status IN ('completed', 'incomplete') AND COALESCE(r.explain, r.profile = 'explain') = 0
     ORDER BY r.id DESC LIMIT 1`,
   carry: "SELECT * FROM review_item WHERE run = $run AND kind IN ('finding', 'question') AND status IN ('new', 'accepted') ORDER BY id",
+  // An inline post holds one finding. Its confirmed comment starts the thread. The newest findings come first.
+  posted: `SELECT i.*, p.remote_id AS root, r.source_head AS run_head, r.merge_base AS run_base FROM review_item i
+    JOIN review_run r ON r.id = i.run
+    JOIN post p ON p.pr = r.pr AND p.kind = 'inline' AND p.state = 'confirmed' AND p.remote_id IS NOT NULL
+      AND json_extract(p.items_json, '$[0].id') = i.id
+    JOIN comment c ON c.pr = r.pr AND c.comment_id = p.remote_id AND c.parent_id IS NULL AND c.tombstoned_at IS NULL AND c.thread_resolved = 0
+    WHERE r.pr = $pr AND i.kind = 'finding' AND i.status = 'posted' ORDER BY i.id DESC LIMIT $limit`,
+  openDraft: `SELECT 1 FROM review_item i JOIN review_run r ON r.id = i.run
+    WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread = $thread AND i.status IN ('new', 'accepted')`,
   // The copy in the re-review replaces the source.
   carried: "UPDATE review_item SET status = 'discarded', revision = revision + 1 WHERE id = $id",
   // A new reply draft replaces the open drafts of its thread. Posted drafts stay.
@@ -791,6 +804,42 @@ function carryOver(db: Database, carry: Carry, checked: CheckedEarlier[]) {
   return out;
 }
 
+// A fixed verdict on a posted finding proposes to resolve its thread: a ticked draft without a reply.
+// A thread with an open reply draft keeps that draft, so no proposal replaces the user's text. threads: the messages by root ID.
+function resolveProposals(
+  db: Database,
+  pr: number,
+  carry: Carry,
+  checked: CheckedEarlier[],
+  me: string | null,
+  threads: Map<number, TurnMsg[]>,
+): NewItem[] {
+  const roots = new Map(carry.posted.map((r) => [r.id, r.root]));
+  const out: NewItem[] = [];
+  for (const c of checked) {
+    const thread = roots.get(c.id);
+    if (thread === undefined || c.verdict !== "fixed" || db.query(SQL.openDraft).get({ pr, thread })) continue;
+    const msgs = threads.get(thread) ?? [];
+    const root = msgs.find((m) => m.id === thread);
+    const last = newestLive(msgs);
+    if (!root || !last || msgs.some((m) => m.threadResolved) || !isMe({ slug: root.authorSlug, login: root.authorLogin }, me)) continue;
+    const payload: ReplyPayload = {
+      thread,
+      action: "none",
+      body: "",
+      reason: c.reason,
+      evidenceStatus: "code",
+      judgement: null,
+      replyTo: last.id,
+      resolve: true,
+      resolveEvidence: c.reason,
+      resolveTick: true,
+    };
+    out.push({ kind: "reply", payload_json: JSON.stringify(payload), body: "", ...NO_ANCHOR, status: "new", thread, edited: 0 });
+  }
+  return out;
+}
+
 function judgeReplies(o: RunOutcome, threads: ReplyThread[], servers: string[], gaps: string[]): Ending {
   const raw = rawOutput(o);
   if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
@@ -1186,6 +1235,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       add(items.filter((it) => it.kind !== "finding"));
       add(c.questions);
       add(c.closed);
+      const me = settings.config()?.userSlug ?? null;
+      add(resolveProposals(j.db, j.pr, j.carry, e.result.checked ?? [], me, turnThreads(j.db, { id: j.pr })));
       return true;
     })();
     notify(j.id, j.pr);
@@ -1203,6 +1254,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const { files, attachments } = taskContext(j.db, j.pr, dataDir);
     const carry = j.carry;
     const earlier = carry?.items.filter((r) => r.kind === "finding") ?? [];
+    const posted = new Set(carry?.posted.map((r) => r.id));
     // A re-review gets findings.md instead. An explain run gets no history.
     const history =
       j.kind !== "review"
@@ -1213,10 +1265,16 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // The findings of a fix run as they are now. A user edit or move after the start counts.
     const fixRows = j.findings.flatMap((id) => (j.db.query(SQL.fixFinding).get({ id }) as FindingRow | null) ?? []);
     const extra = [
-      ...(carry && earlier.length
+      ...(carry && (earlier.length || carry.posted.length)
         ? [
-            findingsFile(current(j.db, earlier), (_, side) =>
-              side === "new" ? carry.since : (carry.sinceBase ?? "the earlier merge base"),
+            findingsFile<ItemRow & Partial<PostedFinding>>([...current(j.db, earlier), ...carry.posted], (r, side) =>
+              posted.has(r.id)
+                ? side === "new"
+                  ? (r.run_head ?? carry.since)
+                  : (r.run_base ?? `the merge base of run ${r.run}`)
+                : side === "new"
+                  ? carry.since
+                  : (carry.sinceBase ?? "the earlier merge base"),
             ),
           ]
         : []),
@@ -1358,7 +1416,13 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
           ? { prompt: buildAskPrompt({ ...input, question }), schema: askJsonSchema(), main: askAgent(profile) }
           : carry
             ? {
-                prompt: buildRereviewPrompt({ ...input, since: carry.since, rangeBase: ws.rangeBase, earlier: earlier.map((r) => r.id) }),
+                prompt: buildRereviewPrompt({
+                  ...input,
+                  since: carry.since,
+                  rangeBase: ws.rangeBase,
+                  earlier: [...earlier, ...carry.posted].map((r) => r.id),
+                  posted: carry.posted.map((r) => r.id),
+                }),
                 schema: rereviewJsonSchema(),
                 main: mainAgent(profile),
               }
@@ -1405,7 +1469,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (reply) return noted(judgeReplies(o, reply, servers, gaps));
     if (fix) return noted(await judgeFix(o, ws, fix, j.findings, servers, gaps));
     if (question !== null) return noted(judgeAsk(o, servers, gaps));
-    const rereview = carry && { carry, items: current(j.db, earlier).map(earlierItem) };
+    const rereview = carry && { carry, items: [...current(j.db, earlier), ...carry.posted].map(earlierItem) };
     return noted(await judge(o, ws, profile, servers, gaps, rereview));
   }
 
@@ -1578,7 +1642,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   }
 
   // The messages of each thread of a PR, by root comment ID.
-  function turnThreads(db: Database, pr: PrRow) {
+  function turnThreads(db: Database, pr: Pick<PrRow, "id">) {
     type Row = Omit<TurnMsg, "deleted" | "threadResolved"> & { deleted: number; threadResolved: number };
     const rows = db.query(SQL.turns).all({ pr: pr.id }) as Row[];
     return byThread(rows.map((m) => ({ ...m, deleted: m.deleted === 1, threadResolved: m.threadResolved === 1 })));
@@ -1592,9 +1656,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const ids = list ? [...new Set(list)] : [...threads].filter(([, t]) => threadTurn(t, me, prAuthor) === "your").map(([id]) => id);
     const out: ReplyThread[] = [];
     for (const thread of ids) {
-      const last = newestLive(threads.get(thread) ?? []);
+      const msgs = threads.get(thread) ?? [];
+      const last = newestLive(msgs);
       if (!last) return { status: 400, error: `Comment ${thread} does not start a thread of this pull request with a live message.` };
-      out.push({ thread, replyTo: last.id });
+      const root = msgs.find((m) => m.id === thread);
+      out.push({ thread, replyTo: last.id, mine: !!root && isMe({ slug: root.authorSlug, login: root.authorLogin }, me) });
     }
     if (!out.length) return { status: 409, error: "No thread waits for your reply." };
     if (out.length > MAX_REPLY_THREADS)
@@ -1719,12 +1785,16 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const key = [id, "rereview", base.id, source_head, target_head, brief.profile, profileRevision(profile), sha256(brief.note)].join(
         ":",
       );
+      const items = db.query(SQL.carry).all({ run: base.id }) as ItemRow[];
+      const room = MAX_EARLIER - items.filter((r) => r.kind === "finding").length;
       const carry: Carry = {
         base: base.id,
         since: base.source_head,
         sinceBase: base.merge_base,
         incomplete: base.status === "incomplete",
-        items: db.query(SQL.carry).all({ run: base.id }) as ItemRow[],
+        items,
+        // shortcut: above MAX_EARLIER earlier findings, the oldest posted findings get no verdict. Page the verdicts if this happens.
+        posted: room > 0 ? (db.query(SQL.posted).all({ pr: id, limit: room }) as PostedFinding[]) : [],
       };
       return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "review", { carry });
     },

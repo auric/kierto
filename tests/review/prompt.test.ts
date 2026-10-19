@@ -24,6 +24,7 @@ import {
   buildRereviewPrompt,
   type PromptInput,
 } from "../../src/server/review/prompt";
+import { replyJsonSchema, replyResult } from "../../src/shared/review";
 
 const general = SHIPPED_PROFILES[0] as (typeof SHIPPED_PROFILES)[number];
 const input: PromptInput = {
@@ -134,6 +135,42 @@ ${rule}
     expect(mixed).toContain("Each Fix threads entry names a thread and its newest message.");
     expect(mixed).toContain('"### Comment N"');
     expect(buildFixPrompt({ ...input, threads })).not.toContain("findings.md");
+  });
+
+  test("resolve: the Threads line says who started each thread; the reply agent proposes resolve only with proof", () => {
+    const text = buildReplyPrompt({
+      ...input,
+      threads: [
+        { thread: 1, replyTo: 2, mine: true },
+        { thread: 5, replyTo: 7 },
+      ],
+    });
+    expect(text).toContain("\nThreads: 1 (answer message 2, the user started it), 5 (answer message 7, another person started it)\n");
+    const agent = replyAgent(general).prompt;
+    expect(agent).toContain(
+      "Set resolve to true only when the code at the head commit or an answer in the thread settles the review point.",
+    );
+    expect(agent).toContain(
+      'Never propose to resolve a thread that another person started, unless the "Your instructions" section asks for it.',
+    );
+    expect(agent).toContain("When the point is not settled, set resolve to false and say in the reply what is still missing.");
+    // The JSON schema lists both fields as required; a result without them still parses with resolve false.
+    const schema = replyJsonSchema() as { properties: { replies: { items: { required: string[] } } } };
+    expect(schema.properties.replies.items.required).toEqual(expect.arrayContaining(["resolve", "resolveEvidence"]));
+    const parsed = replyResult.parse({
+      summary: "S",
+      replies: [{ thread: 1, action: "none", body: "", reason: "R", evidenceStatus: "code", judgement: null }],
+      coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+    });
+    expect(parsed.replies[0]).toMatchObject({ resolve: false, resolveEvidence: "" });
+  });
+
+  test("a re-review lists the posted findings; a fixed verdict on one proposes to resolve its thread", () => {
+    const base = { ...input, since: "c".repeat(40), rangeBase: "d".repeat(40) };
+    const text = buildRereviewPrompt({ ...base, earlier: [11, 12], posted: [12] });
+    expect(text).toContain("\nEarlier findings: 11, 12\n\nPosted findings: 12. The user posted each one as a review thread.");
+    expect(text).toContain("give fixed only when the new commits remove the problem.");
+    expect(buildRereviewPrompt({ ...base, earlier: [11] })).not.toContain("Posted findings");
   });
 
   test("a re-review names its range and the merge base for removed lines", () => {

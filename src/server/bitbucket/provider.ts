@@ -14,16 +14,17 @@ import {
   type PrRef,
   type PullRequest,
   type Role,
+  type User,
 } from "../../shared/types";
 import { type ClientOptions, createClient, ForgeError } from "./client";
-import { activity, change, commit, postedComment, pullRequest, type RawComment, type RawDiff, type user } from "./schemas";
+import { activity, change, comment, commit, postedComment, pullRequest, type RawComment, type RawDiff, type user } from "./schemas";
 
 const API = "/rest/api/1.0";
 const DASHBOARD = `${API}/dashboard/pull-requests`;
 
 const prPath = (ref: PrRef) =>
   `${API}/projects/${encodeURIComponent(ref.project)}/repos/${encodeURIComponent(ref.repo)}/pull-requests/${ref.id}`;
-const toUser = (u: z.infer<typeof user>) => ({ slug: u.slug, name: u.displayName, login: u.name });
+const toUser = (u: z.infer<typeof user>): User => ({ slug: u.slug, name: u.displayName, login: u.name });
 
 const cloneRepo = z.object({
   links: z.object({ clone: z.array(z.object({ href: z.string(), name: z.string() })).optional() }).optional(),
@@ -116,6 +117,12 @@ export const branchUrl = (repoUrl: string | undefined, ref: string | undefined):
 // line: the new-side line of an added line, the old-side line of a context line (Gate v3 U4).
 export type NewAnchor = { path: string; srcPath: string | null; line: number; lineType: "add" | "ctx"; fromHash: string; toHash: string };
 export type NewComment = { text: string; parentId?: number; anchor?: NewAnchor };
+
+// The thread state after a resolve or a reopen, read back from the root comment.
+export type ThreadState = { version: number; threadResolved: boolean; threadResolver?: User; threadResolvedAt?: number };
+// done: the root comment has the wanted state. changed: the version moved between the read and the PUT (HTTP 409).
+// forbidden: HTTP 401 or 403. gone: no such comment (HTTP 404). ignored: Bitbucket took the PUT, but the state stayed.
+export type ResolveResult = { status: "done"; state: ThreadState } | { status: "changed" | "forbidden" | "gone" | "ignored" };
 
 export function createBitbucketProvider(opts: ClientOptions) {
   const client = createClient(opts);
@@ -272,6 +279,37 @@ export function createBitbucketProvider(opts: ClientOptions) {
         }),
       };
       return client.post(`${prPath(ref)}/comments`, body, postedComment);
+    },
+
+    // Resolves or reopens the thread of a root comment: GET for a fresh version, PUT {version, threadResolved}, then GET again.
+    // Docs (7.21, 9.0): the PUT needs the current version. Only the comment author, the PR author, or a repo admin may change it.
+    // UNVERIFIED (integration-check.md U62 to U66): the PUT body field, the 409 on a stale version, and the version bump.
+    // The second GET decides, so a PUT that Bitbucket takes without a state change gives "ignored", never "done".
+    // Other errors throw a ForgeError. Nothing repeats the PUT.
+    async setThreadResolved(ref: PrRef, rootId: number, resolved: boolean): Promise<ResolveResult> {
+      const path = `${prPath(ref)}/comments/${rootId}`;
+      const read = async (): Promise<ThreadState> => {
+        const c = (await client.get(path, comment)).data;
+        return {
+          version: c.version,
+          threadResolved: c.threadResolved ?? false,
+          ...(c.threadResolved && c.threadResolver && { threadResolver: toUser(c.threadResolver) }),
+          ...(c.threadResolved && typeof c.threadResolvedDate === "number" && { threadResolvedAt: c.threadResolvedDate }),
+        };
+      };
+      try {
+        const before = await read();
+        if (before.threadResolved === resolved) return { status: "done", state: before };
+        await client.put(path, { version: before.version, threadResolved: resolved }, z.unknown());
+        const after = await read();
+        return after.threadResolved === resolved ? { status: "done", state: after } : { status: "ignored" };
+      } catch (e) {
+        if (!(e instanceof ForgeError)) throw e;
+        if (e.status === 409) return { status: "changed" };
+        if (e.kind === "auth" || e.kind === "forbidden") return { status: "forbidden" };
+        if (e.kind === "not_found") return { status: "gone" };
+        throw e;
+      }
     },
 
     // A deleted comment has no tombstone. Only a 404 proves the delete.
