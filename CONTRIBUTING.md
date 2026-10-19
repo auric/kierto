@@ -2,10 +2,12 @@
 
 Thank you for your help. This file tells you how to set up, run, and test Revido, and which rules a change must follow.
 
+Report bugs and ideas in the issues: https://github.com/auric/revido/issues. Send changes as pull requests: https://github.com/auric/revido/pulls. Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) tells you.
+
 ## Set up
 
 1. Install Bun 1.x, Node 20 or later, and `git`.
-2. Clone the repository and run `bun install`.
+2. Clone https://github.com/auric/revido and run `bun install`.
 3. Run `bun run dev`. Open the Vite URL, http://127.0.0.1:5173.
 
 You do not need a Bitbucket server or the `claude` CLI for development. `bun run demo` serves the built UI on 127.0.0.1:7399 with a fake Bitbucket, a fake Jira, a fake CLI, and synthetic data. Run `bun run build` first.

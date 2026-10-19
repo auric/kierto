@@ -1,8 +1,12 @@
 # Revido
 
-A local-first inbox for Bitbucket Server pull requests, with AI reviews by your own Claude Code CLI.
+Local-first inbox for Bitbucket Server and Data Center pull requests, with AI code review by your own Claude Code CLI. It drafts review comments and replies, proposes fixes, and posts nothing without your click.
 
-Repository: https://github.com/OWNER/revido
+[![CI](https://github.com/auric/revido/actions/workflows/ci.yml/badge.svg)](https://github.com/auric/revido/actions/workflows/ci.yml) [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
+
+Revido helps with pull request review on Bitbucket Server and Bitbucket Data Center. It runs code review with Claude Code on your machine and can read the linked Jira issues.
+
+Repository: https://github.com/auric/revido
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/inbox-dark.webp">

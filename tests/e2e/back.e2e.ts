@@ -118,6 +118,10 @@ test("Settings sections and Edit <profile> push entries; Back walks the sections
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page).toHaveURL(`${APP}/settings`);
+  const source = page.getByRole("link", { name: "Source code" });
+  await expect(source).toHaveAttribute("href", "https://github.com/auric/revido");
+  await expect(source).toHaveAttribute("target", "_blank");
+  await expect(source).toHaveAttribute("rel", "noopener noreferrer");
   const nav = page.getByRole("navigation", { name: "Settings sections" });
   await nav.getByRole("link", { name: "Task IDs" }).click();
   await expect(page).toHaveURL(`${APP}/settings/task-ids`);

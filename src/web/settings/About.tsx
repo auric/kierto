@@ -62,6 +62,9 @@ export function About() {
             {TITLE[d]}
           </button>
         ))}
+        <a className={linkish} href="https://github.com/auric/revido" target="_blank" rel="noopener noreferrer">
+          Source code
+        </a>
       </div>
       <Dialog open={doc !== null} onOpenChange={(o) => !o && setDoc(null)}>
         {/* The title row and the footer stay put. Only the text scrolls. */}

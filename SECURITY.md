@@ -4,8 +4,8 @@
 
 Report vulnerabilities privately. Do not open a public issue.
 
-1. Open the repository on GitHub: https://github.com/OWNER/revido
-2. Click the Security tab, then click Report a vulnerability.
+1. Open the private reporting page: https://github.com/auric/revido/security/advisories/new
+2. Alternatively, open https://github.com/auric/revido, click the Security tab, then click Report a vulnerability.
 3. Describe the problem, the affected version or commit, and the steps to reproduce it.
 
 The report stays private between you and the maintainer until a fix is published.

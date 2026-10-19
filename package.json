@@ -4,6 +4,14 @@
   "version": "0.2.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/auric/revido.git"
+  },
+  "homepage": "https://github.com/auric/revido#readme",
+  "bugs": {
+    "url": "https://github.com/auric/revido/issues"
+  },
   "type": "module",
   "scripts": {
     "dev": "bun scripts/dev.ts",
