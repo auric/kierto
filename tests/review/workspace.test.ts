@@ -508,7 +508,7 @@ describe("workspace", () => {
   test(
     "a long path works on Windows",
     async () => {
-      const deep = ["a", "b", "c", "d"].map((c) => c.repeat(60)).join("/");
+      const deep = ["a", "b", "c", "d"].map((c) => c.repeat(80)).join("/");
       const s = await scenario("long", {
         [`${deep}/file.txt`]: "deep\n",
         [`${deep}/.claude/settings.json`]: "{}",

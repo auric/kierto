@@ -200,6 +200,26 @@ test("connect Jira, fetch a task, show a fetch error, fetch again, remove, and d
   await expect(confirm).toHaveCount(0);
   await expect(remove).toBeFocused();
   await expect(fold(page, JIRA_ISSUE)).toHaveCount(1);
+  // Esc before the dialog takes the focus closes only the dialog. The brief stays open.
+  // A MutationObserver callback runs as a microtask, so the Esc goes out before the next animation frame.
+  const focused = await remove.evaluate(
+    (el: HTMLElement) =>
+      new Promise<boolean>((resolve) => {
+        const obs = new MutationObserver(() => {
+          if (!document.querySelector('[data-slot="dialog-content"]')) return;
+          obs.disconnect();
+          const still = document.activeElement === el;
+          el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+          resolve(still);
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+        el.click();
+      }),
+  );
+  expect(focused).toBe(true);
+  await expect(confirm).toHaveCount(0);
+  await expect(remove).toBeVisible();
+  await expect(fold(page, JIRA_ISSUE)).toHaveCount(1);
 
   // Remove deletes the stored text. Focus goes back to the Fetch button of the chip.
   await remove.click();

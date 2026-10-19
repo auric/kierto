@@ -13,6 +13,12 @@ const dir = mkdtempSync(join(tmpdir(), "rl-db-"));
 process.env.REVIEW_LOOP_DATA_DIR = dir;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
+// One transaction per setup: a commit per statement is slow on Windows CI disks.
+const migrate = (db: Database, files: string[]) =>
+  db.transaction(() => {
+    for (const f of files) db.exec(readFileSync(join(import.meta.dir, "../../src/server/storage/migrations", f), "utf8"));
+  })();
+
 const schema = (path: string) => {
   const db = openDb(path);
   try {
@@ -97,7 +103,7 @@ const R3_COLUMNS = {
 test("migration from a version-9 database keeps every run", () => {
   const path = join(dir, "v9.sqlite");
   const old = new Database(path, { create: true, strict: true });
-  for (const f of V9) old.exec(readFileSync(join(import.meta.dir, "../../src/server/storage/migrations", f), "utf8"));
+  migrate(old, V9);
   old.exec("PRAGMA user_version = 9");
   old.exec(`INSERT INTO pull_request (id, project, repo, pr_id) VALUES (1, 'P', 'r', 1);
     INSERT INTO review_run (id, pr, kind, profile, note, idem_key, source_head, target_head, status, started_at)
@@ -144,7 +150,7 @@ const CHILDREN = ["run_event", "review_item", "post"];
 // A version-11 database. foreign_keys is off unless the caller turns it on.
 function v11(path: string) {
   const db = new Database(path, { create: true, strict: true });
-  for (const f of V11) db.exec(readFileSync(join(import.meta.dir, "../../src/server/storage/migrations", f), "utf8"));
+  migrate(db, V11);
   db.exec("PRAGMA user_version = 11");
   return db;
 }
@@ -277,7 +283,7 @@ const V13 = [...V11, "012_r2_runs.sql", "013_task_context.sql"];
 test("migration from a version-13 database keeps every run, event, item, and post", () => {
   const path = join(dir, "v13.sqlite");
   const old = new Database(path, { create: true, strict: true });
-  for (const f of V13) old.exec(readFileSync(join(import.meta.dir, "../../src/server/storage/migrations", f), "utf8"));
+  migrate(old, V13);
   old.exec("PRAGMA user_version = 13");
   old.exec("PRAGMA foreign_keys = ON");
   old.exec(`INSERT INTO pull_request (id, project, repo, pr_id) VALUES (1, 'P', 'r', 1), (2, 'P', 'r', 2);
@@ -390,7 +396,7 @@ const V22 = [
 test("migration from a version-22 database keeps every fix edit; an edit names exactly one thread or one finding", () => {
   const path = join(dir, "v22.sqlite");
   const old = new Database(path, { create: true, strict: true });
-  for (const f of V22) old.exec(readFileSync(join(import.meta.dir, "../../src/server/storage/migrations", f), "utf8"));
+  migrate(old, V22);
   old.exec("PRAGMA user_version = 22");
   old.exec("PRAGMA foreign_keys = ON");
   old.exec(`INSERT INTO pull_request (id, project, repo, pr_id) VALUES (1, 'P', 'r', 1);
@@ -441,7 +447,7 @@ const V23 = [...V22, "023_fix_finding.sql"];
 test("migration from a version-23 database keeps every run and child row; kind consult is new", () => {
   const path = join(dir, "v23.sqlite");
   const old = new Database(path, { create: true, strict: true });
-  for (const f of V23) old.exec(readFileSync(join(import.meta.dir, "../../src/server/storage/migrations", f), "utf8"));
+  migrate(old, V23);
   old.exec("PRAGMA user_version = 23");
   old.exec("PRAGMA foreign_keys = ON");
   old.exec(`INSERT INTO pull_request (id, project, repo, pr_id) VALUES (1, 'P', 'r', 1);
@@ -496,8 +502,7 @@ test("migration from a version-23 database keeps every run and child row; kind c
 test("migration from a version-24 database keeps every run and child row; kind session and consult_json are new", () => {
   const path = join(dir, "v24.sqlite");
   const old = new Database(path, { create: true, strict: true });
-  for (const f of [...V23, "024_consult.sql"])
-    old.exec(readFileSync(join(import.meta.dir, "../../src/server/storage/migrations", f), "utf8"));
+  migrate(old, [...V23, "024_consult.sql"]);
   old.exec("PRAGMA user_version = 24");
   old.exec("PRAGMA foreign_keys = ON");
   old.exec(`INSERT INTO pull_request (id, project, repo, pr_id) VALUES (1, 'P', 'r', 1);
@@ -543,8 +548,7 @@ test("migration from a version-24 database keeps every run and child row; kind s
 test("migration from a version-25 database keeps every comment; the resolver columns are new and NULL", () => {
   const path = join(dir, "v25.sqlite");
   const old = new Database(path, { create: true, strict: true });
-  for (const f of [...V23, "024_consult.sql", "025_session.sql"])
-    old.exec(readFileSync(join(import.meta.dir, "../../src/server/storage/migrations", f), "utf8"));
+  migrate(old, [...V23, "024_consult.sql", "025_session.sql"]);
   old.exec("PRAGMA user_version = 25");
   old.exec(`INSERT INTO pull_request (id, project, repo, pr_id) VALUES (1, 'P', 'r', 1);
     INSERT INTO comment (pr, comment_id, version, root_id, author_slug, text, thread_resolved, created_at, updated_at)
@@ -570,8 +574,7 @@ test("migration from a version-25 database keeps every comment; the resolver col
 test("migration from a version-26 database keeps every post; the resolve columns are new, NULL, and checked", () => {
   const path = join(dir, "v26.sqlite");
   const old = new Database(path, { create: true, strict: true });
-  for (const f of [...V23, "024_consult.sql", "025_session.sql", "026_thread_resolver.sql"])
-    old.exec(readFileSync(join(import.meta.dir, "../../src/server/storage/migrations", f), "utf8"));
+  migrate(old, [...V23, "024_consult.sql", "025_session.sql", "026_thread_resolver.sql"]);
   old.exec("PRAGMA user_version = 26");
   old.exec(`INSERT INTO pull_request (id, project, repo, pr_id) VALUES (1, 'P', 'r', 1);
     INSERT INTO post (pr, kind, idem_key, body, destination_json, items_json, state, created_at, updated_at)

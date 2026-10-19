@@ -5,7 +5,7 @@
 // Usage: bun tests/support/fake-claude.ts <scenario.json> <claude arguments>
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 export type FakeScenario = {
   // Each call appends one JSON line: { argv, env, cwd, stdin, pid }. A hang run adds { childPid }.
@@ -198,13 +198,16 @@ async function main() {
     return r === undefined ? l : JSON.stringify({ ...e, structured_output: r });
   };
 
-  // The fixture paths name the recorded cwd. Replace it with the real cwd.
+  // The fixture paths name the recorded Windows cwd. Replace it and its separator with the real cwd and separator.
   const lines = readFileSync(s.fixture, "utf8").split("\n").filter(Boolean).map(rewrite);
   const init = lines.map((l) => JSON.parse(l)).find((e) => e.type === "system" && e.subtype === "init");
   const esc = (p: string) => JSON.stringify(p).slice(1, -1);
   for (const l of lines) {
     if (s.hang && JSON.parse(l).type === "result") break;
-    await Bun.write(Bun.stdout, `${typeof init?.cwd === "string" ? l.replaceAll(esc(init.cwd), esc(process.cwd())) : l}\n`);
+    await Bun.write(
+      Bun.stdout,
+      `${typeof init?.cwd === "string" ? l.replaceAll(esc(`${init.cwd}\\`), esc(process.cwd() + sep)).replaceAll(esc(init.cwd), esc(process.cwd())) : l}\n`,
+    );
     await Bun.sleep(s.delayMs ?? 2);
   }
   if (s.stderr) await Bun.write(Bun.stderr, s.stderr);
