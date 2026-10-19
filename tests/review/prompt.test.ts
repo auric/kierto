@@ -141,17 +141,19 @@ ${rule}
     const text = buildReplyPrompt({
       ...input,
       threads: [
-        { thread: 1, replyTo: 2, mine: true },
+        { thread: 1, replyTo: 2, mine: true, joined: true },
         { thread: 5, replyTo: 7 },
+        { thread: 8, replyTo: 9, joined: true },
       ],
     });
-    expect(text).toContain("\nThreads: 1 (answer message 2, the user started it), 5 (answer message 7, another person started it)\n");
-    const agent = replyAgent(general).prompt;
-    expect(agent).toContain(
-      "Set resolve to true only when the code at the head commit or an answer in the thread settles the review point.",
+    expect(text).toContain(
+      "\nThreads: 1 (answer message 2, the user started it), 5 (answer message 7, another person started it), 8 (answer message 9, another person started it, the user replied in it)\n",
     );
+    const agent = replyAgent(general).prompt;
+    expect(agent).toContain("only when the code at the head commit or an answer in the thread settles the review point.");
+    expect(agent).toContain("Propose resolve only for a thread that the user started or replied in, as the Threads line says.");
     expect(agent).toContain(
-      'Never propose to resolve a thread that another person started, unless the "Your instructions" section asks for it.',
+      'For a thread that another person started and the user never replied in, propose resolve only when the "Your instructions" section asks for it.',
     );
     expect(agent).toContain("When the point is not settled, set resolve to false and say in the reply what is still missing.");
     // The JSON schema lists both fields as required; a result without them still parses with resolve false.
@@ -163,6 +165,32 @@ ${rule}
       coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
     });
     expect(parsed.replies[0]).toMatchObject({ resolve: false, resolveEvidence: "" });
+  });
+
+  test("questions: a full answer proposes resolve with the answer as proof; a partial answer asks again; several questions need each answer", () => {
+    const agent = replyAgent(general).prompt;
+    expect(agent).toContain(
+      'When the user asked a question in the thread and a newer message answers it fully, set judgement to "settled" and resolve to true. Put the message number of the answer and a short quote of it into resolveEvidence.',
+    );
+    expect(agent).toContain('or give a short reply such as "Thanks, clear.".');
+    expect(agent).toContain(
+      'When a newer message answers only a part of the user\'s question, set judgement to "unsettled" and resolve to false. In the reply, ask the open part again.',
+    );
+    // The asker-side judgements, and resolve only with settled.
+    expect(agent).toContain(
+      'When the user made the review point or asked the question, use these values. "settled": the code or the answers settle every point and question of the user. "unsettled": a part is still missing. "followup": the user must ask a new question.',
+    );
+    expect(agent).toContain('Set resolve to true only with judgement "settled"');
+    // A resolve proposal asks for nothing and never announces the resolve.
+    expect(agent).toContain(
+      "A reply with resolve true asks for nothing. When something still needs an action in this thread, set resolve to false and ask for it. When it belongs to another thread, name that thread as information only, with no request.",
+    );
+    expect(agent).toContain(
+      "Never write in the reply that the user resolves the thread. The user can untick the box, and the app does the resolve.",
+    );
+    expect(agent).toContain(
+      "A thread can hold several questions of the user, such as the general comment with the questions of a review. Set resolve to true only when newer messages answer each question. Else name each open question in the reply.",
+    );
   });
 
   test("a re-review lists the posted findings; a fixed verdict on one proposes to resolve its thread", () => {

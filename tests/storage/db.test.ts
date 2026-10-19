@@ -36,7 +36,7 @@ const schema = (path: string) => {
 
 test("migration runs on an empty file and creates every M1 table", () => {
   const s = schema(join(dir, "empty.sqlite"));
-  expect(s.version).toBe(27);
+  expect(s.version).toBe(28);
   expect(s.journal).toBe("wal");
   expect(s.fk).toBe(1);
   expect(s.busy).toBe(5000);
@@ -114,7 +114,7 @@ test("migration from a version-9 database keeps every run", () => {
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(27);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(28);
     expect(db.query("SELECT * FROM review_run ORDER BY id").all()).toEqual(
       before.map((r) => ({ ...r, profile_name: null, profile_revision: null, explain: null, ...R2_COLUMNS, ...R3_COLUMNS })),
     );
@@ -155,8 +155,11 @@ function v11(path: string) {
   return db;
 }
 
-// 027_post_resolve.sql adds the resolve columns to post.
-const LATER: Record<string, Record<string, null>> = { post: { resolve_root: null, resolve_state: null, resolve_error: null } };
+// 027_post_resolve.sql adds the resolve columns to post. 028_run_event_agent.sql adds the subagent columns to run_event.
+const LATER: Record<string, Record<string, null | number>> = {
+  post: { resolve_root: null, resolve_state: null, resolve_error: null },
+  run_event: { model: null, tokens: null, builtin: 0 },
+};
 const later = (t: string, rows: unknown) => (rows as Record<string, unknown>[]).map((r) => ({ ...r, ...LATER[t] }));
 
 const dump = (db: Database) =>
@@ -184,7 +187,7 @@ test("migration from a version-11 database keeps every run, event, item, and pos
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(27);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(28);
     expect((db.query("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys).toBe(1);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "review_run")).toEqual([
@@ -250,7 +253,7 @@ test("an orphan row in a table that no migration touches does not block the upgr
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(27);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(28);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([
       { table: "pr_task", rowid: expect.anything(), parent: "pull_request", fkid: 0 },
     ]);
@@ -305,7 +308,7 @@ test("migration from a version-13 database keeps every run, event, item, and pos
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(27);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(28);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "review_run")).toEqual([
       ...oldColumns,
@@ -413,7 +416,7 @@ test("migration from a version-22 database keeps every fix edit; an edit names e
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(27);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(28);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "fix_edit")).toEqual(["id", "run", "ord", "thread", "path", "old", "new", "start", "rows_json", "item"]);
     expect(db.query("SELECT * FROM fix_edit ORDER BY id").all()).toEqual(before.map((r) => ({ ...r, item: null })));
@@ -470,7 +473,7 @@ test("migration from a version-23 database keeps every run and child row; kind c
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(27);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(28);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     // 025_session.sql adds consult_json.
     expect(columns(db, "review_run")).toEqual([...oldColumns, "consult_json"]);
@@ -520,7 +523,7 @@ test("migration from a version-24 database keeps every run and child row; kind s
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(27);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(28);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "review_run")).toEqual([...oldColumns, "consult_json"]);
     const after = dump(db);
@@ -559,7 +562,7 @@ test("migration from a version-25 database keeps every comment; the resolver col
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(27);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(28);
     expect(columns(db, "comment")).toEqual([...oldColumns, "thread_resolver_json", "thread_resolved_at"]);
     expect(db.query("SELECT * FROM comment ORDER BY comment_id").all()).toEqual(
       before.map((r) => ({ ...r, thread_resolver_json: null, thread_resolved_at: null })),
@@ -585,7 +588,7 @@ test("migration from a version-26 database keeps every post; the resolve columns
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(27);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(28);
     expect(columns(db, "post")).toEqual([...oldColumns, "resolve_root", "resolve_state", "resolve_error"]);
     expect(db.query("SELECT * FROM post ORDER BY id").all()).toEqual(later("post", before));
     db.run("UPDATE post SET resolve_root = 5, resolve_state = 'pending'");

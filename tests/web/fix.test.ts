@@ -12,6 +12,7 @@ import { HANDOFF_RULE, handoffText, indentBlock } from "../../src/web/fix/handof
 import {
   applyText,
   appRefPrefix,
+  askerSide,
   cardKey,
   commitText,
   defaultMessage,
@@ -128,7 +129,19 @@ const reply = (thread: number, p: Partial<ReplyPayload> = {}): ReviewItemDto => 
 
 describe("judgement", () => {
   test("labels", () => {
-    expect(JUDGEMENT).toEqual({ valid: "Valid", partly: "Partly valid", invalid: "Not valid", question: "Question" });
+    expect(JUDGEMENT).toEqual({
+      valid: "Valid",
+      partly: "Partly valid",
+      invalid: "Not valid",
+      question: "Question",
+      settled: "Settled",
+      unsettled: "Not settled",
+      followup: "Follow-up question",
+    });
+  });
+
+  test("the asker-side labels never tick the Fix list", () => {
+    expect((Object.keys(JUDGEMENT) as (keyof typeof JUDGEMENT)[]).filter(askerSide)).toEqual(["settled", "unsettled", "followup"]);
   });
 });
 

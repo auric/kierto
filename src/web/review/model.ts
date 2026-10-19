@@ -81,6 +81,31 @@ export function agentInfo(n: LogNode) {
   return { calls, words: `${plural(calls, "tool call")}${n.e.status === "running" ? " so far" : ""}` };
 }
 
+// The facts of one Agent call that the stream gave: "built-in, <model>, 5k tokens".
+export const agentDetails = (e: RunEvent) =>
+  [e.builtin ? "built-in" : "", e.model ?? "", e.tokens === null ? "" : tokenText(e.tokens)].filter(Boolean).join(", ");
+
+// The subagents of a run, one part per name in call order: "rl-reviewer ×3 (<model>)". null: the run used none.
+export function subagentText(events: RunEvent[]): string | null {
+  const by = new Map<string, { n: number; builtin: boolean; models: Set<string> }>();
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (e.tool !== AGENT) continue;
+    const name = e.agent ?? "unnamed";
+    const g = by.get(name) ?? { n: 0, builtin: false, models: new Set<string>() };
+    g.n++;
+    g.builtin ||= e.builtin;
+    if (e.model) g.models.add(e.model);
+    by.set(name, g);
+  }
+  if (!by.size) return null;
+  return [...by]
+    .map(([name, g]) => {
+      const extra = [g.builtin ? "built-in" : "", ...g.models].filter(Boolean).join(", ");
+      return `${name} ×${g.n}${extra ? ` (${extra})` : ""}`;
+    })
+    .join(", ");
+}
+
 // The first Agent call with this subagent name, then its ancestors.
 export function agentPath(events: RunEvent[], name: string): string[] {
   const byId = new Map(events.map((e) => [e.id, e]));
@@ -170,7 +195,7 @@ export function rereviewCount(items: ReviewItemDto[]): string {
 // calls: null while the log loads.
 export type RunLineState =
   | { kind: "running"; agents: number; calls: number; startedAt: number }
-  | { kind: "done"; result: string; tokens: number | null }
+  | { kind: "done"; result: string; tokens: number | null; subagents: string | null }
   | { kind: "failed"; text: string; raw: boolean }
   | { kind: "limit"; text: string }
   | { kind: "cancelled"; calls: number | null };
@@ -215,7 +240,12 @@ export function runLine(r: RunDto, d: RunDetail | undefined, profiles: ProfileDt
       if (r.errorKind === "usage_limit") return { kind: "limit", text: r.errorText ?? "" };
       return { kind: "failed", text: r.errorText ?? "No reason was recorded.", raw: r.hasRaw };
     default:
-      return { kind: "done", result: doneText(r, d?.items, edits, profiles), tokens: tokenTotal(r.usage) };
+      return {
+        kind: "done",
+        result: doneText(r, d?.items, edits, profiles),
+        tokens: tokenTotal(r.usage),
+        subagents: d ? subagentText(d.events) : null,
+      };
   }
 }
 

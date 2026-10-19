@@ -343,7 +343,8 @@ export function createClaudeRunner(opts: RunnerOptions = {}) {
       projectsDir = c.projectsDir;
       const { args, allowed } = "resume" in spec ? resumeArgs(spec) : prepare(spec);
       const limit = Math.min(opts.timeoutMs ?? RUN_TIMEOUT_MS, ("resume" in spec ? spec.timeoutMs : undefined) ?? RUN_TIMEOUT_MS);
-      const parser = createStreamParser({ cwd, allowedTools: allowed });
+      const agents = new Set("resume" in spec ? [] : [MAIN_AGENT, ...Object.keys(spec.agents)]);
+      const parser = createStreamParser({ cwd, allowedTools: allowed, agents });
       const p = Bun.spawn([...c.command, ...args], {
         cwd,
         env: childEnv(),

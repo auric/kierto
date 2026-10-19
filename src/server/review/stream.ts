@@ -14,6 +14,7 @@ import type {
   SDKResultMessage,
   SDKSystemMessage,
   SDKTaskNotificationMessage,
+  SDKTaskProgressMessage,
   SDKTaskStartedMessage,
   SDKUserMessage,
 } from "../../shared/run-log";
@@ -23,6 +24,10 @@ const NOTE_MAX = 300;
 const AGENT_TOOLS = new Set(["Agent", "Task"]);
 const AUTH_ERRORS = new Set<SDKAssistantMessageError>(["authentication_failed", "oauth_org_not_allowed"]);
 const TASK_END: Record<SDKTaskNotificationMessage["status"], RunEventStatus> = { completed: "ok", failed: "error", stopped: "stopped" };
+// Gate B5 (b5-auth.jsonl): the CLI writes its own error messages with this model name.
+const SYNTHETIC = "<synthetic>";
+const count = (v: unknown) => (typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : null);
+const modelOf = (v: unknown) => (typeof v === "string" && v && v !== SYNTHETIC ? v : null);
 
 export type StreamState = {
   inits: SDKSystemMessage[];
@@ -69,7 +74,8 @@ function resultText(b: ContentBlock) {
 
 const blocks = (c: unknown): ContentBlock[] => (Array.isArray(c) ? c.filter((b) => b && typeof b === "object") : []);
 
-export function createStreamParser(opts: { cwd: string; allowedTools: Set<string>; now?: () => number }) {
+// agents: the subagent names that the run defined. An Agent call of any other name is marked builtin.
+export function createStreamParser(opts: { cwd: string; allowedTools: Set<string>; agents?: ReadonlySet<string>; now?: () => number }) {
   const now = opts.now ?? Date.now;
   const events = new Map<string, RunEvent>();
   // A background Agent call gets its tool_result at launch. Only its task_notification ends it.
@@ -83,6 +89,16 @@ export function createStreamParser(opts: { cwd: string; allowedTools: Set<string
     const next = { ...e, status, note: text, endedAt: now() };
     events.set(id, next);
     changed.set(id, next);
+  }
+
+  // Sets the model or the token total of an Agent call. A null value keeps the old one.
+  function agentStats(changed: Map<string, RunEvent>, id: string | null | undefined, model: string | null, tokens: number | null) {
+    const e = id ? events.get(id) : undefined;
+    if (e?.tool !== "Agent") return;
+    const next = { ...e, model: model ?? e.model, tokens: tokens ?? e.tokens };
+    if (next.model === e.model && next.tokens === e.tokens) return;
+    events.set(e.id, next);
+    changed.set(e.id, next);
   }
 
   // Returns the events that this line created or changed.
@@ -99,10 +115,14 @@ export function createStreamParser(opts: { cwd: string; allowedTools: Set<string
     if (m.type === "assistant") {
       const a = m as SDKAssistantMessage;
       if (a.error) state.apiErrors.push(a.error);
+      // The first message of a subagent names its model before the Agent call ends.
+      if (a.parent_tool_use_id && events.get(a.parent_tool_use_id)?.model === null)
+        agentStats(changed, a.parent_tool_use_id, modelOf(a.message?.model), null);
       for (const b of blocks(a.message?.content)) {
         if (b.type !== "tool_use" || !b.id || !b.name || b.name === "StructuredOutput" || events.has(b.id)) continue;
         const tool = AGENT_TOOLS.has(b.name) ? "Agent" : b.name;
         const input = b.input && typeof b.input === "object" ? b.input : {};
+        const agent = tool === "Agent" && typeof input.subagent_type === "string" ? input.subagent_type : null;
         const e: RunEvent = {
           id: b.id,
           seq: seq++,
@@ -111,7 +131,10 @@ export function createStreamParser(opts: { cwd: string; allowedTools: Set<string
           target: targetOf(tool, input, opts.cwd),
           status: "running",
           note: null,
-          agent: tool === "Agent" && typeof input.subagent_type === "string" ? input.subagent_type : null,
+          agent,
+          model: null,
+          tokens: null,
+          builtin: agent !== null && !opts.agents?.has(agent),
           startedAt: now(),
           endedAt: null,
         };
@@ -119,8 +142,11 @@ export function createStreamParser(opts: { cwd: string; allowedTools: Set<string
         changed.set(e.id, e);
       }
     } else if (m.type === "user") {
-      for (const b of blocks((m as SDKUserMessage).message?.content)) {
+      const u = m as SDKUserMessage;
+      const r = u.tool_use_result && typeof u.tool_use_result === "object" ? u.tool_use_result : null;
+      for (const b of blocks(u.message?.content)) {
         if (b.type !== "tool_result" || !b.tool_use_id) continue;
+        if (r) agentStats(changed, b.tool_use_id, modelOf(r.resolvedModel), count(r.totalTokens));
         if (b.is_error) end(changed, b.tool_use_id, "error", note(resultText(b)));
         else if (!background.has(b.tool_use_id)) end(changed, b.tool_use_id, "ok", null);
       }
@@ -132,8 +158,12 @@ export function createStreamParser(opts: { cwd: string; allowedTools: Set<string
     } else if (m.type === "system" && m.subtype === "task_started") {
       const t = m as SDKTaskStartedMessage;
       if (t.tool_use_id && t.is_backgrounded) background.add(t.tool_use_id);
+    } else if (m.type === "system" && m.subtype === "task_progress") {
+      const t = m as SDKTaskProgressMessage;
+      agentStats(changed, t.tool_use_id, null, count(t.usage?.total_tokens));
     } else if (m.type === "system" && m.subtype === "task_notification") {
       const t = m as SDKTaskNotificationMessage;
+      agentStats(changed, t.tool_use_id, null, count(t.usage?.total_tokens));
       if (t.tool_use_id) end(changed, t.tool_use_id, TASK_END[t.status] ?? "error", note(t.summary ?? ""));
     } else if (m.type === "rate_limit_event") {
       if ((m as SDKRateLimitEvent).rate_limit_info?.status === "rejected") state.rateLimitRejected = true;

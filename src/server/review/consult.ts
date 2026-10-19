@@ -52,7 +52,15 @@ const EVIDENCE: Record<AnchoredFinding["evidenceStatus"], string> = {
   reproduced: "Reproduced",
   unverified: "Unverified",
 };
-const JUDGEMENT = { valid: "Valid", partly: "Partly valid", invalid: "Not valid", question: "Question" } as const;
+const JUDGEMENT = {
+  valid: "Valid",
+  partly: "Partly valid",
+  invalid: "Not valid",
+  question: "Question",
+  settled: "Settled",
+  unsettled: "Not settled",
+  followup: "Follow-up question",
+} as const;
 const VERDICT = { accept: "Valid", reject: "Not valid", question: "Question" } as const;
 
 const SQL = {

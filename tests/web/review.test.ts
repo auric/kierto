@@ -9,6 +9,7 @@ import type { AnchoredFinding, Carried, Question, ReplyPayload } from "../../src
 import type { RunEvent } from "../../src/shared/run-log";
 import type { Turn } from "../../src/shared/turn";
 import {
+  agentDetails,
   agentInfo,
   agentPath,
   anchorNote,
@@ -39,6 +40,7 @@ import {
   setupText,
   severityJumps,
   staleText,
+  subagentText,
   tokenTotal,
   triageText,
 } from "../../src/web/review/model";
@@ -52,6 +54,9 @@ const ev = (id: string, seq: number, o: Partial<RunEvent> = {}): RunEvent => ({
   status: "ok",
   note: null,
   agent: null,
+  model: null,
+  tokens: null,
+  builtin: false,
   startedAt: 1000 + seq,
   endedAt: 1100 + seq,
   ...o,
@@ -185,6 +190,25 @@ describe("log tree", () => {
     expect(agentPath(events, "callers-scan")).toEqual(["ag3", "ag2"]);
     expect(agentPath(events, "nobody")).toEqual([]);
   });
+
+  test("subagents: one part per name in call order, with counts, models, and the built-in mark", () => {
+    const events = [
+      ev("r1", 1),
+      agent("a1", 2, "rl-reviewer", { model: "claude-sonnet-5-5", tokens: 5382 }),
+      agent("a2", 3, "rl-reviewer", { model: "claude-sonnet-5-5" }),
+      agent("g1", 4, "general-purpose", { builtin: true, status: "error" }),
+      agent("a3", 5, "rl-reviewer", { model: "claude-haiku-5-5", status: "running", endedAt: null }),
+      agent("x1", 6, "", { agent: null }),
+    ];
+    expect(subagentText(events)).toBe("rl-reviewer ×3 (claude-sonnet-5-5, claude-haiku-5-5), general-purpose ×1 (built-in), unnamed ×1");
+    expect(subagentText([ev("r1", 1)])).toBeNull();
+    expect(agentDetails(events[1] as RunEvent)).toBe("claude-sonnet-5-5, 5k tokens");
+    expect(agentDetails(events[3] as RunEvent)).toBe("built-in");
+    expect(agentDetails(agent("s", 7, "Explore", { builtin: true, model: "claude-haiku-5-5", tokens: 812 }))).toBe(
+      "built-in, claude-haiku-5-5, 812 tokens",
+    );
+    expect(agentDetails(ev("r2", 8))).toBe("");
+  });
 });
 
 // The row of a run. items absent: the detail is still loading.
@@ -216,6 +240,11 @@ describe("run line", () => {
       kind: "done",
       result: "2 findings, 1 question",
       tokens: 14034,
+      subagents: null,
+    });
+    // A run that used subagents names them in its row.
+    expect(line(run({ usage }), [], undefined, [agent("a1", 1, "rl-reviewer", { model: "claude-sonnet-5-5" })])).toMatchObject({
+      subagents: "rl-reviewer ×1 (claude-sonnet-5-5)",
     });
     expect(result(run({ profile: "explain" }), [question(1)])).toBe("Explained the change, 1 question");
     expect(result(run({ profile: "explain" }), [])).toBe("Explained the change");

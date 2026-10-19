@@ -15,6 +15,7 @@ import { agoLong } from "../pr/threads";
 import { useRaw } from "./data";
 import {
   AGENT,
+  agentDetails,
   agentInfo,
   agentPath,
   callDur,
@@ -30,6 +31,7 @@ import {
   setupText,
   shortHash,
   skillsText,
+  subagentText,
   tokenText,
   tokenTotal,
   toolCalls,
@@ -224,6 +226,11 @@ export function RunLog(props: {
             Project instructions: {instructionsText(detail.run)?.short}
           </span>
         )}
+        {detail && subagentText(detail.events) && (
+          <span data-run-subagents className="text-muted-foreground">
+            Subagents: {subagentText(detail.events)}
+          </span>
+        )}
         {detail && skillsText(detail.run) && (
           <span data-run-skills className="text-muted-foreground">
             Skills: {skillsText(detail.run)}
@@ -266,7 +273,10 @@ function Row(props: { n: LogNode; depth: number; meta: MetaDto; isOpen: (e: RunE
   const result = ended ? (e.note ?? "") : "";
   const s = seconds(e);
   const name = e.agent ?? tool;
-  const label = [`${name} subagent`, AG_WORD[e.status], words, ended && s !== null ? durLong(s) : "", result].filter(Boolean).join(", ");
+  const details = agentDetails(e);
+  const label = [`${name} subagent`, AG_WORD[e.status], details, words, ended && s !== null ? durLong(s) : "", result]
+    .filter(Boolean)
+    .join(", ");
   return (
     <li className={cn("rl-lr rl-ag", open && n.kids.length > 0 && "rl-kids")}>
       <button
@@ -277,6 +287,7 @@ function Row(props: { n: LogNode; depth: number; meta: MetaDto; isOpen: (e: RunE
         aria-expanded={open}
         aria-controls={`ag-${e.id}`}
         aria-label={label}
+        title={e.builtin ? `Kierto did not define this agent. It comes from ${meta.runner.name} or your own agent config.` : undefined}
         onClick={() => props.onToggle(e)}
       >
         <ChevronRight aria-hidden className="rl-lchev" />
@@ -288,7 +299,7 @@ function Row(props: { n: LogNode; depth: number; meta: MetaDto; isOpen: (e: RunE
         </span>
         <span className="rl-lg">
           <b translate="no">{name}</b> {e.target}
-          <span className="rl-lnote">{[words, result].filter(Boolean).join(", ")}</span>
+          <span className="rl-lnote">{[details, words, result].filter(Boolean).join(", ")}</span>
         </span>
         <span className="rl-ld">{ended && s !== null ? (s < 60 ? `${s.toFixed(1)} s` : clockDur(s)) : ""}</span>
       </button>

@@ -425,6 +425,11 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }
           {instructions.notLoaded}
         </p>
       )}
+      {s.kind === "done" && s.subagents && (
+        <p className="m-0 text-muted-foreground [overflow-wrap:anywhere]" data-run-subagents>
+          Subagents: {s.subagents}
+        </p>
+      )}
       {review && s.kind === "running" && (
         <p className="m-0 text-muted-foreground">Drafts show when the review ends. You can read and reply meanwhile.</p>
       )}

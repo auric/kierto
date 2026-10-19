@@ -137,6 +137,7 @@ Use a test pull request that changes C++, C, or Python files for step 4. If it h
 6. Expect the word KIWI-SMOKE in the summary. Expect no finding with severity nit, because the note asks for none. Count the findings per severity and record the counts. Expect no finding for style, naming, or formatting.
 7. Disable the plugin of the marked skill, or rename its folder in your Claude config. Press r. Expect the brief to show "Skill <id> is marked Always use, but it is not found." with the fix hint, and Start to be disabled. Expect the skills dialog to show "Not found in <runner>. Runs do not start while it is marked Always use." Restore the skill. Expect Start to be enabled again.
 8. Remove the Always use mark and the extra text. Turn off the global switch.
+9. After the run of step 4, expect the line "Subagents: rl-reviewer ×N (<model>)" under the run row when the run used subagents. Press 3. Expect each rl-reviewer row with its model, tokens, and duration, and its tool calls nested under it. Press Tab to an agent row, then Enter. Expect it to fold and unfold. A call of an agent that the app did not define shows "built-in".
 
 ## J. Fix on your own comments and on threads without a reply draft
 
@@ -203,8 +204,9 @@ Part L writes to the test pull request: it resolves and reopens threads. Use onl
 7. Expect "Posted and resolved." or "Resolved.", then the thread under "Resolved" with "Resolved by you". In Bitbucket, expect the reply first and the thread resolved.
 8. Open the thread. Open More (…) in its footer. Click "Reopen thread". Expect the thread open in the app and in Bitbucket. Click More, "Resolve thread". Expect it resolved again with no question.
 9. Open an open thread of the second user. Click More, "Resolve thread". Expect the question "<name> started this thread. Resolve it on Bitbucket?". Click Cancel. Expect no change in Bitbucket. Click "Resolve thread" again, then Resolve. As the PR author, expect the thread resolved. Reopen it.
-10. Optional, one run: post one finding of a review run as an inline comment. Push a commit that fixes it. Click "Check now", then "Review changes since". If the run finds the finding fixed, expect a "Resolve proposal" under its thread with the box ticked.
-11. Delete the "Resolve gate." comment by hand if the test branch needs it.
+10. Ask questions in a general comment and as a reply in a thread of the second user. Ask the second user to answer all questions in your thread and only one question in the other. Click "Check now", then Draft replies. Expect a "Settled" chip with "Resolve after posting" ticked on your thread, with the quoted answer as proof and no text that announces the resolve. In the thread of the second user, expect a "Not settled" or "Follow-up question" chip, a reply that asks the open question, and the box not ticked.
+11. Optional, one run: post one finding of a review run as an inline comment. Push a commit that fixes it. Click "Check now", then "Review changes since". If the run finds the finding fixed, expect a "Resolve proposal" under its thread with the box ticked.
+12. Delete the "Resolve gate." comment by hand if the test branch needs it.
 
 ## H. Record
 

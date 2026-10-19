@@ -21,6 +21,11 @@ export type RunEvent = {
   note: string | null;
   // Agent calls only: the subagent name.
   agent: string | null;
+  // Agent calls only: the model of the subagent, and its total tokens so far (Gate B fixtures: resolvedModel, totalTokens, usage.total_tokens).
+  model: string | null;
+  tokens: number | null;
+  // Agent calls only: the run did not define this agent. It comes from the CLI or the user's Claude config.
+  builtin: boolean;
   startedAt: number;
   endedAt: number | null;
 };
@@ -57,16 +62,18 @@ export type SDKAssistantMessageError =
 
 export type SDKAssistantMessage = {
   type: "assistant";
-  message: { content: ContentBlock[] };
+  message: { content: ContentBlock[]; model?: string };
   parent_tool_use_id: string | null;
   error?: SDKAssistantMessageError;
   session_id: string;
 };
 
+// tool_use_result: the result of an Agent call carries the subagent model and, when it ran in the foreground, its token total.
 export type SDKUserMessage = {
   type: "user";
   message: { content: string | ContentBlock[] };
   parent_tool_use_id: string | null;
+  tool_use_result?: { resolvedModel?: unknown; totalTokens?: unknown } | string;
   session_id: string;
 };
 
@@ -108,6 +115,17 @@ export type SDKTaskNotificationMessage = {
   status: "completed" | "failed" | "stopped";
   output_file: string;
   summary: string;
+  usage?: SDKTaskUsage;
+};
+
+export type SDKTaskUsage = { total_tokens?: number; tool_uses?: number; duration_ms?: number };
+
+export type SDKTaskProgressMessage = {
+  type: "system";
+  subtype: "task_progress";
+  task_id: string;
+  tool_use_id?: string;
+  usage?: SDKTaskUsage;
 };
 
 export type SDKRateLimitEvent = {

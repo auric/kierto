@@ -353,11 +353,12 @@ const SQL = {
   // A run that was running at the last stop has no process now.
   recover: `UPDATE review_run SET status = 'failed', error_kind = 'restart', error_text = $text, raw_output = COALESCE(raw_output, $text),
       finished_at = $now WHERE status = 'running'`,
-  event: `INSERT INTO run_event (run, id, seq, parent, tool, target, status, note, agent, started_at, ended_at)
-    VALUES ($run, $id, $seq, $parent, $tool, $target, $status, $note, $agent, $started, $ended)
-    ON CONFLICT (run, id) DO UPDATE SET status = excluded.status, note = excluded.note, agent = excluded.agent, ended_at = excluded.ended_at`,
-  events: `SELECT id, seq, parent, tool, target, status, note, agent, started_at AS startedAt, ended_at AS endedAt FROM run_event
-    WHERE run = $run ORDER BY seq`,
+  event: `INSERT INTO run_event (run, id, seq, parent, tool, target, status, note, agent, model, tokens, builtin, started_at, ended_at)
+    VALUES ($run, $id, $seq, $parent, $tool, $target, $status, $note, $agent, $model, $tokens, $builtin, $started, $ended)
+    ON CONFLICT (run, id) DO UPDATE SET status = excluded.status, note = excluded.note, agent = excluded.agent, model = excluded.model,
+      tokens = excluded.tokens, ended_at = excluded.ended_at`,
+  events: `SELECT id, seq, parent, tool, target, status, note, agent, model, tokens, builtin, started_at AS startedAt, ended_at AS endedAt
+    FROM run_event WHERE run = $run ORDER BY seq`,
   item: `INSERT INTO review_item (run, kind, payload_json, body, path, side, line, line_end, anchor_state, excerpt_json, status, thread, edited)
     VALUES ($run, $kind, $payload_json, $body, $path, $side, $line, $line_end, $anchor_state, $excerpt_json, $status, $thread, $edited)`,
   items: "SELECT * FROM review_item WHERE run = $run ORDER BY id",
@@ -1171,6 +1172,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         status: e.status,
         note: e.note,
         agent: e.agent,
+        model: e.model,
+        tokens: e.tokens,
+        builtin: e.builtin ? 1 : 0,
         started: e.startedAt,
         ended: e.endedAt,
       });
@@ -1660,7 +1664,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const last = newestLive(msgs);
       if (!last) return { status: 400, error: `Comment ${thread} does not start a thread of this pull request with a live message.` };
       const root = msgs.find((m) => m.id === thread);
-      out.push({ thread, replyTo: last.id, mine: !!root && isMe({ slug: root.authorSlug, login: root.authorLogin }, me) });
+      const mine = !!root && isMe({ slug: root.authorSlug, login: root.authorLogin }, me);
+      const joined = msgs.some((m) => !m.deleted && isMe({ slug: m.authorSlug, login: m.authorLogin }, me));
+      out.push({ thread, replyTo: last.id, mine, joined });
     }
     if (!out.length) return { status: 409, error: "No thread waits for your reply." };
     if (out.length > MAX_REPLY_THREADS)
@@ -1974,7 +1980,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (!r || (r.kind as string) === "consult") return null;
       return {
         run: withPhase(db, toRunDto(r)),
-        events: db.query(SQL.events).all({ run: id }) as RunEvent[],
+        events: (db.query(SQL.events).all({ run: id }) as (Omit<RunEvent, "builtin"> & { builtin: number })[]).map((e) => ({
+          ...e,
+          builtin: e.builtin === 1,
+        })),
         items: (db.query(SQL.items).all({ run: id }) as ItemRow[]).map(toItemDto),
       };
     },

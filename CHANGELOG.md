@@ -9,6 +9,14 @@
 - "Review changes since" proposes to resolve the threads of your posted findings that the new commits fix. A Fix commit proposes it on its "Fixed in" reply.
 - Resolve or reopen any thread from its More menu. A thread that another person started asks first.
 - A resolve that fails after the reply keeps the reply and offers "Resolve again". It never posts the reply twice.
+- On threads where you made the point or asked the question, reply drafts show "Settled", "Not settled", or "Follow-up question". Only a settled thread gets a resolve proposal, with the answer quoted as proof.
+- A partly answered question gets a reply that asks the open part again. A thread with several questions resolves only when each one has an answer.
+- Draft replies can propose to resolve a thread of another person where you replied. The box stays unticked there.
+
+### Runs
+
+- The run row and the run log name the subagents of a run, with counts and models, for example "Subagents: rl-reviewer ×3 (claude-sonnet-5-5)".
+- In the run log, each subagent row shows its model, tokens, and duration, with its tool calls nested under it. An agent that Kierto did not define shows "built-in".
 
 ## 0.2.0
 

@@ -122,10 +122,14 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await expect(heads.nth(3)).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText("The description does not say if a reader may see a partial batch.")).toBeVisible();
 
+  // The record names the subagents of the run. The run defined only rl-reviewer, so the refused others are built-in.
+  await expect(runRow(page).locator("[data-run-subagents]")).toHaveText(
+    "Subagents: general-purpose ×1 (built-in), user-agent-5 ×1 (built-in), rl-reviewer ×1 (claude-haiku-5-5)",
+  );
   // "from rl-reviewer" opens the log at that agent. Its calls nest under it by parent.
   await page.getByRole("button", { name: "from rl-reviewer" }).click();
   const log = runLog(page);
-  const agent = log.getByRole("button", { name: /^rl-reviewer subagent, done, 3 tool calls/ });
+  const agent = log.getByRole("button", { name: /^rl-reviewer subagent, done, claude-haiku-5-5, 5k tokens, 3 tool calls/ });
   await expect(agent).toBeFocused();
   await expect(agent).toHaveAttribute("aria-expanded", "true");
   const kids = log.locator(`[id="${await agent.getAttribute("aria-controls")}"] > li`);
@@ -134,6 +138,13 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await agent.click();
   await expect(agent).toHaveAttribute("aria-expanded", "false");
   await expect(kids.first()).toBeHidden();
+  // The keyboard folds and unfolds the agent too.
+  await agent.press("Enter");
+  await expect(agent).toHaveAttribute("aria-expanded", "true");
+  await agent.press("Space");
+  await expect(agent).toHaveAttribute("aria-expanded", "false");
+  await expect(log.getByRole("button", { name: /^general-purpose subagent, failed, built-in, / })).toBeVisible();
+  await expect(log.locator("footer [data-run-subagents]")).toContainText("rl-reviewer ×1 (claude-haiku-5-5)");
   await expect(log.locator("footer")).toContainText("Result: 3 findings, 1 question.");
   await page.keyboard.press("Escape");
   await expect(log).toBeHidden();

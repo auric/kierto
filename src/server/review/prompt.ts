@@ -28,8 +28,11 @@ export type PromptInput = {
   instructions?: string;
 };
 
-// thread: the root comment ID. replyTo: the message to answer. mine: the user wrote the root comment.
-export type ReplyThread = { thread: number; replyTo: number; mine?: boolean };
+// thread: the root comment ID. replyTo: the message to answer. mine: the user wrote the root comment. joined: the user wrote a live message in the thread.
+export type ReplyThread = { thread: number; replyTo: number; mine?: boolean; joined?: boolean };
+
+const starter = (t: ReplyThread) =>
+  t.mine ? "the user started it" : t.joined ? "another person started it, the user replied in it" : "another person started it";
 
 // A re-review (plan r2 S-RR). since: the head that the base run reviewed. earlier: the IDs of the carried findings.
 // posted: the IDs in earlier of findings that the user posted. Each has an open thread.
@@ -143,7 +146,7 @@ export function buildReplyPrompt(i: PromptInput & { threads: ReplyThread[] }): s
     "",
     `Draft the user's replies in the review threads below. The change is ${i.mergeBase}..${i.head} in ./repo. Give one entry in replies per thread.`,
     "",
-    `Threads: ${i.threads.map((t) => `${t.thread} (answer message ${t.replyTo}, ${t.mine ? "the user started it" : "another person started it"})`).join(", ")}`,
+    `Threads: ${i.threads.map((t) => `${t.thread} (answer message ${t.replyTo}, ${starter(t)})`).join(", ")}`,
     "",
     PR_HEADINGS,
     "",

@@ -57,7 +57,8 @@ export const reviewJsonSchema = (): Record<string, unknown> => z.toJSONSchema(re
 export const replyActions = ["reply", "none"] as const;
 export const MAX_REPLY_THREADS = 25;
 // docs/plans/fix-ux.md: valid and partly tick a thread in the Fix list at the start.
-export const judgements = ["valid", "partly", "invalid", "question"] as const;
+// valid to question: the user answers a point of another person. settled to followup: the user made the point or asked the question.
+export const judgements = ["valid", "partly", "invalid", "question", "settled", "unsettled", "followup"] as const;
 export type Judgement = (typeof judgements)[number];
 
 export const replyDraft = z.object({
@@ -70,13 +71,15 @@ export const replyDraft = z.object({
     .enum(judgements)
     .nullable()
     .describe(
-      "valid: the review point is right. partly: only a part of it is right. invalid: the code is right as it is. question: the newest message asks a question. null: the newest message asks for no change and asks no question.",
+      "For a point or question of another person: valid: the review point is right. partly: only a part of it is right. invalid: the code is right as it is. question: the newest message asks a question. For a point or question of the user: settled: the code or the answers settle it. unsettled: a part is still missing. followup: the user asks a new question. null: the newest message asks for no change and asks no question.",
     ),
   // The defaults keep results without these keys valid. --json-schema still lists them as required.
   resolve: z
     .boolean()
     .default(false)
-    .describe("true: the code at the head commit or the answer in the thread settles the review point, so the thread can be resolved."),
+    .describe(
+      "true: the code at the head commit or the answer in the thread settles the review point, so the thread can be resolved. Only with judgement settled.",
+    ),
   resolveEvidence: z
     .string()
     .default("")

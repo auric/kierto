@@ -142,7 +142,27 @@ describe("outcomes", () => {
     expect(o.events.find((e) => e.tool === "Write")?.note).toStartWith("Error: No such tool available: Write.");
     expect(o.events.some((e) => e.tool === "StructuredOutput")).toBe(false);
     expect(o.events.every((e) => e.endedAt !== null)).toBe(true);
-    expect(seen.filter((e) => e.id === agent?.id).map((e) => e.status)).toEqual(["running", "ok"]);
+    expect([...new Set(seen.filter((e) => e.id === agent?.id).map((e) => e.status))]).toEqual(["running", "ok"]);
+  });
+
+  test("subagent stats: model, tokens, and the built-in mark come from the stream", async () => {
+    const { runner, spec } = setup({ fixture: real("b9-wp8-flags.jsonl") });
+    const seen: RunEvent[] = [];
+    const o = await runner.run(spec, (ev) => seen.push(...ev));
+    const id = "toolu_01LSbcECPmHiTBS4CDvWoCbj";
+    // The first subagent message names the model. task_progress raises the tokens. The tool result gives totalTokens.
+    expect(byId(o.events, id)).toMatchObject({ agent: "rl-reviewer", model: "claude-haiku-5-5", tokens: 5382, builtin: false });
+    const live = seen.filter((e) => e.id === id).map((e) => [e.status, e.model, e.tokens]);
+    expect(live[0]).toEqual(["running", null, null]);
+    expect(live).toContainEqual(["running", "claude-haiku-5-5", 4413]);
+    expect(live.at(-1)).toEqual(["ok", "claude-haiku-5-5", 5382]);
+    // The run defined only rl-reviewer. The refused calls of other agents are marked built-in.
+    expect(o.events.filter((e) => e.tool === "Agent").map((e) => [e.agent, e.builtin])).toEqual([
+      ["general-purpose", true],
+      ["user-agent-5", true],
+      ["rl-reviewer", false],
+    ]);
+    expect(o.events.filter((e) => e.tool !== "Agent").every((e) => e.model === null && e.tokens === null && !e.builtin)).toBe(true);
   });
 
   test("two result events: the final one with structured_output wins; a background agent ends at its notification", async () => {
@@ -157,6 +177,8 @@ describe("outcomes", () => {
     expect(o.events.filter((e) => e.parent === agent?.id).map((e) => [e.tool, e.target, e.status])).toEqual([
       ["Read", "note.txt", "error"],
     ]);
+    // A background agent: resolvedModel at launch, the tokens at its notification.
+    expect(agent).toMatchObject({ model: "claude-haiku-5-5", tokens: 4601 });
   });
 
   test("max turns", async () => {

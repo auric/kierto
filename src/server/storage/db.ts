@@ -29,6 +29,7 @@ import m024_consult from "./migrations/024_consult.sql" with { type: "text" };
 import m025_session from "./migrations/025_session.sql" with { type: "text" };
 import m026_thread_resolver from "./migrations/026_thread_resolver.sql" with { type: "text" };
 import m027_post_resolve from "./migrations/027_post_resolve.sql" with { type: "text" };
+import m028_run_event_agent from "./migrations/028_run_event_agent.sql" with { type: "text" };
 
 // Index i holds the SQL that raises user_version from i to i + 1. The list order, not the file number, sets the version.
 const MIGRATIONS = [
@@ -59,6 +60,7 @@ const MIGRATIONS = [
   m025_session,
   m026_thread_resolver,
   m027_post_resolve,
+  m028_run_event_agent,
 ];
 
 const tables = (db: Database) =>

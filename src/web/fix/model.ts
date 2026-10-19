@@ -13,7 +13,12 @@ export const JUDGEMENT: Record<Judgement, string> = {
   partly: "Partly valid",
   invalid: "Not valid",
   question: "Question",
+  settled: "Settled",
+  unsettled: "Not settled",
+  followup: "Follow-up question",
 };
+// The judgements of a thread where the user made the point or asked. They never tick the Fix list.
+export const askerSide = (j: Judgement) => j === "settled" || j === "unsettled" || j === "followup";
 
 // ---------- The Fix list (plan pr-view-v4 2.12, fix-ux Option A) ----------
 

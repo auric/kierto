@@ -215,7 +215,7 @@ describe("thread selection", () => {
       const d = await h.finish(r.body.id);
       expect(d.run).toMatchObject({ kind: "reply", status: "completed", errorKind: null });
       expect(h.runCalls()[0]?.stdin).toContain(
-        "\nThreads: 101 (answer message 103, another person started it), 501 (answer message 502, the user started it)\n",
+        "\nThreads: 101 (answer message 103, another person started it, the user replied in it), 501 (answer message 502, the user started it)\n",
       );
       expect(d.items.map((i) => [i.kind, payload(i).thread, payload(i).replyTo, i.status, i.anchor])).toEqual([
         ["reply", 101, 103, "new", null],
@@ -227,7 +227,7 @@ describe("thread selection", () => {
       h.db.query("UPDATE pull_request SET my_role = 'AUTHOR' WHERE id = $pr").run({ pr: h.pr });
       await h.run();
       expect(h.runCalls()[1]?.stdin).toContain(
-        "\nThreads: 101 (answer message 103, another person started it), 201 (answer message 201, another person started it), 501 (answer message 502, the user started it)\n",
+        "\nThreads: 101 (answer message 103, another person started it, the user replied in it), 201 (answer message 201, another person started it), 501 (answer message 502, the user started it)\n",
       );
     },
     SLOW,
@@ -536,8 +536,14 @@ describe("drafts", () => {
         replies: {
           summary: "Two settled threads.",
           replies: [
-            draft(101, { resolve: true, resolveEvidence: "src/a.ts:3 at the head.", body: "The rename is in." }),
-            draft(501, { action: "none", body: "", resolve: true, resolveEvidence: "  src/b.ts:9 releases the lock.  " }),
+            draft(101, { judgement: "settled", resolve: true, resolveEvidence: "src/a.ts:3 at the head.", body: "The rename is in." }),
+            draft(501, {
+              action: "none",
+              body: "",
+              judgement: "settled",
+              resolve: true,
+              resolveEvidence: "  src/b.ts:9 releases the lock.  ",
+            }),
           ],
           coverage: emptyCoverage,
         },
@@ -580,6 +586,58 @@ describe("drafts", () => {
     },
     SLOW,
   );
+
+  test(
+    "questions: an answered one proposes resolve, a partly answered one asks again, a reply in another person's thread stays unticked",
+    async () => {
+      const h = await setup();
+      // 801: my general comment with two questions. ALEX answers only the first.
+      h.comment(801, FAKE_USER, 13);
+      h.comment(802, ALEX, 14, { parent: 801, root: 801 });
+      h.scenario({
+        replies: {
+          summary: "Two answered questions, one open.",
+          replies: [
+            draft(101, {
+              action: "none",
+              body: "",
+              judgement: "settled",
+              resolve: true,
+              resolveEvidence: 'Message 103: "flush() runs on close."',
+            }),
+            draft(501, {
+              body: "Thanks, clear.",
+              judgement: "settled",
+              resolve: true,
+              resolveEvidence: 'Message 502: "The lock is released in finally."',
+            }),
+            // A resolve with a judgement other than settled is dropped.
+            draft(801, {
+              body: "Thanks. What about the retry limit?",
+              judgement: "unsettled",
+              resolve: true,
+              resolveEvidence: "Message 802.",
+            }),
+          ],
+          coverage: emptyCoverage,
+        },
+      });
+      const d = await h.run();
+      expect(h.runCalls()[0]?.stdin).toContain(
+        "\nThreads: 101 (answer message 103, another person started it, the user replied in it), 501 (answer message 502, the user started it), 801 (answer message 802, the user started it)\n",
+      );
+      expect(d.items.map((i) => [payload(i).thread, i.status, i.body, payload(i).resolve, payload(i).resolveTick])).toEqual([
+        [101, "new", "", true, false],
+        [501, "new", "Thanks, clear.", true, true],
+        [801, "new", "Thanks. What about the retry limit?", false, false],
+      ]);
+      expect(payload(d.items[1] as ReviewItemDto).resolveEvidence).toBe('Message 502: "The lock is released in finally."');
+      expect(d.run.summary?.coverage.skipped).toContain(
+        "Resolve proposal for thread 801 dropped: the judgement is unsettled, not settled.",
+      );
+    },
+    SLOW,
+  );
 });
 
 describe("validateReplies", () => {
@@ -617,8 +675,8 @@ describe("validateReplies", () => {
   test("resolve: the tick needs a thread that the user started; evidence is trimmed and dropped without resolve", () => {
     const v = validateReplies(
       result([
-        draft(101, { action: "none", body: "", resolve: true, resolveEvidence: " a.ts:3 " }),
-        draft(501, { resolve: true, resolveEvidence: "b.ts:1" }),
+        draft(101, { action: "none", body: "", judgement: "settled", resolve: true, resolveEvidence: " a.ts:3 " }),
+        draft(501, { judgement: "settled", resolve: true, resolveEvidence: "b.ts:1" }),
         draft(801, { resolveEvidence: "ignored" }),
       ]),
       requested.map((r) => ({ ...r, mine: r.thread !== 501 })),
@@ -627,6 +685,29 @@ describe("validateReplies", () => {
       [101, "new", true, "a.ts:3"],
       [501, "new", false, "b.ts:1"],
       [801, "new", false, ""],
+    ]);
+  });
+
+  test("resolve: only the settled judgement keeps a proposal; any other judgement drops it with a coverage line", () => {
+    const v = validateReplies(
+      result([
+        draft(101, { judgement: "settled", resolve: true, resolveEvidence: "Message 103." }),
+        draft(501, { action: "none", body: "", judgement: "question", resolve: true, resolveEvidence: "Message 502." }),
+        draft(801, { judgement: "unsettled", resolve: true, resolveEvidence: "Message 802." }),
+      ]),
+      requested.map((r) => ({ ...r, mine: true })),
+    );
+    expect(v.replies.map((r) => [r.payload.thread, r.status, r.payload.resolve, r.payload.resolveTick, r.payload.resolveEvidence])).toEqual(
+      [
+        [101, "new", true, true, "Message 103."],
+        [501, "discarded", false, false, ""],
+        [801, "new", false, false, ""],
+      ],
+    );
+    expect(v.coverage.skipped).toEqual([
+      "big.bin",
+      "Resolve proposal for thread 501 dropped: the judgement is question, not settled.",
+      "Resolve proposal for thread 801 dropped: the judgement is unsettled, not settled.",
     ]);
   });
 

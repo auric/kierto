@@ -7,7 +7,9 @@
 // "Resolve after posting": the tick and the proof of a resolve proposal. A ticked draft resolves its thread after the post.
 import {
   Check,
+  CheckCheck,
   CircleCheck,
+  CircleDashed,
   CircleHelp,
   CircleSlash,
   Contrast,
@@ -15,6 +17,7 @@ import {
   Hourglass,
   LoaderCircle,
   type LucideIcon,
+  MessageCircleQuestionMark,
   Reply,
 } from "lucide-react";
 import { memo, type ReactNode } from "react";
@@ -25,7 +28,7 @@ import { cn } from "@/lib/utils";
 import type { MetaDto, ReviewItemDto } from "../../shared/dto";
 import type { Judgement, ReplyPayload } from "../../shared/review";
 import type { Turn } from "../../shared/turn";
-import { JUDGEMENT } from "../fix/model";
+import { askerSide, JUDGEMENT } from "../fix/model";
 import { CopyButton, Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
 import { Hint, type Hints } from "../shell/Hint";
@@ -86,7 +89,15 @@ export type ReplyCtx = {
 const box = "rl-enter mt-3.5 max-w-[72ch] scroll-mt-3 rounded-lg border border-dashed border-rule-strong px-2.5 pt-2 pb-2.5";
 const icon = "size-[15px] shrink-0";
 
-const JUDGEMENT_ICON: Record<Judgement, LucideIcon> = { valid: CircleCheck, partly: Contrast, invalid: CircleSlash, question: CircleHelp };
+const JUDGEMENT_ICON: Record<Judgement, LucideIcon> = {
+  valid: CircleCheck,
+  partly: Contrast,
+  invalid: CircleSlash,
+  question: CircleHelp,
+  settled: CheckCheck,
+  unsettled: CircleDashed,
+  followup: MessageCircleQuestionMark,
+};
 
 // The judgement of the AI on the review point. The word carries the state, the icon only repeats it.
 export function JudgementChip({ j }: { j: Judgement }) {
@@ -168,7 +179,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   const j = p.judgement ?? null;
   const chip =
     j &&
-    (ctx.author ? (
+    (ctx.author && !askerSide(j) ? (
       <Hint label="The judgement sets the default tick in the Fix list.">
         <span className="inline-flex">
           <JudgementChip j={j} />
