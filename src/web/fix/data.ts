@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Fix it server state (plan r3 UI-FIX). Keys ["pr", pr, "fixes"] and ["pr", pr, "clone"]: a live `changed` that names the PR
 // refreshes both. A commit or an undo names the PR too.
 import { type QueryClient, useQuery } from "@tanstack/react-query";

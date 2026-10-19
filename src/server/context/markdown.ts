@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Jira rendered HTML to Markdown (plan r3 S-JMD). The HTML is untrusted. domino parses it and runs no script and loads no resource.
 import TurndownService from "turndown";
 

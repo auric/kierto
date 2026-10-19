@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Starts, watches, and stops one Claude Code review process. The flags, env, and cwd rules come from integration-check.md, "Gate v3, local".
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";

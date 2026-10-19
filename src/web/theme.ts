@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Theme and row density. Theme: the system scheme by default, with a manual override. Storage can be blocked, so every access sits in try/catch.
 import { useSyncExternalStore } from "react";
 

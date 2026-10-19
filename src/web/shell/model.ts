@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure list and sidebar rules. No DOM access, so bun test runs them directly.
 
 import type { CheckpointDto, CheckpointReason, Group, PrRow, PrTask, SyncStatus, TaskSource } from "../../shared/dto";

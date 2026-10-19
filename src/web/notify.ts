@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Notification claim flow (plan G7). The server claim gives each event to one tab only.
 import { useEffect, useRef } from "react";
 import type { ClaimedEvent } from "../shared/dto";
@@ -22,7 +25,7 @@ export function planNotes(events: ClaimedEvent[], first: boolean): Note[] {
   for (const e of events) byPr.set(e.pr, [...(byPr.get(e.pr) ?? []), e]);
   if (first || events.some((e) => e.digest)) {
     return [
-      { title: "Review Loop", body: `${plural(events.length, "update")} in ${plural(byPr.size, "pull request")}`, tag: "digest", pr: null },
+      { title: "Revido", body: `${plural(events.length, "update")} in ${plural(byPr.size, "pull request")}`, tag: "digest", pr: null },
     ];
   }
   return [...byPr].map(([pr, list]) => {

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // E2E server: the fake Bitbucket on FAKE_URL, the fake Jira on JIRA_URL, and the app on APP_PORT in one process (control.ts). Test code only.
 // The app gets a temp data folder and memory secrets. It never sees the real data folder or the credential store.
 import "../support/no-real-claude";

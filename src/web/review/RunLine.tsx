@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Run record (plan pr-view-v4 2.6, prototype/pr-view-v4 reviewRecord): the newest run of each kind in one block with an ink rule.
 // The review comes first: its result, the summary, a ledger of the open drafts, and what it read and did not check.
 // Every other kind is one line. Each row opens "Not checked" and "Run setup" in place. Only Log opens the run log.

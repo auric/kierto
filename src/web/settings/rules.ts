@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure model of the task-rule editor (plan v3 WP3, prototype/v3 Settings). No DOM access, so bun test runs it.
 import type { TaskRule, TaskRuleDto, TaskSource } from "../../shared/dto";
 

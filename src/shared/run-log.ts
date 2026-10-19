@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Run log types. The stream shapes follow sdk.d.ts of @anthropic-ai/claude-agent-sdk 0.3.295 (Claude Code 2.1.295).
 // They list only the fields the app reads. The CLI sends more.
 

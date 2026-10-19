@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Triage of review items (plan v3 WP12): accept, discard, restore, edit, and move.
 import type { Database } from "bun:sqlite";
 import type { ItemActionInput, ItemConflict, ReviewItemDto } from "../../shared/dto";

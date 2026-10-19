@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r2 S-JIRA and r3 S-JMD: the Jira REST client against the fake Jira. No test calls a real server.
 import { afterEach, describe, expect, test } from "bun:test";
 import { CAPS, CONVERT_FIELD_MS, createJiraSource, MAX_ATTACHMENTS, MAX_BODY_BYTES, MAX_HTML_BYTES } from "../../src/server/context/jira";

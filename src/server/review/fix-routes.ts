@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Fix it API (plan r3 S-APPLY): the clone routes, commit, and undo. Git in the user's clone runs no network command.
 import type { Database } from "bun:sqlite";
 import { existsSync, statSync } from "node:fs";

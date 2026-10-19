@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 import { afterEach, describe, expect, test } from "bun:test";
 import { ForgeError } from "../../src/server/bitbucket/client";
 import { branchUrl, createBitbucketProvider, excerptOf } from "../../src/server/bitbucket/provider";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Gate 0 local checks. Usage: bun scripts/gate0/local-checks.ts
 // Writes raw evidence to .gate0/local/ (gitignored). Raw files can hold local paths and account data.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync, lstatSync } from "node:fs";

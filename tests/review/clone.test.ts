@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r3 S-APPLY: clone checks, apply, commit, hooks, undo, and cache commits. Real git in temp folders, no network.
 // The fake Bitbucket on 127.0.0.1 serves the PR. Git in the clone reads a temp HOME, so no user config of this machine applies.
 import type { Database } from "bun:sqlite";

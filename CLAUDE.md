@@ -1,6 +1,6 @@
-# Review Loop
+# Revido
 
-Review Loop is a local-first inbox for Bitbucket Server pull requests (PRs). It runs the user's own Claude Code CLI (`claude -p`) for reviews. The app runs on localhost and keeps all data on the user's machine.
+Revido is a local-first inbox for Bitbucket Server pull requests (PRs). It runs the user's own Claude Code CLI (`claude -p`) for reviews. The app runs on localhost and keeps all data on the user's machine. Its old name was Review Loop. Only the visible name changed: code identifiers, the `REVIEW_LOOP_*` environment variables, the data folder, the credential store service, and the `rl-` prefixes keep the old name, so existing user data keeps working.
 
 Status: Releases 1, 2, and 3 are code complete. Project instructions, always-use skills, language checks, the severity rubric, field-by-field profile upgrades, and "Copy to all profiles" are code complete after Release 3. The PR view v4 redesign (docs/plans/pr-view-v4.md) and the Fix redesign (docs/plans/fix-ux.md) are code complete. The user runs docs/smoke-m1.md, smoke-v3.md (with part H for the PR view), smoke-m4.md, smoke-r2.md, and smoke-r3.md (with Gate B11, B12, and B15, part I for the prompt features, and part J for Fix); see docs/plans/r2.md and r3.md. Do not assume that a file in the planned layout exists. Check first.
 
@@ -9,6 +9,8 @@ Status: Releases 1, 2, and 3 are code complete. Project instructions, always-use
 | File | Role |
 |---|---|
 | `BRIEF.md` | The spec and the source of truth. If another file disagrees, BRIEF.md wins. |
+| `README.md` | User documentation. Its images in `docs/screenshots/` come from `bun run screenshots`. |
+| `LICENSE`, `NOTICE.md`, `THIRD_PARTY_NOTICES.md` | AGPL-3.0-or-later text, the copyright and section 7 terms, and the generated third-party notices. `third-party-licenses/` holds texts that no package ships. The app shows all three in the Settings footer. |
 | `prototype/index.html` | Visual spec for the UI: three panes, color tokens, keyboard model. Sample data only. It is also a published artifact. |
 | `docs/plans/` | Milestone plans: m1.md, v3.md (M2, M3), replies.md, m4.md, r2.md (Release 2), r3.md (Release 3), pr-view-v4.md (PR detail layout, URL, panels), fix-ux.md (Fix list, Fix for findings), session-consult.md (consult the implementation session). |
 | `docs/smoke-m1.md`, `docs/smoke-v3.md`, `docs/smoke-m4.md`, `docs/smoke-r2.md`, `docs/smoke-r3.md` | Manual smoke tests with the real server and CLI. The user runs them. The smoke-v3.md last table maps A1 to A17 to their tests. |
@@ -38,13 +40,15 @@ Commands:
 - `bun run dev`: start Hono with `--watch` on 127.0.0.1:7317 and Vite with HMR on 127.0.0.1:5173. Open the Vite URL.
 - `bun run build`: build the UI into `dist/web`.
 - `bun run start`: serve the API and the built UI on 127.0.0.1:7317. `REVIEW_LOOP_PORT` overrides the port. `REVIEW_LOOP_DATA_DIR` sets the data folder. `REVIEW_LOOP_SECRETS=memory` keeps the token out of the OS store.
-- `bun run compile`: build the UI, then one self-contained executable for this host into `dist/bin/review-loop-<os>-<arch>`. `bun run compile:all` adds windows-x64, linux-x64, and linux-arm64. Release builds cover Windows and Linux only. `tests/build/compiled.test.ts` checks the host binary. It skips when the binary is absent and fails when a source is newer.
+- `bun run compile`: build the UI, then one self-contained executable for this host into `dist/bin/revido-<os>-<arch>`. `bun run compile:all` adds windows-x64, linux-x64, and linux-arm64. Release builds cover Windows and Linux only. `tests/build/compiled.test.ts` checks the host binary. It skips when the binary is absent and fails when a source is newer.
 - `bun run typecheck`: run strict `tsc --noEmit`. `bun run typecheck:5` runs it with TypeScript 5.
 - `bun run lint`: run Biome lint and format checks. `bun run format` applies the fixes.
 - `bun run demo`: serve the built UI on 127.0.0.1:7399 against a fake Bitbucket and a fake Jira with synthetic data. It uses a temp data folder, memory secrets, and a temp clone for Fix it.
 - `bun test`: run the tests under `tests/`. Each group ends green on typecheck, lint, and test.
 - `bun run check`: run typecheck, typecheck:5, lint, and `bun test` in sequence. It stops at the first failure.
 - `bun run release`: make a tested release in `dist/release/<version>-<commit>/`. It runs check, e2e, compile for all targets, and the compiled-binary test, then writes SHA256SUMS. It refuses a dirty tree unless `--allow-dirty`. `--skip-e2e` skips the e2e tests.
+- `bun run notices`: regenerate `THIRD_PARTY_NOTICES.md` from the Vite source maps, the Bun metafile of the server, the CSS imports, the Bun runtime, and `skills-lock.json`. It fails on a license that is not GPL-compatible. `bun run release` runs it with `--check`. Run it after each dependency or skill change.
+- `bun run screenshots`: build the UI, start the demo on `SHOTS_PORT` (default 7419) in its own temp folder, and write the README images to `docs/screenshots/`. Check each image for real names, hosts, and paths.
 - `bun run test:e2e`: build the UI, then run the Playwright suite `tests/e2e/*.e2e.ts` with Node. `tests/e2e/serve.ts` starts the fake Bitbucket on `E2E_FAKE_PORT` (default 7398), the fake Jira on `E2E_JIRA_PORT` (default 7397), and the app on `E2E_APP_PORT` (default 7399). Stop `bun run demo` first, because it uses port 7399.
 
 ## Skills
@@ -110,3 +114,4 @@ Add or update a project skill:
 - No hard line wrapping. One paragraph or one bullet is one physical line.
 - Code comments state only constraints that the code cannot show.
 - The changelog lists only changes that a user of the tool sees.
+- Each own source file in `src/`, `scripts/`, and `tests/` starts with `// SPDX-License-Identifier: AGPL-3.0-or-later` and `// Copyright (c) 2026 Ihor Lifanov`. The shadcn files in `src/web/components/ui/` and the SQL migrations have no header.

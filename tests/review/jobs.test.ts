@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan v3 WP10: review jobs with the fake CLI, temp repositories with a file remote, and the fake Bitbucket. No test starts the real CLI.
 import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
@@ -1523,7 +1526,7 @@ describe("project instructions", () => {
         "## From the target branch: CLAUDE.md",
         "## From the target branch: docs/main.md (imported by CLAUDE.md)",
         "## From your clone: CLAUDE.local.md",
-        "## From Review Loop settings",
+        "## From Revido settings",
       ];
       const at = heads.map((x) => text.indexOf(x));
       expect(at.every((i, k) => i > (at[k - 1] ?? -1))).toBe(true);

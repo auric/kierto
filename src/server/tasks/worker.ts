@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Runs one task-ID pattern per request. The parent terminates this worker when a request passes its budget.
 declare const self: Worker;
 

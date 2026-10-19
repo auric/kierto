@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The model and effort that Claude Code uses for a run without --model or --effort.
 // Sources: code.claude.com/docs/en/model-config ("Setting your model", "Model aliases", "Adjust effort level"),
 // docs/en/settings-reference (effortLevel, modelSettings, maxEffortLevel), docs/en/settings (user scope is ~/.claude/settings.json only).

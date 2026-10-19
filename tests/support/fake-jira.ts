@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Fake Jira Server for tests and the demo. It listens on 127.0.0.1 only and serves fixtures/jira/ payloads.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

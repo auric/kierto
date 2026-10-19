@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan v3 WP4 and WP13b: file and comment links from server links only (Gate v3 U5). No test reaches a forge.
 import type { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";

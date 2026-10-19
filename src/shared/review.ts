@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Review and reply results (plan v3 WP9, replies.md WP17). zod parses the CLI output. reviewJsonSchema() and replyJsonSchema() feed --json-schema.
 import { z } from "zod";
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure thread rules for the detail pane (prototype/v3 derive, foldPlan, tree). No DOM access, so bun test runs them directly.
 import type { CommentDto, ExcerptLine, PrRow } from "../../shared/dto";
 import { isMe } from "../../shared/me";

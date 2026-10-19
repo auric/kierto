@@ -1,14 +1,18 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Builds and tests a release. Usage: bun scripts/release.ts [--allow-dirty] [--skip-e2e].
-// Output: dist/release/<version>-<commit>/ with one binary per target and a SHA256SUMS file.
+// Output: dist/release/<version>-<commit>/ with one binary per target, a SHA256SUMS file, and the license files.
 import { copyFileSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import pkg from "../package.json";
 import { ALL, binPath, HOST } from "./compile";
 
 const ROOT = resolve(import.meta.dir, "..");
+// AGPL-3.0 section 6 and the MIT notices: each binary goes out with these texts.
+const LEGAL = ["LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"];
 
-export const artifactName = (version: string, target: string) =>
-  `review-loop-${version}-${target}${target.startsWith("windows") ? ".exe" : ""}`;
+export const artifactName = (version: string, target: string) => `revido-${version}-${target}${target.startsWith("windows") ? ".exe" : ""}`;
 
 // `sha256sum` text-mode line: hash, two spaces, file name.
 export const sumsLine = (sha256: string, name: string) => `${sha256}  ${name}\n`;
@@ -42,6 +46,7 @@ if (import.meta.main) {
   // An old host binary makes the compiled-binary test in `check` fail as stale.
   rmSync(join(ROOT, "dist", "bin"), { recursive: true, force: true });
   await step("check", [bun, "run", "check"]);
+  await step("third-party notices", [bun, "scripts/notices.ts", "--check"]);
   if (args.includes("--skip-e2e")) console.warn("\n!!! WARNING: --skip-e2e: the browser acceptance tests DID NOT RUN. !!!\n");
   else await step("test:e2e", [bun, "run", "test:e2e"]);
   await step("compile", [bun, "scripts/compile.ts", "--all"]);
@@ -60,8 +65,9 @@ if (import.meta.main) {
     names.push(name);
   }
   await Bun.write(join(out, "SHA256SUMS"), sums);
+  for (const name of LEGAL) copyFileSync(join(ROOT, name), join(out, name));
 
   console.log(`\nRelease ${pkg.version} (${commit}) in ${relative(ROOT, out)}:`);
-  for (const name of [...names, "SHA256SUMS"])
+  for (const name of [...names, "SHA256SUMS", ...LEGAL])
     console.log(`  ${name.padEnd(44)} ${statSync(join(out, name)).size.toLocaleString("en-US").padStart(14)} bytes`);
 }

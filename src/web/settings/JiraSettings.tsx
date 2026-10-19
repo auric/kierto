@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Issue tracker settings (plan r2, task context UI): the base URL, the personal access token, and the CA file.
-// The server checks the token with the tracker before it saves. Review Loop calls the tracker only on this save and on a Fetch click.
+// The server checks the token with the tracker before it saves. Revido calls the tracker only on this save and on a Fetch click.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -72,7 +75,7 @@ function TrackerSettings({ tracker, settings }: { tracker: Tracker; settings: Se
         {baseUrl === null
           ? `Connect ${name} to fetch the task text into the review brief.`
           : `Connected. The review brief can fetch the task text from ${name}.`}{" "}
-        Review Loop calls {name} only when you save here or click Fetch.
+        Revido calls {name} only when you save here or click Fetch.
       </p>
       {baseUrl !== null && !tokenStored && (
         <p className="m-0 text-sm">The service restarted, and the token was in memory only. Enter the token again.</p>
@@ -176,7 +179,7 @@ function DisconnectConfirm(props: { name: string; pending: boolean; onDisconnect
       }}
     >
       <p id="tracker-off-q" className="m-0 text-sm">
-        Disconnect {props.name}? Review Loop deletes the stored token. Fetched task text stays until you remove it in the brief.
+        Disconnect {props.name}? Revido deletes the stored token. Fetched task text stays until you remove it in the brief.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button variant="destructive" size="sm" disabled={props.pending} onClick={props.onDisconnect}>

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Session consult (docs/plans/session-consult.md parts A and B): the text, the answer parser, the import plan, the import, and the undo.
 // The tests seed a temp database and a temp git cache. No test reaches a forge or the real CLI.
 import type { Database } from "bun:sqlite";
@@ -398,7 +401,7 @@ async function setup(o: { cache?: boolean; role?: string; runAtHead?: boolean } 
 const byId = (d: ConsultData, id: string) => d.items.find((i) => i.id === id) as ConsultItem;
 
 describe("GET /prs/:id/consult", () => {
-  test("groups, IDs, header, conversation, code at the head, outdated marks, and the view of Review Loop", async () => {
+  test("groups, IDs, header, conversation, code at the head, outdated marks, and the view of Revido", async () => {
     const s = await setup({ cache: true });
     const res = await s.call("GET", "/prs/1/consult");
     expect(res.status).toBe(200);
@@ -428,19 +431,17 @@ describe("GET /prs/:id/consult", () => {
     expect(t.text).toContain("- Alex Smith, comment 101, 1970-01-01 00:00 UTC:\n    Rename `x`.\n    ## Not a heading");
     expect(t.text).toContain("- Alex Smith, comment 103, reply to 102,");
     expect(t.text).toContain("- You, comment 102,");
-    expect(t.text).toContain(
-      "- Reply draft from Review Loop (judgement Valid, accepted, not posted):\n    AI reply.\n  Reason: AI reason.",
-    );
+    expect(t.text).toContain("- Reply draft from Revido (judgement Valid, accepted, not posted):\n    AI reply.\n  Reason: AI reason.");
 
     const orphan = byId(d, "T201").text;
     expect(orphan).toContain("Outdated: yes. The code changed after this comment.\nCode when the comment was written:\n    > 2 + | OLD2");
     expect(byId(d, "T301").text).toContain(
       "Source: your comment by You\nStatus: open, waiting for the other person\nPlace: general comment",
     );
-    expect(byId(d, "T401").text).toContain("Source: Review Loop finding, posted by you");
+    expect(byId(d, "T401").text).toContain("Source: Revido finding, posted by you");
     const resolved = byId(d, "T501").text;
     expect(resolved).toContain("Status: resolved. Context only, no verdict.");
-    expect(resolved).not.toContain("The view of Review Loop");
+    expect(resolved).not.toContain("The view of Revido");
 
     // The review read the older commit. F21's line is the same at the head. F22's line changed.
     const same = byId(d, "F21").text;

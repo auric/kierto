@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // MCP servers of the user's Claude config (user scope) and of the enabled plugins for review profiles. Entries can hold secrets: no URL, header, command, args, or env value leaves this module except into the run's mcp.json.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";

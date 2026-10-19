@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Durable outbox (plan v3 WP13a): each approved text reaches the forge once, from the user's point of view.
 // A row goes pending, then sent (committed before the request), then confirmed, failed, or unknown.
 // An unknown row is checked against the remote comments before any new send. Without a match, the user decides.

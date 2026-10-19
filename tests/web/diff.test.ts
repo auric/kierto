@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r2 UI-DIFF: the pure diff viewer rules. Thread and draft placement, the gap rows, and the focus targets.
 import { describe, expect, test } from "bun:test";
 import { parseDiff } from "../../src/server/review/diffmap";

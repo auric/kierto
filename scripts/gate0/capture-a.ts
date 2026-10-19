@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Gate A capture for U2 (range comment, manual step a) and U12 (orphaned comment after a push, manual step b). GET requests only.
 // Usage: bun scripts/gate0/capture-a.ts --pr <PR URL> --step a|b|both [--raw <dir>] [--out <dir>]
 //        bun scripts/gate0/capture-a.ts --dry-run

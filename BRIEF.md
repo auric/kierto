@@ -1,4 +1,4 @@
-# Review Loop: Project Brief
+# Revido: Project Brief
 
 Status: draft 3, 2026-10-11. Scope: a production-quality personal tool for Bitbucket Server pull request (PR) review with Claude Code. Edge-case reference: PROJECT_BRIEF_GPT_ASTRA_6.md.
 
@@ -301,7 +301,7 @@ Layout:
 - src/shared/ (IDs, DTOs, zod schemas)
 - fixtures/ (sanitized Bitbucket payloads, fake CLI output), tests/ (unit, contract, Playwright)
 
-Bitbucket Server REST 1.0, auth with an HTTP access token as Bearer (Gate 0: Data Center 9.4.26):
+Bitbucket Server REST 1.0, auth with an HTTP access token as Bearer (Gate 0: Data Center 9.x):
 - Current user: the X-AUSERNAME response header gives the slug of the token owner.
 - Discovery: GET /rest/api/1.0/dashboard/pull-requests?state=OPEN&role=REVIEWER, then role=AUTHOR. Users can also follow a PR by URL.
 - Timeline: GET /rest/api/1.0/projects/{key}/repos/{slug}/pull-requests/{id}/activities.
@@ -508,7 +508,7 @@ Phase 5, reach:
 
 ## 10. Open questions (defaults in brackets)
 
-1. Bitbucket version and auth? [Answered in Gate 0: Data Center 9.4.26. An HTTP access token as Bearer works for reads and writes.]
+1. Bitbucket version and auth? [Answered in Gate 0: Data Center 9.x. An HTTP access token as Bearer works for reads and writes.]
 2. Can clients fetch refs/pull-requests/*? [Partly answered in Gate 0: ls-remote lists refs/pull-requests/<id>/from, and no merge ref. Verify the fetch in M2. Fall back to a branch fetch.]
 3. Mark AI-assisted comments? [Answered: the 🤖 mark, a setting that is on by default. The user owns every posted comment.]
 4. Which local repository paths may the app read? [Release 3: one clone path per repository, set by the user. The app runs git there only for clone checks, Apply, and Undo. Reviews and fix runs use the app's own cache clones.]

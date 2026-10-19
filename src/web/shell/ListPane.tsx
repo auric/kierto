@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // List pane (prototype/v3 renderList): Needs you, Waiting on others, and a folded Done group.
 // The Review runs, Ready to post, and Archive views are one flat list.
 import {

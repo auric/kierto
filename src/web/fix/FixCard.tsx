@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The fix card under a thread (plan r3 UI-FIX): the run state with its log, the note of the run for the thread, each proposed edit
 // with a checkbox and its diff rows, and the commit with Undo. Dashed: a proposal. Solid: a commit holds the edits.
 import { Check, CircleAlert, Copy, GitCommitHorizontal, LoaderCircle, ScrollText, Undo2 } from "lucide-react";

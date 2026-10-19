@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r2 UI-JIRA browser acceptance: the Jira settings, the task chips of the review brief, and the imported task text.
 // Plan r3 UI-TASKS: the same chips next to the run buttons and in the Ask section. UI-ATT: the task attachments.
 // Runs against serve.ts only: the fake Bitbucket, the fake Jira on JIRA_URL, and the fake Claude Code CLI.

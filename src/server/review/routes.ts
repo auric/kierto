@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR, S-ASK, r3 S-FIX): brief, start, re-review, ask, reply drafts, fix runs, cancel, run,
 // raw output, item triage, and Improve prompt. Every mutation of PR data broadcasts `changed`.
 // Improve prompt: a new start replaces the running proposal. Nothing saves until the user applies the proposal.

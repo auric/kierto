@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 import { Database } from "bun:sqlite";
 import m001_m1 from "./migrations/001_m1.sql" with { type: "text" };
 import m002_reviewers from "./migrations/002_reviewers.sql" with { type: "text" };

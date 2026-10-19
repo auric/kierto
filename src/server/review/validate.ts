@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Anchor validator (plan v3 WP9), earlier-finding validator (r2 S-RR), and reply validator (replies.md WP17).
 // Pure: the caller passes the file contents, the diff, and the run's agent names.
 import { MAX_NOTE } from "../../shared/dto";

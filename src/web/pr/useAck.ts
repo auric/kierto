@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // A message counts as read when 50% of it is visible in the detail pane and the tab is visible (plan section 2).
 import { useMutation } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";

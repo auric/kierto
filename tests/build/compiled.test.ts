@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Checks the binary of `bun run compile` for this host. It skips when the binary is absent.
 // It fails when an input of the compile is newer than the binary.
 import { Database } from "bun:sqlite";
@@ -7,10 +10,11 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import pkg from "../../package.json";
 import { binPath, HOST } from "../../scripts/compile";
 import { dbPath } from "../../src/server/config";
 import { openDb } from "../../src/server/storage/db";
-import type { TaskContextDto, TaskPreviewDto } from "../../src/shared/dto";
+import type { MetaDto, TaskContextDto, TaskPreviewDto } from "../../src/shared/dto";
 import { FAKE_TOKEN, key, startFakeBitbucket } from "../support/fake-bitbucket";
 import { ISSUE_KEY, JIRA_TOKEN, startFakeJira } from "../support/fake-jira";
 import { DASHBOARD_PATH, onePage } from "../support/scenarios";
@@ -19,7 +23,18 @@ const BIN = binPath(HOST);
 const ROOT = join(import.meta.dir, "../..");
 const WEB = join(ROOT, "dist/web");
 // `bun run compile` builds dist/web from these and embeds it. A dist/web rebuild from the same inputs gives the same assets.
-const INPUTS = ["src", "index.html", "vite.config.ts", "tsconfig.json", "package.json", "bun.lock", "scripts/compile.ts"];
+const INPUTS = [
+  "src",
+  "index.html",
+  "vite.config.ts",
+  "tsconfig.json",
+  "package.json",
+  "bun.lock",
+  "scripts/compile.ts",
+  "LICENSE",
+  "NOTICE.md",
+  "THIRD_PARTY_NOTICES.md",
+];
 const START_MS = 20_000;
 const ID = String.raw`[A-Z][A-Z0-9]+-\d+`;
 
@@ -40,6 +55,7 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
   let jira: ReturnType<typeof startFakeJira> | undefined;
   let proc: Bun.Subprocess<"ignore", "pipe", "inherit"> | undefined;
   let origin = "";
+  let commit = "";
   let session = "";
 
   beforeAll(async () => {
@@ -66,13 +82,14 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
         const { done, value } = await stdout.read();
         if (done) return null;
         out += decoder.decode(value, { stream: true });
-        const m = /Review Loop \(([^)]+)\): (http:\/\/127\.0\.0\.1:\d+)\//.exec(out);
+        const m = /Revido \(([^)]+)\): (http:\/\/127\.0\.0\.1:\d+)\//.exec(out);
         if (m) return m;
       }
     })();
     const m = await Promise.race([started, p.exited.then(() => null), Bun.sleep(START_MS - 5_000).then(() => null)]);
     if (!m) throw new Error(`The binary did not start. Output:\n${out}`);
     origin = m[2] as string;
+    commit = m[1] as string;
     console.log(`Binary: ${BIN}\nModified: ${statSync(BIN).mtime.toISOString()}\nBuild commit: ${m[1]}\nURL: ${origin}`);
     // Keep the pipe drained, so that a log line never blocks the binary.
     void (async () => {
@@ -111,6 +128,10 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
       expect(r.status, f).toBe(200);
       expect(Buffer.from(await r.arrayBuffer()).equals(readFileSync(join(WEB, "assets", f))), f).toBe(true);
     }
+  });
+
+  test("meta names the package version and the build commit", async () => {
+    expect(((await (await call("GET", "/api/meta")).json()) as MetaDto).app).toEqual({ version: pkg.version, commit });
   });
 
   test("a settings PUT creates the database at the last migration", async () => {

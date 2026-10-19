@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Outbox rows (plan v3 section 7, replies.md step 4): Posting, "Outcome unknown. Checking.", Failed with the reason, and Posted.
 // Reply rows show in the thread of their parent. Other rows show in the Posts group above the drafts.
 import { useQueryClient } from "@tanstack/react-query";

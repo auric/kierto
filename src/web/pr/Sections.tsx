@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Description, Files, and Commits of the detail pane (prototype/v3 overview, filesSec, commitsSec; pr-view-v4 2.5).
 import {
   Check,
@@ -47,9 +50,7 @@ export function Description({ detail, me }: { detail: PrDetail; me: string | nul
       <h2 id="h-desc" className={h2}>
         Description
       </h2>
-      {!pr.followed && (
-        <p className="m-0 text-muted-foreground">Not followed. Review Loop does not check this pull request for new comments.</p>
-      )}
+      {!pr.followed && <p className="m-0 text-muted-foreground">Not followed. Revido does not check this pull request for new comments.</p>}
       <div id="desc" className="max-w-[72ch] [overflow-wrap:anywhere]">
         {text ? <Text text={long && !more ? (blocks[0] ?? text) : text} /> : <p className="m-0 text-muted-foreground">No description.</p>}
       </div>

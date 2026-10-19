@@ -1,10 +1,13 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Demo: the app on 127.0.0.1:7399 against a fake Bitbucket with synthetic data. No real server, data folder, or credential store.
 // Reviews run the fake Claude Code CLI against a temp git remote. No real CLI and no network.
 // The data covers every inbox group and every thread turn. Task IDs use the fictional key ABC. A fake Jira serves each ABC task.
 // My PR 1004 shows Fix it: judgements, fix edits, and Apply into a temp clone that the demo makes and deletes.
 import "../tests/support/no-real-claude";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { serveStatic } from "hono/bun";
@@ -12,6 +15,7 @@ import { writeConfig } from "../src/server/config";
 import { setFollowed } from "../src/server/inbox/queries";
 import { createLive } from "../src/server/live";
 import { startServer } from "../src/server/main";
+import { SHIPPED_PROFILES } from "../src/server/review/catalog";
 import { git, gitEnv } from "../src/server/review/git";
 import { createReviewJobs } from "../src/server/review/jobs";
 import { createSecrets } from "../src/server/secrets";
@@ -51,11 +55,38 @@ const FIX = {
 // Reply runs judge the threads valid, partly, invalid, question, and null in turn (tests/support/fake-claude.ts).
 const claudeDir = mkdtempSync(join(tmpdir(), "review-loop-demo-claude-"));
 const runner = fakeRunner(claudeDir);
+
+// A synthetic Claude Code config folder, so Settings never lists the skills, plugins, or MCP servers of the real one.
+// Two user skills, one plugin with a skill and an MCP server, one user MCP server, and a global CLAUDE.md. Both MCP servers run fake-mcp.ts.
+const claudeConfig = join(claudeDir, "config");
+const skill = (dir: string, name: string, description: string) => {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\nCheck each changed function.\n`);
+};
+skill(join(claudeConfig, "skills", "test-check"), "test-check", "Finds changed code without a test.");
+skill(join(claudeConfig, "skills", "lock-order"), "lock-order", "Checks that locks are taken in one order.");
+const pluginDir = join(claudeConfig, "plugins", "cache", "demo-market", "review-kit", "1.0.0");
+skill(join(pluginDir, "skills", "naming"), "naming", "Checks the naming style of new code.");
+const fakeMcp = (extra: string[] = []) => ({
+  command: process.execPath,
+  args: [join(import.meta.dir, "../tests/support/fake-mcp.ts"), ...extra],
+});
+writeFileSync(join(pluginDir, ".mcp.json"), JSON.stringify({ mcpServers: { docs: fakeMcp() } }));
+writeFileSync(join(claudeConfig, "settings.json"), JSON.stringify({ enabledPlugins: { "review-kit@demo-market": true } }));
+writeFileSync(
+  join(claudeConfig, "plugins", "installed_plugins.json"),
+  JSON.stringify({ version: 2, plugins: { "review-kit@demo-market": [{ scope: "user", installPath: pluginDir, version: "1.0.0" }] } }),
+);
+writeFileSync(join(claudeConfig, ".claude.json"), JSON.stringify({ mcpServers: { "team-wiki": fakeMcp(["--extra=page_history"]) } }));
+writeFileSync(join(claudeConfig, "CLAUDE.md"), "Name each lock in a comment where it is taken.\n");
+process.env.CLAUDE_CONFIG_DIR = claudeConfig;
+
 runner.write({ fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT), fix: FIX });
 const SOURCE_PRS = [1001, 1002, 31, 210, 212, 77, 74, 33, 215, 9, 5, 2, 1004];
 const remote = await reviewRemote(claudeDir, { ...Object.fromEntries(SOURCE_PRS.map((id) => [id, "source" as const])), 81: "next" });
 
-const PORT = 7399;
+// DEMO_PORT: scripts/screenshots.ts runs the demo on a spare port.
+const PORT = Number(process.env.DEMO_PORT ?? 7399);
 const WEB_DIR = resolve(import.meta.dir, "../dist/web");
 const index = join(WEB_DIR, "index.html");
 if (!existsSync(index)) {
@@ -588,6 +619,17 @@ writeConfig(dataDir, {
   taskRules: (["branch", "title", "description"] as const).map((source) => ({ source, pattern, keys: ["ABC"] })),
   taskLink: "https://tracker.example.test/browse/{key}",
   jira: { baseUrl: jira.url },
+  // General gets skills and an MCP server of the synthetic config, so the brief, the run setup, and Settings show them.
+  profiles: SHIPPED_PROFILES.map((p) =>
+    p.id === "general"
+      ? {
+          ...p,
+          skills: ["test-check", "review-kit:naming"],
+          alwaysSkills: ["test-check"],
+          mcp: [{ server: "team-wiki", tools: ["search", "lookup"] }],
+        }
+      : p,
+  ),
 });
 const secrets = createSecrets(null);
 await secrets.set(FAKE_TOKEN);
@@ -629,7 +671,7 @@ const server = startServer({
 sync.start();
 void review.start();
 
-console.log(`Review Loop demo: http://127.0.0.1:${server.port}/ (pid ${process.pid})`);
+console.log(`Revido demo: http://127.0.0.1:${server.port}/ (pid ${process.pid})`);
 console.log(`Fake Bitbucket: ${fake.url}. Fake Jira: ${jira.url}. Data: ${dataDir}`);
 console.log(`Follow by URL: paste ${fake.url}/projects/PROJ3/repos/tools/pull-requests/5 into the filter.`);
 console.log(`Fix it: open "Release the write lock after each entry", draft replies, then fix. Apply commits in ${cloneDir}.`);

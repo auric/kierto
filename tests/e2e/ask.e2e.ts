@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r2 UI-ASK and pr-view-v4 2.4 in the browser: q opens Ask in the panel slot, Ctrl+Enter asks, and the answer shows as safe
 // Markdown. The slot holds the brief or Ask, one at a time.
 // The answer is text only: no draft, no post, and no write request to the forge.

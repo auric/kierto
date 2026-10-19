@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 import { ArrowLeft, type LucideIcon, Monitor, Moon, Sun, X } from "lucide-react";
 import { type FormEvent, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -13,6 +16,7 @@ import { trackerOf } from "../review/tasks";
 import { useSaveSettings } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { setTheme, type Theme, useTheme } from "../theme";
+import { About } from "./About";
 import { Clones } from "./Clones";
 import { JiraSettings } from "./JiraSettings";
 import { ProjectInstructions } from "./ProjectInstructions";
@@ -286,7 +290,7 @@ export function Settings({
           </div>
           <form className="grid gap-4" onSubmit={submit} key={settings.baseUrl ?? ""}>
             {settings.baseUrl === null && (
-              <p className="m-0">Connect Review Loop to your {forge} server. It checks your pull requests every minute.</p>
+              <p className="m-0">Connect Revido to your {forge} server. It checks your pull requests every minute.</p>
             )}
             {missing && <p className="m-0">The service restarted, and the token was in memory only. Enter the token again.</p>}
             <FieldGroup className="gap-4">
@@ -368,6 +372,7 @@ export function Settings({
         {settings.baseUrl !== null && <JiraSettings settings={settings} />}
         {settings.baseUrl !== null && <Clones settings={settings} />}
         {settings.baseUrl !== null && <ProjectInstructions />}
+        <About />
         <div ref={spy.end} aria-hidden className="h-px" />
       </div>
     </>
@@ -405,7 +410,7 @@ function Checks({ settings }: { settings: SettingsDto }) {
           ))}
         </select>
         <FieldDescription id="check-every-help">
-          Review Loop asks {forge} for changes at this interval. A new interval starts after the next check.
+          Revido asks {forge} for changes at this interval. A new interval starts after the next check.
         </FieldDescription>
       </Field>
       {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
@@ -414,7 +419,7 @@ function Checks({ settings }: { settings: SettingsDto }) {
 }
 
 const PERMISSION_NOTE: Partial<Record<ReturnType<typeof notifyPermission>, string>> = {
-  denied: "This browser blocks notifications for Review Loop. Allow them in the site settings. The inbox badges still show new activity.",
+  denied: "This browser blocks notifications for Revido. Allow them in the site settings. The inbox badges still show new activity.",
   unsupported: "This browser does not support notifications. The inbox badges still show new activity.",
 };
 

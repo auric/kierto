@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 import { timingSafeEqual } from "node:crypto";
 import { createMiddleware } from "hono/factory";
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r3 S-APPLY: a "Fixed in" reply posts only when the synced PR commits hold its commit for the current heads.
 // The app runs in-process against the fake Bitbucket on 127.0.0.1. No test reaches a real host.
 import type { Database } from "bun:sqlite";

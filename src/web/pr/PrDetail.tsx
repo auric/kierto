@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // PR detail (plan v3 WP5, r2 UI-ASK, r2 UI-DIFF, pr-view-v4 section 2): header, status strip, and the panel slot (the brief or Ask),
 // then one column of the run record, Description, Drafts, Threads, Files, and Commits. The run record goes after the Description
 // until a review exists (decision D3).
@@ -622,7 +625,7 @@ export function PrDetail({
           </>
         ) : q.error ? (
           <Calm title={notFound ? "Cannot find this pull request" : "Cannot load this pull request"}>
-            <p className="m-0">{notFound ? "Review Loop has no data for it. Select another pull request." : q.error.message}</p>
+            <p className="m-0">{notFound ? "Revido has no data for it. Select another pull request." : q.error.message}</p>
           </Calm>
         ) : (
           <div role="status" aria-busy="true" aria-label="Loading the pull request" className="grid max-w-[86ch] gap-3 pt-6">

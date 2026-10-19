@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // One thread of the detail pane (prototype/v3 thread, threadBody, tree, msg). A collapsed thread renders no message, so it acks nothing.
 import {
   Bot,

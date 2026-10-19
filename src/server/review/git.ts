@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Runs git with an argument array and an isolated config (plan v3 section 2, "Git isolation").
 const TIMEOUT_MS = 10 * 60_000;
 const DRAIN_MS = 5_000;

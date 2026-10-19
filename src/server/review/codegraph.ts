@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Indexes the run's sanitized repo/ for a picked codegraph MCP server. Never run it in the user's clone.
 // codegraph 1.6.2 CLI: `init --yes <path>`, `sync <path>`, `status --json <path>`, `serve --mcp --path <path> --no-watch`.
 import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Project instructions: the Settings block per repository, the preview, the warning for a ticked file that is gone, and the run inputs.
 // Runs against serve.ts only: the fake Bitbucket with the author PR 1004, a temp clone, and the fake CLI.
 import { rmSync, writeFileSync } from "node:fs";
@@ -83,7 +86,7 @@ test("Settings: tick a clone file, see the preview and the warning for a gone fi
   await preview.getByText("Show the text").click();
   await expect(preview.locator("pre")).toContainText("## From your clone: CLAUDE.local.md");
   await expect(preview.locator("pre")).toContainText("LOCAL-E2E-CANARY");
-  await expect(preview.locator("pre")).toContainText("## From Review Loop settings");
+  await expect(preview.locator("pre")).toContainText("## From Revido settings");
 
   // A ticked file that is gone gets a warning. The text change reads the sources again.
   rmSync(join(clone, "CLAUDE.local.md"));

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Fake `claude` CLI for tests. It replays a recorded stream-json fixture and never calls a model.
 // Usage: bun tests/support/fake-claude.ts <scenario.json> <claude arguments>
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

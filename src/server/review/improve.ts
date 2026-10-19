@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Improve prompt (Settings > Review profiles): one CLI run proposes a new profile prompt. The app saves it only on Apply.
 // The run gets no tool, no MCP server, no repository, no pull request data, and no token. Its cwd is an empty temp folder.
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";

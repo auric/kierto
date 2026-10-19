@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Session consult API (docs/plans/session-consult.md parts A, B, and C): GET /prs/:id/consult, POST /prs/:id/consult/import,
 // POST /prs/:id/consult/:run/undo, GET /prs/:id/consult/sessions, POST /prs/:id/consult/session, and GET /prs/:id/consult/session/:run.
 // Own pull requests only. Nothing goes to the server: the import writes local drafts and marks, and a session run only proposes.

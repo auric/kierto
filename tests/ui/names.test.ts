@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan v3 section 2: UI code holds no product name. GET /api/meta gives it.
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";

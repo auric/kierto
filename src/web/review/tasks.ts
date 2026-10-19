@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Imported task text (plan r2, task context UI): the pure rules. TaskChips.tsx and Brief.tsx hold the requests.
 import {
   type AttachmentDto,

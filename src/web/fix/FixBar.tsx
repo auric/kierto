@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Fix it on the own pull request (plan r3 UI-FIX, pr-view-v4 2.11 and 2.12, docs/plans/fix-ux.md): the Fix button and the Fix list,
 // the fix runs, the fix card of each thread and finding, the runner prompt, and the fix part of the bottom bar with the apply dialog.
 // The fix part shows while a fix run runs, and while an edit is ticked, as the post part shows while an item is accepted.

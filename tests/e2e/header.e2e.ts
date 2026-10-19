@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Detail header (Group 1a, plan pr-view-v4 2.1 and 2.2): the sticky action bar, the key, author, branch, and task links, the plain
 // run buttons, the More menu, and the Ask button. Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake
 // Claude Code CLI.

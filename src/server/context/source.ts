@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // ContextSource (BRIEF section 7): an issue source behind one boundary. Jira (jira.ts) is the only implementation.
 import type { IssueContext } from "../../shared/dto";
 

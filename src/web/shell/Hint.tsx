@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Tooltips for icons without visible words. The trigger carries an aria-label with the same words.
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import type { ReactElement } from "react";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The profile option of the run inputs: a profile for one run only. The route checks that the settings list the ID.
 import { describe, expect, test } from "bun:test";
 import { askInput, fixRunInput, replyRunInput, reviewRunInput } from "../../src/shared/dto";

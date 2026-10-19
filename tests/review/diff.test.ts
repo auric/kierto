@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r2 S-DIFF: the diff API with temp git repositories and a file remote. No test reaches the network.
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";

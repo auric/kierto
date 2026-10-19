@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Regenerates fixtures/bitbucket/ from the Gate 0 probe output in .gate0/raw/.
 // Usage: bun scripts/gate0/sanitize-fixtures.ts [--raw <dir> [--prefix <p>]] [--out <dir>] [--no-scan]
 // With --raw, every .json file in <dir> becomes <out>/<p><name>. --no-scan is for input that is already fake.
@@ -223,14 +226,18 @@ function sanitize(v: any, k = ""): any {
   return typeof v === "string" ? fixStr(v, k) : v;
 }
 
+// The server version, build number, and build date identify the instance. The fixture holds synthetic values.
+const SERVER_BUILD = { version: "9.9.9", buildNumber: "9009009", buildDate: "1700000000000" };
 mkdirSync(OUT, { recursive: true });
 for (const [src, dst] of Object.entries(FILES)) {
   const r = readJson(join(RAW, src));
-  writeFileSync(join(OUT, dst), JSON.stringify({ status: r.status, body: sanitize(r.body) }, null, 2) + "\n");
+  const body = sanitize(r.body);
+  if (dst === "application-properties.json") Object.assign(body, SERVER_BUILD);
+  writeFileSync(join(OUT, dst), JSON.stringify({ status: r.status, body }, null, 2) + "\n");
 }
 
 // ---------- structure comparison ----------
-const ENUM_KEYS = new Set(["action", "commentAction", "state", "type", "lineType", "fileType", "diffType", "severity", "role", "status", "nodeType", "gitChangeType", "changeScope", "scmId", "whitespace", "version", "buildNumber"]);
+const ENUM_KEYS = new Set(["action", "commentAction", "state", "type", "lineType", "fileType", "diffType", "severity", "role", "status", "nodeType", "gitChangeType", "changeScope", "scmId", "whitespace"]);
 let structDiffs = 0;
 function cmp(a: any, b: any, k: string) {
   if (typeof a !== typeof b || Array.isArray(a) !== Array.isArray(b) || (a === null) !== (b === null)) return structDiffs++;

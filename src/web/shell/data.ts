@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Server state through TanStack Query. Keys: ['prs'], ['prs', 'archive'], ['pr', id], ['status'], ['settings'], ['meta'], ['task-preview', ...].
 // An invalidation of ['prs'] also refreshes ['prs', 'archive'].
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";

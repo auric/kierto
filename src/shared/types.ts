@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Forge-neutral types. The Bitbucket adapter maps its payloads to these.
 import type { Side } from "./review";
 

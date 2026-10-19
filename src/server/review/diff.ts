@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The PR diff of the diff viewer (plan r2 S-DIFF). It reads the cache clone that the review runs share.
 import type { Database } from "bun:sqlite";
 import { existsSync, realpathSync } from "node:fs";

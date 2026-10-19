@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r2 UI-JIRA: the pure task text rules of the brief and the AI summary.
 import { describe, expect, test } from "bun:test";
 import type { AttachmentDto, MetaDto, PrTask, RunDto, TaskContextDto } from "../../src/shared/dto";

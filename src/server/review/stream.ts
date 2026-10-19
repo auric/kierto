@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Turns Claude Code stream-json lines into run_event upserts and a final verdict. Pure: no I/O.
 import { isAbsolute, relative, sep } from "node:path";
 import type {

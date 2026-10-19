@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Resolved threads (integration-check.md U56, synthetic): the badge names who resolved the thread and when, in the Threads list and
 // in the diff. A resolved card folds to one line and opens on a click or Enter. A deep link opens a resolved thread.
 import { expect, type Page, test } from "@playwright/test";

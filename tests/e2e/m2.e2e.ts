@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // M2 browser acceptance (plan v3 WP11): the review brief, the run line, the run log, drafts, and raw output.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
@@ -201,7 +204,7 @@ test("a usage limit is one line with the CLI message, and the inbox keeps workin
   await control("claude", { stream: "limit" });
   await connect(page);
   await startWithBrief(page);
-  await expect(runLine(page)).toContainText(/Claude Code: Usage limit reached\. .* Review Loop does not retry by itself\./, {
+  await expect(runLine(page)).toContainText(/Claude Code: Usage limit reached\. .* Revido does not retry by itself\./, {
     timeout: RUN_MS,
   });
   await expect(runLine(page).getByRole("button", { name: "Show raw output" })).toHaveCount(0);

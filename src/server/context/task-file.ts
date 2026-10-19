@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // context/task.md of a run (plan r2 WP0): the imported task text of the PR. The workspace puts the UNTRUSTED banner before it.
 // Plan r3 S-ATT: task.md lists every attachment. The included ones go to context/attachments/.
 import type { Database } from "bun:sqlite";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Diff viewer (plan r2 UI-DIFF): the Files section with the git file list, a paged view of each file, and the threads and drafts on
 // their lines. Cards take no ackRef, so the diff marks nothing read. Only a click on "Get the code" or on a file row fetches from
 // the forge (plan pr-view-v4 2.9).
@@ -348,7 +351,7 @@ function CodeNote(props: { list: boolean; forge: string; busy: boolean; error: s
         <span className="min-w-0 flex-[1_1_260px]">
           {props.list
             ? `Select a file to see its diff. The first one gets the code of both branches from ${props.forge} and keeps it in a local cache.`
-            : `The diff needs the code of both branches from ${props.forge}. Review Loop keeps it in a local cache.`}
+            : `The diff needs the code of both branches from ${props.forge}. Revido keeps it in a local cache.`}
         </span>
         <Button id="diff-get" size="sm" variant="outline" aria-busy={props.busy || undefined} onClick={props.onGet}>
           {props.busy && <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin motion-reduce:animate-none" />}

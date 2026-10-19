@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Inbox API (plan G5). Every mutation broadcasts `changed`.
 import type { Database } from "bun:sqlite";
 import { Hono } from "hono";

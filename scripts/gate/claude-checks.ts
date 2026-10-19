@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Gate B: local Claude Code checks B1 to B9 (docs/plans/v3.md section 5), B11 and B12 (docs/plans/r3.md WP-G3),
 // B13 (the model and effort fields of an --agents definition, and the --effort flag), B14 (the default effort of a run without --effort),
 // B15 (work/CLAUDE.md loads under the runner flag set), B16 (a session fork with the flags of docs/plans/session-consult.md part C).

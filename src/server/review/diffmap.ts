@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Parses `git diff -M -U3 <base> <head>` output (plan v3 WP9). Pure.
 // The caller runs git with the default a/ and b/ prefixes, with no color, no external diff, and no textconv.
 import type { DiffKind } from "../../shared/review";

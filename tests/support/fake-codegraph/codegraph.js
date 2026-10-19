@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Fake codegraph CLI for tests. It never parses code. The file name makes the app treat it as codegraph.
 // Usage: bun codegraph.js init --yes <path> | sync <path> | status --json <path> | serve --mcp [...]
 // FAKE_CG: fail (every index command exits 1), fail-sync, hang, outside (status names another index folder).

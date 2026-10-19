@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // One EventSource per tab. EventSource reconnects by itself.
 import type { QueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";

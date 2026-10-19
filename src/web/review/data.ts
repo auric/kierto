@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Review server state through TanStack Query. Keys: ['brief', pr], ['runs'], ['runs', 'pr', pr], ['run', id], ['raw', id],
 // ['pr', pr, 'reply-drafts']. live.ts invalidates ['runs'] and ['run', id] when SSE `changed` names the run, and ['pr', pr] and
 // ['runs', 'pr', pr] when it names the PR.

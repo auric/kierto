@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The folder of the user's clone (plan r3): one path per repository, kept in the app database. The server checks it on save.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, FolderOpen } from "lucide-react";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Reply composer (docs/plans/replies.md step 4): one under each open thread. Ctrl+Enter opens the confirm with the exact text
 // and "Reply to <name> in <place>". Unsent text stays in localStorage under rl:reply:<pr>:<thread>.
 import { useQueryClient } from "@tanstack/react-query";

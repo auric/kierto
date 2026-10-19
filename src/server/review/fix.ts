@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Fix run validator (plan r3 S-FIX). Pure: the caller reads each edit path at the source head S of the run.
 import type { DiffRowDto } from "../../shared/dto";
 import { type Coverage, type FixResult, type FixThread, MAX_FIX_BYTES } from "../../shared/review";

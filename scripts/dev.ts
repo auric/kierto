@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Dev mode: Hono API with --watch and Vite with HMR share one session token.
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";

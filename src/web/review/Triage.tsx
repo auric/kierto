@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Triage of drafts and questions (plan v3 WP14a, prototype/v3 acts, editor, mover): accept, edit, discard, restore, and move.
 import { Check, CircleAlert, MoveVertical, Pencil, Undo2, X } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useLayoutEffect, useRef, useState } from "react";

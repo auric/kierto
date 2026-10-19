@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // API request and response shapes shared by server and UI.
 import { z } from "zod";
 import {
@@ -777,6 +780,8 @@ export type RunnerDefaults = { model: SettingValue | null; effort: Record<string
 
 // GET /api/meta. Product names, and the default model and effort of the runner. No other setting value.
 export type MetaDto = {
+  // The package.json version. commit: the commit of a compiled binary, null when Bun runs the source.
+  app: { version: string; commit: string | null };
   forge: { name: string };
   // check: the cached runner check. null before the first check. Each run refreshes it.
   // login: the command that signs the runner in with the subscription. models: the model aliases that the settings offer.

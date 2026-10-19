@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Reply drafts (docs/plans/replies.md step 6): the Draft replies button and the draft card under each thread tree.
 // A draft is a draft only. It posts after Accept and the post confirm, as one reply to the message it answers.
 // Plan r3 UI-FIX: the judgement chip and the wait for a "Fixed in" commit. Fix sits in the thread footer (plan pr-view-v4 2.8).

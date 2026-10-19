@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure diff viewer rules (plan r2 UI-DIFF). No DOM access, so bun test runs them directly.
 import type { CommentDto, DiffFileDto, DiffRowDto, ReviewItemDto } from "../../shared/dto";
 import { type Spot, threadSpot } from "../../shared/types";

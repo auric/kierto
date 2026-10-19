@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The separator between the list and the detail (plan pr-view-v4 4.3). The keys work only while it has focus.
 import { type KeyboardEvent, type PointerEvent, useRef, useState } from "react";
 import { clampList, LIST_MIN } from "./layout";

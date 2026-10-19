@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan v3 WP13a: the outbox, reply posts, and confirm. The app runs in-process against the fake Bitbucket on 127.0.0.1.
 // No test reaches a real host.
 import type { Database } from "bun:sqlite";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure acknowledgement batching (plan G7). The useAck hook feeds it from an IntersectionObserver.
 export type AckItem = { id: number; version: number };
 export type Timers = { set(fn: () => void, ms: number): unknown; clear(handle: unknown): void };

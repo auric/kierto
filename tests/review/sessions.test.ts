@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Ask your session (docs/plans/session-consult.md part C): the finder on fake transcript folders, the resume command, and the
 // session run with the fake CLI, a temp git remote, and a fake Bitbucket. No test reads a real transcript or starts the real CLI.
 import type { Database } from "bun:sqlite";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Detail header (plan pr-view-v4 2.1 to 2.3): the key link, the title, the byline, the action bar, and the status strip.
 // The action bar sticks to the top of the pane. When the title leaves the view, the bar shows the key and the title.
 // Rule 2.1: each name of a server object opens that object. The key "PROJ/repo #id" opens the PR (decision D1).

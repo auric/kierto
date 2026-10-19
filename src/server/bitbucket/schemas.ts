@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Bitbucket Server REST 1.0 payloads. Only the used fields are parsed; zod strips the rest.
 // Enum-like fields stay z.string(): real streams carry values beyond the documented ones.
 import { z } from "zod";

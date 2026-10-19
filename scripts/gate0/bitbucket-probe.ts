@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Gate 0 Bitbucket probe. Read-only unless --write is given.
 // Usage: bun scripts/gate0/bitbucket-probe.ts --pr <KEY/repo/id | ~USER/repo/id | PR URL> [--write]
 // Gate v3: add --v3 [--phase 1|2] [--ca-file <pem>]. Raw files are then named v3-p<phase>-<step>.json.

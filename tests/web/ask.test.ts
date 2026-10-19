@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r2 UI-ASK: the pure Ask rules. The state of each answer and the busy note.
 import { describe, expect, test } from "bun:test";
 import type { AskDto, RunDto } from "../../src/shared/dto";
@@ -90,7 +93,7 @@ describe("ask", () => {
     });
     expect(askView(ask({ status: "failed", errorKind: "usage_limit", errorText: "Resets at 6pm." }, null), "Claude Code")).toEqual({
       kind: "failed",
-      text: "Claude Code: Resets at 6pm. Review Loop does not retry by itself.",
+      text: "Claude Code: Resets at 6pm. Revido does not retry by itself.",
       raw: false,
     });
   });

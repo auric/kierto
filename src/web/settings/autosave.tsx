@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Autosave for settings sections: one request at a time, and each request sends the newest values.
 import { Check, CircleAlert, LoaderCircle } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Fake stdio MCP server for tests. It has three tools and never touches the network.
 // Usage: bun tests/support/fake-mcp.ts [--extra=<tool name>]... [--cwd]
 // search and lookup say readOnlyHint true. delete_item says false. bad.name is not valid in a CLI flag. Each --extra adds a tool with no hint. --cwd adds cwd_probe: its description is JSON { cwd, entries } of the start folder.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Review profiles settings (M4, BRIEF US9): name, note, prompt, Explain, Docs, turn cap, and the run setup, in the order of the review brief.
 // Each change saves by itself (autosave.tsx). A field with a problem stays unsaved until the user fixes it.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1267,7 +1270,7 @@ function McpServerRow(props: {
                 t.name,
                 <>
                   {safety === "blocked" && warn("Blocked: the server marks this tool as able to change data.")}
-                  {safety === "unmarked" && warn("May change data. Review Loop cannot check this.")}
+                  {safety === "unmarked" && warn("May change data. Revido cannot check this.")}
                   {t.description && <span>{t.description}</span>}
                 </>,
                 safety,

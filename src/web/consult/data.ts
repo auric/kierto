@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Session consult server state and per-viewer storage (docs/plans/session-consult.md parts A, B, and C). Key ['pr', pr, 'consult']:
 // live.ts invalidates it with the PR. Storage can be off or full, so each read and write has a fallback.
 import { useQuery } from "@tanstack/react-query";

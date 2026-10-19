@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r3 UI-FIX and docs/plans/fix-ux.md: the pure Fix it rules. The Fix list rows, ticks, and reasons for threads and findings,
 // the selection per run, the default commit message, the judgement labels, the card state of a thread or a finding, the fixed mark
 // of a finding, the "Fixed in" wait, and the runner prompt with the comment as an indented block.

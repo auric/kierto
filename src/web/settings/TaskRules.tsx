@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Task IDs settings (prototype/v3 renderSettings): ordered rules, the task link, and a live preview.
 // Each change saves by itself (autosave.tsx). The server runs no remote check here; it checks each pattern in its worker.
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -150,8 +153,8 @@ export function TaskRules({ settings, prs, selected }: { settings: SettingsDto; 
         </p>
       </div>
       <p className="m-0 max-w-[72ch] text-sm text-ink-2">
-        Review Loop looks for task IDs in each pull request. The rules run from top to bottom. When two rules find the same ID, the first
-        rule names its source. Keys limit the matches to your projects, so UTF-8 or SHA-256 do not count.
+        Revido looks for task IDs in each pull request. The rules run from top to bottom. When two rules find the same ID, the first rule
+        names its source. Keys limit the matches to your projects, so UTF-8 or SHA-256 do not count.
       </p>
       <ol aria-label="Task ID rules" className="m-0 list-none border-t p-0">
         {drafts.map((r, i) => (

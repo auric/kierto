@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // URL state of the shell (plan pr-view-v4 section 5). parseRoute, formatRoute, and navMode are pure.
 // The history helpers keep the entry depth and the scrollTop of the detail in history.state.
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // HTTP client for Bitbucket Server. The only module that sends requests to the forge.
 import { readFileSync } from "node:fs";
 import type { z } from "zod";

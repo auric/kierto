@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan v3 WP12: item triage and the post plan. The app runs in-process on a temp database. No test reaches a forge or the CLI.
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";

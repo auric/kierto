@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r2 UI-DIFF in the browser: get the code on a click, open a file, threads and drafts on their lines, Show in diff and
 // back, and the diff marks nothing read. Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake CLI.
 import { test as base, expect, type Page } from "@playwright/test";

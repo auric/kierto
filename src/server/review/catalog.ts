@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Runner names, run log labels, and the shipped review profiles (plan v3 WP10). GET /api/meta gives them to the UI.
 
 import { createHash } from "node:crypto";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Writes fixtures/claude/*.jsonl from the Gate B raw stream-json in .gate0/v3-local/raw/.
 // Usage: bun scripts/gate/sanitize-claude.ts [--raw <dir>] [--out <dir>]
 // Real values come from the raw files, `claude auth status`, and the local Claude config at run time. This file holds no real values.

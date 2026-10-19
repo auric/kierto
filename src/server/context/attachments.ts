@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Task attachments on disk (plan r3 S-ATT): <dataDir>/attachments/<db stem>/<PR row ID>/<task key>/<attachment ID>-<safe name>.
 // task_attachment.file holds the path under <dataDir>/attachments with "/" separators.
 import type { Database } from "bun:sqlite";

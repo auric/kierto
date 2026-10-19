@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Archive view: an archived or unfollowed PR stays reachable after its toast closes, opens there, and Restore brings it back.
 // Runs against serve.ts only: the fake Bitbucket and its fixture data.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
@@ -81,7 +84,7 @@ test("an archived PR waits in Archive after its toast closes, opens there, and U
   await row(page, A).click();
   await expect(detail(page).locator("h1")).toHaveText(A);
   await expect(notice(page)).toContainText("Archived just now");
-  await expect(notice(page)).toContainText("Review Loop does not check it while it is archived.");
+  await expect(notice(page)).toContainText("Revido does not check it while it is archived.");
   // The detail renders as in any view. The notice holds the one action.
   await expect(detail(page).locator("[data-thread]").first()).toBeVisible();
   await expect(detail(page).getByRole("button", { name: "Archive", exact: true })).toHaveCount(0);

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // BRIEF section 6 acceptance in the browser, for the scenarios that m1, m2, m3, and replies.e2e.ts do not cover:
 // A7 (stale), A10 (sign-in problem), A11 (unreadable or cut result), A12 (unavailable source), and A17 (injected comment).
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure key handling (prototype/v3 keyboard model). The shell performs the returned effect.
 
 export type Pane = "list" | "detail";

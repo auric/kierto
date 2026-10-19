@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Gate 0: store the Bitbucket base URL and HTTP access token in the OS credential store.
 // Usage: bun scripts/gate0/set-token.ts [--check | --clear]
 import { createInterface } from "node:readline/promises";

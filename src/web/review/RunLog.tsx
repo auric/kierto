@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Run log sheet (prototype/v3 renderSheet, logTree, logFoot, rawBlock): one line per tool call, subagent calls nested by parent.
 import { Braces, ChevronRight, CircleAlert, Copy, LoaderCircle, Ticket, User, X } from "lucide-react";
 import { Fragment, type ReactNode, useLayoutEffect, useRef, useState } from "react";

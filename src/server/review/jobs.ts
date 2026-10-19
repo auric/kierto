@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Review jobs (plan v3 WP10), re-reviews (r2 S-RR), ask runs (r2 S-ASK), reply-draft jobs (replies.md WP17), fix runs (r3 S-FIX), and
 // session runs (session-consult.md part C): one run from the stored brief to stored drafts, edits, or answers. One run at a time.
 import type { Database } from "bun:sqlite";

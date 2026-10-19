@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The post part of the bottom bar (prototype/v3 postBar, plan pr-view-v4 2.11): shown while something is accepted. p or the button
 // opens the confirm with the exact text and destination of each comment. The confirm keeps the plan it showed: a change on the
 // server gives 409 and a new plan.

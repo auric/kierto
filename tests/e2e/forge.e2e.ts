@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Forge data in the browser (plan v3 WP4, WP13b): the excerpt, the task mark, Files, Commits, and the comment link.
 // Runs against serve.ts only: the fake Bitbucket replays the Gate v3 fixtures of PR 77.
 import { test as base, expect, type Page } from "@playwright/test";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 import { describe, expect, test } from "bun:test";
 import { nextDelay, parseRetryAfter, prEvents, reconcile, roleOf } from "../../src/server/sync/reconcile";
 import type { Comment, PullRequest } from "../../src/shared/types";

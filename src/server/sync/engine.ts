@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Polling sync (plan G4): dashboard, PR states, comments, delete checks, events. One cycle at a time.
 import type { CheckpointReason, SyncState, SyncStatus } from "../../shared/dto";
 import { isMe } from "../../shared/me";

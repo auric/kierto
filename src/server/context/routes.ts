@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Task context API (plan r2 S-JIRA): GET /prs/:id/task-context, POST and DELETE /prs/:id/task-context/:key, PUT /settings/jira.
 // Plan r3 S-ATT: the attachment files of a task under /prs/:id/task-context/:key/files/:att, and open-folder.
 // Jira gets a request only on a POST here or on a Jira settings save.

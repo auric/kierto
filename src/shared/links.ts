@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Web links into the forge (plan v3 WP4, WP13b). Each base is a server link that passed the origin check (Gate v3 U5).
 // A personal repository uses /users/<slug>/, so no link is built from the project key.
 // ponytail: the suffixes "?at=<hash>#<line>" and "/overview?commentId=<id>" are not verified on a real server (Gate v3 U5).

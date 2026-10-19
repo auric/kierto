@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Threads section (prototype/v3 threadsSec, plan pr-view-v4 2.8): the "All | Need me" filter, the posts on the way, then your turn,
 // waiting, others, and resolved threads. The drafts of the newest review have their own section above (plan pr-view-v4 2.7).
 import { CircleCheck, Hourglass, Reply, Users } from "lucide-react";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure Fix it rules (plan r3 UI-FIX, docs/plans/fix-ux.md). No DOM access, so bun test runs them directly.
 import type { CommitDto, FixCommitDto, FixDto, FixEditDto, ReviewItemDto, RunDto } from "../../shared/dto";
 import { type AnchoredFinding, type Judgement, MAX_REPLY_THREADS, type ReplyPayload } from "../../shared/review";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Ask server state (plan r2 UI-ASK). Key ['pr', pr, 'asks']: live.ts invalidates it with the PR when a run starts or ends.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AskDto } from "../../shared/dto";

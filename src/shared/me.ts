@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The current user check, shared by the server and the web.
 // me: the X-AUSERNAME value, the username. It can differ from the slug in case and in form.
 

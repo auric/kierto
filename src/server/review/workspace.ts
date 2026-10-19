@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The sanitized, pinned work folder of one review run (plan v3 WP6). The layout matches claude.ts:
 // <dataDir>/runs/<id>/work/{repo,context} is the CLI cwd, <dataDir>/runs/<id>/app holds the app files.
 import {

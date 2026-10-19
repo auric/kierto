@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Fix it (plan r3 UI-FIX, pr-view-v4 2.7 to 2.12, docs/plans/fix-ux.md): judgement chips, the Fix list and its default ticks, Fix in
 // the thread footer, the proposed edits with their checkboxes, the clone, Apply and commit with the user's git, the "Fixed in" reply
 // and its post rule, a dirty clone, Undo, the runner prompt, Fix on your own comment, Fix on a review finding that is not posted,

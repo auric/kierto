@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Edit rules of a fix run (plan r3 section 1). Pure: the caller reads each file at the source head S of the run.
 import type { DiffRowDto } from "../../shared/dto";
 import { repoPath } from "./validate";

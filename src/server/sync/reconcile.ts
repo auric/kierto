@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure sync rules (plan G4). No I/O, so tests run without a server or a database.
 import { isMe } from "../../shared/me";
 import type { Comment, PullRequest, Role } from "../../shared/types";

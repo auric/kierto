@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Improve prompt: the pure rules of the dialog. The line diff, the request body, and the error texts.
 import { describe, expect, test } from "bun:test";
 import { improveInput } from "../../src/shared/dto";
@@ -88,7 +91,7 @@ describe("improveBody", () => {
 describe("texts", () => {
   test("a usage limit and a wrong login use the run line and brief texts; other errors say the proposal failed", () => {
     expect(failedText({ id: 1, status: "failed", kind: "usage_limit", text: "Limit reached." }, RUNNER)).toBe(
-      "Runner Code: Limit reached. Review Loop does not retry by itself.",
+      "Runner Code: Limit reached. Revido does not retry by itself.",
     );
     expect(failedText({ id: 1, status: "failed", kind: "auth", text: "authMethod is api_key." }, RUNNER)).toBe(
       "authMethod is api_key. Run: runner auth login",

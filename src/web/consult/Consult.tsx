@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Session consult dialogs (docs/plans/session-consult.md parts A, B, and C). "Copy for your session" copies the text of the ticked
 // groups. "Paste the answer" reads the answer of that session, shows what each entry does, and applies it after a click.
 // "Ask your session" forks the session directly; its answer goes through the same preview. Nothing posts.

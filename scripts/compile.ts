@@ -1,12 +1,15 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Builds one self-contained executable per target with the UI embedded (BRIEF section 7, Distribution).
-// Usage: bun scripts/compile.ts [--all]. Output: dist/bin/review-loop-<os>-<arch>, with .exe on Windows.
+// Usage: bun scripts/compile.ts [--all]. Output: dist/bin/revido-<os>-<arch>, with .exe on Windows.
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
 export const HOST = `${process.platform === "win32" ? "windows" : process.platform}-${process.arch}`;
 export const ALL = ["windows-x64", "linux-x64", "linux-arm64"];
 
-export const binPath = (target: string) => join(ROOT, "dist", "bin", `review-loop-${target}${target.startsWith("windows") ? ".exe" : ""}`);
+export const binPath = (target: string) => join(ROOT, "dist", "bin", `revido-${target}${target.startsWith("windows") ? ".exe" : ""}`);
 
 function run(cmd: string[]): string {
   const r = Bun.spawnSync(cmd, { cwd: ROOT, stdout: "pipe", stderr: "inherit" });

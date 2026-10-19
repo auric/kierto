@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Review data for serve.ts and the demo: a temp git remote, the fake Claude Code CLI, and its result. Test code only. No network.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";

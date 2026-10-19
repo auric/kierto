@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure inbox view rules (plan G5, D1). The server and the UI use the same rules.
 import type { Group, PrRow } from "./dto";
 

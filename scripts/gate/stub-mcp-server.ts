@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Gate B fixture: a stdio MCP server with one read-only tool, get_fact.
 // Usage: bun stub-mcp-server.ts <calls-log-file> <fact>
 // Each tools/call appends one JSON line to the log file. The server exits on stdin EOF.

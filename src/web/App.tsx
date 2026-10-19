@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Archive, ArrowLeft, Send, Terminal } from "lucide-react";
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -354,7 +357,7 @@ function Shell({ stale }: { stale: boolean }) {
   });
 
   useEffect(() => {
-    document.title = unread > 0 ? `(${unread}) Review Loop` : "Review Loop";
+    document.title = unread > 0 ? `(${unread}) Revido` : "Revido";
   }, [unread]);
 
   // The default row becomes the selection, so the selection follows the PR and not the first place.
@@ -670,7 +673,7 @@ function Shell({ stale }: { stale: boolean }) {
               <BackBar onBack={goBack} />
               <Calm title="Cannot find this pull request">
                 <p className="m-0">
-                  Review Loop has no data for{" "}
+                  Revido has no data for{" "}
                   <span translate="no" className="font-mono">
                     {pin.project}/{pin.repo} #{pin.id}
                   </span>
@@ -840,7 +843,7 @@ function Stopped() {
   return (
     <main className="grid h-full place-items-center bg-background p-6">
       <div className="grid max-w-[52ch] gap-3">
-        <h1 className="m-0 text-[19px] font-bold tracking-tight">Review Loop is not running</h1>
+        <h1 className="m-0 text-[19px] font-bold tracking-tight">Revido is not running</h1>
         <p className="m-0 text-ink-2">The local service does not answer. Start it again in a terminal:</p>
         <pre className="m-0 rounded-md border bg-card px-3 py-2 font-mono text-[12px]">bun run start</pre>
         <p className="m-0 text-ink-2">This page reconnects by itself when the service is back.</p>

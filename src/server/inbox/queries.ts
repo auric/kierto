@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Inbox reads and writes (plan G5). Unread: followed, not tombstoned (D8), and ack_version IS NULL OR ack_version < version.
 import type { Database } from "bun:sqlite";
 import type {

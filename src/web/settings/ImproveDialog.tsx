@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Improve prompt (Settings > Review profiles): the runner proposes a new prompt, and the dialog shows it as a line diff.
 // Nothing changes before Apply. Closing the dialog cancels a running proposal.
 import { useQuery, useQueryClient } from "@tanstack/react-query";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Drafts section (plan pr-view-v4 2.7, prototype pr-view-v4 drafts()): the findings and questions of the newest review run in one
 // list of rows, with triage (WP14a). Only you see drafts until you post them. On your own PR, an open finding has Fix and its fix
 // card (docs/plans/fix-ux.md phase 2).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Synthetic states derived from the recorded fixtures (fixtures/bitbucket/README.md, "Synthetic scenarios").
 import { fixture, key, type Reply, type Route } from "./fake-bitbucket";
 

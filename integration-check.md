@@ -37,7 +37,7 @@ The probe ran without changes, read-only first, then with `--write`. The write r
 
 | Item | Status | Evidence |
 |---|---|---|
-| Server version | CONFIRMED | `GET /rest/api/1.0/application-properties`: HTTP 200, `version` 9.4.26 (Data Center), `buildNumber` 9004026. Keys: version, buildNumber, buildDate, displayName. |
+| Server version | CONFIRMED | `GET /rest/api/1.0/application-properties`: HTTP 200, `version` 9.x (Data Center). The fixture holds synthetic version values. Keys: version, buildNumber, buildDate, displayName. |
 | Auth header | CONFIRMED | `Authorization: Bearer <HTTP access token>` works for all read and write calls. No redirect. |
 | Current user header | CONFIRMED | `X-AUSERNAME` is present. Its value equals the user `slug` and `name` of the token owner. |
 | Paging fields | CONFIRMED | Dashboard, activities, and changes return size, limit, start, isLastPage, values. Not last page: `nextPageStart` is a number (dashboard, `limit=1`). Last page: dashboard and activities omit `nextPageStart`, but changes returns `nextPageStart: null`. |
@@ -190,7 +190,7 @@ Lines that need an edit:
 - New for 7 snapshot: "Each run folder gets a folder under the user's Claude projects folder (`~/.claude/projects/<encoded cwd>/`). It holds the session transcript (`<session id>.jsonl`) and a `memory/` folder. The transcript holds the reviewed code. Decide between `--no-session-persistence` (not tested in Gate 0, blocks later resume) and cleanup of these folders." Gate 0 saw one such folder per run folder.
 - New for 7 extraction: "Windows `tar.exe` extracts symlinks as real links. Reject link entries (tar typeflag 1 or 2) before or during extraction. Do not use the Git for Windows GNU `tar`."
 
-Bitbucket lines that need an edit (Gate 0, Bitbucket Data Center 9.4.26):
+Bitbucket lines that need an edit (Gate 0, Bitbucket Data Center 9.x):
 - 7 line 281 "Not verified: the commentAction values ...": replace. Proposed: "Only `commentAction: ADDED` occurs. An edit changes the existing activity in place (new text, higher `comment.version`). A reply has no own activity. It is in the parent's `comment.comments[]`. A delete removes the activity. No tombstone exists. GET of a deleted comment returns 404."
 - 7 line 288 "Activity IDs form a seen-set": a seen-set alone misses edits, replies, and deletes, because they create no new activity ID. Proposed addition: "On each poll, also compare `comment.version` and the nested `comment.comments[]` IDs inside seen activities."
 - 7 line 292 "A tombstone needs a confirmed delete from the server": proposed: "A confirmed delete is absence from a complete activities fetch (all pages, `isLastPage: true`) plus 404 from `GET .../comments/{id}`."

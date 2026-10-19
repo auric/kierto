@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // ForgeProvider for Bitbucket Server. It returns forge-neutral types from src/shared/types.ts.
 import { z } from "zod";
 import {

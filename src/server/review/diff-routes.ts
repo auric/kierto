@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Diff API (plan r2 S-DIFF): GET /prs/:id/diff, POST /prs/:id/diff/fetch, GET /prs/:id/diff/file.
 import { Hono } from "hono";
 import { validator } from "hono/validator";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Project instructions per repository: the instruction file from the target branch, files of the user's clone, and extra text.
 // Each run reads the sources again and gets them in its prompt. The preview reads them the same way, with no network.
 import { useQuery, useQueryClient } from "@tanstack/react-query";

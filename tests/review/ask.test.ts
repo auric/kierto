@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r2 S-ASK: ask runs with the fake CLI, a temp git remote, and a fake Bitbucket. No test starts the real CLI or reaches a forge.
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";

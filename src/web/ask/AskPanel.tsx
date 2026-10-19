@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Ask in the panel slot of the detail (plan r2 UI-ASK, pr-view-v4 2.4): one-shot questions about the PR and their answers, newest first.
 // An answer is text only. It never becomes a draft, so nothing of it can post (BRIEF section 2).
 import { useQueryClient } from "@tanstack/react-query";
@@ -158,7 +161,7 @@ export function AskPanel(props: {
           />
           <FieldDescription id="ask-help" className="text-xs">
             {runner} answers with the {profileOf(meta.profiles, brief?.profile ?? "general")?.name ?? ""} profile. The answer stays in
-            Review Loop. Nothing posts to {meta.forge.name}.
+            Revido. Nothing posts to {meta.forge.name}.
           </FieldDescription>
         </Field>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">

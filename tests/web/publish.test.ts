@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan v3 WP14a: the pure publish UI rules. Post states, confirm text, the place of outbox rows, and the reply draft store.
 import { describe, expect, test } from "bun:test";
 import type { CommentDto, PlannedPost, PostDestination, PostDto } from "../../src/shared/dto";

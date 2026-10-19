@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Apply dialog (plan r3 UI-FIX): the clone with its problems, the commit message, "Apply and commit", and the app-branch fallback.
 // The commit runs the user's git hooks. A hook or commit failure leaves the edits staged; the dialog then shows the stderr tail.
 import { CircleAlert, FolderGit2, GitCommitHorizontal, LoaderCircle, Undo2 } from "lucide-react";

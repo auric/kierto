@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r2 UI-RR in the browser: a push after a review, then a review of only the new commits. Carried drafts keep their
 // place, closed drafts read fixed or outdated, and the post goes out once on the new head.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Tests, e2e, and the demo run only the fake CLI (fake-claude.ts). A PATH lookup of claude ends the process.
 // bunfig.toml preloads this file for bun test. serve.ts and demo.ts import it first.
 import { tmpdir } from "node:os";

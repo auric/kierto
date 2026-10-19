@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure model of the review profile editor (M4). No DOM access, so bun test runs it.
 import {
   type Effort,
@@ -370,12 +373,12 @@ export function selectAll(ticked: string[], tools: { name: string; safety: McpTo
 }
 
 export const unmarkedQuestion = (tool: string, server: string) =>
-  `${tool} on ${server} has no read-only mark. Review Loop cannot check what it does. Allow it in runs of this profile?`;
+  `${tool} on ${server} has no read-only mark. Revido cannot check what it does. Allow it in runs of this profile?`;
 
 export const unmarkedListQuestion = (tools: string[], server: string) =>
   tools.length === 1
     ? unmarkedQuestion(tools[0] as string, server)
-    : `These ${tools.length} tools on ${server} have no read-only mark: ${tools.join(", ")}. Review Loop cannot check what they do. Allow them in runs of this profile?`;
+    : `These ${tools.length} tools on ${server} have no read-only mark: ${tools.join(", ")}. Revido cannot check what they do. Allow them in runs of this profile?`;
 
 // Words for a profile in labels. A profile can have no name while the user edits it.
 export const profileLabel = (d: Draft, i: number) => d.name.trim() || `profile ${i + 1}`;

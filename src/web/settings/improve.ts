@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure rules of the Improve prompt dialog. No DOM access, so bun test runs them directly.
 import type { ImproveDto, ImproveInput, ProfileInput } from "../../shared/dto";
 import { limitText } from "../review/model";

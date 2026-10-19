@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Publish server state (plan v3 WP14a). Keys: ['pr', pr, 'post-plan'] and ['pr', pr, 'posts'].
 // live.ts invalidates ['pr', pr] when SSE `changed` names the PR, and the prefix covers both keys.
 import { useQueries, useQuery } from "@tanstack/react-query";

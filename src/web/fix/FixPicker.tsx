@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The Fix list (plan pr-view-v4 2.12, docs/plans/fix-ux.md Option A): one checkbox per open thread with a live message, and one per
 // open review finding that you did not post. "Propose fixes for K" starts one fix run with the ticked rows. Each reason that blocks
 // the run shows as text.

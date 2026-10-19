@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan r3 S-ATT: safe names, sniffing, the Jira download, the store, the start-up sweep, and the run inclusion. No test calls a real server.
 import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";

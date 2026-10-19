@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The confirm step (prototype/v3 postBar confirm): the destination and the exact text of each comment. Nothing posts without it.
 import { CircleAlert, LoaderCircle, Send } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef } from "react";

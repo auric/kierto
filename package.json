@@ -1,7 +1,9 @@
 {
-  "name": "review-loop",
+  "name": "revido",
+  "description": "A local-first inbox for Bitbucket Server pull requests, with AI reviews by your own Claude Code CLI.",
   "version": "0.2.0",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "bun scripts/dev.ts",
@@ -17,7 +19,9 @@
     "test": "bun test",
     "test:e2e": "node node_modules/@playwright/test/cli.js test",
     "check": "bun run typecheck && bun run typecheck:5 && bun run lint && bun test",
-    "release": "bun scripts/release.ts"
+    "release": "bun scripts/release.ts",
+    "notices": "bun scripts/notices.ts",
+    "screenshots": "bun run build && node scripts/screenshots.ts"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",

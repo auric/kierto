@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan v3 WP11, replies.md WP18, and r2 UI-RR: the pure review UI rules. The log tree, the run line, the brief state,
 // the Review runs view, the reply drafts, and the re-review.
 import { describe, expect, test } from "bun:test";
@@ -274,9 +277,9 @@ describe("run line", () => {
 
   test("the usage limit line quotes the CLI message and says that nothing retries", () => {
     expect(limitText("Runner", "Usage limit reached. Your limit resets at 6pm.")).toBe(
-      "Runner: Usage limit reached. Your limit resets at 6pm. Review Loop does not retry by itself.",
+      "Runner: Usage limit reached. Your limit resets at 6pm. Revido does not retry by itself.",
     );
-    expect(limitText("Runner", null)).toBe("Runner usage limit reached. Review Loop does not retry by itself.");
+    expect(limitText("Runner", null)).toBe("Runner usage limit reached. Revido does not retry by itself.");
   });
 
   test("tokens add the four usage counters and skip other fields", () => {

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -76,7 +79,7 @@ if (import.meta.main && gitMcpAt >= 0) {
       indexHtml,
       assets: indexHtml === undefined ? undefined : serveStatic({ root: WEB_DIR }),
     });
-    console.log(`Review Loop (${BUILD_COMMIT ?? "source"}): http://127.0.0.1:${server.port}/`);
+    console.log(`Revido (${BUILD_COMMIT ?? "source"}): http://127.0.0.1:${server.port}/`);
     sync.start();
     void review.start();
     outbox.start();

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Edit rules of a fix run (plan r3 WP0). Pure functions, no git.
 import { describe, expect, test } from "bun:test";
 import { applyEdits, deniedPath, editRows, type Located, locate, overlaps, prepareFile } from "../../src/server/review/edits";

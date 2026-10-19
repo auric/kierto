@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Reply drafts (docs/plans/replies.md WP18): the Draft replies button, the draft card in each thread, its triage and post,
 // the stale mark, cancel, a reply confirm that stays open when its thread changes group, and the thread footer with the
 // "All | Need me" filter (plan pr-view-v4 2.8).

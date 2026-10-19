@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Read-only git MCP server over stdio (plan v3 WP7). It reads the cache clone with --git-dir and never runs git inside the worktree.
 import { isAbsolute, win32 } from "node:path";
 import { parseArgs } from "node:util";

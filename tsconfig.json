@@ -24,6 +24,8 @@
     "scripts/demo.ts",
     "scripts/compile.ts",
     "scripts/release.ts",
+    "scripts/notices.ts",
+    "scripts/screenshots.ts",
     "scripts/gate",
     "vite.config.ts",
     "playwright.config.ts"

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Jira Server REST 2 client (BRIEF section 7, Jira 9.12 docs). The only module that sends requests to Jira. GET only.
 import { readFileSync } from "node:fs";
 import { z } from "zod";

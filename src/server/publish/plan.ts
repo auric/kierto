@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Publish plan (plan v3 WP12). Pure: the exact comments that a confirm posts for the accepted items.
 import type { PlannedPost, ReviewItemDto } from "../../shared/dto";
 import { fileUrl } from "../../shared/links";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Safe Markdown (BRIEF 3.6): no raw HTML, no remote images, links only for http(s). GFM adds tables, task lists, strikethrough, and autolinks.
 import { useMemo } from "react";
 import ReactMarkdown, { type Components, defaultUrlTransform, type UrlTransform } from "react-markdown";

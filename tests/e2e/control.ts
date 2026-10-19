@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Shared by serve.ts (Bun) and the Playwright files (Node). Keep it free of Bun APIs.
 // E2E_APP_PORT, E2E_FAKE_PORT, and E2E_JIRA_PORT move the servers, so that two checkouts can run e2e at the same time.
 // Playwright passes its environment to the web server command.

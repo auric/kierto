@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Project instructions: source detection, @path imports, caps, and the combined text. Temp folders and a temp bare repository only.
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -91,7 +94,7 @@ describe("clone files", () => {
       "## From your clone: docs/a.md (imported by CLAUDE.md)",
       "## From your clone: docs/b.md (imported by docs/a.md)",
       "## From your clone: CLAUDE.local.md",
-      "## From Review Loop settings",
+      "## From Revido settings",
     ];
     const at = heads.map((h) => b.text.indexOf(h));
     expect(at.every((i, k) => i > (at[k - 1] ?? -1))).toBe(true);

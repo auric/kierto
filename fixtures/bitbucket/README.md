@@ -1,8 +1,8 @@
 # Bitbucket fixtures (Gate 0)
 
-Source: Gate 0 probe (`scripts/gate0/bitbucket-probe.ts`) on a sandbox PR, Bitbucket Data Center 9.4.26. Each file is `{ "status": <HTTP status>, "body": <response body> }`.
+Source: Gate 0 probe (`scripts/gate0/bitbucket-probe.ts`) on a sandbox PR, Bitbucket Data Center 9.x. Each file is `{ "status": <HTTP status>, "body": <response body> }`.
 
-Sanitizing: user names, slugs, display names, emails, host, project key, repository slug, PR title, description, branch names, file paths, comment text, diff line text, and diff hunk headers (`context`) are fictional. Commit hashes are fake 40-hex values. Numeric IDs (`id`, `repositoryId`, `commentIds`, IDs in URLs and error messages) are fake values with the same digit count. Each mapping is consistent across all files, so equal values stay equal. The ssh clone port is 7999. Field names, types, enum values, nesting, timestamps, and versions are unchanged.
+Sanitizing: user names, slugs, display names, emails, host, project key, repository slug, PR title, description, branch names, file paths, comment text, diff line text, and diff hunk headers (`context`) are fictional. Commit hashes are fake 40-hex values. Numeric IDs (`id`, `repositoryId`, `commentIds`, IDs in URLs and error messages) are fake values with the same digit count. Each mapping is consistent across all files, so equal values stay equal. The ssh clone port is 7999. Field names, types, enum values, nesting, timestamps, and comment versions are unchanged. The server version, build number, and build date in `application-properties.json` are synthetic.
 
 Regenerate: run the probe (`bun scripts/gate0/bitbucket-probe.ts --pr <PR> --write`) to fill `.gate0/raw/`. Then run `bun scripts/gate0/sanitize-fixtures.ts`. It rewrites the JSON files here, compares their structure with the raw files, and scans `fixtures/bitbucket/` and `integration-check.md` for every real value from `.gate0/raw/`. It prints counts only and exits with code 1 on a hit or a structure difference. The raw step numbers below depend on the probe's request order.
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The clone folders of Fix it (plan r3): one per repository. Change and Remove use the clone routes of a PR in that repository.
 // The opt-in of "Ask your session" (docs/plans/session-consult.md part C) lives here too.
 import { useQueryClient } from "@tanstack/react-query";
@@ -31,7 +34,7 @@ function SessionSwitch({ settings }: { settings: SettingsDto }) {
         onCheckedChange={(sessions) => save.mutate({ baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", sessions })}
       />
       <FieldContent>
-        <FieldLabel htmlFor="sessions-on">Let Review Loop find and consult your {runner} sessions</FieldLabel>
+        <FieldLabel htmlFor="sessions-on">Let Revido find and consult your {runner} sessions</FieldLabel>
         <FieldDescription id="sessions-on-help">
           Off by default. When on, “Ask your session” lists your transcripts on the branch of your own pull request. The app reads only
           their folder, branch, time, and title lines. It never shows or stores their message text. Each question resumes a copy of the

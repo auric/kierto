@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Task-ID extraction (plan v3 WP2). Patterns run only inside worker.ts, under a time budget per PR.
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";

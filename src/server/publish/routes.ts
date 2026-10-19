@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Publish API (plan v3 WP12, WP13a): the post plan, confirm, replies, and the outbox rows. Nothing posts without confirm or a reply call.
 import { Hono } from "hono";
 import { validator } from "hono/validator";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // M3 browser acceptance (plan v3 WP14a): triage, the post confirm, the outbox states, and replies.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { test as base, expect, type Locator, type Page } from "@playwright/test";

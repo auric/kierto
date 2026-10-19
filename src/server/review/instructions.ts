@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Project instructions: the global CLAUDE.md of the Claude config folder, CLAUDE.md from the target branch, the ticked files of the user's clone, and the settings text.
 // Gate B15 (CLI 2.1.296): the runner flags do not load work/CLAUDE.md. A run gets the text in the stdin prompt and in the rl-reviewer prompt.
 // work/CLAUDE.md keeps a copy. No file content goes to a log or to SQLite.
@@ -259,9 +262,9 @@ export async function buildInstructions(o: {
   }
   if (o.extra.trim()) {
     const bytes = Buffer.byteLength(o.extra);
-    if (fits(bytes, "the text from Review Loop settings")) {
+    if (fits(bytes, "the text from Revido settings")) {
       files.push({ source: "settings", path: "", bytes });
-      parts.push(`## From Review Loop settings\n\n${scan(o.extra).text.trimEnd()}\n`);
+      parts.push(`## From Revido settings\n\n${scan(o.extra).text.trimEnd()}\n`);
     }
   }
   return {

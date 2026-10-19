@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 import type { PrRef } from "./types";
 
 // Parses a project or personal PR web URL. The origin must equal the base origin, so the token never goes to another host.

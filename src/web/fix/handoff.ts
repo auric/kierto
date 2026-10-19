@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // "Copy prompt" for the runner (plan r3 section 1). The user pastes the prompt into the interactive runner in the own clone.
 // The comment text is untrusted. Each of its lines gets a 4-space indent, so no line can end the block or start a heading.
 // The prompt holds no shell command: the comment text never goes near a shell.

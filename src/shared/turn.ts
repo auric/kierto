@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Turn rule (plan v3 WP1, prototype/v3 derive()). The server groups rows with it. The UI orders threads with it.
 import type { CommentDto } from "./dto";
 import { isMe } from "./me";

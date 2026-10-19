@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Fake Bitbucket Server for tests. It listens on 127.0.0.1 only and replays fixture payloads.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

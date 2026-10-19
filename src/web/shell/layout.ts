@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Panel preferences of this viewer (plan pr-view-v4 4.3 and 4.4): the list width and the sidebar choice.
 // They stay in localStorage only, never in the URL. Storage can be missing or blocked, so every access sits in try/catch.
 

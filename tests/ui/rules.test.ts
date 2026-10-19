@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 import { describe, expect, test } from "bun:test";
 import { MAX_PATTERN, MAX_TASK_RULES, taskRuleInput } from "../../src/shared/dto";
 import {

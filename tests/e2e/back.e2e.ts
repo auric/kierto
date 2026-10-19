@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan pr-view-v4 P1: the URL holds the view, the PR, the thread, the file, and the settings section. Back and Forward walk them.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { test as base, expect, type Page } from "@playwright/test";

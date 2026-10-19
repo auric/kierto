@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Product names from GET /api/meta (plan v3 section 2). UI code holds no product name.
 import { useQuery } from "@tanstack/react-query";
 import type { MetaDto, SkillDto } from "../shared/dto";

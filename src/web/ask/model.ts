@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure Ask rules (plan r2 UI-ASK). No DOM access, so bun test runs them directly.
 import type { AskDto, RunKind } from "../../shared/dto";
 import { coverageRows, limitText, RUN_TEXT, tokenTotal } from "../review/model";

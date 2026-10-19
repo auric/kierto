@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Plan pr-view-v4 P2: the list width and the sidebar choice stay per viewer. A missing or blocked store gives the default.
 import { describe, expect, test } from "bun:test";
 import {

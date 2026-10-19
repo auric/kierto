@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Session finder (docs/plans/session-consult.md part C). It lists the transcripts of one branch in <config>/projects and reads only
 // their metadata: the working folder, the branch, the time, the title lines, and continued-in. It never returns or logs message text.
 // The transcript format is internal to the CLI and can change. Every file read stops at a byte cap, so a 93 MB file costs 320 KB.

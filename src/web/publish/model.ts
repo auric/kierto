@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Pure publish UI rules (plan v3 WP14a, docs/plans/replies.md step 4). No DOM access, so bun test runs them directly.
 import type { CommentDto, PlannedPost, PostDestination, PostDto } from "../../shared/dto";
 import { commentLines } from "../../shared/types";

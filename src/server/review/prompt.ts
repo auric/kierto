@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // The stdin prompt of a run (plan v3 WP10, replies.md WP17, r2 S-ASK, r3 S-FIX). Only the project instructions and the note or the ask question are instructions. It never quotes PR, comment, or tracker text.
 import type { PrTask } from "../../shared/dto";
 import { DOCS_RULE, LARGE_FILE_RULE, type McpUse, mcpLines, type Profile, skillLines } from "./catalog";

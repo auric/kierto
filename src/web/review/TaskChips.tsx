@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 // Task chips (plan r2 task context UI, plan r3 Feature C): the task IDs of the PR with Fetch, Fetch again, and Remove.
 // Every run kind reads the fetched task text. So the brief, the run buttons, and Ask in the panel slot show the chips.
 // All places share one query, so a fetch in one place shows in all.

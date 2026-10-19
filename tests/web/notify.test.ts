@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
 import { describe, expect, test } from "bun:test";
 import type { ClaimedEvent } from "../../src/shared/dto";
 import { planNotes } from "../../src/web/notify";
@@ -32,7 +35,7 @@ describe("planNotes", () => {
 
   test("the first claim of a tab gives one digest", () => {
     expect(planNotes([ev(1), ev(2), ev(2)], true)).toEqual([
-      { title: "Review Loop", body: "3 updates in 2 pull requests", tag: "digest", pr: null },
+      { title: "Revido", body: "3 updates in 2 pull requests", tag: "digest", pr: null },
     ]);
   });
 
