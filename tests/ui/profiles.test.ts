@@ -243,7 +243,7 @@ describe("profile editor model", () => {
     expect(tickAction("blocked", true)).toBe("none");
     for (const s of ["readOnly", "unmarked", "blocked"] as const) expect(tickAction(s, false)).toBe("set");
     expect(unmarkedQuestion("ctx_execute", "context-mode:context-mode")).toBe(
-      "ctx_execute on context-mode:context-mode has no read-only mark. Revido cannot check what it does. Allow it in runs of this profile?",
+      "ctx_execute on context-mode:context-mode has no read-only mark. Kierto cannot check what it does. Allow it in runs of this profile?",
     );
   });
 
@@ -407,7 +407,7 @@ describe("pickers", () => {
     expect(selectAll([], lots).tools).toHaveLength(LIMITS.mcpTools);
     expect(unmarkedListQuestion(["a"], "s")).toBe(unmarkedQuestion("a", "s"));
     expect(unmarkedListQuestion(["a", "b"], "s")).toBe(
-      "These 2 tools on s have no read-only mark: a, b. Revido cannot check what they do. Allow them in runs of this profile?",
+      "These 2 tools on s have no read-only mark: a, b. Kierto cannot check what they do. Allow them in runs of this profile?",
     );
   });
 });

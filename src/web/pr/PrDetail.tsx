@@ -625,7 +625,7 @@ export function PrDetail({
           </>
         ) : q.error ? (
           <Calm title={notFound ? "Cannot find this pull request" : "Cannot load this pull request"}>
-            <p className="m-0">{notFound ? "Revido has no data for it. Select another pull request." : q.error.message}</p>
+            <p className="m-0">{notFound ? "Kierto has no data for it. Select another pull request." : q.error.message}</p>
           </Calm>
         ) : (
           <div role="status" aria-busy="true" aria-label="Loading the pull request" className="grid max-w-[86ch] gap-3 pt-6">

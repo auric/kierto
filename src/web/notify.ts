@@ -25,7 +25,7 @@ export function planNotes(events: ClaimedEvent[], first: boolean): Note[] {
   for (const e of events) byPr.set(e.pr, [...(byPr.get(e.pr) ?? []), e]);
   if (first || events.some((e) => e.digest)) {
     return [
-      { title: "Revido", body: `${plural(events.length, "update")} in ${plural(byPr.size, "pull request")}`, tag: "digest", pr: null },
+      { title: "Kierto", body: `${plural(events.length, "update")} in ${plural(byPr.size, "pull request")}`, tag: "digest", pr: null },
     ];
   }
   return [...byPr].map(([pr, list]) => {

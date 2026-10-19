@@ -162,7 +162,7 @@ async function shots(browser: Browser) {
 
 mkdirSync(OUT, { recursive: true });
 const parent = process.env.SHOTS_TEMP || (process.platform === "win32" ? `${process.env.SystemDrive || "C:"}\\` : tmpdir());
-const temp = mkdtempSync(join(parent, "revido-shots-"));
+const temp = mkdtempSync(join(parent, "kierto-shots-"));
 let demo: ChildProcess | undefined;
 let browser: Browser | undefined;
 try {

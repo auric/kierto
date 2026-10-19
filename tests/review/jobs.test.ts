@@ -1526,7 +1526,7 @@ describe("project instructions", () => {
         "## From the target branch: CLAUDE.md",
         "## From the target branch: docs/main.md (imported by CLAUDE.md)",
         "## From your clone: CLAUDE.local.md",
-        "## From Revido settings",
+        "## From Kierto settings",
       ];
       const at = heads.map((x) => text.indexOf(x));
       expect(at.every((i, k) => i > (at[k - 1] ?? -1))).toBe(true);

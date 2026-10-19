@@ -671,7 +671,7 @@ const server = startServer({
 sync.start();
 void review.start();
 
-console.log(`Revido demo: http://127.0.0.1:${server.port}/ (pid ${process.pid})`);
+console.log(`Kierto demo: http://127.0.0.1:${server.port}/ (pid ${process.pid})`);
 console.log(`Fake Bitbucket: ${fake.url}. Fake Jira: ${jira.url}. Data: ${dataDir}`);
 console.log(`Follow by URL: paste ${fake.url}/projects/PROJ3/repos/tools/pull-requests/5 into the filter.`);
 console.log(`Fix it: open "Release the write lock after each entry", draft replies, then fix. Apply commits in ${cloneDir}.`);

@@ -329,7 +329,7 @@ export function rereviewState(
 
 // Plan v3 section 7, Usage limit: one line with the CLI message. No automatic retry.
 export const limitText = (runner: string, text: string | null) =>
-  `${text?.trim() ? `${runner}: ${text.trim()}` : `${runner} usage limit reached.`} Revido does not retry by itself.`;
+  `${text?.trim() ? `${runner}: ${text.trim()}` : `${runner} usage limit reached.`} Kierto does not retry by itself.`;
 
 // The project instruction files of a run: a short line and one line per file. null: the run got none, or it ran before they were stored.
 // notLoaded: the files and imports that the run left out. They are warnings, not coverage gaps.
@@ -344,7 +344,7 @@ export function instructionsText(
     global: "from your global settings",
     target: "from the target branch",
     clone: "from your clone",
-    settings: "from Revido settings",
+    settings: "from Kierto settings",
   } as const;
   return {
     short: files.length ? `${[...new Set(files.map(label))].join(", ")} (${sizeText(run.instructions?.bytes ?? 0)})` : null,

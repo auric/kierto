@@ -2,7 +2,7 @@
 
 ## 0.2.0
 
-The first public version. Revido is a local-first inbox for Bitbucket Server and Data Center pull requests, with AI reviews by your own Claude Code CLI.
+The first public version. Kierto is a local-first inbox for Bitbucket Server and Data Center pull requests, with AI reviews by your own Claude Code CLI.
 
 ### Inbox
 
@@ -37,9 +37,9 @@ The first public version. Revido is a local-first inbox for Bitbucket Server and
 
 ### Ask and sessions
 
-- Ask a question about a pull request. The answer stays in Revido.
-- Consult the Claude Code session that wrote the code. Revido resumes a forked, read-only copy of it on your own pull request.
-- "Judge and propose fixes": your session judges each item and proposes edits for the ones it accepts. Revido checks the edits and shows them as fix cards marked "from your session".
+- Ask a question about a pull request. The answer stays in Kierto.
+- Consult the Claude Code session that wrote the code. Kierto resumes a forked, read-only copy of it on your own pull request.
+- "Judge and propose fixes": your session judges each item and proposes edits for the ones it accepts. Kierto checks the edits and shows them as fix cards marked "from your session".
 - "Copy for your session" gives the same review points as text.
 
 ### Settings
@@ -53,5 +53,5 @@ The first public version. Revido is a local-first inbox for Bitbucket Server and
 
 - The server listens on 127.0.0.1 only. It checks Host and Origin, and each change needs a session token.
 - Tokens go into the OS secret store, never into the database, logs, URLs, or prompts. `REVIEW_LOOP_SECRETS=memory` keeps them in memory only.
-- Reviews use your claude.ai login. Revido removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child process.
-- Claude never runs in your clone and never posts. Nothing goes to Bitbucket until you click. Revido never pushes.
+- Reviews use your claude.ai login. Kierto removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child process.
+- Claude never runs in your clone and never posts. Nothing goes to Bitbucket until you click. Kierto never pushes.

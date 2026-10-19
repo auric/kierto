@@ -82,7 +82,7 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
         const { done, value } = await stdout.read();
         if (done) return null;
         out += decoder.decode(value, { stream: true });
-        const m = /Revido \(([^)]+)\): (http:\/\/127\.0\.0\.1:\d+)\//.exec(out);
+        const m = /Kierto \(([^)]+)\): (http:\/\/127\.0\.0\.1:\d+)\//.exec(out);
         if (m) return m;
       }
     })();

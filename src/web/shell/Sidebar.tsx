@@ -98,7 +98,7 @@ export function Sidebar(props: {
           <path d="M20 12a8 8 0 1 1-3.2-6.4" />
           <path d="M20 4v5h-5" />
         </svg>
-        <span className="rl-lbl">Revido</span>
+        <span className="rl-lbl">Kierto</span>
       </div>
       <div className="relative grid grid-cols-[minmax(0,1fr)] content-start gap-3.5 overflow-auto px-2 pt-1 pb-3">
         <div className="grid gap-px">

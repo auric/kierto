@@ -1,4 +1,4 @@
-# Revido: Project Brief
+# Kierto: Project Brief
 
 Status: draft 3, 2026-10-11. Scope: a production-quality personal tool for Bitbucket Server pull request (PR) review with Claude Code. Edge-case reference: PROJECT_BRIEF_GPT_ASTRA_6.md.
 

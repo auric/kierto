@@ -169,13 +169,13 @@ function quoteExcerpt(lines: { n: number; kind: "add" | "del" | "ctx"; text: str
   return lines.map((l) => `    ${l.hit ? ">" : " "} ${String(l.n).padStart(w)} ${SIGN[l.kind]} | ${oneLine(cut(l.text))}`).join("\n");
 }
 
-// ---------- The view of Revido ----------
+// ---------- The view of Kierto ----------
 
 function replyView(it: ReviewItemDto | undefined): string[] {
   if (!it || (it.status !== "new" && it.status !== "accepted")) return [];
   const p = it.payload as ReplyPayload & { session?: SessionMark };
   const j = p.judgement ? `judgement ${JUDGEMENT[p.judgement]}, ` : "";
-  const who = p.session ? "your session" : "Revido";
+  const who = p.session ? "your session" : "Kierto";
   const state = it.status === "accepted" ? "accepted, not posted" : "not accepted yet";
   return [
     `- Reply draft from ${who} (${j}${state}):`,
@@ -213,7 +213,7 @@ function fixView(fixes: FixDto[], target: { thread?: number; finding?: number })
 
 const GROUP_SOURCE: Record<Exclude<ConsultGroup, "resolved">, string> = {
   reviewers: "reviewer comment",
-  findings: "Revido finding, posted by you",
+  findings: "Kierto finding, posted by you",
   own: "your comment",
 };
 
@@ -278,7 +278,7 @@ async function threadItem(o: {
     );
   }
   const view = resolved ? [] : [...replyView(o.reply), ...fixView(o.fixes, { thread: rootId })];
-  if (view.length) lines.push("The view of Revido:", ...view);
+  if (view.length) lines.push("The view of Kierto:", ...view);
   return {
     id: `T${rootId}`,
     group,
@@ -302,7 +302,7 @@ async function findingItem(r: FindingRow, o: { head: string | null; mergeBase: s
   const where = a ? `${a.path}:${lineText(a)}` : `${f.path}:${f.line}`;
   const lines = [
     `### F${it.id}`,
-    `Source: Revido finding${f.agent ? ` from agent ${oneLine(f.agent)}` : ""}`,
+    `Source: Kierto finding${f.agent ? ` from agent ${oneLine(f.agent)}` : ""}`,
     `Status: ${it.status === "accepted" ? "accepted, ready to post" : "new, not triaged"}`,
     `Severity: ${SEVERITY[f.severity]}. Category: ${oneLine(f.category)}. Evidence: ${EVIDENCE[f.evidenceStatus]}, ${f.confidence} confidence.`,
     `Place: ${oneLine(where)}${a ? `, ${a.side} side` : ""}${a?.state === "outside" ? ", outside the diff" : ""}`,
@@ -341,7 +341,7 @@ async function findingItem(r: FindingRow, o: { head: string | null; mergeBase: s
   if (f.carried?.verdict === "open") view.push(`- A re-review of ${short(f.carried.since)} found it still open.`);
   if (f.session) view.push(`- Your session: ${VERDICT[f.session.verdict]}. ${oneLine(f.session.reason)}`);
   view.push(...fixView(o.fixes, { finding: it.id }));
-  if (view.length) lines.push("The view of Revido:", ...view);
+  if (view.length) lines.push("The view of Kierto:", ...view);
   return {
     id: `F${it.id}`,
     group: "findings",
@@ -366,7 +366,7 @@ function header(o: {
   const lines = [
     `# Review points on my pull request ${oneLine(o.key)}`,
     "",
-    "You wrote the code of this pull request. Revido collected the review points below. Judge each point that needs a verdict.",
+    "You wrote the code of this pull request. Kierto collected the review points below. Judge each point that needs a verdict.",
     "",
     `- Pull request: ${oneLine(o.key)}, "${oneLine(o.title)}"`,
     `- Branch: ${oneLine(o.source ?? "?")} into ${oneLine(o.target ?? "?")}`,

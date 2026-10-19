@@ -1270,7 +1270,7 @@ function McpServerRow(props: {
                 t.name,
                 <>
                   {safety === "blocked" && warn("Blocked: the server marks this tool as able to change data.")}
-                  {safety === "unmarked" && warn("May change data. Revido cannot check this.")}
+                  {safety === "unmarked" && warn("May change data. Kierto cannot check this.")}
                   {t.description && <span>{t.description}</span>}
                 </>,
                 safety,

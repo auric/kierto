@@ -103,7 +103,7 @@ test("Copy for your session: all groups on, counts and size, the remembered choi
   await more(page, "Copy for your session…");
   const box = copyDialog(page);
   const group = (name: string) => box.getByRole("checkbox", { name: new RegExp(`^${name}`) });
-  for (const g of ["Open reviewer comments", "Revido findings", "Your own open threads", "Resolved threads"])
+  for (const g of ["Open reviewer comments", "Kierto findings", "Your own open threads", "Resolved threads"])
     await expect(group(g)).toBeChecked();
   await expect(box.locator("[data-consult-group='reviewers']")).toContainText("Open reviewer comments3");
   await expect(box.locator("[data-consult-group='findings']")).toContainText("3");
@@ -261,7 +261,7 @@ const answerDialog = (page: Page) => page.getByRole("dialog", { name: "Answer of
 // Settings, Clones: the opt-in switch. Escape leaves Settings.
 async function optIn(page: Page) {
   await page.locator("nav[aria-label='Views']").getByRole("button", { name: "Settings" }).click();
-  const on = page.getByRole("region", { name: "Clones" }).getByRole("switch", { name: /^Let Revido find and consult your .+ sessions$/ });
+  const on = page.getByRole("region", { name: "Clones" }).getByRole("switch", { name: /^Let Kierto find and consult your .+ sessions$/ });
   await expect(on).not.toBeChecked();
   await expect(page.locator("#sessions-on-help")).toContainText("It never shows or stores their message text.");
   await on.click();

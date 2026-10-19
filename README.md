@@ -1,19 +1,19 @@
-# Revido
+# Kierto
 
 Local-first inbox for Bitbucket Server and Data Center pull requests, with AI code review by your own Claude Code CLI. It drafts review comments and replies, proposes fixes, and posts nothing without your click.
 
-[![CI](https://github.com/auric/revido/actions/workflows/ci.yml/badge.svg)](https://github.com/auric/revido/actions/workflows/ci.yml) [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
+[![CI](https://github.com/auric/kierto/actions/workflows/ci.yml/badge.svg)](https://github.com/auric/kierto/actions/workflows/ci.yml) [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 
-Revido helps with pull request review on Bitbucket Server and Bitbucket Data Center. It runs code review with Claude Code on your machine and can read the linked Jira issues.
+Kierto helps with pull request review on Bitbucket Server and Bitbucket Data Center. It runs code review with Claude Code on your machine and can read the linked Jira issues.
 
-Repository: https://github.com/auric/revido
+Repository: https://github.com/auric/kierto
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/inbox-dark.webp">
-  <img alt="Revido: the inbox, a pull request, and its AI review with a severity count and a Not checked list" src="docs/screenshots/inbox-light.webp">
+  <img alt="Kierto: the inbox, a pull request, and its AI review with a severity count and a Not checked list" src="docs/screenshots/inbox-light.webp">
 </picture>
 
-Revido is Esperanto for "review, seeing again".
+Kierto is Finnish for "cycle, round".
 
 ## What it does
 
@@ -27,10 +27,10 @@ Revido is Esperanto for "review, seeing again".
 
 ## Safety model
 
-- Revido runs on your machine and listens on 127.0.0.1 only. It checks the Host and Origin of each request, and each change needs a session token.
-- Reviews use your own Claude Code CLI with your claude.ai login. Revido removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child process.
-- Nothing goes to Bitbucket until you click. Revido posts your accepted drafts. Claude never posts.
-- Claude never runs in your clone. Reviews run on a sanitized snapshot with read-only tools. Revido never pushes.
+- Kierto runs on your machine and listens on 127.0.0.1 only. It checks the Host and Origin of each request, and each change needs a session token.
+- Reviews use your own Claude Code CLI with your claude.ai login. Kierto removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child process.
+- Nothing goes to Bitbucket until you click. Kierto posts your accepted drafts. Claude never posts.
+- Claude never runs in your clone. Reviews run on a sanitized snapshot with read-only tools. Kierto never pushes.
 - Your Bitbucket token goes into the OS secret store. It never goes into the database, logs, URLs, or prompts.
 
 ## Requirements
@@ -43,7 +43,7 @@ Revido is Esperanto for "review, seeing again".
 
 ## Install
 
-No release is published yet. Build Revido from source with Bun 1.x:
+No release is published yet. Build Kierto from source with Bun 1.x:
 
 ```sh
 bun install
@@ -51,31 +51,31 @@ bun run build
 bun run start
 ```
 
-For one self-contained binary, run `bun run compile`. It writes `dist/bin/revido-<os>-<arch>` for this host.
+For one self-contained binary, run `bun run compile`. It writes `dist/bin/kierto-<os>-<arch>` for this host.
 
 Release binaries: when a release is published on the GitHub Releases page, download the binary for your system and start it. Each release holds one binary per target, `SHA256SUMS`, and the license files. `bun run release` makes them.
 
 ```sh
-./revido-0.2.0-linux-x64          # Linux: chmod +x it first
-revido-0.2.0-windows-x64.exe      # Windows
+./kierto-0.2.0-linux-x64          # Linux: chmod +x it first
+kierto-0.2.0-windows-x64.exe      # Windows
 ```
 
 ## First run
 
 1. Open http://127.0.0.1:7317.
-2. Enter your Bitbucket URL and access token, then click Save. Revido tests the connection first.
+2. Enter your Bitbucket URL and access token, then click Save. Kierto tests the connection first.
 3. Optional: in Settings, Jira, connect Jira. The review brief can then fetch the task text.
 4. The inbox lists the pull requests on your Bitbucket dashboard. To follow another one, paste its URL into the filter.
 5. Open a pull request and press `r` to open the review brief. Add a note and pick a profile.
 6. Click Start review, or press `Ctrl+Enter`.
 7. Triage each draft: `a` accepts, `e` edits, `d` discards.
-8. Press `p` to post the accepted drafts. Revido shows a confirm first.
+8. Press `p` to post the accepted drafts. Kierto shows a confirm first.
 
 ## Features
 
 ### Review profiles
 
-A profile sets the prompt, the model, the effort, the reviewer agents, the skills, and the MCP servers of a run. Revido ships General, Over-engineering, Security, and Explain. Skills and MCP servers come from your Claude Code config. "Improve prompt" proposes a clearer prompt, and you see the changes before you apply them.
+A profile sets the prompt, the model, the effort, the reviewer agents, the skills, and the MCP servers of a run. Kierto ships General, Over-engineering, Security, and Explain. Skills and MCP servers come from your Claude Code config. "Improve prompt" proposes a clearer prompt, and you see the changes before you apply them.
 
 ![Settings, Review profiles: run setup, skills, and MCP servers](docs/screenshots/settings-profiles.webp)
 
@@ -107,7 +107,7 @@ On your own pull request, the Fix list holds the open threads and the review fin
 
 ### Ask
 
-Press `q` to ask a question about the pull request. The answer stays in Revido. Nothing posts.
+Press `q` to ask a question about the pull request. The answer stays in Kierto. Nothing posts.
 
 ### Project instructions
 
@@ -115,13 +115,13 @@ Each run can read the CLAUDE.md files of your clone, extra text from Settings, a
 
 ### Consult your session
 
-You wrote the code with Claude Code, so your session knows why. Turn on the session switch in Settings, Clones. Revido then lists your sessions on the branch of your own pull request. Each question resumes a copy of the session with the review points. Its verdicts tick the Fix list and draft replies. "Copy for your session" gives the same points as text. On your own pull request, "Judge and propose fixes" lets the forked, read-only session judge each item and propose edits for the ones it accepts. Revido checks the edits, and their fix cards show "from your session". Nothing applies until you click.
+You wrote the code with Claude Code, so your session knows why. Turn on the session switch in Settings, Clones. Kierto then lists your sessions on the branch of your own pull request. Each question resumes a copy of the session with the review points. Its verdicts tick the Fix list and draft replies. "Copy for your session" gives the same points as text. On your own pull request, "Judge and propose fixes" lets the forked, read-only session judge each item and propose edits for the ones it accepts. Kierto checks the edits, and their fix cards show "from your session". Nothing applies until you click.
 
 ### Narrow screens
 
-Below 760 px, Revido shows one pane at a time.
+Below 760 px, Kierto shows one pane at a time.
 
-![Revido at 400 px](docs/screenshots/narrow.webp)
+![Kierto at 400 px](docs/screenshots/narrow.webp)
 
 ## Keyboard
 
@@ -158,7 +158,7 @@ The environment variables keep the `REVIEW_LOOP_` prefix of the old name, so exi
 | `REVIEW_LOOP_DATA_DIR` | The data folder. Default: `%LOCALAPPDATA%\review-loop` on Windows, `$XDG_DATA_HOME/review-loop` or `~/.local/share/review-loop` on Linux. |
 | `REVIEW_LOOP_SECRETS` | `memory` keeps the tokens out of the OS secret store. You then enter them again after each restart. |
 
-If the OS secret store fails, Revido keeps the token in memory only and tells you in Settings.
+If the OS secret store fails, Kierto keeps the token in memory only and tells you in Settings.
 
 ## Development
 
@@ -168,7 +168,7 @@ If the OS secret store fails, Revido keeps the token in memory only and tells yo
 | `bun run check` | Typecheck with TypeScript 7 and 5, Biome lint, and `bun test`. |
 | `bun run test:e2e` | Build the UI and run the Playwright suite against a fake Bitbucket and a fake Jira. |
 | `bun run demo` | Serve the built UI on 127.0.0.1:7399 with synthetic data, a fake CLI, and a temp data folder. |
-| `bun run compile` | Build one self-contained binary for this host in `dist/bin/revido-<os>-<arch>`. |
+| `bun run compile` | Build one self-contained binary for this host in `dist/bin/kierto-<os>-<arch>`. |
 | `bun run release` | Run check, e2e, and compile for all targets. Write the binaries, `SHA256SUMS`, and the license files to `dist/release/`. |
 | `bun run notices` | Regenerate `THIRD_PARTY_NOTICES.md` from the web bundle and the server bundle. |
 | `bun run screenshots` | Regenerate the screenshots in `docs/screenshots/` from the demo. |
@@ -177,4 +177,4 @@ Tests never touch a real Bitbucket server, the real `claude` CLI, or your data f
 
 ## License
 
-Revido is free software under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). See [LICENSE](LICENSE). [NOTICE.md](NOTICE.md) states the copyright and the section 7 additional terms. These terms require attribution and marked, renamed modified versions. They grant no trademark rights to the name "Revido". Third-party material keeps its own license. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists it.
+Kierto is free software under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). See [LICENSE](LICENSE). [NOTICE.md](NOTICE.md) states the copyright and the section 7 additional terms. These terms require attribution and marked, renamed modified versions. They grant no trademark rights to the name "Kierto". Third-party material keeps its own license. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists it.

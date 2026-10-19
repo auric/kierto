@@ -35,7 +35,7 @@ describe("planNotes", () => {
 
   test("the first claim of a tab gives one digest", () => {
     expect(planNotes([ev(1), ev(2), ev(2)], true)).toEqual([
-      { title: "Revido", body: "3 updates in 2 pull requests", tag: "digest", pr: null },
+      { title: "Kierto", body: "3 updates in 2 pull requests", tag: "digest", pr: null },
     ]);
   });
 

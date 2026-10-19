@@ -94,7 +94,7 @@ describe("clone files", () => {
       "## From your clone: docs/a.md (imported by CLAUDE.md)",
       "## From your clone: docs/b.md (imported by docs/a.md)",
       "## From your clone: CLAUDE.local.md",
-      "## From Revido settings",
+      "## From Kierto settings",
     ];
     const at = heads.map((h) => b.text.indexOf(h));
     expect(at.every((i, k) => i > (at[k - 1] ?? -1))).toBe(true);

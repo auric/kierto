@@ -88,7 +88,7 @@ ${rule}
   });
 
   test("the project instructions come after Tools and Skills and right before the note, in every prompt; no text gives no section", () => {
-    const text = `# Project instructions\n\n${INSTRUCTIONS_TRUST}\n\n## From your clone: CLAUDE.md\n\nPROJECT-CANARY\n\n## From Revido settings\n\nEXTRA-CANARY\n`;
+    const text = `# Project instructions\n\n${INSTRUCTIONS_TRUST}\n\n## From your clone: CLAUDE.md\n\nPROJECT-CANARY\n\n## From Kierto settings\n\nEXTRA-CANARY\n`;
     const withText = { ...input, instructions: text, skills: ["s"] };
     for (const prompt of [
       buildPrompt(withText),
@@ -100,7 +100,7 @@ ${rule}
       const heads = [...prompt.matchAll(/^# (.+)$/gm)].map((m) => m[1]);
       expect(heads.slice(-4)).toEqual(["Skills", "Project instructions", "Your instructions", "Metadata"]);
       expect(prompt).toContain(`\n${text.trimEnd()}\n\n# Your instructions\n`);
-      expect(prompt.indexOf("## From your clone: CLAUDE.md")).toBeLessThan(prompt.indexOf("## From Revido settings"));
+      expect(prompt.indexOf("## From your clone: CLAUDE.md")).toBeLessThan(prompt.indexOf("## From Kierto settings"));
     }
     for (const prompt of [buildPrompt(input), buildPrompt({ ...input, instructions: "" })])
       expect(prompt).not.toContain("# Project instructions");

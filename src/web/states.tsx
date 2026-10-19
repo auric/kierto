@@ -21,8 +21,8 @@ export function ArchiveNotice({ pr, now, onRestore }: { pr: PrRow; now: number; 
       <AlertTitle>{when === null ? "Not followed" : when === "now" ? "Archived just now" : `Archived ${when} ago`}</AlertTitle>
       <AlertDescription>
         {when === null
-          ? "It is not on your dashboard, so Revido does not check it. This page can be out of date."
-          : "Revido does not check it while it is archived. This page can be out of date."}{" "}
+          ? "It is not on your dashboard, so Kierto does not check it. This page can be out of date."
+          : "Kierto does not check it while it is archived. This page can be out of date."}{" "}
         {pr.followed ? `${verb} it to check it again.` : `${verb} it to follow it and check it again.`}
       </AlertDescription>
       <Button size="sm" className="col-start-2 mt-2 w-fit" onClick={onRestore}>

@@ -34,7 +34,7 @@ function SessionSwitch({ settings }: { settings: SettingsDto }) {
         onCheckedChange={(sessions) => save.mutate({ baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", sessions })}
       />
       <FieldContent>
-        <FieldLabel htmlFor="sessions-on">Let Revido find and consult your {runner} sessions</FieldLabel>
+        <FieldLabel htmlFor="sessions-on">Let Kierto find and consult your {runner} sessions</FieldLabel>
         <FieldDescription id="sessions-on-help">
           Off by default. When on, “Ask your session” lists your transcripts on the branch of your own pull request. The app reads only
           their folder, branch, time, and title lines. It never shows or stores their message text. Each question resumes a copy of the

@@ -386,11 +386,11 @@ test("an MCP server picked in the dialog gets only its ticked tools in the run",
   // note_tool has no hint: a tick asks first.
   const note = tools.getByRole("checkbox", { name: /^note_tool / });
   await expect(note).not.toBeChecked();
-  await expect(tools.getByText("May change data. Revido cannot check this.")).toHaveCount(1);
+  await expect(tools.getByText("May change data. Kierto cannot check this.")).toHaveCount(1);
   const ask = page.getByRole("dialog", { name: "Allow note_tool?" });
   await note.click();
   await expect(ask).toContainText(
-    "note_tool on fake-docs has no read-only mark. Revido cannot check what it does. Allow it in runs of this profile?",
+    "note_tool on fake-docs has no read-only mark. Kierto cannot check what it does. Allow it in runs of this profile?",
   );
   await ask.getByRole("button", { name: "Cancel" }).click();
   await expect(ask).toHaveCount(0);

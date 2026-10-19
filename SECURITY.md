@@ -4,8 +4,8 @@
 
 Report vulnerabilities privately. Do not open a public issue.
 
-1. Open the private reporting page: https://github.com/auric/revido/security/advisories/new
-2. Alternatively, open https://github.com/auric/revido, click the Security tab, then click Report a vulnerability.
+1. Open the private reporting page: https://github.com/auric/kierto/security/advisories/new
+2. Alternatively, open https://github.com/auric/kierto, click the Security tab, then click Report a vulnerability.
 3. Describe the problem, the affected version or commit, and the steps to reproduce it.
 
 The report stays private between you and the maintainer until a fix is published.
@@ -25,7 +25,7 @@ These parts of the safety model are in scope:
 - The local server listens on 127.0.0.1 only. It checks the Host and Origin of each request, and each change needs a session token.
 - The Bitbucket and Jira tokens go into the OS secret store. They must never go into the database, logs, URLs, or prompts.
 - The `claude` CLI runs only in a sanitized snapshot of the pull request, with read-only tools. It must never run in your clone.
-- Nothing goes to Bitbucket without an explicit user action. Revido never pushes.
+- Nothing goes to Bitbucket without an explicit user action. Kierto never pushes.
 
 A report that breaks one of these rules is in scope. Examples: a web page that makes the local server act, a token that leaks into a log, or a pull request that makes the CLI write outside the snapshot.
 

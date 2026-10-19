@@ -12,7 +12,7 @@ const ROOT = resolve(import.meta.dir, "..");
 // AGPL-3.0 section 6 and the MIT notices: each binary goes out with these texts.
 const LEGAL = ["LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"];
 
-export const artifactName = (version: string, target: string) => `revido-${version}-${target}${target.startsWith("windows") ? ".exe" : ""}`;
+export const artifactName = (version: string, target: string) => `kierto-${version}-${target}${target.startsWith("windows") ? ".exe" : ""}`;
 
 // `sha256sum` text-mode line: hash, two spaces, file name.
 export const sumsLine = (sha256: string, name: string) => `${sha256}  ${name}\n`;

@@ -1,16 +1,16 @@
 {
-  "name": "revido",
+  "name": "kierto",
   "description": "A local-first inbox for Bitbucket Server pull requests, with AI reviews by your own Claude Code CLI.",
   "version": "0.2.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/auric/revido.git"
+    "url": "git+https://github.com/auric/kierto.git"
   },
-  "homepage": "https://github.com/auric/revido#readme",
+  "homepage": "https://github.com/auric/kierto#readme",
   "bugs": {
-    "url": "https://github.com/auric/revido/issues"
+    "url": "https://github.com/auric/kierto/issues"
   },
   "type": "module",
   "scripts": {

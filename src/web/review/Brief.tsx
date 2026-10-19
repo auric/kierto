@@ -167,7 +167,7 @@ function TaskFold(props: { pr: number; t: TaskContextDto; source: string; now: n
         <p className="m-0 text-xs text-muted-foreground">
           {/* The summary line hides the same words in a narrow pane (.rl-wide-pane). */}
           From {source}
-          <span className="hidden @max-[560px]/detail:inline">, {meta}</span>.{t.truncated && " Revido cut this text at its size limits."}
+          <span className="hidden @max-[560px]/detail:inline">, {meta}</span>.{t.truncated && " Kierto cut this text at its size limits."}
         </p>
         <TaskText t={t} text={t.description?.trim() || "No description."} images={images} />
         {/* The tracker shows the files after the description, before the comments. */}

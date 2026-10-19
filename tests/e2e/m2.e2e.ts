@@ -204,7 +204,7 @@ test("a usage limit is one line with the CLI message, and the inbox keeps workin
   await control("claude", { stream: "limit" });
   await connect(page);
   await startWithBrief(page);
-  await expect(runLine(page)).toContainText(/Claude Code: Usage limit reached\. .* Revido does not retry by itself\./, {
+  await expect(runLine(page)).toContainText(/Claude Code: Usage limit reached\. .* Kierto does not retry by itself\./, {
     timeout: RUN_MS,
   });
   await expect(runLine(page).getByRole("button", { name: "Show raw output" })).toHaveCount(0);

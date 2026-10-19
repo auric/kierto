@@ -351,7 +351,7 @@ function CodeNote(props: { list: boolean; forge: string; busy: boolean; error: s
         <span className="min-w-0 flex-[1_1_260px]">
           {props.list
             ? `Select a file to see its diff. The first one gets the code of both branches from ${props.forge} and keeps it in a local cache.`
-            : `The diff needs the code of both branches from ${props.forge}. Revido keeps it in a local cache.`}
+            : `The diff needs the code of both branches from ${props.forge}. Kierto keeps it in a local cache.`}
         </span>
         <Button id="diff-get" size="sm" variant="outline" aria-busy={props.busy || undefined} onClick={props.onGet}>
           {props.busy && <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin motion-reduce:animate-none" />}
