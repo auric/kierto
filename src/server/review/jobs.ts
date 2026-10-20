@@ -12,6 +12,7 @@ import {
   type ConsultGroup,
   consultJsonSchema,
   consultOutput,
+  indentBlock,
   type SessionAnswerDto,
   type SessionMode,
   sessionMaxTurns,
@@ -278,10 +279,13 @@ export function currentDrafts(db: Database, pr: number): Map<number, ItemRow> {
   return out;
 }
 
-// A draft that no writer replaces: the user edited or accepted it, or declined it (the current draft is discarded).
-// declined false: the user asked for a new draft of this thread, so a declined draft does not block it.
+// A draft that no writer replaces: the user edited or accepted it, declined it (the current draft is discarded), or declined the fix
+// with it ("Won't fix"). declined false: the user asked for a new draft of this thread, so a discarded draft does not block it.
 export const userDraft = (r: ItemRow | undefined, declined: boolean) =>
-  !!r && (r.status === "accepted" || (r.status === "new" && r.edited === 1) || (declined && r.status === "discarded"));
+  !!r &&
+  (r.status === "accepted" ||
+    (r.status === "new" && (r.edited === 1 || !!(JSON.parse(r.payload_json) as ReplyPayload).declined)) ||
+    (declined && r.status === "discarded"));
 
 export const keptText = (thread: number) => `Thread ${thread}: kept your draft. The new draft was not stored.`;
 
@@ -795,6 +799,72 @@ export function historyFile(db: Database, pr: number, head: string, review = fal
     out.push(...capped(blocks, HISTORY_ASK_BYTES, (n) => `${n} earlier ask runs left out.`));
   }
   return { name: "history.md", text: out.join("\n") };
+}
+
+const FIX_STATE = {
+  notes: "SELECT id, fix_json FROM review_run WHERE pr = $pr AND kind = 'fix' AND fix_json IS NOT NULL ORDER BY id DESC",
+  // The newest fix commit that holds an edit of the thread and is not undone. held of total: its share of the edits of its run.
+  commit: `SELECT c.short_hash AS short,
+      EXISTS (SELECT 1 FROM pr_commit k WHERE k.pr = c.pr AND k.hash = c.commit_hash) AS pushed,
+      (SELECT COUNT(*) FROM fix_edit e WHERE e.run = c.run AND e.thread = $thread) AS total,
+      (SELECT COUNT(*) FROM fix_edit e WHERE e.run = c.run AND e.thread = $thread AND e.id IN (SELECT value FROM json_each(c.edits_json))) AS held
+    FROM fix_commit c WHERE c.pr = $pr AND c.state <> 'undone' ORDER BY c.id DESC`,
+};
+
+// context/fix-state.md of a reply run (docs/plans/thread-outcome.md WP-S4): per thread, the newest fix note, the fix commit, and the
+// current open draft. null when no thread has any of them. Free text goes in indented blocks.
+export function fixStateFile(db: Database, pr: number, threads: number[]): ContextFile | null {
+  const runs = (db.query(FIX_STATE.notes).all({ pr }) as { id: number; fix_json: string }[]).map((r) => ({
+    id: r.id,
+    notes: parseFixNotes(r.fix_json),
+  }));
+  const drafts = currentDrafts(db, pr);
+  const out: string[] = [];
+  for (const thread of threads) {
+    const found = runs.flatMap((r) => r.notes.filter((n) => n.thread === thread).map((n) => ({ run: r.id, n })))[0];
+    type C = { short: string | null; pushed: number; total: number; held: number };
+    const commit = (db.query(FIX_STATE.commit).all({ pr, thread }) as C[]).find((c) => c.held > 0);
+    const cur = drafts.get(thread);
+    const draft = cur && (cur.status === "new" || cur.status === "accepted") ? cur : null;
+    if (!found && !commit && !draft) continue;
+    out.push(`## Thread ${thread}`, "");
+    if (found) {
+      const { n } = found;
+      out.push(
+        `- Fix note of fix run ${found.run}: ${n.fixed ? "fixed" : "no fix"}${n.why ? `, why ${n.why}` : ""}${n.declined ? ", declined by the user" : ""}`,
+        "",
+        "Note reason:",
+        "",
+        indentBlock(n.reason || "(none)"),
+        "",
+        "Note reply:",
+        "",
+        indentBlock(n.reply || "(none)"),
+        "",
+        ...(n.declined ? ["Decline reason:", "", indentBlock(n.declined.reason), ""] : []),
+      );
+    } else out.push("- Fix note: none");
+    if (!commit) out.push("- Fix commit: none");
+    else if (!commit.short) out.push("- Fix commit: staged in the clone, not committed");
+    else
+      out.push(
+        `- Fix commit: ${commit.held < commit.total ? "Partly fixed" : "Fixed"} in ${commit.short} (${commit.pushed ? "on the pull request" : "not on the pull request yet"})`,
+      );
+    if (!draft) out.push("- Current draft: none", "");
+    else {
+      const p = JSON.parse(draft.payload_json) as ReplyPayload;
+      const state = draft.status === "accepted" ? "accepted by the user" : draft.edited ? "edited by the user" : "not accepted";
+      out.push(
+        `- Current draft: ${state}, origin ${p.origin ?? (p.fix ? "fix" : "unknown")}${p.declined ? `, declines the fix of run ${p.declined.run}` : ""}`,
+        "",
+        "Draft text:",
+        "",
+        indentBlock(draft.body || "(empty)"),
+        "",
+      );
+    }
+  }
+  return out.length ? { name: "fix-state.md", text: out.join("\n") } : null;
 }
 
 // Plan r2 S-RR: the copies of the carried items, inside the run-end transaction. Each source becomes discarded.
@@ -1352,6 +1422,14 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         : carry || j.profile.explain
           ? null
           : historyFile(j.db, j.pr, pr.source_head, true);
+    const fixState =
+      j.kind === "reply" && j.threads
+        ? fixStateFile(
+            j.db,
+            j.pr,
+            j.threads.map((t) => t.thread),
+          )
+        : null;
     // The findings of a fix run as they are now. A user edit or move after the start counts.
     const fixRows = j.findings.flatMap((id) => (j.db.query(SQL.fixFinding).get({ id }) as FindingRow | null) ?? []);
     const extra = [
@@ -1372,6 +1450,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         ? [findingsFile(fixRows, (r, side) => (side === "new" ? r.run_head : (r.run_base ?? `the merge base of run ${r.run}`)))]
         : []),
       ...(history ? [history] : []),
+      ...(fixState ? [fixState] : []),
     ];
     // Cancel stops the fetch and `worktree add`. A large repository can take as long as the run may take.
     j.abort = new AbortController();
@@ -1497,6 +1576,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       taskFile: files.length > 0,
       attachments: attachments.length > 0,
       history: history !== null,
+      fixState: fixState !== null,
       skills: folders,
       alwaysSkills: always,
       mcp: used,

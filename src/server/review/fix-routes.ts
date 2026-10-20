@@ -5,7 +5,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { validator } from "hono/validator";
 import {
   type ApiError,
@@ -17,7 +17,11 @@ import {
   type FixCommitDto,
   type FixCommitInput,
   type FixConflict,
+  type FixDeclineInput,
+  type FixUndeclineInput,
   fixCommitInput,
+  fixDeclineInput,
+  fixUndeclineInput,
   type GlobalInstructionsDto,
   globalInstructionsInput,
   type InstructionPreviewDto,
@@ -26,7 +30,7 @@ import {
   instructionsInput,
 } from "../../shared/dto";
 import { isMe } from "../../shared/me";
-import type { ReplyPayload } from "../../shared/review";
+import { type FixNote, parseFixNotes, type ReplyPayload } from "../../shared/review";
 import { newestLive, type TurnMsg } from "../../shared/turn";
 import type { PullRequest } from "../../shared/types";
 import { openFolder } from "../context/attachments";
@@ -101,7 +105,7 @@ const SQL = {
   thread: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr AND root_id = $root`,
   item: `INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited)
-    VALUES ($run, 'reply', $payload, $body, 'new', $thread, 0)`,
+    VALUES ($run, 'reply', $payload, $body, 'new', $thread, 0) RETURNING id`,
   // The fix run records each thread where the commit kept the user's draft. A second commit adds no second line.
   kept: `UPDATE review_run SET summary_json = json_insert(summary_json, '$.coverage.skipped[#]', $text)
     WHERE id = $run AND json_valid(summary_json) AND NOT EXISTS (SELECT 1 FROM json_each(summary_json, '$.coverage.skipped') WHERE value = $text)`,
@@ -123,6 +127,27 @@ const SQL = {
   // The runs of the findings that a commit covers. Their drafts change with the commit and the undo.
   findingRuns: `SELECT DISTINCT i.run FROM fix_edit e JOIN review_item i ON i.id = e.item
     WHERE e.id IN (SELECT value FROM json_each($edits)) ORDER BY i.run`,
+  notes: "SELECT fix_json FROM review_run WHERE id = $id",
+  saveNotes: "UPDATE review_run SET fix_json = $json WHERE id = $id",
+  // The edit IDs of the commits of a run that are not undone. A staged commit holds its edits too.
+  held: "SELECT value AS id FROM fix_commit c, json_each(c.edits_json) WHERE c.run = $run AND c.state <> 'undone'",
+  openDrafts: `SELECT i.id FROM review_item i JOIN review_run r ON r.id = i.run
+    WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread = $thread AND i.status IN ('new', 'accepted') ORDER BY i.id`,
+  discardOpen: "UPDATE review_item SET status = 'discarded', revision = revision + 1 WHERE id = $id AND status IN ('new', 'accepted')",
+  draftStatus: "SELECT status FROM review_item WHERE id = $id",
+  // Undo of a decline: the "Won't fix" draft goes, and it no longer declines a fix. A posted draft stays.
+  dropDecline: `UPDATE review_item SET status = 'discarded', payload_json = json_set(payload_json, '$.declined', json('null')),
+      revision = revision + 1 WHERE id = $id AND status <> 'posted'`,
+  finding: `SELECT i.id, i.run, i.status FROM review_item i JOIN review_run r ON r.id = i.run
+    WHERE i.id = $id AND i.kind = 'finding' AND r.pr = $pr`,
+  // In SQLite, SET reads the old status.
+  declineFinding: `UPDATE review_item SET status = 'discarded', revision = revision + 1,
+      payload_json = json_set(payload_json, '$.declined', json_object('run', $run, 'reason', $reason, 'was', status))
+    WHERE id = $id AND status <> 'posted'`,
+  // As unfixed: a finding that the mark still discards gets its status back. A finding that the user restored keeps its status.
+  undeclineFinding: `UPDATE review_item SET status = CASE WHEN status = 'discarded' THEN json_extract(payload_json, '$.declined.was') ELSE status END,
+      payload_json = json_remove(payload_json, '$.declined'), revision = revision + 1
+    WHERE id = $id AND kind = 'finding' AND status <> 'posted' AND json_extract(payload_json, '$.declined.run') = $run`,
 };
 
 const positiveId = (what: string) =>
@@ -140,6 +165,10 @@ const notFound = (what: string) => ({ error: `${what} not found.` }) satisfies A
 const UNDO_BLOCKS: CloneProblem[] = ["missing", "not_repo", "detached", "branch", "dirty", "busy"];
 
 type Out = { status: 200 | 201; dto: FixCommitDto } | { status: 404 | 409 | 502; body: ApiError | FixConflict };
+// A decline or its undo: the PR and the runs whose items changed, or an error.
+type DeclineOut = { status: 200; pr: number; runs: number[] } | { status: 404 | 409; body: ApiError };
+const target = (n: FixNote, t: { thread?: number; finding?: number }) =>
+  t.thread !== undefined ? n.thread === t.thread : n.finding === t.finding;
 const conflict = (error: string, problems: FixConflict["problems"] = []): Out => ({ status: 409, body: { error, problems } });
 
 // openFolder: the tests pass a recorder.
@@ -187,7 +216,9 @@ export function createFixRoutes(opts: {
   }
 
   // One transaction: the commit, the superseded drafts of each thread, one "Fixed in" reply draft per thread, and the fixed mark of each finding.
-  // A thread keeps a draft that the user edited or accepted: it gets no "Fixed in" draft, and the fix run records it in its coverage.
+  // A thread keeps a draft that the user edited, accepted, or declined the fix with: it gets no "Fixed in" draft, and the fix run records
+  // it in its coverage. docs/plans/thread-outcome.md: the draft keeps an untouched answer and adds "Fixed in X: <what>", with what from
+  // the note reply. A thread with edits outside the committed ones gets "Partly fixed in X" and no resolve proposal.
   function finish(db: Database, run: RunRow, id: number, edits: EditRow[], made: { commit: string; short: string }) {
     db.transaction(() => {
       db.query(SQL.committed).run({ id, hash: made.commit, short: made.short, now: Date.now() });
@@ -195,39 +226,139 @@ export function createFixRoutes(opts: {
         db.query(SQL.fixed).run({ item, pr: run.pr, id, commit: made.commit, short: made.short });
       const me = settings.config()?.userSlug ?? null;
       const drafts = currentDrafts(db, run.pr);
+      const notes = parseFixNotes((db.query(SQL.notes).get({ id: run.run }) as { fix_json: string | null }).fix_json);
+      const all = db.query(SQL.edits).all({ run: run.run }) as EditRow[];
+      const held = new Set((db.query(SQL.held).all({ run: run.run }) as { id: number }[]).map((r) => r.id));
       for (const thread of new Set(edits.flatMap((e) => (e.thread === null ? [] : [e.thread])))) {
         const msgs = db.query(SQL.thread).all({ pr: run.pr, root: thread }) as TurnMsg[];
         const last = newestLive(msgs);
         if (!last) continue;
-        // The user asked for this fix, so a declined draft does not block the "Fixed in" draft.
-        if (userDraft(drafts.get(thread), false)) {
+        // The user asked for this fix, so a discarded draft does not block the "Fixed in" draft.
+        const cur = drafts.get(thread);
+        if (userDraft(cur, false)) {
           db.query(SQL.kept).run({ run: run.run, text: keptText(thread) });
           continue;
         }
+        const was = cur?.status === "new" ? (JSON.parse(cur.payload_json) as ReplyPayload) : null;
+        const answer = was && !was.fix && was.origin !== "nofix" && was.origin !== "resolve" ? (cur?.body.trim() ?? "") : "";
         const replaced = (db.query(SQL.replaceable).all({ thread, pr: run.pr }) as { id: number }[]).map((r) => r.id);
         for (const r of replaced) db.query(SQL.supersede).run({ id: r });
         const root = msgs.find((m) => m.id === thread);
-        const body = `Fixed in ${made.short}.`;
+        const partly = all.some((e) => e.thread === thread && !held.has(e.id));
+        const what = notes.find((n) => n.thread === thread)?.reply.trim() ?? "";
+        const line = `${partly ? "Partly fixed" : "Fixed"} in ${made.short}${what ? `: ${what}` : "."}`;
+        const body = answer ? `${answer}\n\n${line}` : line;
         const paths = [...new Set(edits.filter((e) => e.thread === thread).map((e) => e.path))];
-        // The commit proposes to resolve the thread. Only a thread that the user started gets the tick by default.
+        // A full fix proposes to resolve the thread. Only a thread that the user started gets the tick by default.
         const payload: ReplyPayload = {
           thread,
           action: "reply",
           body,
-          reason: "The app committed the fix.",
+          reason: partly ? "The app committed a part of the fix." : "The app committed the fix.",
           evidenceStatus: "code",
           judgement: null,
           replyTo: last.id,
           fix: { id, commit: made.commit, ...(replaced.length > 0 && { replaced }) },
-          resolve: true,
-          resolveEvidence: `Commit ${made.short} changes ${paths.join(", ")}.`,
-          resolveTick: !!root && isMe({ slug: root.authorSlug, login: root.authorLogin }, me),
+          resolve: !partly,
+          resolveEvidence: partly ? "" : `Commit ${made.short} changes ${paths.join(", ")}.`,
+          resolveTick: !partly && !!root && isMe({ slug: root.authorSlug, login: root.authorLogin }, me),
           threadOpen: !msgs.some((m) => m.threadResolved),
           origin: "fix",
         };
         db.query(SQL.item).run({ run: run.run, payload: JSON.stringify(payload), body, thread });
       }
     })();
+  }
+
+  const notesOf = (db: Database, run: number) =>
+    parseFixNotes((db.query(SQL.notes).get({ id: run }) as { fix_json: string | null }).fix_json);
+  const saveNotes = (db: Database, run: number, notes: FixNote[]) => db.query(SQL.saveNotes).run({ id: run, json: JSON.stringify(notes) });
+
+  // docs/plans/thread-outcome.md "Don't fix": one transaction folds the note. A thread gets an unaccepted "Won't fix" draft that replaces
+  // its open drafts. A finding is discarded with the reason.
+  function decline(db: Database, input: FixDeclineInput): DeclineOut {
+    const run = db.query(SQL.run).get({ id: input.run }) as RunRow | null;
+    if (run?.kind !== "fix") return { status: 404, body: notFound("Fix run") };
+    const notes = notesOf(db, run.run);
+    const note = notes.find((n) => target(n, input));
+    if (!note) return { status: 404, body: notFound("Fix note") };
+    if (note.declined) return { status: 409, body: { error: "You declined this fix already." } };
+    const held = new Set((db.query(SQL.held).all({ run: run.run }) as { id: number }[]).map((r) => r.id));
+    const edits = db.query(SQL.edits).all({ run: run.run }) as EditRow[];
+    if (edits.some((e) => held.has(e.id) && (input.thread !== undefined ? e.thread === input.thread : e.item === input.finding)))
+      return { status: 409, body: { error: "A fix commit holds this fix. Undo the commit first." } };
+    const body = `Won't fix: ${input.reason}`;
+    if (input.thread !== undefined) {
+      const thread = input.thread;
+      const msgs = db.query(SQL.thread).all({ pr: run.pr, root: thread }) as TurnMsg[];
+      const last = newestLive(msgs);
+      if (!last) return { status: 409, body: { error: "The thread has no live message." } };
+      db.transaction(() => {
+        const replaced = (db.query(SQL.openDrafts).all({ pr: run.pr, thread }) as { id: number }[]).map((r) => r.id);
+        for (const r of replaced) db.query(SQL.discardOpen).run({ id: r });
+        const payload: ReplyPayload = {
+          thread,
+          action: "reply",
+          body,
+          reason: "You declined the fix.",
+          evidenceStatus: "unverified",
+          judgement: null,
+          replyTo: last.id,
+          resolve: false,
+          resolveEvidence: "",
+          resolveTick: false,
+          threadOpen: !msgs.some((m) => m.threadResolved),
+          origin: "nofix",
+          declined: { run: run.run },
+        };
+        const { id: draft } = db.query(SQL.item).get({ run: run.run, payload: JSON.stringify(payload), body, thread }) as { id: number };
+        note.declined = { reason: input.reason, draft, ...(replaced.length > 0 && { replaced }) };
+        saveNotes(db, run.run, notes);
+      })();
+      return { status: 200, pr: run.pr, runs: [run.run] };
+    }
+    const finding = db.query(SQL.finding).get({ id: input.finding as number, pr: run.pr }) as {
+      id: number;
+      run: number;
+      status: string;
+    } | null;
+    if (!finding) return { status: 404, body: notFound("Finding") };
+    if (finding.status === "posted") return { status: 409, body: { error: "The finding is posted." } };
+    db.transaction(() => {
+      db.query(SQL.declineFinding).run({ id: finding.id, run: run.run, reason: input.reason });
+      note.declined = { reason: input.reason };
+      saveNotes(db, run.run, notes);
+    })();
+    return { status: 200, pr: run.pr, runs: [run.run, finding.run] };
+  }
+
+  // Undo of a decline: the proposal unfolds, the "Won't fix" draft goes, and the newest draft that it replaced comes back.
+  function undecline(db: Database, input: FixUndeclineInput): DeclineOut {
+    const run = db.query(SQL.run).get({ id: input.run }) as RunRow | null;
+    if (run?.kind !== "fix") return { status: 404, body: notFound("Fix run") };
+    const notes = notesOf(db, run.run);
+    const note = notes.find((n) => target(n, input));
+    if (!note) return { status: 404, body: notFound("Fix note") };
+    const d = note.declined;
+    if (!d) return { status: 409, body: { error: "This fix is not declined." } };
+    const runs = [run.run];
+    if (input.thread !== undefined && d.draft !== undefined) {
+      if ((db.query(SQL.draftStatus).get({ id: d.draft }) as { status: string } | null)?.status === "posted")
+        return { status: 409, body: { error: "The Won't fix reply is posted. The decline stays." } };
+    } else if (input.finding !== undefined) {
+      const finding = db.query(SQL.finding).get({ id: input.finding, pr: run.pr }) as { run: number } | null;
+      if (finding) runs.push(finding.run);
+    }
+    db.transaction(() => {
+      if (input.thread !== undefined && d.draft !== undefined) {
+        db.query(SQL.dropDecline).run({ id: d.draft });
+        if (d.replaced?.length && !db.query(SQL.openDraft).get({ pr: run.pr, thread: input.thread }))
+          db.query(SQL.bringBack).run({ id: Math.max(...d.replaced) });
+      } else if (input.finding !== undefined) db.query(SQL.undeclineFinding).run({ id: input.finding, run: run.run });
+      delete note.declined;
+      saveNotes(db, run.run, notes);
+    })();
+    return { status: 200, pr: run.pr, runs };
   }
 
   async function intoClone(db: Database, run: RunRow, clone: string, edits: EditRow[], key: string, ids: number[], input: FixCommitInput) {
@@ -299,6 +430,13 @@ export function createFixRoutes(opts: {
     const ids = [...new Set(input.edits)].sort((a, b) => a - b);
     const edits = (db.query(SQL.edits).all({ run: runId }) as EditRow[]).filter((e) => ids.includes(e.id));
     if (edits.length !== ids.length) return { status: 404, body: notFound("Fix edit") };
+    // A declined proposal stays out of the commit until the user undoes the decline.
+    const notes = notesOf(db, runId).filter((n) => n.declined);
+    const no = edits.find((e) => notes.some((n) => (e.thread !== null ? n.thread === e.thread : n.finding === e.item)));
+    if (no)
+      return conflict(
+        `You declined the fix of ${no.thread !== null ? `thread ${no.thread}` : `finding ${no.item}`}. Undo the decline first.`,
+      );
     const key = `${runId}:${input.mode}:${ids.join(",")}`;
     const clone = cloneOf(db, run);
     if (input.mode === "clone" && clone === null) return conflict(CLONE_TEXT.not_set, [cloneProblem("not_set")]);
@@ -384,6 +522,12 @@ export function createFixRoutes(opts: {
       if (e instanceof GitError) return conflict(e.message);
       throw e;
     }
+  };
+
+  const declined = (c: Context, r: DeclineOut) => {
+    if ("body" in r) return r.status === 404 ? c.json(r.body, 404) : c.json(r.body, 409);
+    live.broadcast("changed", { prs: [r.pr], runs: [...new Set(r.runs)] });
+    return c.body(null, 204);
   };
 
   return new Hono()
@@ -559,5 +703,29 @@ export function createFixRoutes(opts: {
       }
       if (r.status === 404) return c.json(r.body, 404);
       return r.status === 502 ? c.json(r.body, 502) : c.json(r.body, 409);
-    });
+    })
+    .post(
+      "/fix-declines",
+      validator("json", (v, c) => {
+        const r = fixDeclineInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid decline." }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        return declined(c, decline(db, c.req.valid("json")));
+      },
+    )
+    .post(
+      "/fix-declines/undo",
+      validator("json", (v, c) => {
+        const r = fixUndeclineInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid decline undo." }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        return declined(c, undecline(db, c.req.valid("json")));
+      },
+    );
 }

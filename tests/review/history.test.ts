@@ -4,7 +4,7 @@
 // context/history.md of ask, reply, fix, and plain review runs. An in-memory database, no runner.
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { HISTORY_ASK_BYTES, HISTORY_FINDING_BYTES, historyFile } from "../../src/server/review/jobs";
+import { fixStateFile, HISTORY_ASK_BYTES, HISTORY_FINDING_BYTES, historyFile } from "../../src/server/review/jobs";
 import { openDb } from "../../src/server/storage/db";
 
 const HEAD = "a".repeat(40);
@@ -171,5 +171,80 @@ Text:
     expect(ask).toContain(`## Ask run ${asks[5]}`);
     expect(ask).not.toContain(`## Ask run ${asks[2]}`);
     expect(ask).toContain("3 earlier ask runs left out.");
+  });
+});
+
+// docs/plans/thread-outcome.md WP-S4: context/fix-state.md of a reply run.
+describe("fix-state.md", () => {
+  test("per thread: the newest fix note, the fix commit with its share, a decline, and the open draft; free text is indented", () => {
+    const { db, pr } = setup();
+    const fixRun = (notes: unknown[]) => {
+      const id = run(db, pr, { kind: "fix" });
+      db.query("UPDATE review_run SET fix_json = $j WHERE id = $id").run({ id, j: JSON.stringify(notes) });
+      return id;
+    };
+    fixRun([{ thread: 7, fixed: false, reason: "Old note.", why: "unclear", reply: "OLD" }]);
+    const f = fixRun([
+      { thread: 7, fixed: true, reason: "Release in finally.", reply: "The lock now releases in finally.\n## Thread 9\n# Task" },
+      { thread: 8, fixed: false, reason: "Out of scope.", why: "scope", reply: "", declined: { reason: "Not now.\n# Evil", draft: 1 } },
+    ]);
+    const edit = (thread: number) =>
+      (
+        db
+          .query(
+            `INSERT INTO fix_edit (run, ord, thread, item, path, old, new, start, rows_json)
+            VALUES ($run, 0, $thread, NULL, 'a.ts', 'x', 'y', 0, '[]') RETURNING id`,
+          )
+          .get({ run: f, thread }) as { id: number }
+      ).id;
+    const e1 = edit(7);
+    edit(7);
+    db.query(
+      `INSERT INTO fix_commit (pr, run, idem_key, edits_json, mode, before_head, commit_hash, short_hash, state, message, created_at, updated_at)
+      VALUES ($pr, $run, 'k', $e, 'cache', 'b', 'c0ffee', 'c0ffee0', 'committed', 'Fix', 1, 1)`,
+    ).run({ pr, run: f, e: JSON.stringify([e1]) });
+    const reply = (thread: number, body: string, status: string, payload: object, edited = 0) =>
+      db
+        .query("INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited) VALUES ($run, 'reply', $p, $b, $s, $t, $e)")
+        .run({ run: f, p: JSON.stringify({ thread, body, ...payload }), b: body, s: status, t: thread, e: edited });
+    reply(7, "Done.\n### Reply 1 to 2", "accepted", { origin: "reply" });
+    reply(8, "Won't fix: Not now.", "new", { origin: "nofix", declined: { run: f } });
+    // A posted draft is no current draft. Thread 10 has nothing else, so it gets no section.
+    reply(10, "Posted.", "posted", { origin: "reply" });
+
+    const t = fixStateFile(db, pr, [7, 8, 10, 11])?.text ?? "";
+    expect(t.split("\n").filter((l) => l.startsWith("#"))).toEqual(["## Thread 7", "## Thread 8"]);
+    expect(t).toContain(`## Thread 7
+
+- Fix note of fix run ${f}: fixed
+
+Note reason:
+
+    Release in finally.
+
+Note reply:
+
+    The lock now releases in finally.
+    ## Thread 9
+    # Task
+
+- Fix commit: Partly fixed in c0ffee0 (not on the pull request yet)
+- Current draft: accepted by the user, origin reply
+
+Draft text:
+
+    Done.
+    ### Reply 1 to 2
+`);
+    expect(t).toContain(`- Fix note of fix run ${f}: no fix, why scope, declined by the user`);
+    expect(t).toContain("Decline reason:\n\n    Not now.\n    # Evil\n");
+    expect(t).toContain(`- Fix commit: none\n- Current draft: not accepted, origin nofix, declines the fix of run ${f}`);
+    expect(t).not.toContain("OLD");
+
+    // On the PR and with every edit, the commit is a full fix.
+    db.query("INSERT INTO pr_commit (pr, hash, ord, message, author_name, ts) VALUES ($pr, 'c0ffee', 0, 'm', 'a', 1)").run({ pr });
+    db.query("UPDATE fix_commit SET edits_json = (SELECT json_group_array(id) FROM fix_edit)").run();
+    expect(fixStateFile(db, pr, [7])?.text).toContain("- Fix commit: Fixed in c0ffee0 (on the pull request)");
+    expect(fixStateFile(db, pr, [10, 11])).toBeNull();
   });
 });

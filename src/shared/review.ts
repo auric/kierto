@@ -95,7 +95,8 @@ export const replyResult = z.object({
 export type ReplyDraft = z.infer<typeof replyDraft>;
 export type ReplyResult = z.infer<typeof replyResult>;
 // review: a review run. reply: a reply run. fix: a "Fixed in" draft. nofix: the reply of a fix note without a fix. session: an import of
-// your session. resolve: a resolve proposal without a reply. user: a draft that the user wrote or declined a fix with.
+// your session. resolve: a resolve proposal without a reply. user: a draft that the user wrote. A "Won't fix" draft of a user decline
+// has origin nofix and declined set.
 export const replyOrigins = ["review", "reply", "fix", "nofix", "session", "resolve", "user"] as const;
 export type ReplyOrigin = (typeof replyOrigins)[number];
 // replyTo: the message that the reply answers. The post uses it as the parent.
@@ -106,7 +107,7 @@ export type ReplyOrigin = (typeof replyOrigins)[number];
 // resolveTick: the user's choice to resolve the thread after the post. Only a ticked draft resolves.
 // threadOpen: the thread was open when the app stored the draft. Absent in drafts stored before it existed.
 // origin: the writer of the draft (docs/plans/thread-outcome.md). Absent in drafts stored before it existed.
-// declined: the fix run whose proposal the user declined with this draft, else null.
+// declined: the fix run whose proposal the user declined with this draft, else null. No writer replaces such a draft (jobs.ts userDraft).
 export type ReplyPayload = Omit<ReplyDraft, "judgement" | "resolve" | "resolveEvidence"> & {
   judgement?: Judgement | null;
   replyTo: number;
@@ -178,7 +179,10 @@ export const fixResult = z.object({
 export type FixEdit = z.infer<typeof fixEdit>;
 export type FixThread = z.infer<typeof fixThread>;
 // A stored note. Only the app sets why to "dropped". drops: the drop reasons of its edits, only with why "dropped".
-export type FixNote = Omit<FixThread, "why"> & { why: FixWhy | null; drops?: string[] };
+// declined: the user declined the proposal ("Don't fix"). draft: the "Won't fix" reply draft of a thread. replaced: the open drafts
+// that it discarded. Undo of the decline brings the newest back.
+export type FixDecline = { reason: string; draft?: number; replaced?: number[] };
+export type FixNote = Omit<FixThread, "why"> & { why: FixWhy | null; drops?: string[]; declined?: FixDecline };
 export type FixResult = z.infer<typeof fixResult>;
 
 export const fixJsonSchema = (): Record<string, unknown> => z.toJSONSchema(fixResult, { target: "draft-07" });
@@ -190,6 +194,9 @@ const fixNotes = z.array(
       .nullable()
       .default(null),
     drops: z.array(z.string()).optional(),
+    declined: z
+      .object({ reason: z.string(), draft: z.number().int().optional(), replaced: z.array(z.number().int()).optional() })
+      .optional(),
   }),
 );
 // review_run.fix_json. Notes stored before why and reply existed get the defaults.

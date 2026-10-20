@@ -327,6 +327,8 @@ export function replyAgent(p: Profile): AgentSpec {
       "When the point is not settled, set resolve to false and say in the reply what is still missing.",
       "A reply with resolve true asks for nothing. When something still needs an action in this thread, set resolve to false and ask for it. When it belongs to another thread, name that thread as information only, with no request.",
       "Never write in the reply that the user resolves the thread. The user can untick the box, and the app does the resolve.",
+      "Never write that a fix is made without proof. The proof is the code at the head commit, or a fix commit for that thread in ./context/fix-state.md.",
+      "When the user declined a fix, do not offer the fix again.",
       'When the user asked a question in the thread and a newer message answers it fully, set judgement to "settled" and resolve to true. Put the message number of the answer and a short quote of it into resolveEvidence. Set action to "none", or give a short reply such as "Thanks, clear.".',
       'When a newer message answers only a part of the user\'s question, set judgement to "unsettled" and resolve to false. In the reply, ask the open part again.',
       "A thread can hold several questions of the user, such as the general comment with the questions of a review. Set resolve to true only when newer messages answer each question. Else name each open question in the reply.",

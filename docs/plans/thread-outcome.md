@@ -1,6 +1,6 @@
 # Thread outcome plan: one outcome per thread
 
-Status: in progress, 2026-10-20. WP-D, WP-C, and WP-S1 are done. Line references point to the code at HEAD 0db727e.
+Status: in progress, 2026-10-20. WP-D, WP-C, WP-S1, WP-S4, and WP-S2 are done. Line references point to the code at HEAD 0db727e.
 
 ## 1. Goal
 
@@ -16,17 +16,17 @@ Already landed: 0fe5659 keeps drafts that the user edited or accepted on AI runs
 |---|---|---|
 | P1 | A note with fixed false shows only the card "No fix proposed" (FixCard.tsx:219). It makes no reply draft. The reason is written for the user, not for the reviewer (review.ts fixThread, catalog.ts:344-359). | Partly: WP-S1 makes the nofix draft from the note reply (jobs.ts judgeFix). The fix card is WP-U1b. |
 | P2 | A note with fixed true loses all its edits in validateFix, so validateFix removes the note (fix.ts:108). The reason shows only in the coverage. The pending card lives only while the page is open (fix/model.ts:297-301, FixBar.tsx:123). | Partly: WP-S1 keeps the note with why dropped and drops (fix.ts validateFix). Until WP-U1b, the fix card shows it as "No fix proposed". |
-| P3 | The fix card has no Discard. An untick lives only in memory (FixBar.tsx:124). A reload ticks the newest run again (fix/model.ts:210-213). | Open |
+| P3 | The fix card has no Discard. An untick lives only in memory (FixBar.tsx:124). A reload ticks the newest run again (fix/model.ts:210-213). | Partly: WP-S2 stores a decline on the note (declined) and Apply refuses its edits. The UI is WP-U1b. |
 | P4 | A commit discarded edited or accepted drafts, and Undo did not restore them. | Landed in 0fe5659 (fix-routes.ts:203-206, 366-370, items.ts:51-53) |
-| P5 | A commit replaces an untouched AI answer with "Fixed in X." (fix-routes.ts:207-210). A commit with only a part of the edits of a thread still says fixed and proposes resolve (fix-routes.ts:222). | Open |
+| P5 | A commit replaces an untouched AI answer with "Fixed in X." (fix-routes.ts:207-210). A commit with only a part of the edits of a thread still says fixed and proposes resolve (fix-routes.ts:222). | Landed: WP-S2 keeps the answer, adds "Fixed in X: <what>", and gives "Partly fixed in X" without resolve. |
 | P6 | Draft replies discarded edited, accepted, and "Fixed in" drafts. | Landed: 0fe5659 protects edited and accepted drafts. WP-S1 keeps an untouched "Fixed in" or nofix draft on Draft replies (jobs.ts writerRank, end). |
 | P7 | The reply card and the fix card show side by side and can disagree (useReview.tsx:505-519). | Open |
 | P8 | A session accept without a reply gives "No reply needed" with the chip "Valid" (consult.ts:517, ReplyDraft.tsx:196-210, review/model.ts:520). The outcome must be "To fix". | Open |
 | P9 | Confirm is all or nothing. The first stale reply or unpushed fix stops all posts with one message and no thread (publish/routes.ts:99-105, outbox.ts:449-468). Accept stays on a stale card. | Open |
 | P10 | A draft goes into a thread that another person resolved after the draft. | Partly: 0fe5659 reopens the thread and shows the marker. The draft must stay out of the plan until the user confirms it. |
-| P11 | A rebased or squashed fix commit never reaches the PR, so the "Fixed in" draft waits forever (outbox.ts:460-468). An edit keeps the commit link (items.ts:81-85). | Open |
+| P11 | A rebased or squashed fix commit never reaches the PR, so the "Fixed in" draft waits forever (outbox.ts:460-468). An edit keeps the commit link (items.ts:81-85). | Partly: WP-S2 adds the item action plain. The button is WP-U1a. An edit still keeps the link. |
 | P12 | The Fix list ignores fix notes (fix/model.ts:28-37, 150). | Open |
-| P13 | A reply run does not see the fix state of a thread (catalog.ts:312-341). | Open |
+| P13 | A reply run does not see the fix state of a thread (catalog.ts:312-341). | Landed: WP-S4 adds context/fix-state.md (jobs.ts fixStateFile). |
 | P14 | A thread has no history of its drafts and fixes. | Later |
 | P15 | A BLOCKER task has no actions (Thread.tsx:150). | Later |
 | P16 | No signal tells the user that a draft is out of date (notify.ts:15-19). | Later |
@@ -72,7 +72,7 @@ Markers on the outcome line:
 - Open or To fix to Fix proposed: a fix run gives a note with fixed true and valid edits.
 - Fix proposed to Fixed in X or Partly fixed in X: Apply commits the ticked edits.
 - Fixed in X to Fix proposed: Undo of the commit. The replaced draft comes back.
-- Fix proposed to Won't fix: the user picks "Don't fix…" and types a reason. The app stores a user draft with declined {run} and folds the proposal.
+- Fix proposed to Won't fix: the user picks "Don't fix…" and types a reason. The app stores an unaccepted "Won't fix: <reason>" draft with origin nofix and declined {run}, and folds the proposal. No writer replaces it.
 - A fix run to Already done, Won't fix, Follow-up asked, or Needs your decision: a thread note with fixed false and why already, invalid, scope, or unclear makes a draft with origin nofix and the note reply as its body, not accepted. already also proposes resolve, ticked only on a thread that the user started. why decision and risk make no draft. A finding note makes no draft. A note without a reply makes no draft.
 - A fix run to Needs your decision: validateFix drops every edit of a fixed note. The app keeps the note with why dropped and the reasons in drops. It offers Fix again and Copy prompt, never a reply.
 - Any outcome to Out of date: new messages arrive. Confirm leaves the draft out of the plan.
@@ -85,8 +85,8 @@ Markers on the outcome line:
 | WP-D | This plan, BRIEF.md "Thread outcome", CLAUDE.md status. | Done |
 | WP-C | review.ts: fix note why (already, invalid, scope, decision, risk, unclear; dropped app-only) and reply, with defaults; parseFixNotes; reply payload origin and declined. dto.ts: fixDeclineInput, BlockedDraft on the post plan. | Done |
 | WP-S1 | Fix outcomes: the fix agent writes why and reply. A note with fixed false makes a nofix draft by the writer priority. validateFix keeps a dropped note with why dropped. Every writer sets origin. | Done |
-| WP-S4 | The reply run context shows the fix state of each thread: proposal, commit, decline. | implementer |
-| WP-S2 | Commit: "Partly fixed in X" without resolve; "Fixed in X: <what>" keeps any answer. Decline route "Don't fix…" (fixDeclineInput). "Post as plain reply" for a rebased fix. | implementer |
+| WP-S4 | The reply run context shows the fix state of each thread: proposal, commit, decline. | Done |
+| WP-S2 | Commit: "Partly fixed in X" without resolve; "Fixed in X: <what>" keeps any answer. Decline route "Don't fix…" (fixDeclineInput). "Post as plain reply" for a rebased fix. | Done |
 | WP-S3 | Partial confirm: the plan lists blocked drafts per item and thread. Confirm posts the rest. | implementer-xhigh |
 | WP-U1b | Fix UI: Don't fix…, the persistent fold, the dropped note with Fix again and Copy prompt, the Fix list with fix notes. | implementer-xhigh |
 | WP-U1a | The outcome line per thread, the markers, and a note when the reply and the fix disagree. | implementer-xhigh |

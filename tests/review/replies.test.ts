@@ -479,6 +479,13 @@ describe("drafts", () => {
       expect(third.items.map((i) => [payload(i).thread, payload(i).origin])).toEqual([[101, "reply"]]);
       expect(h.item(a.id)).toMatchObject({ status: "discarded" });
       expect(third.run.summary?.coverage.skipped).not.toContain(keptText(101));
+
+      // A "Won't fix" draft of a user decline is the user's choice. Even Draft again keeps it.
+      swap(b, { origin: "nofix", declined: { run: 1 } });
+      const fourth = await h.run([501]);
+      expect(fourth.items).toEqual([]);
+      expect(fourth.run.summary?.coverage.skipped).toContain(keptText(501));
+      expect(h.item(b.id)).toMatchObject({ status: "new" });
     },
     SLOW,
   );

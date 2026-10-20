@@ -549,6 +549,8 @@ export function triageText(before: ReviewItemDto, after: ReviewItemDto, action: 
       return after.anchor ? `Moved to line ${lineText(after.anchor)}.` : "Moved.";
     case "resolve":
       return replyOf(after).resolveTick ? "The thread resolves after the post." : "The thread stays open after the post.";
+    case "plain":
+      return "The draft posts as a plain reply. Accepted.";
   }
 }
 

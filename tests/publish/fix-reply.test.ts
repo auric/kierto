@@ -16,7 +16,8 @@ import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { createSyncEngine } from "../../src/server/sync/engine";
-import type { ConfirmDto } from "../../src/shared/dto";
+import type { ConfirmDto, ReviewItemDto } from "../../src/shared/dto";
+import type { ReplyPayload } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER, fixture, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
 import {
   ACTIVITIES_PATH,
@@ -135,11 +136,11 @@ async function setup() {
     )
     .get({ run, p: JSON.stringify(payload), b: body, t: ROOT }) as { id: number };
 
-  const confirm = async () => {
+  const confirm = async (revision = 0) => {
     const res = await app.request(`${ORIGIN}/api/prs/${id}/confirm`, {
       method: "POST",
       headers: HEADERS,
-      body: JSON.stringify({ items: [{ id: item, revision: 0 }] }),
+      body: JSON.stringify({ items: [{ id: item, revision }] }),
     });
     return { status: res.status, body: (await res.json()) as ConfirmDto & { error?: string } };
   };
@@ -150,9 +151,19 @@ async function setup() {
     await sync.syncNow();
   };
   const fixCommit: Commit = { ...structuredClone(COMMITS[0] as Commit), id: FIX, displayId: FIX.slice(0, 11), parents: [{ id: source }] };
+  const plain = async (revision: number) => {
+    const res = await app.request(`${ORIGIN}/api/items/${item}`, {
+      method: "POST",
+      headers: HEADERS,
+      body: JSON.stringify({ action: "plain", revision }),
+    });
+    return { status: res.status, body: (await res.json()) as ReviewItemDto & { error?: string } };
+  };
   return {
     db,
     id,
+    item,
+    plain,
     fake,
     posts,
     confirm,
@@ -196,5 +207,26 @@ describe("Fixed in replies", () => {
     expect(r.body.error).toContain("not on the PR source branch yet");
     await s.settle();
     expect(s.sent()).toBe(0);
+  });
+
+  test("thread outcome: a Fixed in draft whose commit is not on the PR becomes a plain accepted reply and posts; a pushed commit refuses it", async () => {
+    const s = await setup();
+    const r = await s.plain(0);
+    expect(r.status).toBe(200);
+    const p = r.body.payload as ReplyPayload;
+    expect([r.body.status, r.body.body, p.fix, p.origin]).toEqual(["accepted", "Fixed in c0ffee0.", undefined, "user"]);
+    const posted = await s.confirm(1);
+    expect(posted.status).toBe(202);
+    await s.settle();
+    expect(s.posts.bodies).toEqual([{ text: "Fixed in c0ffee0.", parent: { id: THEIRS } }]);
+    // A posted draft takes no more actions.
+    expect((await s.plain(r.body.revision)).status).toBe(409);
+  });
+
+  test("thread outcome: Post as plain reply is refused while the PR holds the commit", async () => {
+    const s = await setup();
+    await s.push(FIX, [s.fixCommit, ...COMMITS]);
+    const r = await s.plain(0);
+    expect([r.status, r.body.error]).toEqual([400, "The commit is on the pull request. The draft posts as it is."]);
   });
 });

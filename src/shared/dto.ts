@@ -474,6 +474,8 @@ export const itemActionInput = z.discriminatedUnion("action", [
   z.object({ action: z.literal("move"), revision: version, line: positiveInt }),
   // Reply drafts only: the tick of "Resolve after posting".
   z.object({ action: z.literal("resolve"), revision: version, resolve: z.boolean() }),
+  // A "Fixed in" draft whose commit is not on the PR: drop the commit link and accept the draft, so it posts as a plain reply.
+  z.object({ action: z.literal("plain"), revision: version }),
 ]);
 export type ItemActionInput = z.infer<typeof itemActionInput>;
 // item: the current item, for a reload.
@@ -749,6 +751,11 @@ export const fixDeclineInput = z
   })
   .refine((v) => (v.thread === undefined) !== (v.finding === undefined), { message: "Name exactly one thread or one finding." });
 export type FixDeclineInput = z.infer<typeof fixDeclineInput>;
+// Undo of a decline: the same run and target.
+export const fixUndeclineInput = z
+  .object({ run: positiveInt, thread: positiveInt.optional(), finding: positiveInt.optional() })
+  .refine((v) => (v.thread === undefined) !== (v.finding === undefined), { message: "Name exactly one thread or one finding." });
+export type FixUndeclineInput = z.infer<typeof fixUndeclineInput>;
 
 export const cloneProblems = [
   "not_set",

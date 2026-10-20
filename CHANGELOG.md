@@ -29,6 +29,9 @@
 - When a fix run gives no fix for a thread, it drafts your answer to the commenter with the reason: already done, not valid, out of scope, or unclear. The draft says "From the fix run." and posts only after your Accept.
 - An "already done" draft names the code that does it and proposes to resolve the thread. A choice that only you can make, or a risky fix, gets no draft.
 - A fix run never replaces a reply draft that you edited, accepted, or discarded, or a "Fixed in" draft. Draft replies keeps a "Fixed in" draft and a draft of a fix run too. Draft reply in that one thread replaces them.
+- A "Fixed in" draft keeps the answer that Claude drafted in the thread and adds "Fixed in X: <what the commit changes>".
+- A Fix commit with only a part of the edits of a thread drafts "Partly fixed in X" and proposes no resolve.
+- Draft replies sees the fix note, the fix commit, and the current draft of each thread. It no longer claims a fix without a commit.
 
 ### Fixes
 

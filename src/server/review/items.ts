@@ -29,6 +29,7 @@ const SQL = {
       anchor_state = $anchor_state, payload_json = $payload_json, revision = revision + 1
     WHERE id = $id AND revision = $revision AND status != 'posted'`,
   undone: "SELECT 1 FROM fix_commit WHERE id = $id AND state = 'undone'",
+  pushed: "SELECT 1 FROM pr_commit WHERE pr = $pr AND hash = $hash",
   otherOpen: `SELECT 1 FROM review_item i JOIN review_run r ON r.id = i.run
     WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread = $thread AND i.id <> $id AND i.status IN ('new', 'accepted')`,
 };
@@ -52,7 +53,9 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
   if (reply?.fix && input.action !== "discard" && db.query(SQL.undone).get({ id: reply.fix.id }))
     return conflict("The fix commit was undone, so this draft cannot post. Draft the reply again.");
   // One open draft per thread.
-  const opens = row.status === "discarded" && (input.action === "accept" || input.action === "restore" || input.action === "edit");
+  const opens =
+    row.status === "discarded" &&
+    (input.action === "accept" || input.action === "restore" || input.action === "edit" || input.action === "plain");
   if (reply && opens && db.query(SQL.otherOpen).get({ pr: row.pr, thread: row.thread, id }))
     return conflict("Another reply draft of this thread is open. Discard it first.");
   switch (input.action) {
@@ -69,9 +72,10 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
       // docs/plans/fix-ux.md decision 3: a restore of a finding that a fix commit discarded returns its earlier status. The mark stays.
       // session-consult.md part C: a session reject discards only open findings, so its mark is newer than a fixed mark. The restore
       // returns its status and removes it.
-      const p = JSON.parse(row.payload_json) as { fixed?: FixedMark; session?: SessionMark };
+      // A "Don't fix" decline (fix-routes.ts) is newer than a fixed mark: a declined proposal has no commit.
+      const p = JSON.parse(row.payload_json) as { fixed?: FixedMark; session?: SessionMark; declined?: { was: ReviewItemDto["status"] } };
       const rejected = row.status === "discarded" && p.session?.verdict === "reject" ? p.session : null;
-      next.status = row.status === "discarded" ? (rejected?.was ?? p.fixed?.was ?? "new") : "new";
+      next.status = row.status === "discarded" ? (rejected?.was ?? p.declined?.was ?? p.fixed?.was ?? "new") : "new";
       if (rejected) {
         const { session: _, ...rest } = p;
         next.payload_json = JSON.stringify(rest);
@@ -106,6 +110,16 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
       next.payload_json = JSON.stringify({ ...(JSON.parse(row.payload_json) as ReplyPayload), resolveTick: input.resolve });
       // An accepted draft without a body has nothing to post once the tick is off.
       if (!input.resolve && !row.body.trim() && row.status === "accepted") next.status = "new";
+      break;
+    }
+    case "plain": {
+      // docs/plans/thread-outcome.md: a rebased or squashed fix commit never reaches the PR. Without the link, the draft posts as a reply.
+      if (!reply?.fix) return { status: 400, error: "Only a Fixed in draft can become a plain reply." };
+      if (db.query(SQL.pushed).get({ pr: row.pr, hash: reply.fix.commit }))
+        return { status: 400, error: "The commit is on the pull request. The draft posts as it is." };
+      const { fix: _, ...rest } = reply;
+      next.payload_json = JSON.stringify({ ...rest, origin: "user" } satisfies ReplyPayload);
+      next.status = "accepted";
       break;
     }
   }

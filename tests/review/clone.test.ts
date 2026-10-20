@@ -30,7 +30,7 @@ import { cachePath, gitSetup, syncCache } from "../../src/server/review/workspac
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { createSyncEngine } from "../../src/server/sync/engine";
-import type { CloneDto, CloneProblem, FixCommitDto, FixConflict, ReviewItemDto } from "../../src/shared/dto";
+import type { CloneDto, CloneProblem, FixCommitDto, FixConflict, FixDto, ReviewItemDto } from "../../src/shared/dto";
 import type { ReplyPayload } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
 import { ACTIVITIES_PATH, activities, DASHBOARD_PATH, onePage, ownPr, PR_PATH, PR_REF } from "../support/scenarios";
@@ -239,10 +239,10 @@ async function setup() {
     id: number;
   };
 
-  const call = async <T>(method: string, path: string, body?: unknown) => {
+  const call = async <T>(method: string, path: string, body?: unknown, headers = HEADERS) => {
     const res = await app.request(`${ORIGIN}${path}`, {
       method,
-      headers: HEADERS,
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await res.text();
@@ -459,7 +459,8 @@ describe("apply and commit", () => {
 
       const [draft, fixed] = s.items();
       expect(draft).toMatchObject({ id: s.draft, status: "discarded", revision: 1 });
-      expect(fixed).toMatchObject({ status: "new", body: `Fixed in ${r.body.short}.` });
+      // thread-outcome.md: the draft keeps the untouched answer. The run has no note reply, so the line names only the commit.
+      expect(fixed).toMatchObject({ status: "new", body: `Will do.\n\nFixed in ${r.body.short}.` });
       const payload = JSON.parse(fixed?.payload_json ?? "{}") as ReplyPayload;
       expect(payload).toMatchObject({
         thread: ROOT,
@@ -939,6 +940,161 @@ describe("cache mode", () => {
       } finally {
         rmSync(join(process.env.HOME as string, ".gitconfig"), { force: true });
       }
+    },
+    SLOW,
+  );
+});
+
+// docs/plans/thread-outcome.md WP-S2: the Fixed in text, a partial commit, and "Don't fix" with its undo.
+describe("thread outcome", () => {
+  const NOTE = { thread: ROOT, fixed: true, reason: "R.", why: null, reply: "The lock now releases in finally." };
+  const notes = (s: Awaited<ReturnType<typeof setup>>, list: unknown[]) =>
+    s.db.query("UPDATE review_run SET fix_json = $j WHERE id = $id").run({ id: s.run, j: JSON.stringify(list) });
+  const payloadOf = (row: { payload_json: string } | undefined) => JSON.parse(row?.payload_json ?? "{}") as ReplyPayload;
+  const record = (s: Awaited<ReturnType<typeof setup>>) => {
+    const sent: unknown[] = [];
+    const broadcast = s.live.broadcast;
+    s.live.broadcast = (event, data) => {
+      sent.push([event, data]);
+      broadcast(event, data);
+    };
+    return sent;
+  };
+
+  test(
+    "Fixed in X: <what> keeps the untouched answer; a partial commit says Partly fixed and proposes no resolve; the rest completes it",
+    async () => {
+      const s = await setup();
+      notes(s, [NOTE]);
+      expect((await s.setClone(await makeClone())).status).toBe(200);
+      const r1 = await s.apply([s.ids[0] as number], "cache");
+      expect(r1.status).toBe(201);
+      const [draft, partly] = s.items();
+      expect(draft).toMatchObject({ id: s.draft, status: "discarded" });
+      expect(partly).toMatchObject({
+        status: "new",
+        body: `Will do.\n\nPartly fixed in ${r1.body.short}: The lock now releases in finally.`,
+      });
+      expect(payloadOf(partly)).toMatchObject({ resolve: false, resolveEvidence: "", resolveTick: false, origin: "fix" });
+      expect(payloadOf(partly).fix).toEqual({ id: r1.body.id, commit: r1.body.commit as string, replaced: [s.draft] });
+
+      // A commit holds a part of the fix, so Don't fix is refused.
+      const refused = await s.call<{ error: string }>("POST", "/api/fix-declines", { run: s.run, thread: ROOT, reason: "No." });
+      expect([refused.status, refused.body.error]).toEqual([409, "A fix commit holds this fix. Undo the commit first."]);
+
+      // The rest of the edits completes the fix. The Partly fixed draft is no answer, so the new draft holds only the line.
+      const r2 = await s.apply([s.ids[1] as number, s.ids[2] as number], "cache");
+      expect(r2.status).toBe(201);
+      const full = s.items().at(-1);
+      expect(full).toMatchObject({ status: "new", body: `Fixed in ${r2.body.short}: The lock now releases in finally.` });
+      expect(payloadOf(full)).toMatchObject({
+        resolve: true,
+        resolveEvidence: `Commit ${r2.body.short} changes docs/flush.md, README.md.`,
+      });
+      expect(s.items().find((i) => i.id === partly?.id)).toMatchObject({ status: "discarded" });
+    },
+    SLOW,
+  );
+
+  test(
+    "Don't fix on a thread: an unaccepted Won't fix draft and a stored fold that blocks Apply; Undo brings the proposal and the draft back",
+    async () => {
+      const s = await setup();
+      notes(s, [NOTE]);
+      const sent = record(s);
+      const decline = (body: unknown) => s.call<{ error: string }>("POST", "/api/fix-declines", body);
+      const undecline = (body: unknown) => s.call<{ error: string }>("POST", "/api/fix-declines/undo", body);
+      const declinedNote = async () =>
+        (await s.call<FixDto[]>("GET", `/api/prs/${s.id}/fixes`)).body.find((f) => f.run.id === s.run)?.threads[0]?.declined;
+
+      for (const bad of [
+        { run: s.run, reason: "x" },
+        { run: s.run, thread: ROOT, finding: 1, reason: "x" },
+        { run: s.run, thread: ROOT, reason: " " },
+      ])
+        expect((await decline(bad)).status).toBe(400);
+      const missing = await decline({ run: s.run, thread: 999, reason: "x" });
+      expect([missing.status, missing.body.error]).toEqual([404, "Fix note not found."]);
+      expect(sent).toEqual([]);
+
+      expect((await decline({ run: s.run, thread: ROOT, reason: "Out of scope here." })).status).toBe(204);
+      expect(sent).toEqual([["changed", { prs: [s.id], runs: [s.run] }]]);
+      const [draft, wont] = s.items();
+      expect(draft).toMatchObject({ id: s.draft, status: "discarded" });
+      expect(wont).toMatchObject({ status: "new", body: "Won't fix: Out of scope here." });
+      expect(payloadOf(wont)).toMatchObject({
+        origin: "nofix",
+        declined: { run: s.run },
+        resolve: false,
+        resolveTick: false,
+        replyTo: s.newest(),
+        threadOpen: true,
+      });
+      // The fold is stored: a new request reads it, and Apply refuses the declined edits.
+      expect(await declinedNote()).toEqual({ reason: "Out of scope here.", draft: wont?.id as number, replaced: [s.draft] });
+      expect((await s.call<ReviewItemDto[]>("GET", `/api/prs/${s.id}/reply-drafts`)).body.map((i) => i.id)).toEqual([wont?.id as number]);
+      const blocked = await s.apply(s.ids, "cache");
+      expect([blocked.status, blocked.body.error]).toEqual([409, `You declined the fix of thread ${ROOT}. Undo the decline first.`]);
+      expect(s.db.query("SELECT COUNT(*) AS n FROM fix_commit").get()).toEqual({ n: 0 });
+      const again = await decline({ run: s.run, thread: ROOT, reason: "Again." });
+      expect([again.status, again.body.error]).toEqual([409, "You declined this fix already."]);
+
+      sent.length = 0;
+      expect((await undecline({ run: s.run, thread: ROOT })).status).toBe(204);
+      expect(sent).toEqual([["changed", { prs: [s.id], runs: [s.run] }]]);
+      expect(await declinedNote()).toBeUndefined();
+      const after = s.items();
+      expect(after[0]).toMatchObject({ id: s.draft, status: "new" });
+      expect(after[1]).toMatchObject({ id: wont?.id, status: "discarded" });
+      expect(payloadOf(after[1]).declined).toBeNull();
+      const twice = await undecline({ run: s.run, thread: ROOT });
+      expect([twice.status, twice.body.error]).toEqual([409, "This fix is not declined."]);
+    },
+    SLOW,
+  );
+
+  test(
+    "Don't fix on a finding discards it with the reason and makes no draft; Undo gives its status back",
+    async () => {
+      const s = await setup();
+      const { id: review } = s.db
+        .query(
+          `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, started_at, finished_at)
+          VALUES ($pr, 'review', 'general', '', 'review', 's', 't', 'completed', 1, 2) RETURNING id`,
+        )
+        .get({ pr: s.id }) as { id: number };
+      const { id: finding } = s.db
+        .query(
+          `INSERT INTO review_item (run, kind, payload_json, body, path, side, line, line_end, anchor_state, status)
+          VALUES ($run, 'finding', '{"body":"B."}', 'B.', 'README.md', 'new', 1, 1, 'exact', 'accepted') RETURNING id`,
+        )
+        .get({ run: review }) as { id: number };
+      notes(s, [{ finding, fixed: true, reason: "R.", why: null, reply: "" }]);
+      const row = () =>
+        s.db
+          .query("SELECT status, json_extract(payload_json, '$.declined') AS declined FROM review_item WHERE id = $id")
+          .get({ id: finding });
+      const sent = record(s);
+      const replies = s.items();
+      expect((await s.call("POST", "/api/fix-declines", { run: s.run, finding, reason: "Not worth it." })).status).toBe(204);
+      expect(sent).toEqual([["changed", { prs: [s.id], runs: [s.run, review] }]]);
+      expect(row()).toEqual({ status: "discarded", declined: JSON.stringify({ run: s.run, reason: "Not worth it.", was: "accepted" }) });
+      expect(s.items()).toEqual(replies);
+      expect((await s.call("POST", "/api/fix-declines/undo", { run: s.run, finding })).status).toBe(204);
+      expect(row()).toEqual({ status: "accepted", declined: null });
+    },
+    SLOW,
+  );
+
+  test(
+    "the decline routes need the session token",
+    async () => {
+      const s = await setup();
+      notes(s, [NOTE]);
+      const { "x-rl-session": _, ...headers } = HEADERS;
+      for (const path of ["/api/fix-declines", "/api/fix-declines/undo"])
+        expect((await s.call("POST", path, { run: s.run, thread: ROOT, reason: "x" }, headers)).status).toBe(403);
+      expect(s.items()).toHaveLength(1);
     },
     SLOW,
   );
