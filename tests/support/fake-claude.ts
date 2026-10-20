@@ -109,15 +109,13 @@ export function echoAnswer(stdin: string) {
   return { answer: `Echo: ${question}`, coverage: NO_COVERAGE };
 }
 
-// A session answer (docs/plans/session-consult.md part C): one reject per item under a "needs a verdict" heading of the stdin.
+// A session answer (docs/plans/session-consult.md part C): one reject per item tag with status open in the stdin.
 // fix: the schema asks for fixes too (part D). A reject needs no fix, so the fix has no note and no edit.
 export function echoConsult(stdin: string, fix = false) {
-  let verdict = false;
   const answers: { id: string; verdict: string; reason: string }[] = [];
   for (const l of stdin.split(/\r?\n/)) {
-    if (l.startsWith("## ")) verdict = l.endsWith("needs a verdict");
-    const id = /^### ([TF]\d+)$/.exec(l)?.[1];
-    if (id && verdict) answers.push({ id, verdict: "reject", reason: `Echo: the session rejects ${id}.` });
+    const id = /^<item-[0-9a-f]+ id="([TF]\d+)" status="open">$/.exec(l)?.[1];
+    if (id) answers.push({ id, verdict: "reject", reason: `Echo: the session rejects ${id}.` });
   }
   return fix ? { answers, fix: { summary: "Echo: no fix.", threads: [], edits: [], coverage: NO_COVERAGE } } : { answers };
 }

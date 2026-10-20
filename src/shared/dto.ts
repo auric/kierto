@@ -456,7 +456,7 @@ export type ReviewItemDto = {
   body: string;
   // finding: the AnchoredFinding as validated. question: the Question. reply: the ReplyPayload; body is empty for action none.
   // carried: the item came from the base run of a re-review. fixed: findings only, a fix commit covers the finding.
-  // session: the verdict of your session (docs/plans/session-consult.md part B).
+  // session: the verdict of your session (docs/plans/session-consult.md part C).
   payload: (AnchoredFinding | Question | ReplyPayload) & { carried?: Carried; fixed?: FixedMark; session?: SessionMark };
   // Findings only: the current anchor.
   anchor: (Anchor & { side: Side }) | null;

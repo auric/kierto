@@ -194,7 +194,7 @@ export type Carried = { from: number; verdict: Verdict; reason: string; since: s
 // was: the status before the mark. An undo of the commit and a restore by the user return it. A restore keeps the mark.
 export type FixedMark = { id: number; commit: string; short: string; was: "new" | "accepted" };
 
-// docs/plans/session-consult.md part B: the verdict of the session that wrote the code. run: the consult run of the paste.
+// docs/plans/session-consult.md part C: the verdict of the session that wrote the code. run: the consult run of the import.
 // was: findings only, the status before a reject discarded it. replaced: reply drafts only, the open drafts that it replaced.
 // A reject mark lives only while its discard holds: a restore or an undo removes it.
 export type SessionMark = {

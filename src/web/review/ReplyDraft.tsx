@@ -111,7 +111,7 @@ export function JudgementChip({ j }: { j: Judgement }) {
   );
 }
 
-// who: "Your session" for a draft from a pasted session answer (session-consult.md part B), else the runner.
+// who: "Your session" for a draft from an imported session answer (session-consult.md part C), else the runner.
 function Head({ meta, who, children }: { meta: MetaDto; who: string; children?: ReactNode }) {
   return (
     <div className="flex min-h-(--av) flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-muted-foreground">

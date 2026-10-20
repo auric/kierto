@@ -217,13 +217,14 @@ type RunRow = {
 
 // docs/plans/session-consult.md part C. path: the transcript; it stays on the server and out of the database. prompt: the text of
 // part A with SESSION_RULES. snapshot: the item keys of the text at the start, for the change check of the preview.
-// Part D: mode fix also proposes edits. asked: the IDs of the items in the text that need a verdict.
+// Part D: mode fix also proposes edits. asked: the IDs of the items in the text that need a verdict. tag: the tag suffix of prompt.
 export type SessionStart = {
   path: string;
   id: string;
   title: string | null;
   bytes: number;
   prompt: string;
+  tag: string;
   snapshot: Record<string, string>;
   groups: ConsultGroup[];
   items: number;
@@ -233,7 +234,7 @@ export type SessionStart = {
 };
 // consult_json of a session run. No transcript text. mode: absent before part D. A fix run that an import made from the proposal of a
 // session run (consult.ts) holds a copy with run: the session run, and paste: the consult run of the import.
-export type SessionRecord = Omit<SessionStart, "path" | "prompt" | "id" | "asked" | "mode"> & {
+export type SessionRecord = Omit<SessionStart, "path" | "prompt" | "tag" | "id" | "asked" | "mode"> & {
   session: string;
   tokens: number;
   mode?: SessionMode;
@@ -899,7 +900,7 @@ function judgeAsk(o: RunOutcome, servers: string[], gaps: string[]): Ending {
   });
 }
 
-// docs/plans/session-consult.md part C: a session run makes no items. Its entries go to answer. The preview of part B checks each
+// docs/plans/session-consult.md part C: a session run makes no items. Its entries go to answer. The answer preview checks each
 // entry again, and nothing changes before the user clicks Apply.
 // Part D: fix holds the workspace and the items that need a verdict. validateFix keeps only the edits for accepted items. The notes
 // go to fix_json and the edits to fix_edit of the session run. Only an import copies them into a fix run, so no fix card shows before.
@@ -1914,7 +1915,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const { source_head, target_head } = pr;
       if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
       if (pr.my_role !== "AUTHOR") return { status: 409, error: "Ask your session works only on your own pull requests." };
-      const key = [id, "session", source_head, target_head, s.id, sha256(s.prompt)].join(":");
+      // The tag suffix is new for each start, so the key leaves it out.
+      const key = [id, "session", source_head, target_head, s.id, sha256(s.prompt.replaceAll(s.tag, ""))].join(":");
       const busy = taken(db, key);
       if (busy) return busy;
       const record: SessionRecord = {
@@ -2002,7 +2004,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       return job?.id === run && job.db === db && cancelActive() ? "cancelled" : "not_running";
     },
 
-    // pr: the runs of one PR. null: the runs of all PRs. Newest first. A consult run (session-consult.md part B) and the fix run of a
+    // pr: the runs of one PR. null: the runs of all PRs. Newest first. A consult run (session-consult.md part C) and the fix run of a
     // session import (part D) start no process, so no run list shows them. The fix cards show the fix run of an import.
     // R14: the list of one PR also keeps its newest review run, and its newest review run with a result, when newer runs fill the limit.
     // The UI shows the drafts of the newest review run with a result after a cancelled or failed one.

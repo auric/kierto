@@ -58,7 +58,7 @@ export type FixUi = {
   open: (thread?: number | null, key?: boolean) => void;
   // Opens the Fix list with only this finding ticked. A pull request of another author or a closed finding gives a toast.
   openFinding: (id: number, key?: boolean) => void;
-  // Opens the Fix list with exactly these targets ticked: the accepts of a session answer (session-consult.md part B).
+  // Opens the Fix list with exactly these targets ticked: the accepts of a session answer (session-consult.md part C).
   openWith: (targets: FixTarget[]) => void;
   // Copies the runner prompt of the thread. Call it in the click handler. Resolves to the next step, or null.
   copyPrompt: (thread: number) => Promise<string | null>;

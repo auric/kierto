@@ -158,19 +158,19 @@ Fix for threads and for review findings ships with docs/plans/fix-ux.md WP2 to W
 
 ## K. Consult the session that wrote the code
 
-Parts A and B (package S1), part C (package S2), and part D (package S3) of docs/plans/session-consult.md. Run steps 12 to 27 only after a B16 PASS.
+Part A (package S1, changed 2026-10-20), part C (package S2), and part D (package S3) of docs/plans/session-consult.md. Part B (paste the answer) was removed on 2026-10-20. Run steps 12 to 27 only after a B16 PASS.
 
 1. Use the test pull request after part J. Keep at least one open reviewer thread, one thread of your own, one resolved thread, and one review finding that is not posted. If Files offers "Get the code", click it.
 2. Open More (…) in the action bar. Click "Copy for your session…". Expect four groups, all ticked, each with its count, and the line "N items, X KB."
 3. Untick "Resolved threads". Reload the page. Open the dialog again. Expect "Resolved threads" unticked. Tick it again.
-4. Click "Copy N items". Paste the clipboard into an empty editor window. Expect the PR key, both branches, the head commit, the task keys, and the changed files. Expect the IDs T<id> and F<id>, the code at the head, each full conversation, and an "Outdated" line for each inline item. Do not save the text.
-5. Open a terminal in `<CLONE>`. Run `claude` and resume the session that wrote the code, or start a new one. Paste the text. Expect one fenced json block as the answer. Do not let the session change files.
-6. Copy the answer. In the app, open More, click "Paste the answer…", and paste it. Expect one preview row per entry with its action, and each skipped row with its reason.
-7. Click "Apply N changes". Expect the result line. Expect a "Your session" reply draft under each rejected or questioned thread, and "Rejected by your session" on each rejected finding. Expect nothing new on the pull request in Bitbucket.
-8. Click "Open the Fix list". Expect exactly the accepted items ticked. Click Cancel. Press F. Expect the same items ticked.
-9. Ask the second user to reply in one thread of the answer. Click "Check now". Paste the same answer again. Expect that thread row "Skipped. Changed since the copy."
-10. Click Apply, then Undo in the result view. Expect the new session drafts gone and the findings back in their earlier status.
-11. Discard the remaining session drafts.
+4. Click "Copy N items". Paste the clipboard into an empty editor window. Expect the PR key, both branches, the head commit, the task keys, the changed files, and the section "What to do". Expect the items between `<suggestions-XXXX>` and `</suggestions-XXXX>`, each in `<item-XXXX id="T<id>" status="open">` or `status="resolved"`, with the same suffix XXXX in every tag. Expect the code at the head, each full conversation, and an "Outdated" line for each inline item. Expect no JSON answer format. Do not save the text.
+5. Open a terminal in `<CLONE>`. Run `claude` and resume the session that wrote the code, or start a new one. Paste the text. Expect the session to check each open item against the code, edit the files for the valid ones, and explain each rejection with its ID in plain text. Expect no edit for a resolved item.
+6. Run `git -C <CLONE> status` and `git -C <CLONE> diff`. Expect only edits for the items that the session accepted. Expect no push and nothing new on the pull request in Bitbucket.
+7. In the text of step 4, find a comment with several lines. Expect each line of the comment text indented by 4 spaces, so no comment line starts a tag.
+8. Open the dialog again and copy again. Expect a new suffix in every tag.
+9. Open More. Expect no "Paste the answer…". Press F. Expect the Fix list footer with "Copy for your session" and no paste link. Close the list.
+10. Optional: commit and push the edits yourself. Click "Check now". Click "Review changes since", then Draft replies. Expect the results to come back as resolve proposals and reply drafts.
+11. If you do not keep the edits, revert them in `<CLONE>` yourself.
 12. Open Settings, Clones. Expect the switch "Let Kierto find and consult your Claude Code sessions" off, and its text about the folder, branch, time, and title lines and the plan quota. Open the test pull request and open More. Expect no "Ask your session…".
 13. List the files in the projects folder of the session of step 5 (`~/.claude/projects/<folder>`). Record the count of `.jsonl` files only.
 14. Turn the switch on. Open More and click "Ask your session…". Expect the four groups and, under "Session on branch <source branch>", the sessions of that branch. Expect a session in `<CLONE>` first, with "In your clone". Each row shows a title, the folder name, the last use, the size, and a token estimate. Expect the cost line. Expect no message text of a transcript anywhere in the dialog.

@@ -60,7 +60,7 @@ Scroll order: Header, Action bar (sticky), Status strip, Panel slot (brief or As
 - Draft replies shows when the PR has threads. N is the count of threads where it is your turn. With N = 0 the button has no count. A click opens a popover: "No thread waits for your reply. Your message is the newest in each open thread. They wait for the other person." With no open thread: "No open thread. Every thread is resolved, so no reply is due."
 - Fix N shows on an own PR only and is never disabled. N is the count of open, unresolved threads with a live message (BRIEF:69). A click or F opens the Fix list (2.12).
 - Review opens the brief. The brief holds the profile, "Edit <profile>", and the run setup.
-- More: "Open on the server", "Copy the pull request link". On an own PR also "Copy for your session..." and "Paste the answer..." (section 9).
+- More: "Open on the server", "Copy the pull request link". On an own PR also "Copy for your session..." (section 9). "Paste the answer..." was removed on 2026-10-20.
 - When the header leaves the view, the bar shows the key and the title, as today.
 - In a pane of 520 px or less: "Draft replies" becomes "Replies", and the stuck title hides. Every button keeps a text label.
 
@@ -254,9 +254,9 @@ All other keys stay: j, k, Enter, Right, Esc, Left, /, ?, n, N, y, o, g c, g d, 
 - No new REST call. The file click uses the existing "Get the code" route (`useGetCode`, diff/data.ts).
 
 ## 9. Consult the session that wrote the code (S1 done)
-- Places: the More menu of an own PR ("Copy for your session...", "Paste the answer...") and a link in the Fix list footer. In the prototype they show a "Planned" tag and a toast.
-- docs/plans/session-consult.md applies: items in groups with IDs (T<thread>, F<finding>), a JSON answer, and a paste that maps verdicts to reply drafts, finding marks, and Fix ticks. Nothing posts.
-- Package S1 built parts A and B. Package S2 built part C (0bd573c) after gate B16 passed.
+- Places: the More menu of an own PR ("Copy for your session...") and a link in the Fix list footer. In the prototype they show a "Planned" tag and a toast.
+- docs/plans/session-consult.md applies: items in groups with IDs (T<thread>, F<finding>) in tags with a random suffix, and a plain "validate and implement" prompt. Nothing posts.
+- Package S1 built parts A and B. Package S2 built part C (0bd573c) after gate B16 passed. Part B (paste the answer) was removed on 2026-10-20.
 
 ## 10. Implementation packages
 

@@ -8,7 +8,6 @@ import {
   Archive,
   Check,
   ClipboardCopy,
-  ClipboardPaste,
   Copy,
   Ellipsis,
   ExternalLink,
@@ -190,7 +189,7 @@ function MoreMenu({
   pr: PrRow;
   forge: string;
   announce: (text: string) => void;
-  consult: Pick<ConsultUi, "copy" | "paste" | "session" | "sessions">;
+  consult: Pick<ConsultUi, "copy" | "session" | "sessions">;
 }) {
   const web = webLink(pr.webUrl);
   const own = pr.role === "AUTHOR";
@@ -237,7 +236,6 @@ function MoreMenu({
               {item("Copy for your session…", "Give open comments to the session that wrote the code.", ClipboardCopy, () =>
                 consult.copy(),
               )}
-              {item("Paste the answer…", "Turn its verdicts into reply drafts and Fix ticks.", ClipboardPaste, () => consult.paste())}
               {/* docs/plans/session-consult.md part C. It shows only while its opt-in in Settings, Clones is on. */}
               {consult.sessions &&
                 item("Ask your session…", "Resume a copy of the session that wrote the code and ask it directly.", History, () =>
@@ -407,7 +405,7 @@ export function Header(props: {
   onFull: () => void;
   onTaskIds: () => void;
   announce: (text: string) => void;
-  consult: Pick<ConsultUi, "copy" | "paste" | "session" | "sessions">;
+  consult: Pick<ConsultUi, "copy" | "session" | "sessions">;
   action: ReactNode;
   slot: ReactNode;
 }) {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Session consult API (docs/plans/session-consult.md parts A, B, and C): GET /prs/:id/consult, POST /prs/:id/consult/import,
+// Session consult API (docs/plans/session-consult.md parts A, C, and D): GET /prs/:id/consult, POST /prs/:id/consult/import,
 // POST /prs/:id/consult/:run/undo, GET /prs/:id/consult/sessions, POST /prs/:id/consult/session, and GET /prs/:id/consult/session/:run.
 // Own pull requests only. Nothing goes to the server: the import writes local drafts and marks, and a session run only proposes.
 import { Hono } from "hono";
@@ -25,7 +25,7 @@ const prParam = validator("param", (v: Record<string, string>, c) => {
 const undoParam = validator("param", (v: Record<string, string>, c) => {
   const id = positive(v.id);
   const run = positive(v.run);
-  return id && run ? { id, run } : c.json<ApiError>({ error: "Invalid pull request or paste ID." }, 400);
+  return id && run ? { id, run } : c.json<ApiError>({ error: "Invalid pull request or import ID." }, 400);
 });
 const runParam = validator("param", (v: Record<string, string>, c) => {
   const id = positive(v.id);

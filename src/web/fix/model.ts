@@ -88,7 +88,7 @@ const placeText = (t: ThreadModel) => {
 // findings: the finding drafts of the newest review run, in screen order.
 // Decision D6: your own comments and posted findings start unticked. Valid and partly valid start ticked, unless a commit fixed them.
 // The plans give no default tick for a finding. Accepted findings start ticked and new ones do not. A restore returns the status of a fixed one.
-// session-consult.md part B: an accept of your session ticks any thread or finding.
+// session-consult.md part C: an accept of your session ticks any thread or finding.
 export function fixTargets(
   threads: ThreadModel[],
   replies: ReviewItemDto[] | undefined,

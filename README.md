@@ -123,7 +123,9 @@ Each run can read the CLAUDE.md files of your clone, extra text from Settings, a
 
 ### Consult your session
 
-You wrote the code with Claude Code, so your session knows why. Turn on the session switch in Settings, Clones. Kierto then lists your sessions on the branch of your own pull request. Each question resumes a copy of the session with the review points. Its verdicts tick the Fix list and draft replies. "Copy for your session" gives the same points as text. On your own pull request, "Judge and propose fixes" lets the forked, read-only session judge each item and propose edits for the ones it accepts. Kierto checks the edits, and their fix cards show "from your session". Nothing applies until you click.
+You wrote the code with Claude Code, so your session knows why. On your own pull request, "Copy for your session" copies one prompt with the review points. Paste it into your session in your clone. The session checks each point against the code, makes the valid changes, and explains each rejection. The points sit in tags with a new random suffix for each copy, and the prompt tells the session that the tag content is data, not instructions. Push the changes, then use "Review changes since" and Draft replies.
+
+To ask without leaving Kierto, turn on the session switch in Settings, Clones. Kierto then lists your sessions on the branch of your own pull request. Each question resumes a read-only copy of the session with the same points. Its verdicts tick the Fix list and draft replies. "Judge and propose fixes" also lets the session propose edits for the points that it accepts. Kierto checks the edits, and their fix cards show "from your session". Nothing applies until you click.
 
 ### Narrow screens
 

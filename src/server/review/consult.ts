@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Session consult (docs/plans/session-consult.md parts A, B, and C): the header and the item blocks of the copied text, the import
-// and undo of a session answer, and the start of a direct session run. The text holds only what the app shows: no token, no setting, no host.
+// Session consult (docs/plans/session-consult.md parts A, C, and D): the header and the item blocks of the text, the import and undo
+// of a session answer, and the start of a direct session run. The text holds only what the app shows: no token, no setting, no host.
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import {
@@ -374,7 +374,7 @@ function header(o: {
   const lines = [
     `# Review points on my pull request ${oneLine(o.key)}`,
     "",
-    "You wrote the code of this pull request. Kierto collected the review points below. Judge each point that needs a verdict.",
+    "You wrote the code of this pull request. Kierto collected the review points below.",
     "",
     `- Pull request: ${oneLine(o.key)}, "${oneLine(o.title)}"`,
     `- Branch: ${oneLine(o.source ?? "?")} into ${oneLine(o.target ?? "?")}`,
@@ -476,14 +476,10 @@ function fixFromSession(db: Database, o: { pr: number; session: number; paste: n
 }
 
 // One transaction. Each row of the plan with an act changes the database. The other rows change nothing.
-// A session import reads the entries and the item keys of its run on the server.
+// The import reads the entries and the item keys of the session run on the server.
 export async function importAnswer(s: ConsultSource, prId: number, input: ConsultImportInput, now = Date.now()): Promise<ImportOut> {
-  let given: { entries: unknown[]; snapshot: Record<string, string> | null; session: number | null };
-  if ("session" in input) {
-    const a = s.review.sessionAnswer(s.db, prId, input.session);
-    if (!a) return { status: 404, error: "Answer not found." };
-    given = { entries: a.entries, snapshot: a.snapshot, session: input.session };
-  } else given = { ...input, session: null };
+  const given = s.review.sessionAnswer(s.db, prId, input.session);
+  if (!given) return { status: 404, error: "Answer not found." };
   const data = await consultData(s, prId, false);
   if ("error" in data) return data;
   const rows = planAnswer(data.items, given.entries, given.snapshot);
@@ -541,7 +537,7 @@ export async function importAnswer(s: ConsultSource, prId: number, input: Consul
         if (n && r.verdict === "accept") out.ticks.findings.push(target);
       }
     }
-    const fix = given.session === null ? null : fixFromSession(db, { pr: prId, session: given.session, paste: id, ticks: out.ticks, now });
+    const fix = fixFromSession(db, { pr: prId, session: input.session, paste: id, ticks: out.ticks, now });
     return { id, fix };
   })();
   const runs = (db.query(SQL.markedRuns).all({ run: run.id }) as { run: number }[]).map((x) => x.run);
@@ -616,7 +612,7 @@ export async function startSession(
   const data = await consultData(s, prId);
   if ("error" in data) return data;
   if (s.review.open() !== s.db) return CHANGED;
-  const t = consultText(data, new Set(input.groups));
+  const t = consultText(data, new Set(input.groups), "session");
   if (!t.ids.length) return { status: 400, error: "Nothing to ask. Tick a group with items." };
   const byId = new Map(data.items.map((it) => [it.id, it]));
   const mode = input.mode ?? "judge";
@@ -626,6 +622,7 @@ export async function startSession(
     title: picked.title,
     bytes: picked.bytes,
     prompt: sessionPrompt(t.text, mode),
+    tag: t.tag,
     snapshot: Object.fromEntries(t.ids.map((id) => [id, byId.get(id)?.key ?? ""])),
     groups: input.groups,
     items: t.ids.length,
@@ -645,7 +642,7 @@ type UndoOut = { status: 200; dto: ConsultUndoDto; runs: number[] } | { status: 
 // Discards the session drafts that are not posted, brings back the drafts that they replaced while no newer draft exists, and resets
 // the findings that the run marked. Part D: deletes the fix run of the import, unless a fix commit holds its edits.
 export function undoImport(db: Database, prId: number, run: number): UndoOut {
-  if (!db.query(SQL.consultRun).get({ run, pr: prId })) return { status: 404, error: "Paste not found." };
+  if (!db.query(SQL.consultRun).get({ run, pr: prId })) return { status: 404, error: "Import not found." };
   const runs = (db.query(SQL.markedRuns).all({ run }) as { run: number }[]).map((x) => x.run);
   const linked = db.query(SQL.linkedFix).get({ pr: prId, run }) as { id: number } | null;
   if (linked) runs.push(linked.id);

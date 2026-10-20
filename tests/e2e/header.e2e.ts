@@ -348,10 +348,9 @@ test("Review and Draft replies are plain buttons; a zero count explains itself; 
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(D);
   await expect(page.locator("[data-author]")).toContainText("Opened by You");
   await page.locator("#more-btn").click();
-  for (const name of [/^Copy for your session…/, /^Paste the answer…/]) {
-    const item = page.getByRole("menu").getByRole("menuitem", { name });
-    await expect(item).not.toContainText("Planned");
-    await expect(item).not.toHaveAttribute("aria-disabled", "true");
-  }
+  const copy = page.getByRole("menu").getByRole("menuitem", { name: /^Copy for your session…/ });
+  await expect(copy).not.toContainText("Planned");
+  await expect(copy).not.toHaveAttribute("aria-disabled", "true");
+  await expect(page.getByRole("menu").getByRole("menuitem", { name: /Paste/ })).toHaveCount(0);
   await page.keyboard.press("Escape");
 });

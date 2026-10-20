@@ -512,7 +512,7 @@ export function closedLabel(it: ReviewItemDto): string {
   return it.payload.session?.verdict === "reject" ? "Rejected by your session" : carriedLabel(it.payload.carried?.verdict);
 }
 
-// session-consult.md part B: the verdict of your session on a finding. A reject mark exists only while its discard holds.
+// session-consult.md part C: the verdict of your session on a finding. A reject mark exists only while its discard holds.
 export function sessionNote(it: ReviewItemDto): string | null {
   const s = it.payload.session;
   if (!s || it.kind !== "finding") return null;

@@ -92,7 +92,7 @@ export type Scenario = {
 // hang: the CLI stops before its result and waits for a cancel. replies: the result of a reply run; absent, the CLI answers each thread.
 // rereview: the result of a re-review; absent, the CLI gives one verdict per earlier finding. answer: the result of an ask run; absent, an echo.
 // fix: the result of a fix run; absent, one note per thread and no edit. login: the authMethod of `claude auth status`. Absent: claude.ai.
-// session: a session fork (docs/plans/session-consult.md part C). consult: its answer; absent, one reject per item that needs a verdict.
+// session: a session fork (docs/plans/session-consult.md part C). consult: its answer; absent, one reject per item with status open.
 export type ClaudeScenario = {
   stream: "tree" | "schema" | "limit" | "gaps" | "session";
   hang?: boolean;

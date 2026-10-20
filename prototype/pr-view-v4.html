@@ -1168,7 +1168,7 @@ const ACT = {
   copy: (a) => { toast(`Copied ${a}.`); say(`Copied ${a}.`); },
   "task-nolink": (a) => nav({ settings: { section: "task-ids", profile: null } }, { focus: "set-h" }),
   toast: (a) => toast(a),
-  planned: () => toast("Planned: Copy for your session and Paste the answer. See the spec, section 9."),
+  planned: () => toast("Planned: Copy for your session. See the spec, section 9."),
   ask: () => { S.slot = S.slot === "ask" ? null : "ask"; renderDetail(); if (S.slot) focusSoon("ask-q"); },
   review: () => { S.slot = S.slot === "brief" ? null : "brief"; renderDetail(); if (S.slot) focusSoon("note"); },
   "close-slot": () => { const was = S.slot; S.slot = null; renderDetail(); focusSoon(was === "ask" ? "ask-btn" : "review-btn"); },
@@ -1192,7 +1192,7 @@ const ACT = {
   more: (a, el) => {
     const pr = prById(S.sel);
     const items = [{ act: "ext-pr", icon: "ext", label: `Open on ${FORGE.name}` }, { act: "copy", arg: "the pull request link", icon: "copy", label: "Copy the pull request link" }];
-    if (pr.role === "author") items.push("-", { act: "planned", icon: "clip", label: "Copy for your session…", tag: "Planned", note: "Give open comments to the session that wrote the code." }, { act: "planned", icon: "paste", label: "Paste the answer…", tag: "Planned", note: "Turn its verdicts into reply drafts and Fix ticks." });
+    if (pr.role === "author") items.push("-", { act: "planned", icon: "clip", label: "Copy for your session…", tag: "Planned", note: "Give open comments to the session that wrote the code." });
     openMenu(el, items);
   },
   "ext-pr": () => toast(`Opens the pull request on ${FORGE.name} in a new tab.`),

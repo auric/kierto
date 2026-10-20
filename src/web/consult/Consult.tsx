@@ -1,20 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Session consult dialogs (docs/plans/session-consult.md parts A to D). "Copy for your session" copies the text of the ticked
-// groups. "Paste the answer" reads the answer of that session, shows what each entry does, and applies it after a click.
-// "Ask your session" forks the session directly; its answer goes through the same preview. In part D the session also proposes
-// edits, and Apply adds them as fix cards. Nothing posts.
+// Session consult dialogs (docs/plans/session-consult.md parts A, C, and D). "Copy for your session" copies a validate-and-implement
+// prompt with the items of the ticked groups. "Ask your session" forks the session directly; the dialog shows what each entry of its
+// answer does and applies it after a click. In part D the session also proposes edits, and Apply adds them as fix cards. Nothing posts.
 import { useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, CircleStop, ClipboardCopy, ClipboardPaste, History, Info, LoaderCircle, Send, Undo2, Wrench } from "lucide-react";
+import { Check, CircleAlert, CircleStop, ClipboardCopy, History, Info, LoaderCircle, Send, Undo2, Wrench } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldError, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import { FieldLegend, FieldSet } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
@@ -29,7 +27,6 @@ import {
   consultText,
   needsVerdict,
   type PlanRow,
-  parseAnswer,
   planAnswer,
   SESSION_FIX_MAX_TURNS,
   SESSION_MAX_TURNS,
@@ -55,13 +52,10 @@ import {
   consultKey,
   loadGroups,
   loadMode,
-  loadSnapshot,
-  postImport,
   postSessionImport,
   postUndo,
   saveGroups,
   saveMode,
-  saveSnapshot,
   useConsultData,
   useSessionAnswer,
   useSessions,
@@ -83,12 +77,11 @@ const MODE: Record<SessionMode, { name: string; about: string }> = {
 const rowBox = "grid cursor-pointer grid-cols-[18px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-0.5 rounded px-1 py-2 hover:bg-hover";
 
 // from: the ID of the element that takes the focus after the dialog. run: a session run to show (part C).
-type Open = { mode: "copy" | "paste" | "session"; from: string; run?: number };
+type Open = { mode: "copy" | "session"; from: string; run?: number };
 
 export type ConsultUi = {
   // from: the element that gets the focus back. Default: the More button.
   copy: (from?: string) => void;
-  paste: (from?: string) => void;
   // Part C. run: show this session run. Absent: the running session run of the PR, else the session list.
   session: (from?: string, run?: number) => void;
   // The opt-in of part C is on.
@@ -133,8 +126,6 @@ export function useConsult(pr: PrRow, o: { announce: (text: string) => void; ope
           onSession={sessions ? () => setOpen({ mode: "session", from: b.from }) : undefined}
         />
       );
-    if (b.mode === "paste")
-      return <PasteBody pr={pr} announce={o.announce} onClose={close} onChanged={changed} finalFocus={finalFocus} onFix={onFix} />;
     return (
       <SessionBody pr={pr} run={b.run} announce={o.announce} onClose={close} onChanged={changed} finalFocus={finalFocus} onFix={onFix} />
     );
@@ -145,7 +136,7 @@ export function useConsult(pr: PrRow, o: { announce: (text: string) => void; ope
         {body(open)}
       </Dialog>
     ) : null;
-  return { copy: show("copy"), paste: show("paste"), session: show("session"), sessions, dialog };
+  return { copy: show("copy"), session: show("session"), sessions, dialog };
 }
 
 type Body = { pr: PrRow; announce: (text: string) => void; onClose: () => void; finalFocus: () => HTMLElement | true };
@@ -208,7 +199,7 @@ function GroupBoxes({
               <span className="text-muted-foreground">{t.counts[g]}</span>
             </span>
             <span id={`cg-${g}-about`} className="col-start-2 text-xs text-muted-foreground">
-              {needsVerdict(g) ? "Needs a verdict." : "Context only. No verdict."}
+              {needsVerdict(g) ? "Open. Your session checks each item." : "Context only. No action."}
             </span>
           </label>
         ))}
@@ -218,8 +209,7 @@ function GroupBoxes({
           <Info aria-hidden />
           <AlertTitle>The text reached its size cap of {kb(CONSULT_MAX_BYTES)}.</AlertTitle>
           <AlertDescription>
-            {plural(t.left.length, "item")} stay out: <span translate="no">{t.left.join(", ")}</span>. Untick a group to make room, or copy
-            again after this answer.
+            {plural(t.left.length, "item")} stay out: <span translate="no">{t.left.join(", ")}</span>. Untick a group to make room.
           </AlertDescription>
         </Alert>
       )}
@@ -232,15 +222,14 @@ function CopyBody({ pr, announce, onClose, finalFocus, onSession }: Body & { onS
   const q = useConsultData(pr.id, true);
   const { groups, tick } = useGroups();
   const copyBtn = useRef<HTMLButtonElement>(null);
-  const t = useMemo(() => q.data && consultText(q.data, groups), [q.data, groups]);
+  const t = useMemo(() => q.data && consultText(q.data, groups, "copy"), [q.data, groups]);
   const copy = async () => {
-    const data = q.data;
-    if (!t || !data || !t.ids.length) return;
-    if (!(await copyText(t.text)))
+    if (!q.data || !t?.ids.length) return;
+    // Each copy gets a new tag suffix.
+    const fresh = consultText(q.data, groups, "copy");
+    if (!(await copyText(fresh.text)))
       return void toast.add({ title: "The clipboard is blocked here. Allow the clipboard for this page and copy again." });
-    const ids = new Set(t.ids);
-    saveSnapshot(pr.id, Object.fromEntries(data.items.filter((it) => ids.has(it.id)).map((it) => [it.id, it.key])));
-    announce(`Copied ${plural(t.ids.length, "item")} for your session. Paste its answer with Paste the answer.`);
+    announce(`Copied ${plural(fresh.ids.length, "item")} for your session.`);
     onClose();
   };
   return (
@@ -253,8 +242,8 @@ function CopyBody({ pr, announce, onClose, finalFocus, onSession }: Body & { onS
       <DialogHeader>
         <DialogTitle>Copy for your session</DialogTitle>
         <DialogDescription>
-          <span translate="no">{prKey(pr)}</span>. Paste the text into the session that wrote the code. It answers with a verdict for each
-          item.
+          <span translate="no">{prKey(pr)}</span>. Paste the text into the session that wrote the code, in your clone. It checks each item
+          against the code, makes the valid changes, and explains each rejection.
         </DialogDescription>
       </DialogHeader>
       {!t ? (
@@ -286,7 +275,7 @@ function CopyBody({ pr, announce, onClose, finalFocus, onSession }: Body & { onS
   );
 }
 
-// ---------- Part B ----------
+// ---------- The answer of a session run ----------
 
 // done: the rows of an applied answer.
 function PlanTable({ rows, done }: { rows: PlanRow[]; done?: boolean }) {
@@ -349,28 +338,21 @@ const withFix = (rows: PlanRow[], edits: Readonly<Record<string, number>>): Plan
   });
 
 type Changes = { onChanged: () => void; onFix: (t: FixTarget[]) => void };
-// given: the answer of a session run (part C) with the item keys at its start. The paste box does not show then.
-// edits: part D, the count of proposed edits per item ID.
+// given: the answer of a session run (part C) with the item keys at its start. edits: part D, the count of proposed edits per item ID.
 type Given = { run: number; entries: unknown[]; snapshot: Record<string, string>; edits: Record<string, number>; title: string };
 
-function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given }: Body & Changes & { given?: Given }) {
+function AnswerBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given }: Body & Changes & { given: Given }) {
   const q = useConsultData(pr.id, true);
-  const [raw, setRaw] = useState("");
   const [done, setDone] = useState<ConsultImportDto | null>(null);
   const [busy, setBusy] = useState(false);
-  const [stored] = useState(() => loadSnapshot(pr.id));
-  const snapshot = given ? given.snapshot : stored;
-  const parsed = given ? { entries: given.entries } : raw.trim() ? parseAnswer(raw) : null;
-  const planned = parsed && "entries" in parsed && q.data ? planAnswer(q.data.items, parsed.entries, snapshot) : null;
-  const rows = planned && given ? withFix(planned, given.edits) : planned;
+  const rows = q.data ? withFix(planAnswer(q.data.items, given.entries, given.snapshot), given.edits) : null;
   const changes = rows?.filter((r) => r.act).length ?? 0;
-  const error = parsed && "error" in parsed ? parsed.error : null;
 
   const apply = async () => {
-    if (!parsed || !("entries" in parsed) || !changes || busy) return;
+    if (!changes || busy) return;
     setBusy(true);
     try {
-      const d = given ? await postSessionImport(pr.id, given.run) : await postImport(pr.id, parsed.entries, snapshot);
+      const d = await postSessionImport(pr.id, given.run);
       setDone(d);
       onChanged();
       announce(`Applied. ${resultText(d)}`);
@@ -411,16 +393,10 @@ function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given 
       finalFocus={finalFocus}
     >
       <DialogHeader>
-        <DialogTitle>{given ? "Answer of your session" : "Paste the answer"}</DialogTitle>
+        <DialogTitle>Answer of your session</DialogTitle>
         <DialogDescription>
-          <span translate="no">{prKey(pr)}</span>.{" "}
-          {given ? (
-            <>
-              The answer of <span className="font-medium text-foreground">{given.title}</span>. Nothing changes before Apply. Nothing posts.
-            </>
-          ) : (
-            "Paste the answer of your session with its json block. Nothing changes before Apply. Nothing posts."
-          )}
+          <span translate="no">{prKey(pr)}</span>. The answer of <span className="font-medium text-foreground">{given.title}</span>. Nothing
+          changes before Apply. Nothing posts.
         </DialogDescription>
       </DialogHeader>
       {done ? (
@@ -428,7 +404,7 @@ function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given 
           <p id="consult-result" role="status" className="m-0 text-sm font-medium">
             Applied. {resultText(done)}
           </p>
-          <PlanTable rows={given && done.fix ? withFix(done.rows, given.edits) : done.rows} done />
+          <PlanTable rows={done.fix ? withFix(done.rows, given.edits) : done.rows} done />
           <p className="m-0 text-xs text-muted-foreground">
             The reply drafts wait under their threads. Accept them to put them in Ready to post.{" "}
             {done.fix
@@ -438,34 +414,8 @@ function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given 
         </>
       ) : (
         <>
-          {given ? (
-            <p className="m-0 text-sm text-ink-2">The app skips each item that changed after the run started.</p>
-          ) : (
-            <Field data-invalid={error ? true : undefined}>
-              <FieldLabel htmlFor="consult-answer">Answer of your session</FieldLabel>
-              <Textarea
-                id="consult-answer"
-                rows={7}
-                value={raw}
-                spellCheck={false}
-                aria-invalid={error ? true : undefined}
-                aria-describedby="consult-answer-note"
-                placeholder={'```json\n[{"id": "T123", "verdict": "reject", "reason": "…"}]\n```'}
-                className="max-h-[30dvh] font-mono text-xs"
-                onChange={(e) => setRaw(e.target.value)}
-              />
-              {error ? (
-                <FieldError id="consult-answer-note">{error}</FieldError>
-              ) : (
-                <FieldDescription id="consult-answer-note">
-                  {snapshot
-                    ? "The app skips each item that changed after your copy."
-                    : "No copy from this browser. The app checks only the current state of each item."}
-                </FieldDescription>
-              )}
-            </Field>
-          )}
-          {(given || raw.trim()) && !q.data && <Loading error={q.error} />}
+          <p className="m-0 text-sm text-ink-2">The app skips each item that changed after the run started.</p>
+          {!q.data && <Loading error={q.error} />}
           {rows && (
             <>
               <p id="consult-plan" className="m-0 text-sm text-ink-2">
@@ -496,7 +446,7 @@ function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given 
         ) : (
           <>
             <Button variant="outline" onClick={onClose}>
-              {given ? "Close" : "Cancel"}
+              Close
             </Button>
             <Button
               id="consult-apply"
@@ -504,7 +454,7 @@ function PasteBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given 
               aria-describedby={rows ? "consult-plan" : undefined}
               onClick={() => void apply()}
             >
-              <ClipboardPaste aria-hidden data-icon="inline-start" />
+              <Check aria-hidden data-icon="inline-start" />
               {changes ? `Apply ${plural(changes, "change")}` : "Apply"}
             </Button>
           </>
@@ -559,7 +509,7 @@ function SessionBody({ pr, run, announce, onClose, onChanged, onFix, finalFocus 
     return <SessionPicker pr={pr} frame={frame} onStarted={(id) => setPicked(id)} onClose={onClose} announce={announce} runner={runner} />;
   if (done && answer.data)
     return (
-      <PasteBody
+      <AnswerBody
         pr={pr}
         announce={announce}
         onClose={onClose}
@@ -664,7 +614,7 @@ function SessionPicker({
   const [mode, setMode] = useState(loadMode);
   const start = useStartSession(pr.id);
   const runs = usePrRuns(pr.id).data;
-  const t = useMemo(() => q.data && consultText(q.data, groups), [q.data, groups]);
+  const t = useMemo(() => q.data && consultText(q.data, groups, "session"), [q.data, groups]);
   const sessions = list.data?.sessions ?? [];
   // The first session is the best match: in the clone, else the newest.
   const pick: SessionDto | null = sessions.find((s) => s.id === choice) ?? sessions[0] ?? null;

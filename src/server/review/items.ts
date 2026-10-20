@@ -67,7 +67,7 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
       break;
     case "restore": {
       // docs/plans/fix-ux.md decision 3: a restore of a finding that a fix commit discarded returns its earlier status. The mark stays.
-      // session-consult.md part B: a session reject discards only open findings, so its mark is newer than a fixed mark. The restore
+      // session-consult.md part C: a session reject discards only open findings, so its mark is newer than a fixed mark. The restore
       // returns its status and removes it.
       const p = JSON.parse(row.payload_json) as { fixed?: FixedMark; session?: SessionMark };
       const rejected = row.status === "discarded" && p.session?.verdict === "reject" ? p.session : null;

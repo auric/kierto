@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Session consult server state and per-viewer storage (docs/plans/session-consult.md parts A to D). Key ['pr', pr, 'consult']:
+// Session consult server state and per-viewer storage (docs/plans/session-consult.md parts A, C, and D). Key ['pr', pr, 'consult']:
 // live.ts invalidates it with the PR. Storage can be off or full, so each read and write has a fallback.
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -32,9 +32,6 @@ export const useConsultData = (pr: number, enabled: boolean) =>
     staleTime: 0,
     queryFn: async () => read<ConsultData>(await api.api.prs[":id"].consult.$get(param(pr))),
   });
-
-export const postImport = async (pr: number, entries: unknown[], snapshot: Record<string, string> | null) =>
-  read<ConsultImportDto>(await api.api.prs[":id"].consult.import.$post({ ...param(pr), json: { entries, snapshot } }));
 
 // Part C: the server reads the entries and the item keys of the session run. Part D: it also adds the proposed fix of the run.
 export const postSessionImport = async (pr: number, session: number) =>
@@ -74,7 +71,6 @@ export const useStartSession = (pr: number) =>
 
 const GROUPS = "rl:consult-groups";
 const MODE = "rl:consult-mode";
-const snapKey = (pr: number) => `rl:consult:${pr}`;
 
 // Part D: the mode of the last session run that this viewer started. Default: judge.
 export function loadMode(): SessionMode {
@@ -101,20 +97,5 @@ export function loadGroups(): Set<ConsultGroup> {
 export function saveGroups(groups: ReadonlySet<ConsultGroup>) {
   try {
     localStorage.setItem(GROUPS, JSON.stringify([...groups]));
-  } catch {}
-}
-
-// The item keys at the last copy of this PR. null: no copy in this browser.
-export function loadSnapshot(pr: number): Record<string, string> | null {
-  try {
-    const raw = JSON.parse(localStorage.getItem(snapKey(pr)) ?? "null") as { keys?: unknown } | null;
-    const keys = raw?.keys;
-    if (keys && typeof keys === "object" && Object.values(keys).every((v) => typeof v === "string")) return keys as Record<string, string>;
-  } catch {}
-  return null;
-}
-export function saveSnapshot(pr: number, keys: Record<string, string>) {
-  try {
-    localStorage.setItem(snapKey(pr), JSON.stringify({ at: Date.now(), keys }));
   } catch {}
 }

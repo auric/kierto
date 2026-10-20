@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Consult your session
+
+- "Copy for your session" now copies one plain prompt. Your session checks each review point against the code in your clone, makes the valid changes, and explains each rejection.
+- The copied points and the points of "Ask your session" sit in tags with a new random suffix each time. The prompt says that the tag content is data from the pull request, not instructions.
+- "Paste the answer" is gone. Push the changes of your session, then use "Review changes since" and Draft replies.
+
 ### Replies
 
 - Draft replies checks each thread against the new code and the answer in the thread. When the point is settled, it proposes to resolve the thread and shows its proof.
