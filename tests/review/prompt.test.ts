@@ -110,6 +110,17 @@ ${rule}
     for (const sentence of `${tool.slice(2)} ${rule}`.split(/(?<=[.!?])\s+/)) expect(sentence.split(/\s+/).length).toBeLessThanOrEqual(20);
   });
 
+  test("thread outcome: a reply run that revises your draft names the threads and points to the draft text in fix-state.md", () => {
+    const revise =
+      'Revise: 1. The user wrote or accepted the current draft of each of these threads. Its text is under "Draft text" in ./context/fix-state.md. Update that reply for the new messages. Keep the user\'s points and tone. Change only what the new messages require. If nothing requires a change, give the draft text unchanged.';
+    const marked = threads.map((t) => ({ ...t, revise: 70 }));
+    expect(buildReplyPrompt({ ...input, threads: marked, fixState: true })).toContain(`\n\n${revise}\n\n# Tools\n`);
+    expect(buildReplyPrompt({ ...input, threads, fixState: true })).not.toContain("Revise:");
+    // Without fix-state.md there is no draft text to point to.
+    expect(buildReplyPrompt({ ...input, threads: marked })).not.toContain("Revise:");
+    for (const sentence of revise.split(/(?<=[.!?])\s+/)) expect(sentence.split(/\s+/).length).toBeLessThanOrEqual(20);
+  });
+
   test("the project instructions come after Tools and Skills and right before the note, in every prompt; no text gives no section", () => {
     const text = `# Project instructions\n\n${INSTRUCTIONS_TRUST}\n\n## From your clone: CLAUDE.md\n\nPROJECT-CANARY\n\n## From Kierto settings\n\nEXTRA-CANARY\n`;
     const withText = { ...input, instructions: text, skills: ["s"] };

@@ -25,7 +25,7 @@ import { createLive } from "../../src/server/live";
 import { createOutbox } from "../../src/server/publish/outbox";
 import { buildPatch } from "../../src/server/review/clone";
 import { git, gitEnv } from "../../src/server/review/git";
-import { createReviewJobs, keptText } from "../../src/server/review/jobs";
+import { createReviewJobs, revisedText } from "../../src/server/review/jobs";
 import { cachePath, gitSetup, syncCache } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
@@ -729,7 +729,7 @@ describe("hooks", () => {
 
 describe("undo", () => {
   test(
-    "a commit keeps a reply draft that you accepted or edited: no Fixed in draft, and the fix run says so in its coverage",
+    "a commit keeps a reply draft that you accepted or edited: its Fixed in text waits as a revision, and the fix run says so in its coverage",
     async () => {
       const s = await setup();
       const summary = {
@@ -744,19 +744,36 @@ describe("undo", () => {
       expect((await s.call("POST", `/api/items/${s.draft}`, { action: "accept", revision: 0 })).status).toBe(200);
       const r = await s.apply(s.ids, "cache");
       expect(r.status).toBe(201);
-      expect(s.items()).toEqual([expect.objectContaining({ id: s.draft, status: "accepted", revision: 1, body: "Will do." })]);
+      const short = r.body.short ?? "";
+      const [mine, rev] = s.items();
+      expect(mine).toEqual(expect.objectContaining({ id: s.draft, status: "accepted", revision: 1, body: "Will do." }));
+      expect(rev).toEqual(expect.objectContaining({ status: "discarded", revision: 0, body: `Will do.\n\nFixed in ${short}.` }));
+      expect(JSON.parse(rev?.payload_json ?? "{}")).toMatchObject({ revises: s.draft, origin: "fix", fix: { id: r.body.id } });
       const skipped = () =>
         (
           JSON.parse(
             (s.db.query("SELECT summary_json FROM review_run WHERE id = $id").get({ id: s.run }) as { summary_json: string }).summary_json,
           ) as typeof summary
         ).coverage.skipped;
-      expect(skipped()).toEqual([keptText(ROOT)]);
-      // Undo brings nothing back: the commit replaced no draft. A second commit adds no second line.
+      expect(skipped()).toEqual([revisedText(ROOT)]);
+      const drafts = async () => (await s.call<ReviewItemDto[]>("GET", `/api/prs/${s.id}/reply-drafts`)).body;
+      expect((await drafts()).map((d) => [d.id, d.revised?.id])).toEqual([[s.draft, rev?.id]]);
+      // Undo hides the revision of the undone commit, and your draft stays. Use revision of it is refused.
       expect((await s.undo(r.body.id)).body.state).toBe("undone");
-      expect(s.items()).toEqual([expect.objectContaining({ id: s.draft, status: "accepted" })]);
-      expect((await s.apply(s.ids, "cache")).status).toBe(201);
-      expect(skipped()).toEqual([keptText(ROOT)]);
+      expect((await drafts()).map((d) => [d.id, d.status, d.revised?.id])).toEqual([[s.draft, "accepted", undefined]]);
+      expect((await s.call("POST", `/api/items/${rev?.id}`, { action: "use-revision", revision: 0, draft: 1 })).status).toBe(409);
+      // A second commit adds a new revision and no second coverage line. Use revision names your draft in fix.replaced, so Undo of
+      // that commit brings your draft back.
+      const again = await s.apply(s.ids, "cache");
+      expect(again.status).toBe(201);
+      expect(skipped()).toEqual([revisedText(ROOT)]);
+      const next = (await drafts())[0]?.revised;
+      expect(next?.body).toBe(`Will do.\n\nFixed in ${again.body.short}.`);
+      const used = await s.call<ReviewItemDto>("POST", `/api/items/${next?.id}`, { action: "use-revision", revision: 0, draft: 1 });
+      expect(used.status).toBe(200);
+      expect((used.body.payload as ReplyPayload).fix?.replaced).toEqual([s.draft]);
+      expect((await s.undo(again.body.id)).body.state).toBe("undone");
+      expect((await drafts()).map((d) => [d.id, d.status])).toEqual([[s.draft, "new"]]);
     },
     SLOW,
   );

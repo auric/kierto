@@ -8,7 +8,7 @@ import type { FixWhy, ReplyPayload } from "../../shared/review";
 import type { Turn } from "../../shared/turn";
 import { type FixState, type FixTarget, fixState, fixWaiting, WHY } from "../fix/model";
 import { snippet } from "../pr/threads";
-import { plural, shortHash } from "./model";
+import { plural, shortHash, touchedDraft } from "./model";
 
 export type OutcomeKind =
   | "open"
@@ -26,13 +26,14 @@ export type OutcomeKind =
   | "resolved";
 
 // stale: new messages since the open draft, or its parent is deleted. resolved-since: the thread was open at the draft and is
-// resolved now. push: the "Fixed in" commit is not on the PR yet.
-export type Marker = "stale" | "resolved-since" | "push";
+// resolved now. push: the "Fixed in" commit is not on the PR yet. revision: a revision of your draft waits for Use revision or Keep mine.
+export type Marker = "stale" | "resolved-since" | "push" | "revision";
 
 export const MARKER: Record<Marker, string> = {
   stale: "Out of date",
   "resolved-since": "Resolved since the draft",
   push: "Waiting for push",
+  revision: "Revision waiting",
 };
 
 // label: the outcome in words. commit: the short hash after the label, or null. detail: the text after "label: ", or null.
@@ -171,11 +172,17 @@ export function threadOutcome(i: OutcomeInput): { outcome: Outcome; conflict: Co
   if (shown && stale) markers.push("stale");
   if (live && p?.threadOpen && t.turn === "resolved" && live.body.trim()) markers.push("resolved-since");
   if (live && p?.fix && fixWaiting(p, i.commits, i.fixes)) markers.push("push");
+  if (live?.revised) markers.push("revision");
 
-  // jobs.ts writer priority: Draft replies replaces only an open, untouched draft of a reply, review, session, or resolve writer.
+  // jobs.ts writer priority: Draft replies replaces only an open, untouched draft of a reply, review, session, or resolve writer, and
+  // a draft that a reply run discarded as "No reply needed". It revises an open draft that you edited or accepted, unless a waiting
+  // revision answers the newest message already.
   const replaceable =
-    !!cur && cur.status === "new" && !cur.edited && !p?.fix && !p?.declined && p?.origin !== "nofix" && p?.origin !== "user";
-  const needsReply = t.turn === "your" && t.newest !== null && ((!cur && base.kind === "open") || (stale && replaceable));
+    !!cur &&
+    ((cur.status === "new" && !cur.edited && !p?.fix && !p?.declined && p?.origin !== "nofix" && p?.origin !== "user") ||
+      (cur.status === "discarded" && p?.discardedBy === "ai"));
+  const revisable = !!cur && touchedDraft(cur) && !(cur.revised && replyOf(cur.revised).replyTo === t.newest);
+  const needsReply = t.turn === "your" && t.newest !== null && ((!cur && base.kind === "open") || (stale && (replaceable || revisable)));
 
   const outcome: Outcome = { commit: null, detail: null, ...base, markers, needsReply };
   return { outcome, conflict: conflictOf() };

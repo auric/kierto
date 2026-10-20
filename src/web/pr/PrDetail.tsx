@@ -345,7 +345,6 @@ export function PrDetail({
     forge,
     announce: ctx.announce,
     jump,
-    draftAgain: (tid) => draftReply.current(tid),
     reopen: async (tid) => {
       const t = latest.current.find((x) => x.id === tid);
       if (!t?.last) return { error: "The thread is not loaded yet.", reason: null };

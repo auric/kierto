@@ -23,12 +23,16 @@
 - A reply draft says "Resolved since the draft" when someone resolved its thread after Claude drafted it. The post leaves that reply out until you reopen the thread.
 - The post confirm lists the drafts that cannot post now, with the thread and the reason: new messages after the draft, a thread resolved since the draft, or a "Fixed in" commit that is not on the pull request yet. Post sends the other drafts. Before, one such draft stopped the whole post.
 - A "Fixed in" draft whose commit left your branch, for example after a rebase or a squash, offers "Post as plain reply" in the post confirm.
-- The post confirm groups the drafts that cannot post by reason. Each group says what to do. Each draft links to its thread and has its action: "Draft again", "Reopen thread", or "Post as plain reply".
+- The post confirm groups the drafts that cannot post by reason. Each group says what to do. Each draft links to its thread and has its action: "Reply to the newest as is", "Reopen thread", or "Post as plain reply". Your accepted draft is never discarded there.
 - The post confirm updates its lists when the drafts change while it is open. When the list to post changes, it asks you to read it again before you post.
 - The post bar counts the out-of-date drafts. Ready to post also lists pull requests with only drafts that cannot post, with "N cannot post". Screen readers announce count changes.
 - If the reply fails after the reopen, the post says so. Retry posts the reply without a second reopen.
 - Claude never replaces a reply draft that you edited, accepted, or discarded. The run says "kept your draft" for that thread. Draft reply in that one thread replaces a discarded draft.
-- A Fix commit keeps a reply draft that you edited or accepted and adds no "Fixed in" draft there. Undo of a Fix commit brings back the draft that its "Fixed in" draft replaced.
+- "Draft again" on a draft that you edited or accepted is now "Revise my reply". Claude gets your text, keeps your points and tone, and changes only what the new messages need. The revision shows under your draft as a word diff against your text. "Use revision" makes it the draft, not accepted, and keeps your resolve tick. "Keep mine" drops it, and your exact text stays.
+- Draft replies revises your out-of-date drafts the same way. Your current drafts stay as they are. The outcome line says "Revision waiting".
+- "Reply to the newest as is" on an out-of-date draft answers the newest message with the same text. It runs no AI and keeps your accept. A thread resolved after the draft must open again first.
+- A "No reply needed" draft of a reply run no longer counts as your decline. Draft replies now writes a new draft there when new messages arrive.
+- A Fix commit keeps a reply draft that you edited or accepted. Its "Fixed in" text waits under your draft as a revision. Undo of a Fix commit brings back the draft that its "Fixed in" draft replaced.
 - A "Fixed in" draft of an undone commit can no longer come back with Restore.
 - Post again of a reply no longer fails when the pull request got new commits.
 - When a fix run gives no fix for a thread, it drafts your answer to the commenter with the reason: already done, not valid, out of scope, or unclear. The draft says "from the fix run" and posts only after your Accept.
@@ -37,11 +41,11 @@
 - A "Fixed in" draft keeps the answer that Claude drafted in the thread and adds "Fixed in X: <what the commit changes>".
 - A Fix commit with only a part of the edits of a thread drafts "Partly fixed in X" and proposes no resolve.
 - Draft replies sees the fix note, the fix commit, and the current draft of each thread. It no longer claims a fix without a commit.
-- Each thread with a reply draft or a fix card shows one outcome line on top: Open, Answered, To fix, Fix proposed, Fixed in X, Partly fixed in X, Already done, Won't fix, Needs your decision, Follow-up asked, Settled, Waiting on them, or Resolved. Marks say "Out of date", "Resolved since the draft", or "Waiting for push".
+- Each thread with a reply draft or a fix card shows one outcome line on top: Open, Answered, To fix, Fix proposed, Fixed in X, Partly fixed in X, Already done, Won't fix, Needs your decision, Follow-up asked, Settled, Waiting on them, or Resolved. Marks say "Out of date", "Resolved since the draft", "Waiting for push", or "Revision waiting".
 - When the reply draft and the fix disagree, a note says so, for example a "Not valid" reply next to a ticked edit, or a valid reply next to "Already done". "Keep the reply" and "Keep the fix" settle it with one click.
 - A session accept without a reply now says "To fix", not "No reply needed".
 - Each reply draft names where it came from: the review, the reply run, your fix commit, the fix run, the re-review, or you.
-- The Draft replies button counts only the threads that still need a reply: no draft yet, or a draft that is out of date.
+- The Draft replies button counts only the threads that still need a reply: no draft yet, or a draft that is out of date and has no revision for the newest message.
 - A "Fixed in" draft whose commit left your branch offers "Post as plain reply" on its card too.
 
 ### Fix

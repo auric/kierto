@@ -291,9 +291,19 @@ export function validateReplies(result: ReplyResult, requested: readonly ReplyTh
       skipped.push(`Resolve proposal for thread ${r.thread} dropped: the judgement is ${r.judgement ?? "none"}, not settled.`);
     // Only a thread that the user started gets the tick by default. A resolve proposal without a reply stays a draft.
     const resolveEvidence = resolve ? r.resolveEvidence.trim() : "";
+    const none = r.action === "none" && !resolve;
     replies.push({
-      payload: { ...r, body, replyTo: to, resolve, resolveEvidence, resolveTick: resolve && mine.has(r.thread), origin: "reply" },
-      status: r.action === "none" && !resolve ? "discarded" : "new",
+      payload: {
+        ...r,
+        body,
+        replyTo: to,
+        resolve,
+        resolveEvidence,
+        resolveTick: resolve && mine.has(r.thread),
+        origin: "reply",
+        ...(none && { discardedBy: "ai" as const }),
+      },
+      status: none ? "discarded" : "new",
     });
   }
   for (const r of requested) if (!answered.has(r.thread)) skipped.push(`Thread ${r.thread} has no reply.`);

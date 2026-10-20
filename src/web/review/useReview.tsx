@@ -346,7 +346,12 @@ export function useReview(
     });
   const putItem = (it: ReviewItemDto) => {
     qc.setQueryData<RunDetail>(["run", it.run], (old) => old && { ...old, items: old.items.map((x) => (x.id === it.id ? it : x)) });
-    if (it.kind === "reply") qc.setQueryData<ReviewItemDto[]>(replyKey(pr.id), (old) => old?.map((x) => (x.id === it.id ? it : x)));
+    // Use revision returns the used revision: it takes the place of the draft that held it. A waiting revision is no draft of its own.
+    const used = !replyOf(it).revises;
+    if (it.kind === "reply")
+      qc.setQueryData<ReviewItemDto[]>(replyKey(pr.id), (old) =>
+        old?.map((x) => (x.id === it.id || (used && x.revised?.id === it.id) ? it : x)),
+      );
   };
 
   // prototype/v3 setItem: accept and discard close the row and open the next untriaged row of the Drafts list.
@@ -373,6 +378,8 @@ export function useReview(
       const r = await sendItem(it.id, input);
       if ("conflict" in r) {
         putItem(r.conflict.item);
+        // A conflict of a revision changes the draft that holds it, so the list loads again.
+        if (it.kind === "reply") void qc.invalidateQueries({ queryKey: replyKey(pr.id) });
         toast.add({ title: r.conflict.error });
         return false;
       }
@@ -418,6 +425,10 @@ export function useReview(
     moveTo: (it: ReviewItemDto, line: number) => void send(it, { action: "move", revision: it.revision, line }, true),
     tick: (it: ReviewItemDto, on: boolean) => void send(it, { action: "resolve", revision: it.revision, resolve: on }),
     plain: (it: ReviewItemDto) => void send(it, { action: "plain", revision: it.revision }),
+    takeRevision: (rev: ReviewItemDto, mine: ReviewItemDto) =>
+      void send(rev, { action: "use-revision", revision: rev.revision, draft: mine.revision }),
+    keepMine: (rev: ReviewItemDto) => void send(rev, { action: "keep-mine", revision: rev.revision }),
+    newest: (it: ReviewItemDto) => void send(it, { action: "reply-to-newest", revision: it.revision }),
   };
   const onTriage = useRef(triageFns);
   onTriage.current = triageFns;
@@ -486,6 +497,8 @@ export function useReview(
       triage: triageCtx,
       again: (thread) => onDraft.current([thread]),
       plain: (it) => onTriage.current.plain(it),
+      revision: { take: (rev, it) => onTriage.current.takeRevision(rev, it), keep: (rev) => onTriage.current.keepMine(rev) },
+      newest: (it) => onTriage.current.newest(it),
       author,
     }),
     [meta, o.hints, o.announce, triageCtx, author],
@@ -580,7 +593,7 @@ export function useReview(
               mine={t.root.who.me}
               to={to ? (to.who.me ? "your message" : to.who.name) : null}
               mode={it ? modeOf(triage, it.id) : null}
-              busy={!!it && triage.busy.has(it.id)}
+              busy={!!it && (triage.busy.has(it.id) || (!!it.revised && triage.busy.has(it.revised.id)))}
               waiting={p ? fixWaiting(p, commits, fixes) : null}
               gone={!!it && gone.has(it.id)}
               resolved={t.turn !== "resolved" ? null : p?.threadOpen ? "since" : "now"}

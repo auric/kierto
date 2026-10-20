@@ -77,8 +77,8 @@ const blockedList = (
   });
 
 // onPosted: the rows of the confirm, for the focus. announce: the live region of the detail. jump: show and focus a thread.
-// draftAgain: a new reply run for one thread. reopen: reopen a resolved thread now. "ask": another person started the thread, so
-// its own Reopen button asks first (Thread.tsx useResolve).
+// reopen: reopen a resolved thread now. "ask": another person started the thread, so its own Reopen button asks first
+// (Thread.tsx useResolve).
 export function usePostBar(
   pr: PrRow,
   o: {
@@ -87,7 +87,6 @@ export function usePostBar(
     onPosted: (rows: PostDto[]) => void;
     announce: (text: string) => void;
     jump: (thread: number) => void;
-    draftAgain: (thread: number) => void;
     reopen: (thread: number) => Promise<ResolveOutcome | "ask">;
   },
 ) {
@@ -121,12 +120,13 @@ export function usePostBar(
     }
   };
 
-  // The draft loses its commit link and stays accepted. The new plan then lists it as a reply to post.
-  const plain = async (b: BlockedDraft) => {
+  // plain: the draft loses its commit link. reply-to-newest: the draft answers the newest message with the same text
+  // (docs/plans/thread-outcome.md). The draft stays accepted, so the new plan lists it as a reply to post.
+  const fixDraft = async (b: BlockedDraft, action: "plain" | "reply-to-newest", done: string) => {
     try {
-      const r = await sendItem(b.item, { action: "plain", revision: b.revision });
+      const r = await sendItem(b.item, { action, revision: b.revision });
       if ("conflict" in r) return void (await load(r.conflict.error));
-      o.announce("The draft is now a plain reply in the list.");
+      o.announce(done);
       await load(null);
     } catch (e) {
       await load((e as Error).message);
@@ -141,19 +141,9 @@ export function usePostBar(
   };
 
   const act = async (b: BlockedDraft) => {
-    if (b.reason === "commit-gone") return void (await plain(b));
-    // A reply run keeps an accepted draft (jobs.ts userDraft), so Draft again discards it first. The discarded card keeps Restore.
-    if (b.reason === "out-of-date") {
-      try {
-        const r = await sendItem(b.item, { action: "discard", revision: b.revision });
-        if ("conflict" in r) return void (await load(r.conflict.error));
-      } catch (e) {
-        return void (await load((e as Error).message));
-      }
-      toThread(b);
-      o.draftAgain(b.thread);
-      return;
-    }
+    if (b.reason === "commit-gone") return void (await fixDraft(b, "plain", "The draft is now a plain reply in the list."));
+    if (b.reason === "out-of-date")
+      return void (await fixDraft(b, "reply-to-newest", "The draft answers the newest message now. It is in the list."));
     if (b.reason !== "resolved-since") return;
     const out = await o.reopen(b.thread).catch((e: unknown) => ({ error: (e as Error).message, reason: null }));
     if (out === "ask") return toThread(b);

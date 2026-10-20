@@ -1,6 +1,6 @@
 # Thread outcome plan: one outcome per thread
 
-Status: code complete, 2026-10-20. Every WP is done. Section 7 lists the later items. Line references point to the code at HEAD 0db727e.
+Status: code complete, 2026-10-20. Every WP is done. Section 7 lists the later items. Section 8 adds the revisions and Reply to the newest as is (user decision C+D, 2026-10-20). Line references point to the code at HEAD 0db727e.
 
 ## 1. Goal
 
@@ -53,6 +53,7 @@ Markers on the outcome line:
 - Out of date: newer messages arrived after the draft, or its parent is deleted.
 - Resolved since the draft: threadOpen true, and the thread is resolved now.
 - Waiting for push: the "Fixed in" commit is not on the PR yet.
+- Revision waiting: a revision of the open draft waits for Use revision or Keep mine (section 8).
 
 ## 4. Writer priority
 
@@ -62,7 +63,7 @@ Markers on the outcome line:
 4. A reply run (origin reply).
 5. A resolve-only proposal (origin resolve).
 
-- A writer never replaces a draft of a higher writer. It records "kept your draft" in the coverage.
+- A writer never replaces a draft of a higher writer. It records "kept your draft" in the coverage. A reply run or a fix commit stores a revision of a draft that the user edited or accepted instead (section 8).
 - A reply run for threads that the user named (Draft again, Draft reply) is the user's choice. It replaces an untouched AI draft of any writer.
 - A draft stored before origin existed ranks by its fix field: with fix it is "Fixed in", else a reply run.
 - A writer that replaces a lower draft stores its ID in replaced. Undo restores the newest replaced draft. Only a fix commit has an Undo.
@@ -75,7 +76,7 @@ Markers on the outcome line:
 - Fix proposed to Won't fix: the user picks "Don't fix…" and types a reason. The app stores an unaccepted "Won't fix: <reason>" draft with origin nofix and declined {run}, and folds the proposal. No writer replaces it.
 - A fix run to Already done, Won't fix, Follow-up asked, or Needs your decision: a thread note with fixed false and why already, invalid, scope, or unclear makes a draft with origin nofix and the note reply as its body, not accepted. already also proposes resolve, ticked only on a thread that the user started. why decision and risk make no draft. A finding note makes no draft. A note without a reply makes no draft.
 - A fix run to Needs your decision: validateFix drops every edit of a fixed note. The app keeps the note with why dropped and the reasons in drops. It offers Fix again and Copy prompt, never a reply.
-- Any outcome to Out of date: new messages arrive. Confirm leaves the draft out of the plan.
+- Any outcome to Out of date: new messages arrive. Confirm leaves the draft out of the plan. Reply to the newest as is ends Out of date with the same text (section 8).
 - Any outcome to Resolved since the draft: the thread is resolved after the draft. Confirm leaves the draft out of the plan until the user reopens the thread.
 - Waiting for push to Fixed in X: the next sync finds the commit. A commit that the clone branch no longer holds (rebase, squash, reset) offers "Post as plain reply". A cache commit or a clone that git cannot read stays Waiting for push.
 
@@ -102,3 +103,29 @@ Markers on the outcome line:
 - A finding that your session rejected, with ticked edits, gets the note with Keep the reject (untick) and Keep the fix (restore the finding).
 - The Draft replies count: your-turn threads with no current draft, or with an out-of-date draft that a reply run for all threads replaces. The run still takes every your-turn thread.
 - Later: per-thread history (P14), the stale-draft notice (P16), BLOCKER task done (P15), no Accept on a stale card (P9), the commit-gone check for an unaccepted "Fixed in" draft (P11), and an untick that survives a reload (P3).
+
+## 8. Revisions and Reply to the newest as is (decisions C and D)
+
+User decision, 2026-10-20. Rule: an action that would replace a draft that the user edited or accepted stores a revision. The user uses it or keeps the draft. No writer overwrites it in silence.
+
+- Revision: a review_item with kind reply, status discarded, and payload revises <draft ID>. CURRENT_DRAFTS never picks it. GET reply-drafts and the item action response carry the newest waiting revision on its open draft as revised. A newer revision of a thread, or a new draft of the thread, sets dropped true on the older ones. The row stays, because SQLite gives the ID of a deleted last row again, and a stale page could then use a revision it never saw.
+- Revise mode: draftReplies marks a thread with ReplyThread.revise <draft ID> when its current draft is touched (accepted, or new and edited). A named thread (Draft again, Draft reply) always gets it. Draft replies marks only an out-of-date touched draft. The prompt gets a Revise line that points to the "Draft text" of context/fix-state.md: keep the user's points and tone, change only what the new messages require, else give the text unchanged. At the run end, a result for a marked thread whose current draft is still that draft becomes a revision. The same text stores nothing (sameText). The coverage says revisedText.
+- Use revision (item action use-revision {revision, draft}): one transaction discards the user's draft (discardedBy user) and makes the revision the draft: revises removed, status new, edited 0, not accepted. The user's resolveTick stays. A revision with fix adds the user's draft to fix.replaced, so Undo of the commit brings it back. A revision without text and without a resolve stays discarded as the user's choice.
+- Keep mine (keep-mine {revision}): sets dropped on the revision. The user's draft keeps its exact text and its accepted state.
+- A waiting revision takes no other item action. A dropped revision gets 409. A revision of an undone commit is hidden, and Use revision of it gets 409.
+- Reply to the newest as is (reply-to-newest {revision}): no AI run. It sets replyTo of an open draft with text to the newest live message (newestLive). The status, the text, edited, and threadOpen stay. threadOpen true in a thread that is resolved now gets 409 (resolved-since). threadOpen false keeps reopen-first. The draft card offers it on an out-of-date draft. The post confirm offers it as the action of the out-of-date group, in place of Draft again, which discarded the accepted draft first.
+- AI discard: validateReplies stores a "No reply needed" draft with discardedBy ai. userDraft counts a discarded current draft as a decline only without discardedBy ai. The item action discard sets discardedBy user. Drafts stored before the field read as the user's.
+- Draft replies count (outcome.ts needsReply): also an out-of-date AI-discarded draft, and an out-of-date touched draft without a waiting revision for the newest message.
+
+Writers:
+
+| Writer | Choice |
+|---|---|
+| Reply run for named threads | Revision of a touched draft. A declined "Won't fix" draft stays kept, as before. |
+| Draft replies | Revision of an out-of-date touched draft. A current touched draft stays kept. An AI-discarded draft is replaced. |
+| Fix commit | Revision of a touched draft: its text plus the "Fixed in" line. A "Won't fix" draft stays kept. |
+| Fix run, no-fix draft | Kept, as before. The note reply does not revise the user's text. |
+| Session Apply | Unchanged: the user's own click replaces open drafts and its Undo brings them back (consult.ts). |
+| Don't fix | Unchanged: the user's own click with Undo. |
+| Re-review resolve proposal | Unchanged: it skips every thread with an unposted draft. |
+

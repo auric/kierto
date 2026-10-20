@@ -72,7 +72,11 @@ export function threadText(thread: number, comments: CommentDto[]): string {
 
 // Why the post leaves a draft out, and what the user can do. action: the button of each draft, null: none. The key order is the group order.
 export const BLOCKED: Record<BlockedReason, { title: string; text: string; action: string | null }> = {
-  "out-of-date": { title: "Out of date", text: "New messages since the draft. Draft again or edit.", action: "Draft again" },
+  "out-of-date": {
+    title: "Out of date",
+    text: "New messages since the draft. Reply to the newest as is, or revise it in the thread.",
+    action: "Reply to the newest as is",
+  },
   "resolved-since": { title: "Resolved since the draft", text: "Reopen the thread to post.", action: "Reopen thread" },
   unpushed: { title: "Fix commit not pushed", text: "Push the fix commit first.", action: null },
   "commit-gone": {

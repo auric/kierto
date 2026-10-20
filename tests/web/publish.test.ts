@@ -206,8 +206,8 @@ describe("post states", () => {
     expect(threadText(999, [root])).toBe("Thread 999");
     expect(BLOCKED["out-of-date"]).toEqual({
       title: "Out of date",
-      text: "New messages since the draft. Draft again or edit.",
-      action: "Draft again",
+      text: "New messages since the draft. Reply to the newest as is, or revise it in the thread.",
+      action: "Reply to the newest as is",
     });
     expect(BLOCKED["resolved-since"]).toEqual({
       title: "Resolved since the draft",

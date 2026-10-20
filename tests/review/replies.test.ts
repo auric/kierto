@@ -12,7 +12,7 @@ import { writeConfig } from "../../src/server/config";
 import { createLive } from "../../src/server/live";
 import { buildPlan } from "../../src/server/publish/plan";
 import { MIN_EDIT_TURNS, SHIPPED_PROFILES } from "../../src/server/review/catalog";
-import { createReviewJobs, keptText } from "../../src/server/review/jobs";
+import { createReviewJobs, fixStateFile, keptText, revisedText, sameText } from "../../src/server/review/jobs";
 import { validateReplies } from "../../src/server/review/validate";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
@@ -434,8 +434,10 @@ describe("drafts", () => {
       expect(second.run.summary?.coverage.skipped).toEqual(expect.arrayContaining([keptText(101), keptText(501)]));
       expect(h.item(a.id)).toMatchObject({ status: "accepted", revision: 1 });
       expect(h.item(b.id)).toMatchObject({ status: "accepted", revision: 1, body: "My own words." });
-      // Draft again for thread 101 keeps the accepted draft too.
-      expect((await h.run([101])).items).toEqual([]);
+      // Draft again for thread 101 revises the accepted draft. The fixture gives the same text, so no revision is stored.
+      const again = await h.run([101]);
+      expect(again.items).toEqual([]);
+      expect(again.run.summary?.coverage.skipped).toContain(sameText(101));
 
       // A declined draft stays the answer of Draft replies. A run for the named thread takes a new draft.
       expect((await h.act(b.id, { action: "discard", revision: 1 })).status).toBe(200);
@@ -705,6 +707,192 @@ describe("drafts", () => {
       expect(d.run.summary?.coverage.skipped).toContain(
         "Resolve proposal for thread 801 dropped: the judgement is unsettled, not settled.",
       );
+    },
+    SLOW,
+  );
+});
+
+// docs/plans/thread-outcome.md decisions C and D: a reply run revises a draft that you edited or accepted, and an out-of-date draft can
+// answer the newest message as it is.
+describe("revisions and reply to the newest", () => {
+  const replies = (...list: ReplyDraft[]) => ({ replies: { summary: "Drafts.", replies: list, coverage: emptyCoverage } });
+  const stored = (h: Awaited<ReturnType<typeof setup>>, id: number) => {
+    const r = h.db.query("SELECT status, body, edited, revision, payload_json FROM review_item WHERE id = $id").get({ id }) as {
+      status: string;
+      body: string;
+      edited: number;
+      revision: number;
+      payload_json: string;
+    } | null;
+    return r && { ...r, payload: JSON.parse(r.payload_json) as ReplyPayload };
+  };
+  const draftsOf = async (h: Awaited<ReturnType<typeof setup>>) =>
+    new Map((await h.json<ReviewItemDto[]>(`/api/prs/${h.pr}/reply-drafts`)).body.map((i) => [payload(i).thread, i]));
+
+  test(
+    "Draft again on your edited draft gets your text as input and stores a revision; Keep mine drops it and keeps your exact text",
+    async () => {
+      const h = await setup();
+      const [a] = (await h.run()).items as [ReviewItemDto];
+      const mine = "MINE-CANARY: I will move the flush out of the lock.";
+      expect((await h.act(a.id, { action: "edit", revision: 0, body: mine })).status).toBe(200);
+      h.comment(104, ALEX, 20, { parent: 103, root: 101 });
+
+      h.scenario(replies(draft(101, { body: "MINE-CANARY: I moved the flush out of the lock in abc123." })));
+      const d = await h.run([101]);
+      // The run revises your draft. fix-state.md holds your text, and the prompt points to it.
+      const stdin = h.runCalls().at(-1)?.stdin ?? "";
+      expect(stdin).toContain("\nThreads: 101 (answer message 104, another person started it, the user replied in it)\n");
+      expect(stdin).toContain(
+        '\nRevise: 101. The user wrote or accepted the current draft of each of these threads. Its text is under "Draft text"',
+      );
+      expect(fixStateFile(h.db, h.pr, [101])?.text).toContain(
+        `- Current draft: accepted by the user, origin reply\n\nDraft text:\n\n    ${mine}\n`,
+      );
+
+      const rev = d.items[0] as ReviewItemDto;
+      expect(d.items).toHaveLength(1);
+      expect(rev).toMatchObject({ status: "discarded", body: "MINE-CANARY: I moved the flush out of the lock in abc123." });
+      expect(payload(rev)).toMatchObject({ revises: a.id, replyTo: 104, origin: "reply", threadOpen: true });
+      expect(d.run.summary?.coverage.skipped).toContain(revisedText(101));
+      expect(stored(h, a.id)).toMatchObject({ status: "accepted", body: mine, edited: 1, revision: 1 });
+      // The draft list keeps your draft as the current draft and carries the revision on it.
+      const shown = (await draftsOf(h)).get(101);
+      expect(shown?.id).toBe(a.id);
+      expect(shown?.revised?.id).toBe(rev.id);
+      // A waiting revision takes only Use revision and Keep mine.
+      expect((await h.act(rev.id, { action: "accept", revision: 0 })).status).toBe(400);
+      expect((await h.act(rev.id, { action: "keep-mine", revision: 5 })).status).toBe(409);
+
+      const kept = await h.act(rev.id, { action: "keep-mine", revision: 0 });
+      expect(kept.status).toBe(200);
+      expect(kept.body).toMatchObject({ id: a.id, status: "accepted", body: mine });
+      expect(kept.body.revised).toBeUndefined();
+      // The row stays as a dropped revision, so its ID never comes back for another draft.
+      expect(stored(h, rev.id)).toMatchObject({ status: "discarded", revision: 1, payload: { revises: a.id, dropped: true } });
+      expect((await h.act(rev.id, { action: "keep-mine", revision: 1 })).status).toBe(409);
+      expect((await h.act(rev.id, { action: "use-revision", revision: 1, draft: 1 })).status).toBe(409);
+      expect(stored(h, a.id)).toMatchObject({ status: "accepted", body: mine, revision: 1 });
+      expect((await draftsOf(h)).get(101)?.revised).toBeUndefined();
+      // Only a revision can go.
+      expect((await h.act(a.id, { action: "keep-mine", revision: 1 })).status).toBe(400);
+
+      // The same text as your draft stores nothing.
+      h.scenario(replies(draft(101, { body: mine })));
+      const same = await h.run([101]);
+      expect(same.items).toEqual([]);
+      expect(same.run.summary?.coverage.skipped).toContain(sameText(101));
+    },
+    SLOW,
+  );
+
+  test(
+    "Use revision makes the revision the draft, not accepted, keeps your resolve tick, and discards your draft; a newer revision replaces an older one",
+    async () => {
+      const h = await setup();
+      const [a] = (await h.run()).items as [ReviewItemDto];
+      expect((await h.act(a.id, { action: "accept", revision: 0 })).status).toBe(200);
+      expect((await h.act(a.id, { action: "resolve", revision: 1, resolve: true })).status).toBe(200);
+      h.comment(104, ALEX, 20, { parent: 103, root: 101 });
+
+      h.scenario(replies(draft(101, { body: "First revision." })));
+      const first = (await h.run([101])).items[0] as ReviewItemDto;
+      h.scenario(replies(draft(101, { body: "Second revision." })));
+      const second = (await h.run([101])).items[0] as ReviewItemDto;
+      expect(second.id).not.toBe(first.id);
+      expect(stored(h, first.id)?.payload.dropped).toBe(true);
+      expect((await draftsOf(h)).get(101)?.revised?.id).toBe(second.id);
+
+      // The revision on screen must match your draft on screen.
+      const late = await h.act(second.id, { action: "use-revision", revision: 0, draft: 1 });
+      expect(late.status).toBe(409);
+      expect(late.body.error).toBe("Your draft changed on another page. Check it again.");
+      const used = await h.act(second.id, { action: "use-revision", revision: 0, draft: 2 });
+      expect(used.status).toBe(200);
+      expect(used.body).toMatchObject({ id: second.id, status: "new", edited: false, body: "Second revision.", revision: 1 });
+      expect(payload(used.body).revises).toBeUndefined();
+      expect(payload(used.body)).toMatchObject({ replyTo: 104, resolveTick: true });
+      expect(stored(h, a.id)).toMatchObject({ status: "discarded", body: a.body });
+      expect(stored(h, a.id)?.payload.discardedBy).toBe("user");
+      expect((await draftsOf(h)).get(101)?.id).toBe(second.id);
+      // The used revision is an ordinary draft now.
+      expect((await h.act(second.id, { action: "accept", revision: 1 })).status).toBe(200);
+      expect((await h.act(second.id, { action: "use-revision", revision: 2, draft: 3 })).status).toBe(400);
+    },
+    SLOW,
+  );
+
+  test(
+    "Draft replies revises only an out-of-date draft that you touched; a current one stays; a No reply needed draft of a reply run is no decline",
+    async () => {
+      const h = await setup();
+      h.scenario(replies(draft(101, { action: "none", body: "", reason: "Nothing to answer." }), draft(501)));
+      const [none, b] = (await h.run()).items as [ReviewItemDto, ReviewItemDto];
+      expect(none.status).toBe("discarded");
+      expect(payload(none).discardedBy).toBe("ai");
+      expect((await h.act(b.id, { action: "accept", revision: 0 })).status).toBe(200);
+
+      // The AI discarded its own draft, so Draft replies writes a new one. Your current accepted draft stays as it is.
+      h.scenario(replies(draft(101, { body: "Now an answer." }), draft(501, { body: "Another answer." })));
+      const second = await h.run();
+      expect(second.items.map((i) => [payload(i).thread, i.status, i.body])).toEqual([[101, "new", "Now an answer."]]);
+      expect(h.runCalls().at(-1)?.stdin).not.toContain("Revise:");
+      expect(second.run.summary?.coverage.skipped).toContain(keptText(501));
+      expect(second.run.summary?.coverage.skipped).not.toContain(keptText(101));
+
+      // A draft that you discarded stays your decline.
+      const a = second.items[0] as ReviewItemDto;
+      expect((await h.act(a.id, { action: "discard", revision: 0 })).status).toBe(200);
+      expect(stored(h, a.id)?.payload.discardedBy).toBe("user");
+      // New messages make your accepted draft out of date: Draft replies revises it.
+      h.comment(503, ALEX, 21, { parent: 502, root: 501 });
+      h.scenario(replies(draft(101, { body: "Ignored." }), draft(501, { body: "Revised for 503." })));
+      const third = await h.run();
+      expect(h.runCalls().at(-1)?.stdin).toContain("\nRevise: 501. ");
+      expect(third.items.map((i) => [payload(i).thread, i.status, payload(i).revises])).toEqual([[501, "discarded", b.id]]);
+      expect(third.run.summary?.coverage.skipped).toEqual(expect.arrayContaining([keptText(101), revisedText(501)]));
+    },
+    SLOW,
+  );
+
+  test(
+    "Reply to the newest as is moves the parent, keeps the text and the accepted state, and respects the resolved-thread rules",
+    async () => {
+      const h = await setup();
+      const [a, b] = (await h.run()).items as [ReviewItemDto, ReviewItemDto];
+      expect((await h.act(a.id, { action: "accept", revision: 0 })).status).toBe(200);
+      const current = await h.act(a.id, { action: "reply-to-newest", revision: 1 });
+      expect(current.status).toBe(409);
+      expect(current.body.error).toBe("The draft answers the newest message already.");
+
+      h.comment(104, ALEX, 20, { parent: 103, root: 101 });
+      const blocked = async () => (await h.json<PostPlanDto>(`/api/prs/${h.pr}/post-plan`)).body.blocked ?? [];
+      expect((await blocked()).map((x) => [x.item, x.reason])).toEqual([[a.id, "out-of-date"]]);
+      const moved = await h.act(a.id, { action: "reply-to-newest", revision: 1 });
+      expect(moved.status).toBe(200);
+      expect(moved.body).toMatchObject({ id: a.id, status: "accepted", body: a.body, edited: false, revision: 2 });
+      expect(payload(moved.body).replyTo).toBe(104);
+      expect(await blocked()).toEqual([]);
+      const plan = (await h.json<PostPlanDto>(`/api/prs/${h.pr}/post-plan`)).body;
+      expect(plan.posts.map((p) => p.destination)).toEqual([{ kind: "reply", parentId: 104 }]);
+
+      // A thread resolved after the draft waits for a reopen. A draft written in a resolved thread keeps reopen-first.
+      h.comment(503, ALEX, 21, { parent: 502, root: 501 });
+      h.db.query("UPDATE comment SET thread_resolved = 1 WHERE pr = $pr AND root_id = 501").run({ pr: h.pr });
+      const since = await h.act(b.id, { action: "reply-to-newest", revision: 0 });
+      expect(since.status).toBe(409);
+      expect(since.body.error).toBe("The thread was resolved after the draft. Reopen the thread first.");
+      h.db
+        .query("UPDATE review_item SET payload_json = json_set(payload_json, '$.threadOpen', json('false')) WHERE id = $id")
+        .run({ id: b.id });
+      const first = await h.act(b.id, { action: "reply-to-newest", revision: 0 });
+      expect(first.status).toBe(200);
+      expect(payload(first.body)).toMatchObject({ replyTo: 503, threadOpen: false });
+      expect(first.body.status).toBe("new");
+
+      // Only an open draft with text.
+      expect((await h.act(b.id, { action: "discard", revision: 1 })).status).toBe(200);
+      expect((await h.act(b.id, { action: "reply-to-newest", revision: 2 })).status).toBe(400);
     },
     SLOW,
   );

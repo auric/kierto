@@ -200,6 +200,85 @@ test("a stale draft says new messages arrived; Draft again answers the newest me
   expect(await posts()).toMatchObject([{ text: MARK + text, parent: { id: 1000011 } }]);
 });
 
+// docs/plans/thread-outcome.md decision C: a reply run revises a draft that you edited, and never replaces it.
+test("revise my reply: the revision shows a word diff against your text; Keep mine keeps your exact text; Use revision makes it the draft", async ({
+  page,
+}) => {
+  await connect(page);
+  await control("state", { reply: "new" });
+  await repliesButton(page).click();
+  await expect(card(page, ROOT)).toContainText(echo(1000010), { timeout: RUN_MS });
+  const mine = "MINE: the flush runs first now.";
+  await card(page, ROOT).getByRole("button", { name: "Edit" }).click();
+  await card(page, ROOT).getByRole("textbox", { name: "Edit the reply" }).fill(mine);
+  await card(page, ROOT).getByRole("textbox", { name: "Edit the reply" }).press("Control+Enter");
+  await expect(card(page, ROOT)).toContainText("edited by you");
+
+  // New messages: your edited draft is out of date. Draft replies counts it, because a run revises it.
+  await control("state", { reply: "two" });
+  await expect(page.locator("#c-1000011")).toBeVisible();
+  const outcome = thread(page, ROOT).locator("[data-outcome]");
+  await expect(outcome.locator("[data-marker='stale']")).toHaveText("Out of date");
+  await expect(repliesButton(page)).toHaveAccessibleName("Draft replies, 1 thread");
+  await expect(card(page, ROOT).getByRole("button", { name: "Draft again" })).toHaveCount(0);
+  await card(page, ROOT).getByRole("button", { name: "Revise my reply" }).click();
+
+  const revision = card(page, ROOT).locator("[data-revision]");
+  await expect(revision).toBeVisible({ timeout: RUN_MS });
+  await expect(card(page, ROOT).getByRole("region", { name: "Claude revised your reply" })).toBeVisible();
+  // The diff strikes your words and underlines the new ones. Your draft stays as it is above it.
+  await expect(revision.locator("del").first()).toContainText("MINE:");
+  await expect(revision.locator("ins").first()).toContainText("Thanks.");
+  await expect(revision.locator("[data-diff]")).toContainText("1000011");
+  await expect(card(page, ROOT).locator(".rl-indent").first()).toHaveText(mine);
+  await expect(outcome.locator("[data-marker='revision']")).toHaveText("Revision waiting");
+  // The revision answers the newest message, so Draft replies has nothing new to do.
+  await expect(repliesButton(page)).toHaveAccessibleName("Draft replies");
+
+  // Keep mine by keyboard: your exact text stays, still accepted and out of date.
+  await revision.getByRole("button", { name: "Keep mine" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(revision).toHaveCount(0);
+  await expect(card(page, ROOT).locator(".rl-indent").first()).toHaveText(mine);
+  await expect(card(page, ROOT)).toContainText("Accepted");
+  await expect(outcome.locator("[data-marker='revision']")).toHaveCount(0);
+  await expect(outcome.locator("[data-marker='stale']")).toHaveText("Out of date");
+
+  // Revise again, then Use revision: the revision is the draft now, not accepted, and it answers the newest message.
+  await card(page, ROOT).getByRole("button", { name: "Revise my reply" }).click();
+  await expect(revision).toBeVisible({ timeout: RUN_MS });
+  await revision.getByRole("button", { name: "Use revision" }).click();
+  await expect(card(page, ROOT)).toContainText(echo(1000011));
+  await expect(card(page, ROOT)).not.toContainText(mine);
+  await expect(card(page, ROOT)).not.toContainText("Accepted");
+  await expect(card(page, ROOT)).toContainText("from the reply run");
+  await expect(card(page, ROOT).locator("[data-revision]")).toHaveCount(0);
+  await expect(outcome.locator("[data-marker]")).toHaveCount(0);
+  expect(await posts()).toEqual([]);
+});
+
+// docs/plans/thread-outcome.md decision D: no AI run. The draft answers the newest message with the same text and stays accepted.
+test("reply to the newest as is: an accepted out-of-date draft posts its text under the newest message", async ({ page }) => {
+  await connect(page);
+  await control("state", { reply: "new" });
+  await repliesButton(page).click();
+  await expect(card(page, ROOT)).toContainText(echo(1000010), { timeout: RUN_MS });
+  await card(page, ROOT).getByRole("button", { name: "Accept" }).click();
+  await expect(card(page, ROOT)).toContainText("Accepted");
+  await control("state", { reply: "two" });
+  await expect(card(page, ROOT)).toContainText("New messages since this draft.");
+
+  await card(page, ROOT).getByRole("button", { name: "Reply to the newest as is" }).click();
+  await expect(card(page, ROOT)).not.toContainText("New messages since this draft.");
+  await expect(card(page, ROOT)).toContainText("Accepted");
+  await expect(card(page, ROOT)).toContainText(echo(1000010));
+  await expect(thread(page, ROOT).locator("[data-outcome] [data-marker]")).toHaveCount(0);
+  await page.keyboard.press("p");
+  await postButton(confirmBox(page)).click();
+  await expect(thread(page, ROOT).locator("[data-post]")).toContainText("Posted.");
+  expect(await posts()).toMatchObject([{ text: MARK + echoRaw(1000010), parent: { id: 1000011 } }]);
+});
+
 test("cancel stops a reply run: the pending card goes, and no draft appears", async ({ page }) => {
   await connect(page);
   await control("state", { turns: 1 });

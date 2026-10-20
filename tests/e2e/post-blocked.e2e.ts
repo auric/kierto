@@ -4,7 +4,7 @@
 // Thread outcome (docs/plans/thread-outcome.md WP-U2): the confirm groups the drafts that cannot post by reason, refreshes while it is
 // open, and offers the thread link and the action of each reason. The post bar and the Ready to post view count them.
 import { expect, type Page, test } from "@playwright/test";
-import { control, E2E_TOKEN, FAKE_URL, openApp, writes } from "./control";
+import { control, E2E_TOKEN, FAKE_URL, MARK, openApp, posts, writes } from "./control";
 
 const TITLE = "Batch cache writes in the sync worker";
 const RUN_MS = 60_000;
@@ -12,6 +12,7 @@ const RUN_MS = 60_000;
 const ROOT = 1000003;
 const THREAD = /^Thread of .+ in the general comment$/;
 const echo = (msg: number) => `Thanks. I checked message ${msg} against flush() and will change it.`;
+const echoRaw = (msg: number) => `Thanks. I checked message ${msg} against \`flush()\` and will change it.`;
 
 test.beforeEach(async () => {
   await control("reset");
@@ -32,7 +33,7 @@ async function connect(page: Page) {
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(TITLE);
 }
 
-test("an out-of-date draft: the open confirm refreshes into its group, the bar and Ready to post count it, and the thread link and Draft again work", async ({
+test("an out-of-date draft: the open confirm refreshes into its group, the bar and Ready to post count it, and the thread link and Reply to the newest as is work", async ({
   page,
 }) => {
   await connect(page);
@@ -53,7 +54,7 @@ test("an out-of-date draft: the open confirm refreshes into its group, the bar a
   await expect(box.getByRole("list", { name: "Comments to post" })).toHaveCount(0);
   const group = box.locator("[data-blocked-group='out-of-date']");
   await expect(group.getByRole("heading")).toHaveText("Out of date (1)");
-  await expect(group).toContainText("New messages since the draft. Draft again or edit.");
+  await expect(group).toContainText("New messages since the draft. Reply to the newest as is, or revise it in the thread.");
   const item = group.getByRole("list", { name: "Out of date" }).getByRole("listitem");
   await expect(item).toHaveCount(1);
   await expect(item.getByRole("button", { name: THREAD })).toBeVisible();
@@ -61,9 +62,9 @@ test("an out-of-date draft: the open confirm refreshes into its group, the bar a
   await expect(box.getByRole("alert")).toHaveText("The list changed while it was open. Read it again before you post.");
   await expect(box.getByRole("button", { name: "Cancel" })).toBeFocused();
 
-  // The actions are reachable by keyboard: Shift+Tab goes back from Cancel over the disabled Post to Draft again, then to the thread.
+  // The actions are reachable by keyboard: Shift+Tab goes back from Cancel over the disabled Post to the action, then to the thread.
   await page.keyboard.press("Shift+Tab");
-  await expect(item.getByRole("button", { name: "Draft again" })).toBeFocused();
+  await expect(item.getByRole("button", { name: "Reply to the newest as is" })).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(item.getByRole("button", { name: THREAD })).toBeFocused();
   await page.keyboard.press("Escape");
@@ -84,11 +85,16 @@ test("an out-of-date draft: the open confirm refreshes into its group, the bar a
   await expect(thread(page, ROOT)).toBeInViewport();
   expect(await page.evaluate((id) => !!document.activeElement?.closest(`#t-${id}`), ROOT)).toBe(true);
 
-  // Draft again answers the newest message. The new draft waits for Accept, so nothing can post or is blocked.
+  // docs/plans/thread-outcome.md decision D: Reply to the newest as is keeps the text and the accept, so the draft moves into the list
+  // and posts under the newest message. Your accepted draft is never discarded.
   await page.keyboard.press("p");
-  await confirmBox(page).getByRole("button", { name: "Draft again" }).click();
-  await expect(confirmBox(page)).toBeHidden();
-  await expect(card(page, ROOT)).toContainText(echo(1000011), { timeout: RUN_MS });
-  await expect(page.locator("[data-post-part]")).toHaveCount(0);
+  await confirmBox(page).getByRole("button", { name: "Reply to the newest as is" }).click();
+  await expect(confirmBox(page)).toHaveAccessibleName("Post 1 reply to PROJ1/sample-repo-2 #1001?");
+  await expect(confirmBox(page).locator("[data-blocked-group]")).toHaveCount(0);
   expect(await writes()).toEqual([]);
+  await expect(card(page, ROOT)).not.toContainText("New messages since this draft.");
+  await expect(card(page, ROOT)).toContainText("Accepted");
+  await confirmBox(page).getByRole("button", { name: "Post", exact: true }).click();
+  await expect(thread(page, ROOT).locator("[data-post]")).toContainText("Posted.");
+  expect(await posts()).toMatchObject([{ text: MARK + echoRaw(1000010), parent: { id: 1000011 } }]);
 });

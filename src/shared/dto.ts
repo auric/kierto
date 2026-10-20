@@ -472,6 +472,9 @@ export type ReviewItemDto = {
   status: ItemStatus;
   revision: number;
   edited: boolean;
+  // An open reply draft of GET reply-drafts and POST /api/items/:id: the newest revision of it (payload revises) that waits for
+  // Use revision or Keep mine. Absent: none.
+  revised?: ReviewItemDto;
 };
 
 // POST /api/items/:id. revision: the item revision on screen. A mismatch gives 409 with ItemConflict.
@@ -484,6 +487,12 @@ export const itemActionInput = z.discriminatedUnion("action", [
   z.object({ action: z.literal("resolve"), revision: version, resolve: z.boolean() }),
   // A "Fixed in" draft whose commit is not on the PR: drop the commit link and accept the draft, so it posts as a plain reply.
   z.object({ action: z.literal("plain"), revision: version }),
+  // A revision (payload revises) of the user's draft. use-revision: the revision becomes the draft, not accepted, and the user's draft is
+  // discarded. draft: the revision of the user's draft on screen. keep-mine: the revision goes, and the user's draft stays as it is.
+  z.object({ action: z.literal("use-revision"), revision: version, draft: version }),
+  z.object({ action: z.literal("keep-mine"), revision: version }),
+  // An open reply draft: answer the newest live message of the thread with the same text. No AI run.
+  z.object({ action: z.literal("reply-to-newest"), revision: version }),
 ]);
 export type ItemActionInput = z.infer<typeof itemActionInput>;
 // item: the current item, for a reload.

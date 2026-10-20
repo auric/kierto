@@ -551,6 +551,14 @@ export function triageText(before: ReviewItemDto, after: ReviewItemDto, action: 
       return replyOf(after).resolveTick ? "The thread resolves after the post." : "The thread stays open after the post.";
     case "plain":
       return "The draft posts as a plain reply. Accepted.";
+    case "use-revision":
+      return after.status === "discarded"
+        ? "The revision says no reply is needed. Your draft is discarded."
+        : "The revision is your draft now. Accept it to post.";
+    case "keep-mine":
+      return "Kept your draft. The revision is gone.";
+    case "reply-to-newest":
+      return "The draft answers the newest message now.";
   }
 }
 
@@ -568,18 +576,22 @@ export function replyMap(items: ReviewItemDto[] | undefined): Map<number, Review
 // none: action none, or no body yet. Accept needs a body (WP17), so it offers only a reply of your own.
 // A draft without a body that proposes or ticks a resolve is a draft: Accept with the tick resolves the thread without a reply.
 // stale: the draft answers a message that is no longer the newest live message of the thread.
+// pending revise: the run revises your out-of-date draft (jobs.ts draftReplies), so it keeps your text.
 export type ReplyCard =
-  | { kind: "pending" }
+  | { kind: "pending"; revise: boolean }
   | { kind: "none"; it: ReviewItemDto; stale: boolean }
   | { kind: "draft"; it: ReviewItemDto; stale: boolean }
   | { kind: "discarded"; it: ReviewItemDto };
 
+// An open draft that you edited or accepted. A reply run revises it and never replaces it (docs/plans/thread-outcome.md).
+export const touchedDraft = (it: ReviewItemDto) => it.status === "accepted" || (it.status === "new" && it.edited);
+
 // newest: the newest live message of the thread. pending: a reply run that this page started for the thread runs now.
 export function replyCard(it: ReviewItemDto | undefined, newest: number | null, pending: boolean): ReplyCard | null {
-  if (pending) return { kind: "pending" };
+  const stale = !!it && newest !== null && replyOf(it).replyTo !== newest;
+  if (pending) return { kind: "pending", revise: !!it && stale && touchedDraft(it) };
   if (!it) return null;
   const p = replyOf(it);
-  const stale = newest !== null && p.replyTo !== newest;
   if (!it.body.trim() && !p.resolve && !p.resolveTick) return { kind: "none", it, stale };
   return it.status === "discarded" ? { kind: "discarded", it } : { kind: "draft", it, stale };
 }

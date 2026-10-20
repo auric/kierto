@@ -31,7 +31,8 @@ export type PromptInput = {
 };
 
 // thread: the root comment ID. replyTo: the message to answer. mine: the user wrote the root comment. joined: the user wrote a live message in the thread.
-export type ReplyThread = { thread: number; replyTo: number; mine?: boolean; joined?: boolean };
+// revise: the ID of the draft that the user edited or accepted. The run revises its text (docs/plans/thread-outcome.md). Reply runs only.
+export type ReplyThread = { thread: number; replyTo: number; mine?: boolean; joined?: boolean; revise?: number };
 
 const starter = (t: ReplyThread) =>
   t.mine ? "the user started it" : t.joined ? "another person started it, the user replied in it" : "another person started it";
@@ -147,7 +148,9 @@ const PR_HEADINGS =
   'In ./context/pr.md, the heading "### Comment N" holds message N, the first message of thread N. The heading "### Reply M to P" holds message M.';
 
 // Plan replies.md R11: the thread list holds numbers only. The comment text stays in ./context/pr.md.
+// The text of a draft to revise stays in ./context/fix-state.md, which lists the current open draft of each thread.
 export function buildReplyPrompt(i: PromptInput & { threads: ReplyThread[] }): string {
+  const revise = i.threads.filter((t) => t.revise !== undefined).map((t) => t.thread);
   return [
     "# Task",
     "",
@@ -160,6 +163,12 @@ export function buildReplyPrompt(i: PromptInput & { threads: ReplyThread[] }): s
     ...(i.fixState
       ? [
           'In ./context/fix-state.md, the heading "## Thread N" holds the fix state of thread N. Respect it. Do not contradict the fix note, the fix commit, a decline, or a draft that the user accepted or edited.',
+          "",
+        ]
+      : []),
+    ...(revise.length && i.fixState
+      ? [
+          `Revise: ${revise.join(", ")}. The user wrote or accepted the current draft of each of these threads. Its text is under "Draft text" in ./context/fix-state.md. Update that reply for the new messages. Keep the user's points and tone. Change only what the new messages require. If nothing requires a change, give the draft text unchanged.`,
           "",
         ]
       : []),

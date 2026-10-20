@@ -59,7 +59,7 @@ import {
 } from "./clone";
 import { GitError, git } from "./git";
 import { GLOBAL_FILE, instructionSettings, projectInstructions, saveInstructionSettings } from "./instructions";
-import { currentDrafts, keptText, type ReviewJobs, userDraft } from "./jobs";
+import { currentDrafts, DROP_REVISIONS, keptText, type ReviewJobs, revisedText, touched, userDraft } from "./jobs";
 import { cachePath, gitSetup, locked, longPath } from "./workspace";
 
 type PrRow = {
@@ -106,6 +106,10 @@ const SQL = {
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr AND root_id = $root`,
   item: `INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited)
     VALUES ($run, 'reply', $payload, $body, 'new', $thread, 0) RETURNING id`,
+  // jobs.ts: a revision of the user's draft waits as a discarded item. A newer one drops the older ones of the thread.
+  revision: `INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited)
+    VALUES ($run, 'reply', $payload, $body, 'discarded', $thread, 0)`,
+  dropRevisions: DROP_REVISIONS,
   // The fix run records each thread where the commit kept the user's draft. A second commit adds no second line.
   kept: `UPDATE review_run SET summary_json = json_insert(summary_json, '$.coverage.skipped[#]', $text)
     WHERE id = $run AND json_valid(summary_json) AND NOT EXISTS (SELECT 1 FROM json_each(summary_json, '$.coverage.skipped') WHERE value = $text)`,
@@ -216,8 +220,9 @@ export function createFixRoutes(opts: {
   }
 
   // One transaction: the commit, the superseded drafts of each thread, one "Fixed in" reply draft per thread, and the fixed mark of each finding.
-  // A thread keeps a draft that the user edited, accepted, or declined the fix with: it gets no "Fixed in" draft, and the fix run records
-  // it in its coverage. docs/plans/thread-outcome.md: the draft keeps an untouched answer and adds "Fixed in X: <what>", with what from
+  // A thread keeps a draft that the user declined the fix with: it gets no "Fixed in" draft, and the fix run records it in its coverage.
+  // A draft that the user edited or accepted stays too. Its "Fixed in" text waits as a revision of it (payload revises).
+  // docs/plans/thread-outcome.md: the draft keeps an untouched answer and adds "Fixed in X: <what>", with what from
   // the note reply. A thread with edits outside the committed ones gets "Partly fixed in X" and no resolve proposal.
   function finish(db: Database, run: RunRow, id: number, edits: EditRow[], made: { commit: string; short: string }) {
     db.transaction(() => {
@@ -235,13 +240,18 @@ export function createFixRoutes(opts: {
         if (!last) continue;
         // The user asked for this fix, so a discarded draft does not block the "Fixed in" draft.
         const cur = drafts.get(thread);
-        if (userDraft(cur, false)) {
+        const mine = cur && touched(cur) ? cur : null;
+        if (!mine && userDraft(cur, false)) {
           db.query(SQL.kept).run({ run: run.run, text: keptText(thread) });
           continue;
         }
         const was = cur?.status === "new" ? (JSON.parse(cur.payload_json) as ReplyPayload) : null;
-        const answer = was && !was.fix && was.origin !== "nofix" && was.origin !== "resolve" ? (cur?.body.trim() ?? "") : "";
-        const replaced = (db.query(SQL.replaceable).all({ thread, pr: run.pr }) as { id: number }[]).map((r) => r.id);
+        const answer = mine
+          ? mine.body.trim()
+          : was && !was.fix && was.origin !== "nofix" && was.origin !== "resolve"
+            ? (cur?.body.trim() ?? "")
+            : "";
+        const replaced = mine ? [] : (db.query(SQL.replaceable).all({ thread, pr: run.pr }) as { id: number }[]).map((r) => r.id);
         for (const r of replaced) db.query(SQL.supersede).run({ id: r });
         const root = msgs.find((m) => m.id === thread);
         const partly = all.some((e) => e.thread === thread && !held.has(e.id));
@@ -264,8 +274,15 @@ export function createFixRoutes(opts: {
           resolveTick: !partly && !!root && isMe({ slug: root.authorSlug, login: root.authorLogin }, me),
           threadOpen: !msgs.some((m) => m.threadResolved),
           origin: "fix",
+          ...(mine && { revises: mine.id }),
         };
-        db.query(SQL.item).run({ run: run.run, payload: JSON.stringify(payload), body, thread });
+        const at = { run: run.run, payload: JSON.stringify(payload), body, thread };
+        db.query(SQL.dropRevisions).run({ thread, pr: run.pr });
+        if (!mine) db.query(SQL.item).run(at);
+        else {
+          db.query(SQL.revision).run(at);
+          db.query(SQL.kept).run({ run: run.run, text: revisedText(thread) });
+        }
       }
     })();
   }

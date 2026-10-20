@@ -200,7 +200,7 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
         if (r.status === 404) return c.json(notFound("Item"), 404);
         if (r.status === 400) return c.json({ error: r.error }, 400);
         if (r.status === 409) return c.json(r.conflict, 409);
-        live.broadcast("changed", { prs: [r.pr], runs: [r.item.run] });
+        live.broadcast("changed", { prs: [r.pr], runs: [...new Set([r.item.run, ...(r.runs ?? [])])] });
         return c.json(r.item, 200);
       },
     )

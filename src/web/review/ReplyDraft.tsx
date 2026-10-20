@@ -24,10 +24,12 @@ import {
   type LucideIcon,
   MessageCircleQuestionMark,
   MessageSquareReply,
+  PenLine,
   Reply,
   RotateCcw,
   Signpost,
   Split,
+  Undo2,
   Wrench,
 } from "lucide-react";
 import { Fragment, memo, type ReactNode, useId } from "react";
@@ -40,11 +42,12 @@ import type { MetaDto, ReviewItemDto } from "../../shared/dto";
 import type { Judgement, ReplyOrigin, ReplyPayload } from "../../shared/review";
 import type { Turn } from "../../shared/turn";
 import { askerSide, JUDGEMENT } from "../fix/model";
+import { wordDiff } from "../lib/textdiff";
 import { CopyButton, Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
 import { Hint, type Hints } from "../shell/Hint";
 import { AiAvatar, Inline } from "./Drafts";
-import { EVIDENCE, plural, type ReplyCard, repliesButton, replyOf } from "./model";
+import { EVIDENCE, plural, type ReplyCard, repliesButton, replyOf, touchedDraft } from "./model";
 import { asksFix, type ConflictText, MARKER, type Outcome, type OutcomeKind } from "./outcome";
 import { Acts, Editor, RestoreButton, type TriageCtx, type TriageMode } from "./Triage";
 
@@ -91,10 +94,13 @@ export type ReplyCtx = {
   hints: Hints;
   announce: (text: string) => void;
   triage: TriageCtx;
-  // Draft again: a new reply run for this thread only.
+  // Draft again: a new reply run for this thread only. For a draft that you edited or accepted, the run revises it (jobs.ts).
   again: (thread: number) => void;
   // "Post as plain reply": drops the commit link of a "Fixed in" draft and accepts it (item action plain).
   plain: (it: ReviewItemDto) => void;
+  // docs/plans/thread-outcome.md. take: the revision rev replaces your draft it. keep: rev goes. newest: it answers the newest message.
+  revision: { take: (rev: ReviewItemDto, it: ReviewItemDto) => void; keep: (rev: ReviewItemDto) => void };
+  newest: (it: ReviewItemDto) => void;
   // The user's own pull request: the judgement sets the default tick of the Fix list.
   author: boolean;
 };
@@ -102,6 +108,7 @@ export type ReplyCtx = {
 // Dashed: a draft that nobody accepted yet. Solid: accepted, so the post bar holds it.
 const box = "rl-enter mt-3.5 max-w-[72ch] scroll-mt-3 rounded-lg border border-dashed border-rule-strong px-2.5 pt-2 pb-2.5";
 const icon = "size-[15px] shrink-0";
+const linkButton = "cursor-pointer rounded font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-50";
 
 const JUDGEMENT_ICON: Record<Judgement, LucideIcon> = {
   valid: CircleCheck,
@@ -199,7 +206,7 @@ export const OutcomeLine = memo(function OutcomeLine({ o }: { o: Outcome }) {
       {o.markers.map((m) => (
         <Fragment key={m}>
           {" "}
-          <Badge data-marker={m} variant={m === "push" ? "quiet" : "warn"}>
+          <Badge data-marker={m} variant={m === "push" || m === "revision" ? "quiet" : "warn"}>
             {MARKER[m]}
           </Badge>
         </Fragment>
@@ -260,7 +267,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
       <p data-reply-draft={thread} className="rl-enter mt-3.5 mb-0 flex items-center gap-2 text-sm text-ink-2">
         <AiAvatar meta={ctx.meta} />
         <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
-        {short} is drafting a reply…
+        {short} is {card.revise ? "revising your reply" : "drafting a reply"}…
       </p>
     );
   }
@@ -286,13 +293,22 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
       </article>
     );
   }
+  // docs/plans/thread-outcome.md: a reply run revises a draft that you edited or accepted, so the button says what it does.
+  // Reply to the newest keeps the text. A thread resolved after the draft must open again first, so that choice waits.
+  const mineText = touchedDraft(it);
+  const asIs = card.kind === "draft" && it.body.trim() !== "" && props.resolved !== "since";
   const stale = card.stale && (
     <p className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-2">
       <History aria-hidden className="size-[13px] shrink-0" />
       New messages since this draft.
-      <button type="button" className="cursor-pointer rounded font-medium text-pen hover:underline" onClick={() => ctx.again(thread)}>
-        Draft again
+      <button type="button" disabled={props.busy} className={linkButton} onClick={() => ctx.again(thread)}>
+        {mineText ? "Revise my reply" : "Draft again"}
       </button>
+      {asIs && (
+        <button type="button" disabled={props.busy} className={linkButton} onClick={() => ctx.newest(it)}>
+          Reply to the newest as is
+        </button>
+      )}
     </p>
   );
   const j = p.judgement ?? null;
@@ -348,7 +364,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
       data-item={it.id}
       data-reply-draft={thread}
       tabIndex={-1}
-      aria-label={`${text ? "Reply draft" : "Resolve proposal"} from ${session ? "your session" : short}${text && props.to ? ` to ${props.to}` : ""}.${judged}${reopen ? ` ${reopen}` : ""}${resolves ? " Resolves the thread after the post." : ""}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}`}
+      aria-label={`${text ? "Reply draft" : "Resolve proposal"} from ${session ? "your session" : short}${text && props.to ? ` to ${props.to}` : ""}.${judged}${reopen ? ` ${reopen}` : ""}${resolves ? " Resolves the thread after the post." : ""}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}${it.revised ? " A revision waits." : ""}`}
       className={cn(box, accepted && "border-solid")}
     >
       <Head meta={ctx.meta} who={who}>
@@ -424,11 +440,73 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
           <ResolveTick it={it} p={p} mine={props.mine} who={who} busy={props.busy} ctx={ctx} />
           {stale}
           <Acts it={it} busy={props.busy} ctx={ctx.triage} />
+          {it.revised && <Revision it={it} rev={it.revised} who={who} busy={props.busy} ctx={ctx} />}
         </>
       )}
     </article>
   );
 });
+
+// docs/plans/thread-outcome.md: the revision of your draft as a word diff against your text. Struck text leaves, underlined text comes
+// in, so the state never rests on color alone. A revision without text and without a resolve says that no reply is needed.
+function Revision(props: { it: ReviewItemDto; rev: ReviewItemDto; who: string; busy: boolean; ctx: ReplyCtx }) {
+  const { it, rev, ctx } = props;
+  const id = useId();
+  const r = replyOf(rev);
+  const none = !rev.body.trim() && !r.resolve;
+  const parts = none ? [] : wordDiff(it.body.trim(), rev.body.trim());
+  return (
+    <section aria-labelledby={`${id}-t`} data-revision={rev.id} className="rl-enter rl-indent mt-3 border-l-2 border-pen/60 pl-2.5">
+      <p id={`${id}-t`} className="m-0 flex flex-wrap items-center gap-x-1.5 text-sm font-semibold">
+        <PenLine aria-hidden className="size-[13px] shrink-0 text-pen" />
+        {none ? `${props.who} finds that no reply is needed now` : `${props.who} revised your reply`}
+      </p>
+      {!none && (
+        <p data-diff className="m-0 mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
+          {/* The screen reader words sit outside the marks: inside, they make an empty marked line fragment at a wrap. */}
+          {parts.map((d, k) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: the parts have no ID, and the list never reorders.
+            <Fragment key={k}>
+              {d.kind === "same" ? (
+                d.text
+              ) : (
+                <>
+                  <span className="sr-only">{d.kind === "del" ? "[removed: " : "[added: "}</span>
+                  {d.kind === "del" ? (
+                    <del className="rounded-[3px] bg-(--del) box-decoration-clone px-0.5 text-ink-2 decoration-1">{d.text}</del>
+                  ) : (
+                    <ins className="rounded-[3px] bg-(--add) box-decoration-clone px-0.5 underline decoration-1 underline-offset-2">
+                      {d.text}
+                    </ins>
+                  )}
+                  <span className="sr-only">]</span>
+                </>
+              )}
+            </Fragment>
+          ))}
+        </p>
+      )}
+      <p className="m-0 mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+        <Inline text={r.reason} />
+      </p>
+      <p id={`${id}-d`} className="m-0 mt-1.5 text-xs text-muted-foreground">
+        {none
+          ? "Use revision discards your draft. Keep mine drops the revision."
+          : "Struck text leaves your reply, underlined text comes in. Use revision makes it your draft, not accepted. Keep mine drops it."}
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <Button size="sm" variant="outline" disabled={props.busy} aria-describedby={`${id}-d`} onClick={() => ctx.revision.take(rev, it)}>
+          <Check aria-hidden data-icon="inline-start" />
+          Use revision
+        </Button>
+        <Button size="sm" variant="outline" disabled={props.busy} aria-describedby={`${id}-d`} onClick={() => ctx.revision.keep(rev)}>
+          <Undo2 aria-hidden data-icon="inline-start" />
+          Keep mine
+        </Button>
+      </div>
+    </section>
+  );
+}
 
 // The tick shows on every open draft, so a plain reply can resolve too. The proof shows only for a proposal.
 // A thread that another person started never gets the tick by default (jobs.ts, validate.ts).

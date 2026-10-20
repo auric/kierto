@@ -267,11 +267,19 @@ export type ItemRow = {
 type NewItem = Omit<ItemRow, "id" | "run" | "revision">;
 
 // The current reply draft of each thread: the newest open draft, else the newest draft. A draft of an undone fix commit never
-// counts: it cannot post (outbox.ts fixCheck). An open draft sorts last, so it wins.
+// counts: it cannot post (outbox.ts fixCheck). A revision that waits for the user (payload revises) never counts.
+// An open draft sorts last, so it wins.
+const UNDONE = "EXISTS (SELECT 1 FROM fix_commit f WHERE f.id = json_extract(i.payload_json, '$.fix.id') AND f.state = 'undone')";
 const CURRENT_DRAFTS = `SELECT i.* FROM review_item i JOIN review_run r ON r.id = i.run
-  WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM fix_commit f WHERE f.id = json_extract(i.payload_json, '$.fix.id') AND f.state = 'undone')
+  WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread IS NOT NULL AND NOT ${UNDONE} AND json_extract(i.payload_json, '$.revises') IS NULL
   ORDER BY i.status IN ('new', 'accepted'), i.id`;
+const REVISIONS = `SELECT i.* FROM review_item i JOIN review_run r ON r.id = i.run
+  WHERE r.pr = $pr AND i.kind = 'reply' AND i.status = 'discarded' AND json_extract(i.payload_json, '$.revises') IS NOT NULL
+    AND json_extract(i.payload_json, '$.dropped') IS NULL AND NOT ${UNDONE} ORDER BY i.id`;
+// A newer draft or revision of a thread drops its waiting revisions. shared/review.ts says why the rows stay.
+export const DROP_REVISIONS = `UPDATE review_item SET payload_json = json_set(payload_json, '$.dropped', json('true')), revision = revision + 1
+  WHERE kind = 'reply' AND thread = $thread AND status = 'discarded' AND json_extract(payload_json, '$.revises') IS NOT NULL
+    AND json_extract(payload_json, '$.dropped') IS NULL AND run IN (SELECT id FROM review_run WHERE pr = $pr)`;
 
 export function currentDrafts(db: Database, pr: number): Map<number, ItemRow> {
   const out = new Map<number, ItemRow>();
@@ -279,15 +287,35 @@ export function currentDrafts(db: Database, pr: number): Map<number, ItemRow> {
   return out;
 }
 
+// The newest waiting revision of each draft, by the ID of the draft that it revises.
+export function revisions(db: Database, pr: number): Map<number, ItemRow> {
+  const out = new Map<number, ItemRow>();
+  for (const r of db.query(REVISIONS).all({ pr }) as ItemRow[]) out.set((JSON.parse(r.payload_json) as ReplyPayload).revises as number, r);
+  return out;
+}
+
+// The DTO of a reply draft with its waiting revision. Only an open draft can take a revision.
+export function withRevision(r: ItemRow, revs: Map<number, ItemRow>): ReviewItemDto {
+  const rev = r.status === "new" || r.status === "accepted" ? revs.get(r.id) : undefined;
+  return rev ? { ...toItemDto(r), revised: toItemDto(rev) } : toItemDto(r);
+}
+
+// An open draft that the user edited or accepted. A writer that would replace it stores a revision instead (docs/plans/thread-outcome.md).
+export const touched = (r: ItemRow | undefined) => !!r && (r.status === "accepted" || (r.status === "new" && r.edited === 1));
+
 // A draft that no writer replaces: the user edited or accepted it, declined it (the current draft is discarded), or declined the fix
 // with it ("Won't fix"). declined false: the user asked for a new draft of this thread, so a discarded draft does not block it.
+// A draft that a reply run discarded (discardedBy ai) is no decline.
 export const userDraft = (r: ItemRow | undefined, declined: boolean) =>
-  !!r &&
-  (r.status === "accepted" ||
-    (r.status === "new" && (r.edited === 1 || !!(JSON.parse(r.payload_json) as ReplyPayload).declined)) ||
-    (declined && r.status === "discarded"));
+  touched(r) ||
+  (!!r &&
+    ((r.status === "new" && !!(JSON.parse(r.payload_json) as ReplyPayload).declined) ||
+      (declined && r.status === "discarded" && (JSON.parse(r.payload_json) as ReplyPayload).discardedBy !== "ai")));
 
 export const keptText = (thread: number) => `Thread ${thread}: kept your draft. The new draft was not stored.`;
+export const revisedText = (thread: number) =>
+  `Thread ${thread}: kept your draft. The new text waits under it as a revision. Use it, or keep your draft.`;
+export const sameText = (thread: number) => `Thread ${thread}: kept your draft. The revision has the same text.`;
 
 // docs/plans/thread-outcome.md writer priority, after the user (userDraft): "Fixed in", then nofix, then the other writers, then a
 // resolve-only proposal. A lower rank wins. A draft stored before origin existed ranks by its fix field only.
@@ -421,6 +449,7 @@ const SQL = {
   // A new reply draft replaces the open drafts of its thread that the user did not touch. Posted drafts stay.
   supersede: `UPDATE review_item SET status = 'discarded', revision = revision + 1
     WHERE kind = 'reply' AND thread = $thread AND status = 'new' AND edited = 0 AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
+  dropRevisions: DROP_REVISIONS,
   threadResolved: "SELECT thread_resolved FROM comment WHERE pr = $pr AND comment_id = $thread",
   // Deleted messages too: the turn rule reads them.
   turns: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
@@ -1331,16 +1360,30 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (o) upsertEvents(j.db, j.id, o.events);
       // One open draft per thread. A new reply draft never replaces a draft that the user edited, accepted, or declined. A run for
       // threads that the user named is the user's choice, so only the other runs keep an untouched draft of a higher writer.
+      // A thread that the run revises (ReplyThread.revise) gets a revision of the user's draft, unless the draft changed since the start.
       const drafts = currentDrafts(j.db, j.pr);
       const kept = new Set<number>();
+      const revised = new Map<number, number>();
+      const notes: string[] = [];
       for (const it of e.result?.items ?? []) {
         if (it.kind !== "reply" || it.thread === null) continue;
         const cur = drafts.get(it.thread);
-        if (userDraft(cur, !j.picked) || (!j.picked && higherDraft(cur, it.payload_json))) kept.add(it.thread);
+        const revise = j.threads?.find((t) => t.thread === it.thread)?.revise;
+        if (cur && touched(cur) && cur.id === revise) {
+          if (it.body.trim() === cur.body.trim()) {
+            kept.add(it.thread);
+            notes.push(sameText(it.thread));
+          } else {
+            revised.set(it.thread, cur.id);
+            notes.push(revisedText(it.thread));
+          }
+        } else if (userDraft(cur, !j.picked) || (!j.picked && higherDraft(cur, it.payload_json))) {
+          kept.add(it.thread);
+          notes.push(keptText(it.thread));
+        }
       }
       const summary = e.result?.summary;
-      const coverage =
-        summary && kept.size ? { ...summary.coverage, skipped: [...summary.coverage.skipped, ...[...kept].map(keptText)] } : null;
+      const coverage = summary && notes.length ? { ...summary.coverage, skipped: [...summary.coverage.skipped, ...notes] } : null;
       const done = j.db.query(SQL.end).run({
         id: j.id,
         status: e.status,
@@ -1379,10 +1422,19 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         if (it.kind !== "reply" || it.thread === null) return [it];
         if (kept.has(it.thread)) return [];
         const shut = (resolved.get({ pr: j.pr, thread: it.thread }) as { thread_resolved: number } | null)?.thread_resolved === 1;
-        return [{ ...it, payload_json: JSON.stringify({ ...(JSON.parse(it.payload_json) as ReplyPayload), threadOpen: !shut }) }];
+        const of = revised.get(it.thread);
+        const payload: ReplyPayload = { ...(JSON.parse(it.payload_json) as ReplyPayload), threadOpen: !shut };
+        if (of === undefined) return [{ ...it, payload_json: JSON.stringify(payload) }];
+        return [{ ...it, status: "discarded", payload_json: JSON.stringify({ ...payload, revises: of }) }];
       });
+      // A new draft or a new revision of a thread replaces its older revisions that wait for the user.
       const supersede = j.db.query(SQL.supersede);
-      for (const thread of new Set(items.map((it) => it.thread))) if (thread !== null) supersede.run({ thread, pr: j.pr });
+      const dropRevisions = j.db.query(SQL.dropRevisions);
+      for (const thread of new Set(items.map((it) => it.thread))) {
+        if (thread === null) continue;
+        dropRevisions.run({ thread, pr: j.pr });
+        if (!revised.has(thread)) supersede.run({ thread, pr: j.pr });
+      }
       const q = j.db.query(SQL.item);
       const add = (list: NewItem[]) => {
         for (const it of list) q.run({ run: j.id, ...it });
@@ -2013,8 +2065,17 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (!pr) return { status: 404, error: "Pull request not found." };
       const { source_head, target_head } = pr;
       if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
-      const threads = replyThreads(db, pr, list);
-      if (!Array.isArray(threads)) return threads;
+      const found = replyThreads(db, pr, list);
+      if (!Array.isArray(found)) return found;
+      // docs/plans/thread-outcome.md: the run revises a draft that the user edited or accepted. A thread that the user named always,
+      // the other threads only when new messages came after the draft. Draft replies keeps a current one as it is.
+      const drafts = currentDrafts(db, id);
+      const threads = found.map((t): ReplyThread => {
+        const cur = drafts.get(t.thread);
+        if (!cur || !touched(cur)) return t;
+        const stale = (JSON.parse(cur.payload_json) as ReplyPayload).replyTo !== t.replyTo;
+        return list !== undefined || stale ? { ...t, revise: cur.id } : t;
+      });
       const brief = briefOf(db, id);
       const profile = profileOf(settings.profiles(), profileId ?? brief.profile);
       const at = threads.map((t) => `${t.thread}@${t.replyTo}`);
@@ -2131,13 +2192,14 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       }));
     },
 
-    // The current reply draft of each thread (currentDrafts), unless it is posted. null for an unknown PR.
+    // The current reply draft of each thread (currentDrafts), unless it is posted, with its waiting revision. null for an unknown PR.
     replyDrafts(db: Database, pr: number): ReviewItemDto[] | null {
       if (!prRow(db, pr)) return null;
+      const revs = revisions(db, pr);
       return [...currentDrafts(db, pr).values()]
         .filter((r) => r.status !== "posted")
         .sort((a, b) => (a.thread ?? 0) - (b.thread ?? 0))
-        .map(toItemDto);
+        .map((r) => withRevision(r, revs));
     },
 
     // The Claude config folder of the runs. The instructions preview reads the global file from it.

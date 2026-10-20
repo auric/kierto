@@ -247,22 +247,39 @@ describe("writer priority", () => {
 });
 
 describe("the reply count of Draft replies", () => {
-  test("a thread needs a reply when it has no draft, or when its draft is out of date and a reply run may replace it", () => {
+  test("a thread needs a reply when it has no draft, or when its draft is out of date and a reply run may replace or revise it", () => {
     const stale = { newest: NEWEST + 1 };
     expect(of({ draft: reply(), ...stale }).needsReply).toBe(true);
     expect(of({ draft: reply() }).needsReply).toBe(false);
-    // jobs.ts writer priority: a reply run keeps your draft, a "Fixed in" draft, a nofix draft, a decline, and a discarded draft.
-    expect(of({ draft: reply({}, { status: "accepted" }), ...stale }).needsReply).toBe(false);
-    expect(of({ draft: reply({}, { edited: true }), ...stale }).needsReply).toBe(false);
+    // jobs.ts writer priority: a reply run keeps a "Fixed in" draft, a nofix draft, a decline, and a draft that you discarded.
     expect(of({ draft: reply({ origin: "fix", fix: { id: 9, commit: HASH } }), ...stale }).needsReply).toBe(false);
     expect(of({ draft: reply({ origin: "nofix" }), ...stale }).needsReply).toBe(false);
     expect(of({ draft: reply({}, { status: "discarded" }) }).needsReply).toBe(false);
-    // A reply-run draft with action none is stored discarded, so a reply run keeps it. A stale session or resolve draft is replaced.
     expect(of({ draft: reply({}, { body: "", status: "discarded" }), ...stale }).needsReply).toBe(false);
+    expect(of({ draft: reply({ discardedBy: "user" }, { body: "", status: "discarded" }), ...stale }).needsReply).toBe(false);
+    // A reply run discarded its own "No reply needed" draft. That is no decline, so a reply run replaces it.
+    expect(of({ draft: reply({ discardedBy: "ai" }, { body: "", status: "discarded" }), ...stale }).needsReply).toBe(true);
+    expect(of({ draft: reply({ discardedBy: "ai" }, { body: "", status: "discarded" }) }).needsReply).toBe(false);
+    // A stale session or resolve draft is replaced.
     expect(of({ draft: reply({ origin: "session" }, { body: "" }), ...stale }).needsReply).toBe(true);
     expect(of({ draft: reply({ origin: "resolve", resolve: true }, { body: "" }), ...stale }).needsReply).toBe(true);
+    // An out-of-date draft that you accepted or edited gets a revision, unless a waiting revision answers the newest message.
+    expect(of({ draft: reply({}, { status: "accepted" }), ...stale }).needsReply).toBe(true);
+    expect(of({ draft: reply({}, { edited: true }), ...stale }).needsReply).toBe(true);
+    expect(of({ draft: reply({}, { status: "accepted" }) }).needsReply).toBe(false);
+    const rev = (to: number) => reply({ revises: 7, replyTo: to }, { id: 8, status: "discarded", body: "Thanks, done." });
+    expect(of({ draft: reply({}, { status: "accepted", revised: rev(NEWEST + 1) }), ...stale }).needsReply).toBe(false);
+    expect(of({ draft: reply({}, { status: "accepted", revised: rev(NEWEST) }), ...stale }).needsReply).toBe(true);
     // Only threads where it is your turn.
     expect(of({ turn: "wait" }).needsReply).toBe(false);
+  });
+
+  test("markers: a waiting revision of an open draft, and no out-of-date marker once the draft answers the newest message", () => {
+    const rev = reply({ revises: 7 }, { id: 8, status: "discarded", body: "Thanks, done." });
+    expect(of({ draft: reply({}, { status: "accepted", revised: rev }), newest: NEWEST + 1 }).markers).toEqual(["stale", "revision"]);
+    expect(of({ draft: reply({}, { status: "accepted", revised: rev }) }).markers).toEqual(["revision"]);
+    expect(of({ draft: reply({}, { status: "accepted" }) }).markers).toEqual([]);
+    expect(line({ draft: reply({}, { status: "accepted", revised: rev }) })).toBe("Answered");
   });
 });
 

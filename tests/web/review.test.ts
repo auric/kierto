@@ -596,8 +596,13 @@ describe("reply drafts", () => {
   test("card kinds: pending wins, none has no body, discarded folds, no item gives no card", () => {
     const none = reply(2, 101, 105, { body: "", status: "discarded" }, { action: "none", body: "" });
     const gone = reply(3, 101, 105, { status: "discarded" });
-    expect(replyCard(reply(1, 101, 105), 105, true)).toEqual({ kind: "pending" });
-    expect(replyCard(undefined, 105, true)).toEqual({ kind: "pending" });
+    expect(replyCard(reply(1, 101, 105), 105, true)).toEqual({ kind: "pending", revise: false });
+    expect(replyCard(undefined, 105, true)).toEqual({ kind: "pending", revise: false });
+    // docs/plans/thread-outcome.md: a run for an out-of-date draft that you accepted or edited revises it.
+    expect(replyCard(reply(1, 101, 105, { status: "accepted" }), 106, true)).toEqual({ kind: "pending", revise: true });
+    expect(replyCard(reply(1, 101, 105, { edited: true }), 106, true)).toEqual({ kind: "pending", revise: true });
+    expect(replyCard(reply(1, 101, 105, { status: "accepted" }), 105, true)).toEqual({ kind: "pending", revise: false });
+    expect(replyCard(reply(1, 101, 105), 106, true)).toEqual({ kind: "pending", revise: false });
     expect(replyCard(none, 106, false)).toEqual({ kind: "none", it: none, stale: true });
     expect(replyCard(gone, 106, false)).toEqual({ kind: "discarded", it: gone });
     // An edited none draft has a body, so it can be accepted.
