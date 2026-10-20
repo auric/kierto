@@ -316,7 +316,15 @@ export type CommentDto = {
   posted?: "run" | "reply";
 };
 
-export type PrDetail = { pr: PrRow; description: string | null; comments: CommentDto[]; files?: ChangedFile[]; commits?: CommitDto[] };
+// sourceHead: the source head of the last sync. null before the first sync.
+export type PrDetail = {
+  pr: PrRow;
+  description: string | null;
+  sourceHead: string | null;
+  comments: CommentDto[];
+  files?: ChangedFile[];
+  commits?: CommitDto[];
+};
 
 export type FollowState = { id: number; followed: boolean; archivedAt: number | null };
 

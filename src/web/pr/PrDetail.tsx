@@ -17,6 +17,7 @@ import { type DiffCtx, DiffSection, useDiffView } from "../diff/FileDiff";
 import type { Card } from "../diff/model";
 import { detailStep, type Layer } from "../keys";
 import { type FileRef, restoreScroll } from "../lib/route";
+import { diffRefresh } from "../live";
 import { useMeta } from "../meta";
 import { setThreadResolved } from "../publish/data";
 import { PostsGroup, useOutbox } from "../publish/Outbox";
@@ -211,6 +212,13 @@ export function PrDetail({
 
   const outbox = useOutbox(row.id, comments, forge);
   const qc = useQueryClient();
+  const head = data?.sourceHead;
+  const lastHead = useRef(head);
+  useEffect(() => {
+    const f = diffRefresh(row.id, lastHead.current, head);
+    if (head !== undefined) lastHead.current = head;
+    if (f) void qc.invalidateQueries(f);
+  }, [qc, row.id, head]);
   // My avatar comes from my own messages. Without one, the slug stands in.
   const mine = useMemo<Person>(
     () => threads.flatMap((t) => t.msgs).find((m) => m.who.me)?.who ?? { slug: me ?? "", name: me ?? "You", me: true },

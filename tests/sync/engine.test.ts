@@ -525,6 +525,24 @@ describe("follow state (A15)", () => {
     expect(requests(from, "/activities")).toHaveLength(1);
   });
 
+  test("a followed MERGED PR gets no single-PR GET after it is stored, but new comments still arrive", async () => {
+    const base = byUser(inline(), 1000003, OTHER);
+    world.own = base;
+    const h = await setup();
+    await h.cycle();
+    world.author = [];
+    const merged = ownPr();
+    merged.state = "MERGED";
+    fake.routes[key("GET", PR_PATH)] = { status: 200, body: merged };
+    await h.cycle();
+    expect(h.pr(2)).toMatchObject({ state: "MERGED", on_dashboard: 0 });
+    const from = fake.requests.length;
+    world.own = addReply(base, 1000003, 1000010, OTHER);
+    await h.cycle();
+    expect(fake.requests.slice(from).filter((r) => r === key("GET", PR_PATH))).toEqual([]);
+    expect(h.unread()).toBe(1);
+  });
+
   test("a 404 on the single-PR GET sets a reason for that PR only", async () => {
     world.reviewer = [reviewPr()];
     const h = await setup();
@@ -773,6 +791,15 @@ describe("scheduling", () => {
     h.engine.start();
     await h.timers.fire();
     expect(h.timers.delays.at(-1)).toBe(300_000);
+  });
+
+  test("a short Retry-After never shortens the check interval", async () => {
+    fake.routes[key("GET", DASHBOARD_PATH)] = { status: 429, body: {}, headers: { "Retry-After": "1" } };
+    const h = await setup();
+    h.random.value = 0;
+    h.engine.start();
+    await h.timers.fire();
+    expect(h.timers.delays.at(-1)).toBeGreaterThanOrEqual(0.9 * 60_000);
   });
 
   test("the first cycle after start and a gap over 120 s set the digest flag", async () => {

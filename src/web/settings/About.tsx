@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogFooter, DialogTitle } from "@/components/ui/dialog";
+import { dialogKeys } from "../fix/CloneDialog";
 import { useMeta } from "../meta";
 
 type Doc = "license" | "notices";
@@ -68,7 +69,10 @@ export function About() {
       </div>
       <Dialog open={doc !== null} onOpenChange={(o) => !o && setDoc(null)}>
         {/* The title row and the footer stay put. Only the text scrolls. */}
-        <DialogContent className="max-h-[min(85vh,800px)] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-[760px]">
+        <DialogContent
+          className="max-h-[min(85vh,800px)] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-[760px]"
+          onKeyDown={dialogKeys(() => setDoc(null))}
+        >
           <DialogTitle>{TITLE[shown]}</DialogTitle>
           <div
             // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll region needs keyboard focus.

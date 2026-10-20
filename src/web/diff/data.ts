@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Diff server state (plan r2 UI-DIFF). Keys ['pr', pr, 'diff'] and ['pr', pr, 'diff', path, start]: live.ts invalidates them with the PR.
+// Diff server state (plan r2 UI-DIFF). Keys ['pr', pr, 'diff'] and ['pr', pr, 'diff', path, start]: PrDetail invalidates them when the source head changes (live.ts diffRefresh).
 import {
   type QueryClient,
   queryOptions,

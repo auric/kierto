@@ -157,6 +157,25 @@ test("Settings sections and Edit <profile> push entries; Back walks the sections
   expect(path(page)).toBe(prUrl);
 });
 
+test("keys in the license dialog do not act behind it; Esc closes only the dialog", async ({ page }) => {
+  await connect(page);
+  await row(page, A).click();
+  await expect(h1(page)).toHaveText(A);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page).toHaveURL(`${APP}/settings`);
+  await page.getByRole("button", { name: "License", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "License" });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("r");
+  await page.waitForTimeout(300);
+  await expect(dialog).toBeVisible();
+  await expect(page).toHaveURL(`${APP}/settings`);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page).toHaveURL(`${APP}/settings`);
+  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+});
+
 test("narrow: the detail has its own entry; Esc and Back to the list go back; a link in a new tab has a list to go back to", async ({
   page,
 }) => {

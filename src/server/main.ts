@@ -34,6 +34,19 @@ export function startServer(opts: Omit<AppOptions, "port"> & { port: number }) {
   return server;
 }
 
+// On POSIX, claude runs in its own process group, so a signal to the app does not reach it. A second signal exits at once.
+export function stopOnSignals(stop: () => Promise<unknown>, exit: (code: number) => void = (code) => process.exit(code)) {
+  let stopping = false;
+  const onSignal = () => {
+    if (stopping) return exit(1);
+    stopping = true;
+    stop()
+      .catch((e) => log(`Could not stop the active run: ${(e as Error).message}`))
+      .finally(() => exit(0));
+  };
+  for (const s of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(s, onSignal);
+}
+
 // A compiled binary puts extra entries before --git-mcp in argv (U13), so the flag position varies.
 const gitMcpAt = process.argv.indexOf("--git-mcp");
 if (import.meta.main && gitMcpAt >= 0) {
@@ -80,6 +93,7 @@ if (import.meta.main && gitMcpAt >= 0) {
       assets: indexHtml === undefined ? undefined : serveStatic({ root: WEB_DIR }),
     });
     console.log(`Kierto (${BUILD_COMMIT ?? "source"}): http://127.0.0.1:${server.port}/`);
+    stopOnSignals(() => review.stop());
     sync.start();
     void review.start();
     outbox.start();

@@ -3,7 +3,7 @@
 
 // Run log sheet (prototype/v3 renderSheet, logTree, logFoot, rawBlock): one line per tool call, subagent calls nested by parent.
 import { Braces, ChevronRight, CircleAlert, Copy, LoaderCircle, Ticket, User, X } from "lucide-react";
-import { Fragment, type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, memo, type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
@@ -149,8 +149,11 @@ export function RunLog(props: {
   }, [events]);
 
   const run = detail?.run;
-  const isOpen = (e: RunEvent) => folds.get(e.id) ?? e.status !== "ok";
-  const toggle = (e: RunEvent) => setFolds((f) => new Map(f).set(e.id, !isOpen(e)));
+  const tree = useMemo(() => (events ? logTree(events) : []), [events]);
+  const toggle = useCallback((e: RunEvent) => setFolds((f) => new Map(f).set(e.id, !isOpen(f, e))), []);
+  const instructions = run ? instructionsText(run) : null;
+  const subagents = events ? subagentText(events) : null;
+  const skills = run ? skillsText(run) : null;
 
   return (
     <aside
@@ -198,8 +201,8 @@ export function RunLog(props: {
             atEnd.current = ol.scrollTop + ol.clientHeight >= ol.scrollHeight - 8;
           }}
         >
-          {logTree(detail.events).map((n) => (
-            <Row key={n.e.id} n={n} depth={0} meta={meta} isOpen={isOpen} onToggle={toggle} />
+          {tree.map((n) => (
+            <Row key={n.e.id} n={n} depth={0} meta={meta} folds={folds} onToggle={toggle} />
           ))}
           {!detail.events.length && <li className="py-1 font-sans text-sm text-muted-foreground">No tool call yet.</li>}
         </ol>
@@ -221,24 +224,24 @@ export function RunLog(props: {
             {setupText(detail.run, meta.runner.defaults)}
           </span>
         )}
-        {detail && instructionsText(detail.run)?.short && (
-          <span data-run-instructions className="text-muted-foreground" title={instructionsText(detail.run)?.long}>
-            Project instructions: {instructionsText(detail.run)?.short}
+        {instructions?.short && (
+          <span data-run-instructions className="text-muted-foreground" title={instructions.long}>
+            Project instructions: {instructions.short}
           </span>
         )}
-        {detail && subagentText(detail.events) && (
+        {subagents && (
           <span data-run-subagents className="text-muted-foreground">
-            Subagents: {subagentText(detail.events)}
+            Subagents: {subagents}
           </span>
         )}
-        {detail && skillsText(detail.run) && (
+        {skills && (
           <span data-run-skills className="text-muted-foreground">
-            Skills: {skillsText(detail.run)}
+            Skills: {skills}
           </span>
         )}
-        {detail && instructionsText(detail.run)?.notLoaded && (
+        {instructions?.notLoaded && (
           <span data-run-not-loaded className="text-destructive">
-            {instructionsText(detail.run)?.notLoaded}
+            {instructions.notLoaded}
           </span>
         )}
       </footer>
@@ -246,7 +249,11 @@ export function RunLog(props: {
   );
 }
 
-function Row(props: { n: LogNode; depth: number; meta: MetaDto; isOpen: (e: RunEvent) => boolean; onToggle: (e: RunEvent) => void }) {
+const isOpen = (folds: ReadonlyMap<string, boolean>, e: RunEvent) => folds.get(e.id) ?? e.status !== "ok";
+
+type RowProps = { n: LogNode; depth: number; meta: MetaDto; folds: ReadonlyMap<string, boolean>; onToggle: (e: RunEvent) => void };
+
+const Row = memo(function Row(props: RowProps) {
   const { n, meta } = props;
   const e = n.e;
   const tool = meta.tools[e.tool] ?? e.tool;
@@ -267,7 +274,7 @@ function Row(props: { n: LogNode; depth: number; meta: MetaDto; isOpen: (e: RunE
       </li>
     );
   }
-  const open = props.isOpen(e);
+  const open = isOpen(props.folds, e);
   const { words } = agentInfo(n);
   const ended = e.status === "ok" || e.status === "error";
   const result = ended ? (e.note ?? "") : "";
@@ -305,12 +312,12 @@ function Row(props: { n: LogNode; depth: number; meta: MetaDto; isOpen: (e: RunE
       </button>
       <ol id={`ag-${e.id}`} className={cn("rl-lsub", props.depth + 1 >= LOG_CAP && "rl-cap")} hidden={!open}>
         {n.kids.map((k) => (
-          <Row key={k.e.id} n={k} depth={props.depth + 1} meta={meta} isOpen={props.isOpen} onToggle={props.onToggle} />
+          <Row key={k.e.id} n={k} depth={props.depth + 1} meta={meta} folds={props.folds} onToggle={props.onToggle} />
         ))}
       </ol>
     </li>
   );
-}
+});
 
 const linkish = "inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
 

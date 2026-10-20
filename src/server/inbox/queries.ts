@@ -76,7 +76,7 @@ const SQL = {
       (SELECT pr_id FROM pull_request WHERE id = event.pr) AS pr_id, (SELECT title FROM pull_request WHERE id = event.pr) AS title,
       (SELECT followed = 1 AND archived_at IS NULL FROM pull_request WHERE id = event.pr) AS shown`,
   cleanup: "DELETE FROM event WHERE claimed_at IS NOT NULL AND claimed_at < $cutoff",
-  description: "SELECT description FROM pull_request WHERE id = $id",
+  description: "SELECT description, source_head FROM pull_request WHERE id = $id",
   // Plan v3 WP13: confirmed outbox rows link a remote comment to its source.
   posted: "SELECT remote_id, run IS NOT NULL AS run FROM post WHERE pr = $pr AND state = 'confirmed' AND remote_id IS NOT NULL",
   checkpoint: "SELECT last_complete_at, incomplete_reason, last_error FROM sync_checkpoint WHERE scope = $scope",
@@ -312,10 +312,10 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
       ...(by && { posted: by }),
     };
   });
-  const { description } = db.query(SQL.description).get({ id }) as { description: string | null };
+  const { description, source_head } = db.query(SQL.description).get({ id }) as { description: string | null; source_head: string | null };
   const commits = db.query(SQL.commits).all({ pr: id }) as CommitDto[];
   const files = db.query(SQL.files).all({ pr: id }) as ChangedFile[];
-  return { pr, description, comments, files, commits };
+  return { pr, description, sourceHead: source_head, comments, files, commits };
 }
 
 // null for an unknown PR.

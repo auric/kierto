@@ -27,7 +27,8 @@ class Unauthorized extends Error {}
 const SQL = {
   forget: "UPDATE pull_request SET initialized_at = NULL WHERE initialized_at IS NOT NULL AND (followed = 0 OR archived_at IS NOT NULL)",
   polled: "SELECT id, project, repo, pr_id FROM pull_request WHERE followed = 1 AND archived_at IS NULL ORDER BY id",
-  away: "SELECT id, project, repo, pr_id FROM pull_request WHERE followed = 1 AND archived_at IS NULL AND on_dashboard = 0 ORDER BY id",
+  // Bitbucket cannot reopen a MERGED PR, so its stored state is final.
+  away: "SELECT id, project, repo, pr_id FROM pull_request WHERE followed = 1 AND archived_at IS NULL AND on_dashboard = 0 AND state IS NOT 'MERGED' ORDER BY id",
   prBefore:
     "SELECT id, my_role, source_head, initialized_at, followed, archived_at FROM pull_request WHERE project = $project AND repo = $repo AND pr_id = $pr_id",
   prUpsert: `INSERT INTO pull_request (project, repo, pr_id, title, description, author_slug, author_name, my_role, my_status, last_reviewed_commit,
@@ -246,7 +247,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
       dashboardDone = true;
     }
 
-    // Step 2: followed PRs off the dashboard get the single-PR GET, for MERGED, DECLINED, and the current role.
+    // Step 2: followed PRs off the dashboard get the single-PR GET, for MERGED, DECLINED, and the current role. A stored MERGED PR gets no GET.
     const skip = new Set<number>();
     if (dashboardDone) {
       for (const row of tx(() => db.query(SQL.away).all({}) as PrKey[])) {
@@ -443,7 +444,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
     }
     status.state = out.state;
     status.error = out.error ?? null;
-    if (started && !out.pause) schedule(out.retryAfterMs ?? nextDelay(failures, random, settings.checkMs()));
+    if (started && !out.pause) schedule(Math.max(out.retryAfterMs ?? 0, nextDelay(failures, random, settings.checkMs())));
   }
 
   function clearTimer() {
