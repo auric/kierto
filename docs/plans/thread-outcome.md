@@ -1,6 +1,6 @@
 # Thread outcome plan: one outcome per thread
 
-Status: in progress, 2026-10-20. WP-D, WP-C, WP-S1, WP-S4, and WP-S2 are done. Line references point to the code at HEAD 0db727e.
+Status: in progress, 2026-10-20. WP-D, WP-C, WP-S1, WP-S4, WP-S2, and WP-S3 are done. Line references point to the code at HEAD 0db727e.
 
 ## 1. Goal
 
@@ -22,9 +22,9 @@ Already landed: 0fe5659 keeps drafts that the user edited or accepted on AI runs
 | P6 | Draft replies discarded edited, accepted, and "Fixed in" drafts. | Landed: 0fe5659 protects edited and accepted drafts. WP-S1 keeps an untouched "Fixed in" or nofix draft on Draft replies (jobs.ts writerRank, end). |
 | P7 | The reply card and the fix card show side by side and can disagree (useReview.tsx:505-519). | Open |
 | P8 | A session accept without a reply gives "No reply needed" with the chip "Valid" (consult.ts:517, ReplyDraft.tsx:196-210, review/model.ts:520). The outcome must be "To fix". | Open |
-| P9 | Confirm is all or nothing. The first stale reply or unpushed fix stops all posts with one message and no thread (publish/routes.ts:99-105, outbox.ts:449-468). Accept stays on a stale card. | Open |
-| P10 | A draft goes into a thread that another person resolved after the draft. | Partly: 0fe5659 reopens the thread and shows the marker. The draft must stay out of the plan until the user confirms it. |
-| P11 | A rebased or squashed fix commit never reaches the PR, so the "Fixed in" draft waits forever (outbox.ts:460-468). An edit keeps the commit link (items.ts:81-85). | Partly: WP-S2 adds the item action plain. The button is WP-U1a. An edit still keeps the link. |
+| P9 | Confirm is all or nothing. The first stale reply or unpushed fix stops all posts with one message and no thread (publish/routes.ts:99-105, outbox.ts:449-468). Accept stays on a stale card. | Partly: WP-S3 lists the blocked drafts with item, thread, and reason, and confirm posts the rest (outbox.ts blockedDrafts). Accept on a stale card is WP-U2. |
+| P10 | A draft goes into a thread that another person resolved after the draft. | Landed: WP-S3 leaves a resolved-since draft out of the plan. The user reopens the thread to post it. A draft written while the thread was resolved keeps reopen-first. |
+| P11 | A rebased or squashed fix commit never reaches the PR, so the "Fixed in" draft waits forever (outbox.ts:460-468). An edit keeps the commit link (items.ts:81-85). | Partly: WP-S2 adds the item action plain. WP-S3 marks commit-gone when the clone branch no longer holds the commit, and the confirm offers "Post as plain reply". The card button is WP-U1a. An edit still keeps the link. |
 | P12 | The Fix list ignores fix notes (fix/model.ts:28-37, 150). | Open |
 | P13 | A reply run does not see the fix state of a thread (catalog.ts:312-341). | Landed: WP-S4 adds context/fix-state.md (jobs.ts fixStateFile). |
 | P14 | A thread has no history of its drafts and fixes. | Later |
@@ -76,7 +76,8 @@ Markers on the outcome line:
 - A fix run to Already done, Won't fix, Follow-up asked, or Needs your decision: a thread note with fixed false and why already, invalid, scope, or unclear makes a draft with origin nofix and the note reply as its body, not accepted. already also proposes resolve, ticked only on a thread that the user started. why decision and risk make no draft. A finding note makes no draft. A note without a reply makes no draft.
 - A fix run to Needs your decision: validateFix drops every edit of a fixed note. The app keeps the note with why dropped and the reasons in drops. It offers Fix again and Copy prompt, never a reply.
 - Any outcome to Out of date: new messages arrive. Confirm leaves the draft out of the plan.
-- Waiting for push to Fixed in X: the next sync finds the commit. A rebased commit offers "Post as plain reply".
+- Any outcome to Resolved since the draft: the thread is resolved after the draft. Confirm leaves the draft out of the plan until the user reopens the thread.
+- Waiting for push to Fixed in X: the next sync finds the commit. A commit that the clone branch no longer holds (rebase, squash, reset) offers "Post as plain reply". A cache commit or a clone that git cannot read stays Waiting for push.
 
 ## 6. Work packages
 
@@ -87,7 +88,7 @@ Markers on the outcome line:
 | WP-S1 | Fix outcomes: the fix agent writes why and reply. A note with fixed false makes a nofix draft by the writer priority. validateFix keeps a dropped note with why dropped. Every writer sets origin. | Done |
 | WP-S4 | The reply run context shows the fix state of each thread: proposal, commit, decline. | Done |
 | WP-S2 | Commit: "Partly fixed in X" without resolve; "Fixed in X: <what>" keeps any answer. Decline route "Don't fix…" (fixDeclineInput). "Post as plain reply" for a rebased fix. | Done |
-| WP-S3 | Partial confirm: the plan lists blocked drafts per item and thread. Confirm posts the rest. | implementer-xhigh |
+| WP-S3 | Partial confirm: the plan lists blocked drafts per item and thread. Confirm posts the rest. | Done |
 | WP-U1b | Fix UI: Don't fix…, the persistent fold, the dropped note with Fix again and Copy prompt, the Fix list with fix notes. | implementer-xhigh |
 | WP-U1a | The outcome line per thread, the markers, and a note when the reply and the fix disagree. | implementer-xhigh |
 | WP-U2 | Post UI: the blocked list in the confirm dialog, no Accept on a stale card. | implementer |

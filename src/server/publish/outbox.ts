@@ -6,12 +6,14 @@
 // An unknown row is checked against the remote comments before any new send. Without a match, the user decides.
 import type { Database } from "bun:sqlite";
 import type {
+  BlockedDraft,
   PlannedPost,
   PostDestination,
   PostDto,
   PostState,
   ReplyConflict,
   ReplyPostInput,
+  ReviewItemDto,
   ThreadResolveError,
   ThreadResolveInput,
 } from "../../shared/dto";
@@ -23,6 +25,7 @@ import { ForgeError } from "../bitbucket/client";
 import type { ForgeProvider, NewAnchor, ResolveResult, ThreadState } from "../bitbucket/provider";
 import type { Live } from "../live";
 import { log } from "../log";
+import { git, userGitEnv } from "../review/git";
 import type { Settings } from "../settings";
 
 type Ref = { id: number; revision: number };
@@ -93,11 +96,10 @@ const SQL = {
   ref: "SELECT project, repo, pr_id AS id FROM pull_request WHERE id = $pr",
   heads: "SELECT source_head, target_head FROM review_run WHERE id = $run",
   parent: "SELECT root_id, tombstoned_at FROM comment WHERE pr = $pr AND comment_id = $id",
-  fixItem: "SELECT payload_json FROM review_item WHERE id = $id AND kind = 'reply'",
   // Plan r3: sync writes pr_commit and meta_head together, after a complete commits fetch for the current heads.
   fixed: `SELECT 1 FROM pull_request p JOIN pr_commit c ON c.pr = p.id AND c.hash = $hash
     WHERE p.id = $pr AND p.meta_head = p.source_head || ':' || p.target_head`,
-  fixShort: "SELECT short_hash FROM fix_commit WHERE id = $id",
+  fixRow: "SELECT short_hash, mode, clone_path, branch FROM fix_commit WHERE id = $id",
   thread: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr AND root_id = $root`,
   insert: `INSERT INTO post (pr, run, kind, idem_key, body, destination_json, items_json, state, created_at, updated_at, resolve_root, resolve_state)
@@ -144,6 +146,67 @@ export function selectPosts(plan: PlannedPost[], want: Map<number, number>): Pla
   const chosen = plan.filter((p) => p.items.some((i) => want.has(i.id)));
   const exact = chosen.every((p) => p.items.every((i) => want.get(i.id) === i.revision));
   return exact && chosen.reduce((n, p) => n + p.items.length, 0) === want.size ? chosen : null;
+}
+
+// A git read in the user's clone during a plan read stops after this time.
+const CLONE_READ_MS = 10_000;
+
+// D14: the reply parent is a live comment and the newest live message of its thread.
+function replyCurrent(db: Database, pr: number, id: number): boolean {
+  const parent = db.query(SQL.parent).get({ pr, id }) as { root_id: number; tombstoned_at: number | null } | null;
+  if (!parent || parent.tombstoned_at !== null) return false;
+  return newestLive(db.query(SQL.thread).all({ pr, root: parent.root_id }) as TurnMsg[])?.id === id;
+}
+
+// git merge-base prints the commit itself when the commit is an ancestor of the branch (git-merge-base(1)).
+// null: git cannot read the clone, the branch, or the commit. Git in the clone runs no network command.
+async function inBranch(path: string, branch: string, commit: string): Promise<boolean | null> {
+  try {
+    const base = await git(["merge-base", commit, `refs/heads/${branch}`], { cwd: path, env: userGitEnv(), timeoutMs: CLONE_READ_MS });
+    return base.trim() === commit;
+  } catch {
+    return null;
+  }
+}
+
+// Plan r3: a "Fixed in" reply posts only when the stored PR commits hold its commit and belong to the current heads.
+// Else commit-gone when the clone branch of the fix no longer holds the commit, and unpushed in every other case. null: it can post.
+async function fixCheck(db: Database, pr: number, fix: NonNullable<ReplyPayload["fix"]>) {
+  if (db.query(SQL.fixed).get({ pr, hash: fix.commit })) return null;
+  const row = db.query(SQL.fixRow).get({ id: fix.id }) as {
+    short_hash: string | null;
+    mode: string;
+    clone_path: string | null;
+    branch: string | null;
+  } | null;
+  const gone =
+    row?.mode === "clone" &&
+    row.clone_path !== null &&
+    row.branch !== null &&
+    (await inBranch(row.clone_path, row.branch, fix.commit)) === false;
+  return { reason: gone ? "commit-gone" : "unpushed", commit: row?.short_hash ?? fix.commit.slice(0, 7) } as const;
+}
+
+// docs/plans/thread-outcome.md: the accepted reply drafts that confirm cannot post now, with one reason each, in this order:
+// out-of-date, resolved-since, then unpushed or commit-gone. resolved: the root comments of the resolved threads.
+// A draft without text posts no reply, so a resolved thread never blocks it.
+export async function blockedDrafts(db: Database, pr: number, items: ReviewItemDto[], resolved: number[] = []): Promise<BlockedDraft[]> {
+  const shut = new Set(resolved);
+  const out: BlockedDraft[] = [];
+  for (const it of items) {
+    if (it.kind !== "reply" || it.status !== "accepted") continue;
+    const p = it.payload as ReplyPayload;
+    const text = it.body.trim() !== "";
+    if (!text && !p.resolveTick) continue;
+    const draft = { item: it.id, revision: it.revision, thread: p.thread };
+    if (!replyCurrent(db, pr, p.replyTo)) out.push({ ...draft, reason: "out-of-date" });
+    else if (text && p.threadOpen === true && shut.has(p.thread)) out.push({ ...draft, reason: "resolved-since" });
+    else {
+      const fix = p.fix && (await fixCheck(db, pr, p.fix));
+      if (fix) out.push({ ...draft, ...fix });
+    }
+  }
+  return out;
 }
 
 const runKey = (pr: number, p: PlannedPost) =>
@@ -458,29 +521,6 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     };
   }
 
-  // D14: each reply parent is a live comment and the newest live message of its thread. Returns an error, else null.
-  function replyCheck(db: Database, pr: number, parents: number[]): string | null {
-    for (const id of parents) {
-      const parent = db.query(SQL.parent).get({ pr, id }) as { root_id: number; tombstoned_at: number | null } | null;
-      if (!parent || parent.tombstoned_at !== null) return "The comment was deleted. Discard the reply draft.";
-      if (newestLive(db.query(SQL.thread).all({ pr, root: parent.root_id }) as TurnMsg[])?.id !== id)
-        return "New messages arrived in the thread. Read them and draft the reply again.";
-    }
-    return null;
-  }
-
-  // Plan r3: a "Fixed in" reply posts only when the stored PR commits hold its commit and belong to the current heads.
-  function fixCheck(db: Database, pr: number, items: number[]): string | null {
-    for (const id of items) {
-      const row = db.query(SQL.fixItem).get({ id }) as { payload_json: string } | null;
-      const fix = row ? (JSON.parse(row.payload_json) as ReplyPayload).fix : undefined;
-      if (!fix || db.query(SQL.fixed).get({ pr, hash: fix.commit })) continue;
-      const short = (db.query(SQL.fixShort).get({ id: fix.id }) as { short_hash: string | null } | null)?.short_hash;
-      return `Commit ${short ?? fix.commit.slice(0, 7)} is not on the PR source branch yet. Push it. The next sync finds it.`;
-    }
-    return null;
-  }
-
   // The rows of an earlier confirm with exactly these items and revisions (A14), else null.
   function existing(db: Database, pr: number, want: Map<number, number>): PostDto[] | null {
     const rows = (db.query(SQL.runPosts).all({ pr }) as PostRow[]).filter((r) => {
@@ -506,8 +546,6 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     // Resolves when the sender is idle.
     wait: () => busy ?? Promise.resolve(),
     headCheck,
-    replyCheck,
-    fixCheck,
     existing,
 
     posts(db: Database, pr: number): PostDto[] | null {

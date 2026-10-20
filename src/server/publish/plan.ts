@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Publish plan (plan v3 WP12). Pure: the exact comments that a confirm posts for the accepted items.
-import type { PlannedPost, ReviewItemDto } from "../../shared/dto";
+import type { BlockedDraft, PlannedPost, ReviewItemDto } from "../../shared/dto";
 import { fileUrl } from "../../shared/links";
 import { isMe } from "../../shared/me";
 import type { AnchoredFinding, Finding, Question, ReplyPayload } from "../../shared/review";
@@ -13,7 +13,7 @@ export type PlanRun = { id: number; sourceHead: string; targetHead: string; merg
 // A live root comment. anchor: the stored forge anchor, absent for a general comment.
 export type PlanComment = { id: number; authorSlug: string; authorLogin: string | null; authorName: string | null; anchor: unknown };
 // mark: the markAi setting at build time. severity: the markSeverity setting. The outbox keeps the built body, so a later change never alters a queued row.
-// resolved: the root comments of the resolved threads.
+// resolved: the root comments of the resolved threads. blocked: the drafts that the plan leaves out (outbox.ts blockedDrafts).
 export type PlanInput = {
   me: string | null;
   mark: boolean;
@@ -22,6 +22,7 @@ export type PlanInput = {
   items: ReviewItemDto[];
   comments: PlanComment[];
   resolved?: number[];
+  blocked?: BlockedDraft[];
 };
 
 export const AI_MARK = "🤖 ";
@@ -88,9 +89,10 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
   const text = input.mark ? marked : (body: string) => body;
   const sev = (it: ReviewItemDto) => (input.severity ? severityOf(it) : undefined);
   const resolved = new Set(input.resolved);
+  const blocked = new Set(input.blocked?.map((b) => b.item));
   for (const run of input.runs) {
     const heads = { run: run.id, sourceHead: run.sourceHead, targetHead: run.targetHead, mergeBase: run.mergeBase };
-    const items = input.items.filter((i) => i.run === run.id && i.status === "accepted").sort((a, b) => a.id - b.id);
+    const items = input.items.filter((i) => i.run === run.id && i.status === "accepted" && !blocked.has(i.id)).sort((a, b) => a.id - b.id);
     const general: { ref: string; body: string }[] = [];
     const questions: { body: string; why: string }[] = [];
     const generalItems: PlannedPost["items"] = [];
@@ -99,7 +101,7 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
       const a = it.anchor;
       // R15: a reply item has no anchor, but it never joins the general comment.
       // A ticked draft resolves its thread after the post. A ticked draft without text only resolves, so it gets no AI mark.
-      // A reply in a resolved thread reopens it first (outbox.ts reopenFor).
+      // A reply in a resolved thread reopens it first (outbox.ts reopenFor). A thread resolved after the draft blocks the draft.
       if (it.kind === "reply") {
         const p = it.payload as ReplyPayload;
         const body = it.body.trim() ? text(it.body) : "";
@@ -111,7 +113,7 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
           items: [ref],
           duplicate: null,
           ...(p.resolveTick && { resolve: p.thread }),
-          ...(body && resolved.has(p.thread) && { reopen: p.threadOpen === true ? "since" : "resolved" }),
+          ...(body && resolved.has(p.thread) && { reopen: "resolved" as const }),
         });
         continue;
       }

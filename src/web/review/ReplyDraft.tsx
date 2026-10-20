@@ -216,10 +216,11 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   const text = it.body.trim() !== "";
   const resolves = p.resolveTick === true;
   // The forge takes no reply in a resolved thread, so the post reopens it first. A draft without text posts no reply.
+  // A thread resolved after the draft keeps the draft out of the post (docs/plans/thread-outcome.md).
   const reopen =
     text && props.resolved
       ? props.resolved === "since"
-        ? "Resolved since the draft. The post reopens the thread first."
+        ? "Resolved since the draft. Reopen the thread to post this reply."
         : "The thread is resolved. The post reopens it first."
       : null;
   return (

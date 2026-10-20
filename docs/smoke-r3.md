@@ -50,7 +50,7 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 10. Expect a "Fixed in <short>." reply draft on T1 in place of its earlier draft. Expect "Waiting for <short> on the PR branch. Push it. The next sync finds it."
 11. Click Undo on the fix card. Expect "You undid the fix commit <short>." In the clone, expect HEAD at the old commit and a clean status. Expect the "Fixed in" draft to be gone and the reply draft from before the commit back under the thread.
 12. Click Apply and commit again with the same edit. Expect a new commit and a second line in the marker file.
-13. Accept the "Fixed in" draft. Press p. Expect the 409 text "Commit <short> is not on the PR source branch yet. Push it. The next sync finds it." Expect no new comment in Bitbucket.
+13. Accept the "Fixed in" draft. Expect "1 draft cannot post now" in the bottom bar. Press p. Expect the draft under "Cannot post now" with "Commit <short> is not on the PR source branch yet. Push it. The next sync finds it." Expect Post off. Press Esc. Expect no new comment in Bitbucket.
 14. Run `git -C <CLONE> push`. Click "Check now". Expect the waiting text to go. Press p and confirm. Expect exactly one reply "Fixed in <short>." under T1 in Bitbucket.
 15. Delete `<CLONE>/.git/hooks/pre-commit` and `$HOME/rl-smoke-hook.txt`.
 

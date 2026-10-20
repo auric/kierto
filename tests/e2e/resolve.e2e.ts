@@ -135,7 +135,7 @@ test("Draft replies proposes resolve; untick keeps a thread open; the post repli
   await expect(card(page, ONLY)).toHaveCount(0);
 });
 
-test("a reply in a thread that another person resolved after the draft: the card and the confirm say so; the post reopens, replies, and resolves again", async ({
+test("thread outcome: a thread that another person resolved after the draft keeps its reply out of the post; the other draft posts; Reopen lets the reply post", async ({
   page,
 }) => {
   await connect(page);
@@ -143,36 +143,56 @@ test("a reply in a thread that another person resolved after the draft: the card
   await page.locator("#replies-btn").click();
   await expect(page.locator("#runline [data-run-kind='reply']")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   const both = card(page, BOTH);
+  const only = card(page, ONLY);
   await expect(tick(both)).toBeChecked();
   await both.getByRole("button", { name: "Accept" }).click();
   await expect(both).toContainText("Accepted");
-  await expect(page.getByText("Ready to post: 1 reply", { exact: true })).toBeVisible();
+  await only.getByRole("button", { name: "Accept" }).click();
+  await expect(only).toContainText("Accepted");
+  await expect(page.getByText("Ready to post: 1 reply and 1 thread resolve", { exact: true })).toBeVisible();
 
-  // Maria resolves the thread on Bitbucket. The next sync shows it, and the draft card says what the post does.
+  // Maria resolves the thread on Bitbucket. The next sync shows it. The card and the bar say that the reply waits.
   await posts({ resolve: BOTH });
   await control("state", {});
   await showResolved(page, 3);
   await openThread(page, BOTH);
-  await expect(card(page, BOTH).locator("[data-reopen]")).toHaveText("Resolved since the draft. The post reopens the thread first.");
-  await expect(page.getByText("Ready to post: 1 reply and 1 thread reopen")).toBeVisible();
+  await expect(card(page, BOTH).locator("[data-reopen]")).toHaveText("Resolved since the draft. Reopen the thread to post this reply.");
+  await expect(page.getByText("Ready to post: 1 thread resolve", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 draft cannot post now", { exact: true })).toBeVisible();
 
+  // The confirm lists the blocked reply with its reason. Post sends only the resolve of the other thread.
   await page.keyboard.press("p");
-  const box = page.getByRole("dialog", { name: "Post 1 reply and 1 thread reopen to PROJ1/sample-repo-2 #1001?" });
-  const item = box.getByRole("list", { name: "Comments to post" }).getByRole("listitem");
-  await expect(item).toHaveCount(1);
-  await expect(item.locator("[data-reopen]")).toHaveText("Resolved since the draft. Reopen thread, post reply.");
-  await expect(item.locator("[data-resolve]")).toHaveText("Then resolves the thread.");
-  // The reopen goes through, then Bitbucket refuses the reply once.
-  await posts({ fail: 400 });
+  const box = page.getByRole("dialog", { name: "Post 1 thread resolve to PROJ1/sample-repo-2 #1001?" });
+  const items = box.getByRole("list", { name: "Comments to post" }).getByRole("listitem");
+  await expect(items).toHaveCount(1);
+  await expect(items).toContainText("Resolves the thread. No reply is posted.");
+  const blocked = box.getByRole("list", { name: "Cannot post now" }).getByRole("listitem");
+  await expect(blocked).toHaveCount(1);
+  await expect(blocked).toContainText("in the general comment");
+  await expect(blocked).toContainText("Resolved since the draft. Reopen the thread to post this reply, or discard the draft.");
   await box.getByRole("button", { name: "Post", exact: true }).click();
-  const row = thread(page, BOTH).locator("[data-post]");
-  await expect(row).toContainText("Bitbucket refused the comment (HTTP 400). The app reopened the thread before the post.");
-  expect(await writes()).toEqual([`PUT ${A}/comments/${BOTH}`, `POST ${A}/comments`]);
+  await expect(box).toBeHidden();
+  await expect(badge(page, ONLY)).toContainText("Resolved by you");
+  expect(await writes()).toEqual([`PUT ${A}/comments/${ONLY}`]);
+  expect(await posts()).toEqual([]);
+  await expect(page.getByText("1 draft cannot post now", { exact: true })).toBeVisible();
 
-  // Retry posts the reply with no second reopen, then the tick resolves the thread again.
-  await row.getByRole("button", { name: "Retry" }).click();
+  // My own thread reopens at once. Then the reply posts with no second reopen, and the tick resolves the thread again.
+  await button(page, BOTH, "Reopen thread").click();
+  await expect(badge(page, BOTH)).toHaveCount(0);
+  await expect(page.getByText("Ready to post: 1 reply", { exact: true })).toBeVisible();
+  await page.keyboard.press("p");
+  const again = page.getByRole("dialog", { name: "Post 1 reply to PROJ1/sample-repo-2 #1001?" });
+  await expect(again.getByRole("list", { name: "Cannot post now" })).toHaveCount(0);
+  await expect(again.locator("[data-reopen]")).toHaveCount(0);
+  await again.getByRole("button", { name: "Post", exact: true }).click();
   await expect(badge(page, BOTH)).toContainText("Resolved by you");
-  expect(await writes()).toEqual([`PUT ${A}/comments/${BOTH}`, `POST ${A}/comments`, `POST ${A}/comments`, `PUT ${A}/comments/${BOTH}`]);
+  expect(await writes()).toEqual([
+    `PUT ${A}/comments/${ONLY}`,
+    `PUT ${A}/comments/${BOTH}`,
+    `POST ${A}/comments`,
+    `PUT ${A}/comments/${BOTH}`,
+  ]);
   expect((await posts()).map((p) => [p.text, p.parent?.id])).toEqual([[MARK + REPLY, 1000202]]);
 });
 

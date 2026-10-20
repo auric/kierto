@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Pure publish UI rules (plan v3 WP14a, docs/plans/replies.md step 4). No DOM access, so bun test runs them directly.
-import type { CommentDto, PlannedPost, PostDestination, PostDto } from "../../shared/dto";
+import type { BlockedDraft, CommentDto, PlannedPost, PostDestination, PostDto } from "../../shared/dto";
 import { commentLines } from "../../shared/types";
 import { lineText, plural } from "../review/model";
 
@@ -62,9 +62,27 @@ export const resolveNote = (p: { body: string; resolve?: number }) =>
 
 // The reopen line of a planned post. The forge takes no reply in a resolved thread. null: the thread is open.
 export const reopenNote = (p: { body: string; reopen?: PlannedPost["reopen"] }) =>
-  !p.body || !p.reopen
-    ? null
-    : `${p.reopen === "since" ? "Resolved since the draft. " : "The thread is resolved. "}Reopen thread, post reply.`;
+  !p.body || !p.reopen ? null : "The thread is resolved. Reopen thread, post reply.";
+
+// docs/plans/thread-outcome.md: the thread of a draft that the post leaves out, from its root comment.
+export function threadText(thread: number, comments: CommentDto[]): string {
+  const root = comments.find((c) => c.id === thread);
+  return root ? `Thread of ${root.authorName ?? root.authorSlug} in ${placeOf(root)}` : `Thread ${thread}`;
+}
+
+// Why the post leaves a draft out, and what the user can do.
+export function blockedText(b: Pick<BlockedDraft, "reason" | "commit">): string {
+  switch (b.reason) {
+    case "out-of-date":
+      return "Out of date: new messages arrived after the draft, or its comment was deleted. Read the thread and draft the reply again.";
+    case "resolved-since":
+      return "Resolved since the draft. Reopen the thread to post this reply, or discard the draft.";
+    case "unpushed":
+      return `Commit ${b.commit} is not on the PR source branch yet. Push it. The next sync finds it.`;
+    case "commit-gone":
+      return `Commit ${b.commit} is not in your branch now, so it cannot reach the PR. Post the draft as a plain reply, or discard it.`;
+  }
+}
 
 // The destination words of a planned post or an outbox row.
 export function destLabel(d: PostDestination, comments: CommentDto[]): { code: string | null; text: string } {

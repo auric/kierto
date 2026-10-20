@@ -16,7 +16,7 @@ import {
 } from "../../shared/dto";
 import { type ItemRow, type ReviewJobs, toItemDto } from "../review/jobs";
 import type { Settings } from "../settings";
-import { type Outbox, selectPosts } from "./outbox";
+import { blockedDrafts, type Outbox, selectPosts } from "./outbox";
 import { buildPlan, type PlanComment, type PlanInput, type PlanRun } from "./plan";
 
 const SQL = {
@@ -65,16 +65,19 @@ const postParam = positiveId("post");
 const unconfigured = { error: "Configure the Bitbucket URL and token first." } satisfies ApiError;
 const notFound = { error: "Pull request not found." } satisfies ApiError;
 const planChanged = { error: "The post plan changed. Check it again." } satisfies ApiError;
+const notNow = { error: "A draft in the list cannot post now. The new list shows why." } satisfies ApiError;
 
 export function createPublishRoutes(opts: { review: ReviewJobs; settings: Settings; outbox: Outbox }) {
   const { review, settings, outbox } = opts;
   return new Hono()
-    .get("/prs/:id/post-plan", prParam, (c) => {
+    .get("/prs/:id/post-plan", prParam, async (c) => {
       const pr = c.req.valid("param").id;
       const input = planInput(review, settings, pr);
-      if (!input) return c.json(notFound, 404);
+      const db = review.open();
+      if (!input || !db) return c.json(notFound, 404);
+      const blocked = await blockedDrafts(db, pr, input.items, input.resolved);
       c.header("Cache-Control", "no-store");
-      return c.json({ pr, posts: buildPlan(input) } satisfies PostPlanDto, 200);
+      return c.json({ pr, posts: buildPlan({ ...input, blocked }), ...(blocked.length > 0 && { blocked }) } satisfies PostPlanDto, 200);
     })
     .post(
       "/prs/:id/confirm",
@@ -94,15 +97,11 @@ export function createPublishRoutes(opts: { review: ReviewJobs; settings: Settin
         if (!input) return c.json(notFound, 404);
         const done = outbox.existing(db, pr, want);
         if (done) return c.json({ posts: done, warning: null } satisfies ConfirmDto, 200);
-        const chosen = selectPosts(buildPlan(input), want);
-        if (!chosen) return c.json(planChanged, 409);
-        // D14: a reply post checks its parent and the newest message, never the heads.
-        const parents = chosen.flatMap((p) => (p.destination.kind === "reply" ? [p.destination.parentId] : []));
-        const stale = outbox.replyCheck(db, pr, parents);
-        if (stale) return c.json({ error: stale }, 409);
-        const replyItems = chosen.flatMap((p) => (p.destination.kind === "reply" ? p.items.map((i) => i.id) : []));
-        const unpushed = outbox.fixCheck(db, pr, replyItems);
-        if (unpushed) return c.json({ error: unpushed }, 409);
+        // D14: a reply post checks its parent and the newest message, never the heads. A blocked draft is not in the plan,
+        // so a confirm that names it differs from the plan.
+        const blocked = await blockedDrafts(db, pr, input.items, input.resolved);
+        const chosen = selectPosts(buildPlan({ ...input, blocked }), want);
+        if (!chosen) return c.json(blocked.some((b) => want.has(b.item)) ? notNow : planChanged, 409);
         const runs = [...new Set(chosen.filter((p) => p.destination.kind !== "reply").map((p) => p.run))];
         const heads = runs.length ? await outbox.headCheck(db, pr, runs) : { warning: null };
         if ("error" in heads) return heads.status === 409 ? c.json({ error: heads.error }, 409) : c.json({ error: heads.error }, 502);

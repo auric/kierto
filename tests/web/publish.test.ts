@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CommentDto, PlannedPost, PostDestination, PostDto } from "../../src/shared/dto";
 import {
+  blockedText,
   destLabel,
   destText,
   draftKey,
@@ -19,6 +20,7 @@ import {
   resolveNote,
   shownPosts,
   splitPosts,
+  threadText,
 } from "../../src/web/publish/model";
 
 const inline: PostDestination = { kind: "inline", path: "src/cache/flush.ts", srcPath: null, line: 3, lineEnd: 3, lineType: "add" };
@@ -186,12 +188,30 @@ describe("post states", () => {
 
   test("a reply in a resolved thread names the reopen in the count and in the confirm line", () => {
     const planned = (body: string, reopen?: PlannedPost["reopen"]) => ({ destination: reply(5), body, ...(reopen && { reopen }) });
-    expect(destText([planned("Text", "since"), planned("Text")])).toBe("2 replies and 1 thread reopen");
+    expect(destText([planned("Text", "resolved"), planned("Text")])).toBe("2 replies and 1 thread reopen");
     expect(destText([planned("Text", "resolved"), planned("")])).toBe("1 reply, 1 thread reopen and 1 thread resolve");
-    expect(reopenNote({ body: "Text", reopen: "since" })).toBe("Resolved since the draft. Reopen thread, post reply.");
     expect(reopenNote({ body: "Text", reopen: "resolved" })).toBe("The thread is resolved. Reopen thread, post reply.");
     expect(reopenNote({ body: "Text" })).toBeNull();
-    expect(reopenNote({ body: "", reopen: "since" })).toBeNull();
+    expect(reopenNote({ body: "", reopen: "resolved" })).toBeNull();
+  });
+
+  test("thread outcome: a draft that cannot post names its thread and says why and what to do", () => {
+    const root = comment(100, { anchor: { path: "src/cache/flush.ts", line: 3 }, authorName: null, authorSlug: "mlopez" });
+    expect(threadText(100, [root])).toBe("Thread of mlopez in src/cache/flush.ts:3");
+    expect(threadText(200, [comment(200)])).toBe("Thread of Alex Smith in the general comment");
+    expect(threadText(999, [root])).toBe("Thread 999");
+    expect(blockedText({ reason: "out-of-date" })).toBe(
+      "Out of date: new messages arrived after the draft, or its comment was deleted. Read the thread and draft the reply again.",
+    );
+    expect(blockedText({ reason: "resolved-since" })).toBe(
+      "Resolved since the draft. Reopen the thread to post this reply, or discard the draft.",
+    );
+    expect(blockedText({ reason: "unpushed", commit: "c0ffee0" })).toBe(
+      "Commit c0ffee0 is not on the PR source branch yet. Push it. The next sync finds it.",
+    );
+    expect(blockedText({ reason: "commit-gone", commit: "c0ffee0" })).toBe(
+      "Commit c0ffee0 is not in your branch now, so it cannot reach the PR. Post the draft as a plain reply, or discard it.",
+    );
   });
 });
 

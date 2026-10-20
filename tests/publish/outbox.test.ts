@@ -556,19 +556,65 @@ describe("confirm", () => {
     expect(s.posts.bodies[0]).toMatchObject({ text: "Reply text.", parent: { id: THEIRS } });
   });
 
-  test("D14: a reply item to an older message or a deleted parent gives 409 and sends nothing", async () => {
+  test("D14: a reply item to an older message or a deleted parent is out of date: the plan leaves it out, and a confirm of it gives 409", async () => {
     const s = await setup();
     const older = seedReply(s, ROOT);
     const gone = seedReply(s, 999);
     await accept(s, older, gone);
-    const stale = await s.call<{ error: string }>(`/api/prs/${s.pr}/confirm`, { items: [{ id: older, revision: 1 }] });
-    expect(stale.status).toBe(409);
-    expect(stale.body.error).toContain("New messages arrived");
-    const deleted = await s.call<{ error: string }>(`/api/prs/${s.pr}/confirm`, { items: [{ id: gone, revision: 1 }] });
-    expect(deleted.status).toBe(409);
-    expect(deleted.body.error).toContain("deleted");
+    const plan = (await s.call<PostPlanDto>(`/api/prs/${s.pr}/post-plan`)).body;
+    expect(plan.posts).toEqual([]);
+    expect(plan.blocked).toEqual([
+      { item: older, revision: 1, thread: ROOT, reason: "out-of-date" },
+      { item: gone, revision: 1, thread: ROOT, reason: "out-of-date" },
+    ]);
+    for (const id of [older, gone]) {
+      const r = await s.call<{ error: string }>(`/api/prs/${s.pr}/confirm`, { items: [{ id, revision: 1 }] });
+      expect([r.status, r.body.error]).toEqual([409, "A draft in the list cannot post now. The new list shows why."]);
+    }
     expect(await s.list()).toEqual([]);
     expect(s.sent()).toBe(0);
+    expect([itemRow(s, older).status, itemRow(s, gone).status]).toEqual(["accepted", "accepted"]);
+  });
+
+  test("thread outcome: confirm posts the shown drafts and leaves a blocked one out; the same set again posts nothing twice", async () => {
+    const s = await setup();
+    const { item } = seedRun(s);
+    const inline = item("Inline text.", 3);
+    const fresh = seedReply(s, THEIRS);
+    const stale = seedReply(s, ROOT, "Old reply.");
+    await accept(s, inline, fresh, stale);
+    const plan = (await s.call<PostPlanDto>(`/api/prs/${s.pr}/post-plan`)).body;
+    expect(plan.posts.map((p) => [p.destination.kind, p.body])).toEqual([
+      ["inline", "Inline text."],
+      ["reply", "Reply text."],
+    ]);
+    expect(plan.blocked).toEqual([{ item: stale, revision: 1, thread: ROOT, reason: "out-of-date" }]);
+
+    // The client sends the postable set it showed. The blocked draft never reaches Bitbucket.
+    const shown = itemsOf(plan.posts);
+    const r = await s.call<ConfirmDto>(`/api/prs/${s.pr}/confirm`, { items: shown });
+    expect(r.status).toBe(202);
+    await s.settle();
+    expect(s.posts.bodies.map((b) => b.text)).toEqual(["Inline text.", "Reply text."]);
+    expect([itemRow(s, inline).status, itemRow(s, fresh).status, itemRow(s, stale).status]).toEqual(["posted", "posted", "accepted"]);
+
+    // A14: a second confirm of the same set returns the rows of the first one.
+    const again = await s.call<ConfirmDto>(`/api/prs/${s.pr}/confirm`, { items: shown });
+    expect(again.status).toBe(200);
+    expect(again.body.posts.map((p) => p.id)).toEqual(r.body.posts.map((p) => p.id));
+    // The blocked draft with the shown set is not the plan on screen.
+    const mixed = await s.call<{ error: string }>(`/api/prs/${s.pr}/confirm`, { items: [{ id: stale, revision: 1 }] });
+    expect([mixed.status, mixed.body.error]).toEqual([409, "A draft in the list cannot post now. The new list shows why."]);
+    await s.settle();
+    expect(s.sent()).toBe(2);
+  });
+
+  test("thread outcome: with nothing blocked the plan has no blocked list", async () => {
+    const s = await setup();
+    await accept(s, seedReply(s, THEIRS));
+    const plan = (await s.call<PostPlanDto>(`/api/prs/${s.pr}/post-plan`)).body;
+    expect(plan.posts).toHaveLength(1);
+    expect("blocked" in plan).toBe(false);
   });
 
   test("a confirm that differs from the plan gives 409 and sends nothing", async () => {
@@ -988,13 +1034,22 @@ describe("a reply in a resolved thread", () => {
     expect(writes(s)).toEqual([PUT, COMMENTS]);
   });
 
-  test("the plan marks the reopen; the post reopens, replies, then resolves again", async () => {
+  test("thread outcome: a thread resolved after the draft blocks it until the user reopens the thread; then it posts and resolves again", async () => {
     const s = await setup();
     const draft = seedReply(s, THEIRS, "Reply text.", { threadOpen: true });
     await tick(s, draft);
     expect((await s.plan())[0]?.reopen).toBeUndefined();
     await resolveOnForge(s);
-    expect((await s.plan())[0]).toMatchObject({ body: "Reply text.", resolve: ROOT, reopen: "since" });
+    const plan = (await s.call<PostPlanDto>(`/api/prs/${s.pr}/post-plan`)).body;
+    expect(plan).toEqual({ pr: s.pr, posts: [], blocked: [{ item: draft, revision: 2, thread: ROOT, reason: "resolved-since" }] });
+    const no = await s.call<{ error: string }>(`/api/prs/${s.pr}/confirm`, { items: [{ id: draft, revision: 2 }] });
+    expect(no.status).toBe(409);
+    expect(writes(s)).toEqual([]);
+
+    // The user reopens the thread. The draft then posts with no reopen step, and the tick resolves the thread again.
+    expect((await s.call(`/api/prs/${s.pr}/resolve`, { thread: ROOT, resolved: false, seen: THEIRS })).status).toBe(200);
+    expect((await s.plan())[0]).toMatchObject({ body: "Reply text.", resolve: ROOT });
+    expect((await s.plan())[0]?.reopen).toBeUndefined();
     expect((await s.call(`/api/prs/${s.pr}/confirm`, { items: [{ id: draft, revision: 2 }] })).status).toBe(202);
     await s.settle();
     const [post] = await s.list();
@@ -1004,6 +1059,20 @@ describe("a reply in a resolved thread", () => {
       [V0, false],
       [V0, true],
     ]);
+  });
+
+  test("a draft written while the thread was resolved keeps reopen-first: the post reopens, replies, then resolves again", async () => {
+    const s = await setup();
+    await resolveOnForge(s);
+    const draft = seedReply(s, THEIRS, "Reply text.", { threadOpen: false });
+    await tick(s, draft);
+    const plan = (await s.call<PostPlanDto>(`/api/prs/${s.pr}/post-plan`)).body;
+    expect("blocked" in plan).toBe(false);
+    expect(plan.posts[0]).toMatchObject({ body: "Reply text.", resolve: ROOT, reopen: "resolved" });
+    expect((await s.call(`/api/prs/${s.pr}/confirm`, { items: [{ id: draft, revision: 2 }] })).status).toBe(202);
+    await s.settle();
+    expect((await s.list())[0]).toMatchObject({ state: "confirmed", remoteId: FIRST_ID, resolve: { state: "done" } });
+    expect(writes(s)).toEqual([PUT, COMMENTS, PUT]);
   });
 
   test("a draft from before the field shows a plain reopen; a resolve-only draft needs no reopen", async () => {

@@ -105,7 +105,9 @@ The run log shows each tool call of the review and of its subagents.
 
 Draft replies judges each thread where it is your turn: valid, partly valid, not valid, or a question. It drafts a reply for each one. You edit the reply and post it. A new run never replaces a draft that you edited, accepted, or discarded.
 
-Each thread footer has "Resolve", or "Reopen" on a resolved thread. The key x does the same on the current thread. The change goes to Bitbucket at once. A thread that another person started asks first. Tick "Resolve after posting" to resolve the thread after the reply. Bitbucket takes no reply in a resolved thread, so Kierto reopens a resolved thread first. The confirm says "Reopen thread, post reply", and a draft says "Resolved since the draft" when someone resolved its thread after Claude drafted it.
+Each thread footer has "Resolve", or "Reopen" on a resolved thread. The key x does the same on the current thread. The change goes to Bitbucket at once. A thread that another person started asks first. Tick "Resolve after posting" to resolve the thread after the reply. Bitbucket takes no reply in a resolved thread, so Kierto reopens a resolved thread first. The confirm says "Reopen thread, post reply". When someone resolved the thread after Claude drafted the reply, the draft says "Resolved since the draft", and the post leaves it out until you reopen the thread.
+
+The post confirm lists the drafts that cannot post now, each with its thread and the reason: new messages after the draft, a thread resolved since the draft, or a "Fixed in" commit that is not on the pull request yet. Post sends the other drafts. When the commit left your branch, for example after a rebase, the confirm offers "Post as plain reply".
 
 ### Fix it
 

@@ -441,6 +441,44 @@ describe("post plan", () => {
       [2, "Q5? W.", [{ id: 5, revision: 2 }]],
     ]);
   });
+
+  test("thread outcome: buildPlan leaves out each blocked draft; a reopen marks only a thread that was resolved at the draft", () => {
+    const reply = (id: number, threadOpen?: boolean): ReviewItemDto => ({
+      id,
+      run: 1,
+      kind: "reply",
+      body: `Reply ${id}.`,
+      payload: {
+        thread: 30 + id,
+        action: "reply",
+        body: `Reply ${id}.`,
+        reason: "R.",
+        evidenceStatus: "code",
+        judgement: null,
+        replyTo: 40 + id,
+        ...(threadOpen !== undefined && { threadOpen }),
+      },
+      anchor: null,
+      status: "accepted",
+      revision: 1,
+      edited: false,
+    });
+    const reasons = ["out-of-date", "resolved-since", "unpushed", "commit-gone"] as const;
+    const posts = buildPlan({
+      me: FAKE_USER,
+      mark: false,
+      severity: false,
+      runs: [{ id: 1, sourceHead: SOURCE, targetHead: TARGET, mergeBase: BASE }],
+      items: [1, 2, 3, 4].map((id) => reply(id, true)).concat(reply(5, false), reply(6)),
+      comments: [],
+      resolved: [32, 35, 36],
+      blocked: reasons.map((reason, i) => ({ item: i + 1, revision: 1, thread: 31 + i, reason })),
+    });
+    expect(posts.map((p) => [p.items, p.destination, p.reopen])).toEqual([
+      [[{ id: 5, revision: 1 }], { kind: "reply", parentId: 45 }, "resolved"],
+      [[{ id: 6, revision: 1 }], { kind: "reply", parentId: 46 }, "resolved"],
+    ]);
+  });
 });
 
 describe("AI mark", () => {

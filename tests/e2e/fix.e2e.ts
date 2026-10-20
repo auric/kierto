@@ -273,16 +273,26 @@ test("the Fix list ticks the valid threads; the edits show, one is unticked, App
   await expect(fixed.locator("[data-judgement]")).toHaveCount(0);
   await fixed.getByRole("button", { name: "Accept" }).click();
   await expect(fixed).toContainText("Accepted");
+  // Thread outcome: the post leaves the draft out and says why. Post stays off while no draft can post.
+  await expect(page.getByText("1 draft cannot post now", { exact: true })).toBeVisible();
   await page.keyboard.press("p");
-  const confirm = page.getByRole("dialog", { name: "Post 1 reply to PROJ1/sample-repo-4 #1004?" });
-  await confirm.getByRole("button", { name: "Post", exact: true }).click();
-  await expect(confirm).toContainText(`Commit ${short} is not on the PR source branch yet. Push it. The next sync finds it.`);
+  const waiting = page.getByRole("dialog", { name: "Post to PROJ1/sample-repo-4 #1004?" });
+  const blocked = waiting.getByRole("list", { name: "Cannot post now" }).getByRole("listitem");
+  await expect(blocked).toHaveCount(1);
+  await expect(blocked).toContainText(`Commit ${short} is not on the PR source branch yet. Push it. The next sync finds it.`);
+  await expect(waiting.getByRole("list", { name: "Comments to post" })).toHaveCount(0);
+  await expect(waiting.getByRole("button", { name: "Post", exact: true })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(waiting).toBeHidden();
   expect(await writes()).toEqual([]);
 
   // The push and a sync list the commit on the PR. Then the reply posts once, under the root of the thread.
   await pushClone(1004, path);
   await control("state", {});
   await expect(fixed).not.toContainText("Waiting for");
+  await expect(page.getByText("Ready to post: 1 reply", { exact: true })).toBeVisible();
+  await page.locator("#post-btn").click();
+  const confirm = page.getByRole("dialog", { name: "Post 1 reply to PROJ1/sample-repo-4 #1004?" });
   await confirm.getByRole("button", { name: "Post", exact: true }).click();
   await expect(confirm).toBeHidden();
   await expect(thread(page, LOCK).locator("[data-post]")).toContainText("Posted.");

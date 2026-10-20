@@ -20,7 +20,9 @@
 - A partly answered question gets a reply that asks the open part again. A thread with several questions resolves only when each one has an answer.
 - Draft replies can propose to resolve a thread of another person where you replied. The box stays unticked there.
 - A reply to a resolved thread reopens the thread first, because Bitbucket takes no reply there. The post confirm and Ready to post say "Reopen thread, post reply". A ticked draft resolves the thread again after the reply.
-- A reply draft says "Resolved since the draft" when someone resolved its thread after Claude drafted it.
+- A reply draft says "Resolved since the draft" when someone resolved its thread after Claude drafted it. The post leaves that reply out until you reopen the thread.
+- The post confirm lists the drafts that cannot post now, with the thread and the reason: new messages after the draft, a thread resolved since the draft, or a "Fixed in" commit that is not on the pull request yet. Post sends the other drafts. Before, one such draft stopped the whole post.
+- A "Fixed in" draft whose commit left your branch, for example after a rebase or a squash, offers "Post as plain reply" in the post confirm.
 - If the reply fails after the reopen, the post says so. Retry posts the reply without a second reopen.
 - Claude never replaces a reply draft that you edited, accepted, or discarded. The run says "kept your draft" for that thread. Draft reply in that one thread replaces a discarded draft.
 - A Fix commit keeps a reply draft that you edited or accepted and adds no "Fixed in" draft there. Undo of a Fix commit brings back the draft that its "Fixed in" draft replaced.
