@@ -584,14 +584,20 @@ export function replyCard(it: ReviewItemDto | undefined, newest: number | null, 
   return it.status === "discarded" ? { kind: "discarded", it } : { kind: "draft", it, stale };
 }
 
-// The Draft replies button (plan pr-view-v4 2.2). turns: the turn of each thread of the PR. your: the count on the button.
-// why: the popover text when a click starts no run, null when it starts one. D12: the server refuses more than
+// The Draft replies button (plan pr-view-v4 2.2). turns: the turn of each thread of the PR. your: the threads where it is your turn.
+// need: the count on the button, the threads whose outcome needs a reply (outcome.ts needsReply). The run still takes every
+// your-turn thread. why: the popover text when a click starts no run, null when it starts one. D12: the server refuses more than
 // MAX_REPLY_THREADS threads in one run. "wait" means that your message is the newest (shared/turn.ts).
-export function repliesButton(turns: readonly Turn[]): { your: number; why: { title: string; text: string } | null; hint: string } {
+export function repliesButton(
+  turns: readonly Turn[],
+  need?: number,
+): { your: number; need: number; why: { title: string; text: string } | null; hint: string } {
   const your = turns.filter((t) => t === "your").length;
+  const n = Math.min(need ?? your, your);
   const why = repliesWhy(turns, your);
   const which = your === 1 ? "the thread" : `each of the ${your} threads`;
-  return { your, why, hint: why ? why.title : `Draft a reply for ${which} where it is your turn.` };
+  const left = n === your ? "" : n ? ` ${plural(n, "thread")} still ${n === 1 ? "needs" : "need"} a reply.` : " None needs a new reply.";
+  return { your, need: n, why, hint: why ? why.title : `Draft a reply for ${which} where it is your turn.${left}` };
 }
 
 function repliesWhy(turns: readonly Turn[], your: number): { title: string; text: string } | null {

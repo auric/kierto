@@ -696,11 +696,15 @@ export type DiffFetchNeeded = ApiError & { fetch: true };
 
 // POST /api/prs/:id/fix-run. findings: review item IDs. Absent threads and findings: the newest valid or partly reply draft of each thread.
 // docs/plans/fix-ux.md WP3: one run takes at most MAX_REPLY_THREADS threads and findings together. The route shows the refine message.
+// anyway: "Fix anyway" (docs/plans/thread-outcome.md). The user wants edits despite a decision or risk note. Exactly one target.
 const fixTargets = z.array(positiveInt).min(1).max(MAX_REPLY_THREADS).optional();
 export const fixRunInput = z
-  .object({ threads: fixTargets, findings: fixTargets, profile: runProfile })
+  .object({ threads: fixTargets, findings: fixTargets, profile: runProfile, anyway: z.boolean().optional() })
   .refine((v) => (v.threads?.length ?? 0) + (v.findings?.length ?? 0) <= MAX_REPLY_THREADS, {
     message: `Pick at most ${MAX_REPLY_THREADS} threads and findings for one run.`,
+  })
+  .refine((v) => !v.anyway || (v.threads?.length ?? 0) + (v.findings?.length ?? 0) === 1, {
+    message: "Fix anyway takes exactly one thread or finding.",
   });
 
 // One stored edit. Exactly one of thread and finding is set. added, removed: the line counts of rows.

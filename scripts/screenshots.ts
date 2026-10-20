@@ -132,9 +132,18 @@ async function shots(browser: Browser) {
   await runRow(page, "reply").and(page.locator("[data-run-state='done']")).waitFor({ timeout: RUN_MS });
   await page.locator("#fix-btn").focus();
   await page.keyboard.press("Shift+F");
-  await page.getByRole("dialog", { name: "Fix comments on your pull request" }).waitFor();
+  const list = page.getByRole("dialog", { name: "Fix comments on your pull request" });
+  await list.waitFor();
   await save(page, "fix-list");
-  await page.keyboard.press("Escape");
+  // The fix run of the two ticked threads. The first thread then shows its outcome line, its reply draft, and its fix card.
+  await list.getByRole("button", { name: /^Propose fixes for / }).click();
+  await runRow(page, "fix").and(page.locator("[data-run-state='done']")).waitFor({ timeout: RUN_MS });
+  const head = page.locator("#th-2000");
+  if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+  await page.locator("#t-2000 [data-fix] [data-edit]").waitFor();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await toTop(page.locator("#t-2000"), 64);
+  await save(page, "fix-thread");
 
   await page.goto(`${BASE}/settings/profiles`);
   await page.locator("#h-profiles").waitFor();

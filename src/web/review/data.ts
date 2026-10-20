@@ -43,12 +43,9 @@ export const usePrRuns = (pr: number) =>
 // GET /api/runs: the 50 newest runs of all PRs, newest first.
 export const useRuns = () => useQuery({ queryKey: ["runs"], queryFn: async () => read<RunDto[]>(await api.api.runs.$get()) });
 
-export const useRun = (id: number | null) =>
-  useQuery({
-    queryKey: ["run", id],
-    enabled: id !== null,
-    queryFn: async () => read<RunDetail>(await api.api.runs[":id"].$get(param(id ?? 0))),
-  });
+export const getRun = async (id: number) => read<RunDetail>(await api.api.runs[":id"].$get(param(id)));
+
+export const useRun = (id: number | null) => useQuery({ queryKey: ["run", id], enabled: id !== null, queryFn: () => getRun(id ?? 0) });
 
 // The raw output of an ended run does not change.
 export const useRaw = (id: number, enabled: boolean) =>

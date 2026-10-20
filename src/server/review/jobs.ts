@@ -334,6 +334,8 @@ type Job = {
   // A reply run for threads that the user named. Its drafts replace a draft that the user declined.
   picked: boolean;
   findings: number[];
+  // A fix run for one target that the user wants fixed despite a decision or risk note ("Fix anyway").
+  anyway?: boolean;
   carry: Carry | null;
   question: string | null;
   // A session run only.
@@ -1588,7 +1590,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const spec = reply
       ? { prompt: buildReplyPrompt({ ...input, threads: reply }), schema: replyJsonSchema(), main: replyAgent(profile) }
       : fix
-        ? { prompt: buildFixPrompt({ ...input, threads: fix, findings: j.findings }), schema: fixJsonSchema(), main: fixAgent(profile) }
+        ? {
+            prompt: buildFixPrompt({ ...input, threads: fix, findings: j.findings, anyway: j.anyway }),
+            schema: fixJsonSchema(),
+            main: fixAgent(profile),
+          }
         : question !== null
           ? { prompt: buildAskPrompt({ ...input, question }), schema: askJsonSchema(), main: askAgent(profile) }
           : carry
@@ -1770,14 +1776,14 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     profile: Profile,
     key: string,
     kind: RunKind,
-    o: { threads?: ReplyThread[]; picked?: boolean; findings?: number[]; carry?: Carry; question?: string } = {},
+    o: { threads?: ReplyThread[]; picked?: boolean; findings?: number[]; anyway?: boolean; carry?: Carry; question?: string } = {},
   ): StartResult {
     const busy = taken(db, key);
     if (busy) return busy;
     // A missing always-use skill refuses the start, so no failed run is stored.
     const missing = alwaysProblems(profile.alwaysSkills, opts.claudeConfigDir ?? claudeConfigDir());
     if (missing.length) return { status: 409, error: missing.join(" ") };
-    const { threads = null, picked = false, findings = [], carry = null, question = null } = o;
+    const { threads = null, picked = false, findings = [], anyway = false, carry = null, question = null } = o;
     const { id: runId } = db.query(SQL.insert).get({
       pr: pr.id,
       kind,
@@ -1808,6 +1814,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         threads,
         picked,
         findings,
+        anyway,
         carry,
         question,
         session: null,
@@ -2018,7 +2025,13 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // Plan r3 S-FIX: proposes edits for the review points on the user's own PR. It shares the run slot.
     // pick: the threads and the review findings to fix. Absent both: the threads with a valid or partly valid reply draft.
     // fixRunInput caps the threads and the findings together. profile: a profile for this run only. Absent: the brief profile.
-    fix(db: Database, id: number, pick: { threads?: number[]; findings?: number[] } = {}, profileId?: string): StartResult {
+    // anyway: "Fix anyway" for the one target of pick. fixRunInput refuses it with more targets.
+    fix(
+      db: Database,
+      id: number,
+      pick: { threads?: number[]; findings?: number[]; anyway?: boolean } = {},
+      profileId?: string,
+    ): StartResult {
       const pr = prRow(db, id);
       if (!pr) return { status: 404, error: "Pull request not found." };
       const { source_head, target_head } = pr;
@@ -2032,8 +2045,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const findings = pick.findings ? fixFindings(db, pr, pick.findings) : [];
       if (!Array.isArray(findings)) return findings;
       const at = [...threads.map((t) => `${t.thread}@${t.replyTo}`), ...findings.map((f) => `finding${f}`)];
-      const key = [id, "fix", source_head, target_head, profile.id, profileRevision(profile), ...at].join(":");
-      return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "fix", { threads, findings });
+      const anyway = pick.anyway === true;
+      const key = [id, "fix", source_head, target_head, profile.id, profileRevision(profile), ...at, ...(anyway ? ["anyway"] : [])].join(
+        ":",
+      );
+      return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "fix", { threads, findings, anyway });
     },
 
     // docs/plans/session-consult.md part C: forks the user's own session with the text of part A. Own PRs only. It shares the run slot.

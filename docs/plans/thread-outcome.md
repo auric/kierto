@@ -1,6 +1,6 @@
 # Thread outcome plan: one outcome per thread
 
-Status: in progress, 2026-10-20. WP-D, WP-C, WP-S1, WP-S4, WP-S2, WP-S3, and WP-U1b are done. Line references point to the code at HEAD 0db727e.
+Status: code complete, 2026-10-20. Every WP is done. Section 7 lists the later items. Line references point to the code at HEAD 0db727e.
 
 ## 1. Goal
 
@@ -20,11 +20,11 @@ Already landed: 0fe5659 keeps drafts that the user edited or accepted on AI runs
 | P4 | A commit discarded edited or accepted drafts, and Undo did not restore them. | Landed in 0fe5659 (fix-routes.ts:203-206, 366-370, items.ts:51-53) |
 | P5 | A commit replaces an untouched AI answer with "Fixed in X." (fix-routes.ts:207-210). A commit with only a part of the edits of a thread still says fixed and proposes resolve (fix-routes.ts:222). | Landed: WP-S2 keeps the answer, adds "Fixed in X: <what>", and gives "Partly fixed in X" without resolve. |
 | P6 | Draft replies discarded edited, accepted, and "Fixed in" drafts. | Landed: 0fe5659 protects edited and accepted drafts. WP-S1 keeps an untouched "Fixed in" or nofix draft on Draft replies (jobs.ts writerRank, end). |
-| P7 | The reply card and the fix card show side by side and can disagree (useReview.tsx:505-519). | Open |
-| P8 | A session accept without a reply gives "No reply needed" with the chip "Valid" (consult.ts:517, ReplyDraft.tsx:196-210, review/model.ts:520). The outcome must be "To fix". | Open |
-| P9 | Confirm is all or nothing. The first stale reply or unpushed fix stops all posts with one message and no thread (publish/routes.ts:99-105, outbox.ts:449-468). Accept stays on a stale card. | Partly: WP-S3 lists the blocked drafts with item, thread, and reason, and confirm posts the rest (outbox.ts blockedDrafts). Accept on a stale card is WP-U2. |
+| P7 | The reply card and the fix card show side by side and can disagree (useReview.tsx:505-519). | Landed: WP-U1a adds the outcome line on top of the AI area and the conflict note with "Keep the reply" and "Keep the fix" (review/outcome.ts). |
+| P8 | A session accept without a reply gives "No reply needed" with the chip "Valid" (consult.ts:517, ReplyDraft.tsx:196-210, review/model.ts:520). The outcome must be "To fix". | Landed: WP-U1a. The outcome line and the card say "To fix". |
+| P9 | Confirm is all or nothing. The first stale reply or unpushed fix stops all posts with one message and no thread (publish/routes.ts:99-105, outbox.ts:449-468). Accept stays on a stale card. | Partly: WP-S3 and WP-U2 list the blocked drafts in groups with their actions, and confirm posts the rest. Accept still shows on a stale card (section 7). |
 | P10 | A draft goes into a thread that another person resolved after the draft. | Landed: WP-S3 leaves a resolved-since draft out of the plan. The user reopens the thread to post it. A draft written while the thread was resolved keeps reopen-first. |
-| P11 | A rebased or squashed fix commit never reaches the PR, so the "Fixed in" draft waits forever (outbox.ts:460-468). An edit keeps the commit link (items.ts:81-85). | Partly: WP-S2 adds the item action plain. WP-S3 marks commit-gone when the clone branch no longer holds the commit, and the confirm offers "Post as plain reply". The card button is WP-U1a. An edit still keeps the link. |
+| P11 | A rebased or squashed fix commit never reaches the PR, so the "Fixed in" draft waits forever (outbox.ts:460-468). An edit keeps the commit link (items.ts:81-85). | Partly: WP-S2 adds the item action plain. WP-S3 marks commit-gone when the clone branch no longer holds the commit. The confirm and the draft card offer "Post as plain reply" (WP-U2, WP-U1a). Only an accepted draft gets the commit-gone check. An edit still keeps the link. |
 | P12 | The Fix list ignores fix notes (fix/model.ts:28-37, 150). | Landed: WP-U1b shows the fix outcome of each row, and a no-fix note or a decline starts unticked (fix/model.ts fixOutcome). |
 | P13 | A reply run does not see the fix state of a thread (catalog.ts:312-341). | Landed: WP-S4 adds context/fix-state.md (jobs.ts fixStateFile). |
 | P14 | A thread has no history of its drafts and fixes. | Later |
@@ -90,6 +90,15 @@ Markers on the outcome line:
 | WP-S2 | Commit: "Partly fixed in X" without resolve; "Fixed in X: <what>" keeps any answer. Decline route "Don't fix…" (fixDeclineInput). "Post as plain reply" for a rebased fix. | Done |
 | WP-S3 | Partial confirm: the plan lists blocked drafts per item and thread. Confirm posts the rest. | Done |
 | WP-U1b | Fix UI: Don't fix…, the persistent fold, the dropped note with Fix again and Copy prompt, the Fix list with fix notes. | Done |
-| WP-U1a | The outcome line per thread, the markers, and a note when the reply and the fix disagree. | implementer-xhigh |
-| WP-U2 | Post UI: the blocked list in the confirm dialog, no Accept on a stale card. | implementer |
-| Later | Per-thread history (P14), the stale-draft notice (P16), BLOCKER task done (P15). | - |
+| WP-U2 | Post UI: the blocked list in the confirm dialog, grouped by reason with the actions. | Done |
+| WP-U1a | The outcome line per thread, the markers, the conflict note, the origin label, the Draft replies count, "Post as plain reply" on the card, and Fix anyway with `anyway`. | Done |
+
+## 7. As built (WP-U1a) and later items
+
+- review/outcome.ts derives the line. First match wins: Resolved without an open draft, your decline, a fix commit, your open draft (accepted, edited, or origin user), the newest fix result, an AI draft, then Waiting on them or Open. A draft with no text and no resolve reads "No reply needed", or "To fix" when it asks for a fix (P8).
+- An untick of every free edit is your choice: an open draft then states the outcome, not "Fix proposed".
+- Conflict "no": an open reply judges the comment not valid, and edits of the thread are ticked. Keep the reply unticks them. Keep the fix discards the reply.
+- Conflict "yes": an untouched open reply asks for a fix, and the newest fix note says already, invalid, or scope. Keep the reply accepts the reply, or runs Fix anyway when it has no text. Keep the fix discards the reply and restores the nofix draft of that fix run.
+- A finding that your session rejected, with ticked edits, gets the note with Keep the reject (untick) and Keep the fix (restore the finding).
+- The Draft replies count: your-turn threads with no current draft, or with an out-of-date draft that a reply run for all threads replaces. The run still takes every your-turn thread.
+- Later: per-thread history (P14), the stale-draft notice (P16), BLOCKER task done (P15), no Accept on a stale card (P9), the commit-gone check for an unaccepted "Fixed in" draft (P11), and an untick that survives a reload (P3).

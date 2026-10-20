@@ -151,9 +151,9 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       (c) => {
         const db = review.open();
         if (!db) return c.json(unconfigured, 409);
-        const { threads, findings, profile } = c.req.valid("json");
+        const { threads, findings, profile, anyway } = c.req.valid("json");
         if (profile && !review.hasProfile(profile)) return c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
-        const r = review.fix(db, c.req.valid("param").id, { threads, findings }, profile);
+        const r = review.fix(db, c.req.valid("param").id, { threads, findings, anyway }, profile);
         if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
         if ("conflict" in r) return c.json(r.conflict, 409);
         if (r.status === 400) return c.json({ error: r.error }, 400);

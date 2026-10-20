@@ -16,12 +16,13 @@ import { fixWaiting } from "../fix/model";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
 import { ordered, type ThreadModel } from "../pr/threads";
-import { planKey } from "../publish/data";
+import { planKey, usePostPlan } from "../publish/data";
 import { Hint, type Hints } from "../shell/Hint";
 import { prKey } from "../shell/model";
 import { BriefComposer, type BriefMode, ReviewButton } from "./Brief";
 import { type DraftCtx, Drafts, draftDomId, modeOf, type TriageState } from "./Drafts";
 import {
+  getRun,
   replyKey,
   saveLastProfile,
   sendItem,
@@ -54,7 +55,8 @@ import {
   staleText,
   triageText,
 } from "./model";
-import { DraftRepliesButton, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft";
+import { type Conflict, conflictText, findingConflict, findingConflictText, threadOutcome } from "./outcome";
+import { ConflictNote, DraftRepliesButton, OutcomeLine, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft";
 import { Ledger, RunRecord } from "./RunLine";
 import { type LogTarget, RunLog } from "./RunLog";
 import { TaskChips, useTaskContext } from "./TaskChips";
@@ -364,14 +366,15 @@ export function useReview(
     }
   };
 
-  async function send(it: ReviewItemDto, input: ItemActionInput, close = false) {
+  // Resolves to true when the server took the change.
+  async function send(it: ReviewItemDto, input: ItemActionInput, close = false): Promise<boolean> {
     setBusy(it.id, true);
     try {
       const r = await sendItem(it.id, input);
       if ("conflict" in r) {
         putItem(r.conflict.item);
         toast.add({ title: r.conflict.error });
-        return;
+        return false;
       }
       putItem(r.item);
       if (input.action !== "move") writeEdit(pr.id, it.id, null);
@@ -381,8 +384,10 @@ export function useReview(
       if (close) setTriage((s) => ({ ...s, open: s.open?.id === it.id ? null : s.open }));
       if (input.action === "move") focusAfter({ id: domId(r.item), block: "nearest", flash: false });
       else advance(r.item);
+      return true;
     } catch (e) {
       toast.add({ title: "The change was not saved", description: (e as Error).message });
+      return false;
     } finally {
       setBusy(it.id, false);
     }
@@ -412,6 +417,7 @@ export function useReview(
     move: (it: ReviewItemDto | null) => openMode(it, "move"),
     moveTo: (it: ReviewItemDto, line: number) => void send(it, { action: "move", revision: it.revision, line }, true),
     tick: (it: ReviewItemDto, on: boolean) => void send(it, { action: "resolve", revision: it.revision, resolve: on }),
+    plain: (it: ReviewItemDto) => void send(it, { action: "plain", revision: it.revision }),
   };
   const onTriage = useRef(triageFns);
   onTriage.current = triageFns;
@@ -479,15 +485,69 @@ export function useReview(
       announce: o.announce,
       triage: triageCtx,
       again: (thread) => onDraft.current([thread]),
+      plain: (it) => onTriage.current.plain(it),
       author,
     }),
     [meta, o.hints, o.announce, triageCtx, author],
   );
   const byThread = useMemo(() => replyMap(replies.data), [replies.data]);
   const pending = asked && newest?.id === asked.run && newest.status === "running" ? asked : null;
-  // Per thread, so a memo thread renders again only when its own card changes. The fix card follows the reply draft card.
-  const { cards: fixCards, fixes } = fix;
+  const { cards: fixCards, findingCards: fixFindingCards, fixes, ticks, tick: setTicks } = fix;
   const { commits } = o;
+  // docs/plans/thread-outcome.md: the outcome of each thread, and the conflict note when its reply and its fix disagree.
+  const outcomes = useMemo(
+    () =>
+      new Map(
+        o.threads.map((t) => [
+          t.id,
+          threadOutcome({
+            thread: { id: t.id, turn: t.turn, newest: t.last?.id ?? null },
+            draft: byThread.get(t.id),
+            fixes,
+            commits,
+            ticks,
+            author,
+          }),
+        ]),
+      ),
+    [o.threads, byThread, fixes, commits, ticks, author],
+  );
+  const need = o.threads.filter((t) => outcomes.get(t.id)?.outcome.needsReply).length;
+  // WP-S3: the post plan names the accepted "Fixed in" drafts whose commit the clone branch no longer holds.
+  const cannotPost = usePostPlan(pr.id).data?.blocked;
+  const gone = useMemo(() => new Set(cannotPost?.flatMap((b) => (b.reason === "commit-gone" ? [b.item] : []))), [cannotPost]);
+
+  // "Keep the reply" and "Keep the reject": the fix card keeps the focus, as the note leaves.
+  const untick = (edits: number[], card: string) => {
+    setTicks(edits, false);
+    o.announce(`Unticked ${plural(edits.length, "edit")}. Apply leaves ${edits.length === 1 ? "it" : "them"} out.`);
+    focusAfter({ id: card, block: "nearest", flash: false });
+  };
+  // "Keep the fix" of a "yes" conflict: discard the reply, then restore the nofix draft of the note when the run holds one.
+  const keepFix = async (c: Extract<Conflict, { kind: "yes" }>, thread: number) => {
+    const d = await qc.fetchQuery({ queryKey: ["run", c.run], queryFn: () => getRun(c.run) }).catch(() => null);
+    const back = d?.items.find((x) => {
+      const p = replyOf(x);
+      return x.kind === "reply" && x.status === "discarded" && p.thread === thread && p.origin === "nofix" && !p.declined;
+    });
+    if (!(await send(c.reply, { action: "discard", revision: c.reply.revision })) || !back) return;
+    if (await send(back, { action: "restore", revision: back.revision })) void qc.invalidateQueries({ queryKey: replyKey(pr.id) });
+  };
+  const resolveConflict = (c: Conflict, thread: number, keep: boolean) => {
+    if (c.kind === "no") {
+      if (!keep) return void send(c.reply, { action: "discard", revision: c.reply.revision });
+      untick(c.edits, `fx-${thread}`);
+      return;
+    }
+    if (!keep) return void keepFix(c, thread);
+    if (c.text) void send(c.reply, { action: "accept", revision: c.reply.revision });
+    else fix.again({ kind: "thread", id: thread }, true);
+  };
+  const onConflict = useRef({ resolveConflict, untick });
+  onConflict.current = { resolveConflict, untick };
+
+  // Per thread, so a memo thread renders again only when its own card changes. The outcome line comes first, then the conflict note,
+  // the reply draft card, and the fix card.
   const { cards, drafted } = useMemo(() => {
     const out = new Map<number, ReactNode>();
     const drafted = new Set<number>();
@@ -499,9 +559,20 @@ export function useReview(
       const it = !card || card.kind === "pending" ? null : card.it;
       const p = it && replyOf(it);
       const to = p && t.msgs.find((m) => m.id === p.replyTo);
+      const state = outcomes.get(t.id);
+      const c = state?.conflict;
       out.set(
         t.id,
         <>
+          {state && <OutcomeLine o={state.outcome} />}
+          {c && (
+            <ConflictNote
+              c={conflictText(c)}
+              busy={triage.busy.has(c.reply.id)}
+              onKeep={() => onConflict.current.resolveConflict(c, t.id, true)}
+              onFix={() => onConflict.current.resolveConflict(c, t.id, false)}
+            />
+          )}
           {card && (
             <ReplyDraftCard
               card={card}
@@ -511,6 +582,7 @@ export function useReview(
               mode={it ? modeOf(triage, it.id) : null}
               busy={!!it && triage.busy.has(it.id)}
               waiting={p ? fixWaiting(p, commits, fixes) : null}
+              gone={!!it && gone.has(it.id)}
               resolved={t.turn !== "resolved" ? null : p?.threadOpen ? "since" : "now"}
               ctx={replyCtx}
             />
@@ -520,7 +592,30 @@ export function useReview(
       );
     }
     return { cards: out, drafted };
-  }, [o.threads, byThread, pending, triage, replyCtx, fixCards, fixes, commits]);
+  }, [o.threads, byThread, pending, triage, replyCtx, fixCards, fixes, commits, outcomes, gone]);
+
+  // session-consult.md part C: a finding that your session rejected, with edits still ticked, gets the conflict note on its fix card.
+  const findingCards = useMemo(() => {
+    const out = new Map(fixFindingCards);
+    for (const it of ds) {
+      const edits = findingConflict(it, fixes, ticks);
+      const card = out.get(it.id);
+      if (!edits || !card) continue;
+      out.set(
+        it.id,
+        <>
+          <ConflictNote
+            c={findingConflictText(edits)}
+            busy={triage.busy.has(it.id)}
+            onKeep={() => onConflict.current.untick(edits, `fx-f${it.id}`)}
+            onFix={() => onTriage.current.act(it, "restore")}
+          />
+          {card}
+        </>,
+      );
+    }
+    return out;
+  }, [fixFindingCards, ds, fixes, ticks, triage.busy]);
 
   const api: ReviewApi = {
     rerun: () => openBrief(),
@@ -606,7 +701,7 @@ export function useReview(
         extra={
           <>
             {"since" in rr && <RereviewButton since={rr.since} busy={startRereview.isPending} onClick={rereview} />}
-            <DraftRepliesButton turns={o.threads.map((t) => t.turn)} onRun={() => draftReplies()} />
+            <DraftRepliesButton turns={o.threads.map((t) => t.turn)} need={need} onRun={() => draftReplies()} />
             {fix.button}
           </>
         }
@@ -659,7 +754,7 @@ export function useReview(
     ),
     reviewed: latest !== null,
     draftCount: ds.filter((d) => d.status !== "discarded").length + (qJump?.n ?? 0),
-    drafts: <Drafts items={list} isOpen={isDraftOpen} triage={triage} cards={fix.findingCards} ctx={draftCtx} />,
+    drafts: <Drafts items={list} isOpen={isDraftOpen} triage={triage} cards={findingCards} ctx={draftCtx} />,
     cards,
     drafted,
     sheet: log && (

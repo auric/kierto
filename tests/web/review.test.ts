@@ -627,6 +627,7 @@ describe("reply drafts", () => {
     const turns = (your: number, ...rest: Turn[]): Turn[] => [...Array<Turn>(your).fill("your"), ...rest];
     expect(repliesButton(turns(1, "wait", "resolved"))).toEqual({
       your: 1,
+      need: 1,
       why: null,
       hint: "Draft a reply for the thread where it is your turn.",
     });
@@ -634,9 +635,19 @@ describe("reply drafts", () => {
     expect(repliesButton(turns(25)).why).toBeNull();
     expect(repliesButton(turns(26))).toEqual({
       your: 26,
+      need: 26,
       why: { title: "26 threads wait for your reply.", text: "Draft at most 25 at a time: use Draft reply in each thread." },
       hint: "26 threads wait for your reply.",
     });
+    // docs/plans/thread-outcome.md: the count names the threads whose outcome needs a reply. The run still takes each your-turn thread.
+    expect(repliesButton(turns(3), 1)).toEqual({
+      your: 3,
+      need: 1,
+      why: null,
+      hint: "Draft a reply for each of the 3 threads where it is your turn. 1 thread still needs a reply.",
+    });
+    expect(repliesButton(turns(2), 0)).toMatchObject({ need: 0, why: null, hint: expect.stringMatching(/ None needs a new reply\.$/) });
+    expect(repliesButton(turns(1), 5).need).toBe(1);
     const no = "No thread waits for your reply.";
     expect(repliesButton(["wait", "wait", "resolved"]).why).toEqual({
       title: no,

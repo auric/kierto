@@ -336,9 +336,11 @@ test("Review and Draft replies are plain buttons; a zero count explains itself; 
   await expect(page.locator("#runline [data-run-kind='reply']")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(page.locator("#runline [data-run-kind='reply']")).toContainText("General profile");
 
+  // docs/plans/thread-outcome.md: both threads have a draft now, so no thread still needs a reply and the count goes.
+  await expect(replies).toHaveAccessibleName("Draft replies");
   // A pane of 520 px or less shows "Replies". Every button keeps a text label, and the stuck title hides.
   await page.setViewportSize({ width: 400, height: 800 });
-  await expect(replies).toHaveText(/^Replies\s*2$/, { useInnerText: true });
+  await expect(replies).toHaveText(/^Replies$/, { useInnerText: true });
   await expect(page.locator("#ask-btn")).toHaveText("Ask");
   await page.setViewportSize({ width: 1440, height: 900 });
 

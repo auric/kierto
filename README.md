@@ -103,7 +103,9 @@ The run log shows each tool call of the review and of its subagents.
 
 ### Replies
 
-Draft replies judges each thread where it is your turn: valid, partly valid, not valid, or a question. It drafts a reply for each one. You edit the reply and post it. A new run never replaces a draft that you edited, accepted, or discarded.
+Draft replies judges each thread where it is your turn: valid, partly valid, not valid, or a question. It drafts a reply for each one, and the draft says where it came from. You edit the reply and post it. A new run never replaces a draft that you edited, accepted, or discarded. The button counts the threads that still need a reply.
+
+Each thread with a draft or a fix shows one outcome line on top, such as Answered, To fix, Fix proposed, Fixed in X, Partly fixed in X, Already done, Won't fix, Needs your decision, or Settled. Marks on the line say "Out of date", "Resolved since the draft", or "Waiting for push". When the reply and the fix disagree, for example a "Not valid" reply next to a ticked edit, a note says so. "Keep the reply" or "Keep the fix" settles it with one click.
 
 Each thread footer has "Resolve", or "Reopen" on a resolved thread. The key x does the same on the current thread. The change goes to Bitbucket at once. A thread that another person started asks first. Tick "Resolve after posting" to resolve the thread after the reply. Bitbucket takes no reply in a resolved thread, so Kierto reopens a resolved thread first. The confirm says "Reopen thread, post reply". When someone resolved the thread after Claude drafted the reply, the draft says "Resolved since the draft", and the post leaves it out until you reopen the thread.
 
@@ -111,11 +113,13 @@ The post confirm lists the drafts that cannot post now in groups by reason: out 
 
 ### Fix it
 
-On your own pull request, the Fix list holds the open threads and the review findings. Valid threads and accepted findings start ticked. A read-only run checks each ticked point and proposes exact edits. You review each edit. Apply commits the edits into your clone and drafts a "Fixed in" reply in each fixed thread, unless you already edited or accepted a reply there. You push. Before the push, Undo removes the commit and brings back the reply draft that it replaced.
-
-When the run gives no fix, the card says why: Already done, Not valid, Out of scope, Unclear, or Needs your decision. Where the run drafted your answer, the card points to the draft. A decision card offers "Fix anyway". "Don't fix…" asks for your reason, drafts a "Won't fix" reply, and folds the proposal until you Undo it. The Fix list shows the outcome of each row, and a row without a fix starts unticked.
+On your own pull request, the Fix list holds the open threads and the review findings. Valid threads and accepted findings start ticked. A read-only run checks each ticked point and proposes exact edits. You review each edit. Apply commits the edits into your clone and drafts "Fixed in X: <what changed>" in each fixed thread. It keeps the answer that Claude drafted there, and it never touches a reply that you edited or accepted. A commit with only a part of the edits of a thread says "Partly fixed in X" and proposes no resolve. You push. Before the push, Undo removes the commit and brings back the reply draft that it replaced.
 
 ![The Fix list](docs/screenshots/fix-list.webp)
+
+When the run gives no fix, the card says why: Already done, Not valid, Out of scope, Unclear, or Needs your decision. For the first four, the run drafts your answer to the commenter, and the card points to the draft. A decision or a risk card offers "Fix anyway", which asks the run for edits despite the note. "Don't fix…" asks for your reason, drafts a "Won't fix" reply, and folds the proposal until you Undo it. The Fix list shows the outcome of each row, and a row without a fix starts unticked.
+
+![A thread with its outcome line, the reply draft, and the fix card](docs/screenshots/fix-thread.webp)
 
 ### Ask
 

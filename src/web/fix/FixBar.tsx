@@ -6,7 +6,7 @@
 // The fix part shows while a fix run runs, and while an edit is ticked, as the post part shows while an item is accepted.
 import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Wrench } from "lucide-react";
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
@@ -63,6 +63,12 @@ export type FixUi = {
   openWith: (targets: FixTarget[]) => void;
   // Copies the runner prompt of the thread. Call it in the click handler. Resolves to the next step, or null.
   copyPrompt: (thread: number) => Promise<string | null>;
+  // The choice of the user per free edit ID. Without a choice, selection() ticks the edits of the newest run.
+  ticks: ReadonlyMap<number, boolean>;
+  // Ticks or unticks these edits: "Keep the reply" of a conflict note (docs/plans/thread-outcome.md).
+  tick: (edits: number[], on: boolean) => void;
+  // A new fix run for one target, with the checks of Fix again. anyway: "Fix anyway".
+  again: (t: FixTarget, anyway?: boolean) => void;
 };
 
 const NO_CARDS: ReadonlyMap<number, ReactNode> = new Map();
@@ -187,12 +193,12 @@ export function useFix(
     showList(targets.map(cardKey), false);
   };
 
-  // focus: the element that takes the focus after the start, or null.
-  const runFor = (ts: number[], fs: number[], focus: string | null = null) => {
+  // focus: the element that takes the focus after the start, or null. anyway: "Fix anyway" for the one target.
+  const runFor = (ts: number[], fs: number[], focus: string | null = null, anyway = false) => {
     const n = ts.length + fs.length;
     start.mutate(
       // fixRunInput refuses an empty list.
-      { threads: ts.length ? ts : undefined, findings: fs.length ? fs : undefined },
+      { threads: ts.length ? ts : undefined, findings: fs.length ? fs : undefined, anyway },
       {
         onSuccess: (r) => {
           if ("conflict" in r) return o.slotTaken(r.conflict);
@@ -213,12 +219,12 @@ export function useFix(
     runFor(tickedThreads, tickedFindings);
   };
   // Fix again and Fix anyway on a card: the same checks as the Fix list with one ticked row.
-  const again = (t: FixTarget) => {
+  const again = (t: FixTarget, anyway = false) => {
     if (start.isPending) return;
     const why = fixReason({ rows: rowCount, ticked: 1, synced: o.synced, profile: o.profile, busy: o.busy });
     if (why.kind !== "ok") return void toast.add({ title: why.text });
     // The button leaves with the card, so the focus goes to the running card.
-    runFor(t.kind === "thread" ? [t.id] : [], t.kind === "finding" ? [t.id] : [], `fx-${cardKey(t)}`);
+    runFor(t.kind === "thread" ? [t.id] : [], t.kind === "finding" ? [t.id] : [], `fx-${cardKey(t)}`, anyway);
   };
 
   const refresh = () => {
@@ -331,6 +337,15 @@ export function useFix(
     const command = meta.runner.login.split(" ")[0] ?? meta.runner.short;
     return `Open a terminal in ${path ?? `your clone of ${repoOf(pr)}`}, run ${command}, and paste.`;
   };
+  const setMany = useCallback(
+    (ids: number[], on: boolean) =>
+      setTicks((m) => {
+        const out = new Map(m);
+        for (const id of ids) out.set(id, on);
+        return out;
+      }),
+    [],
+  );
   // The newest actions. The stable ctx calls them, so a card never runs a stale one.
   const acts = useRef({ undo, decline, again, copyPrompt });
   acts.current = { undo, decline, again, copyPrompt };
@@ -345,7 +360,7 @@ export function useFix(
       onUndo: (c, target) => void acts.current.undo(c, target),
       onDecline: (t, run, reason) => acts.current.decline(t, run, reason),
       onUndecline: (t, run) => void acts.current.decline(t, run, null),
-      onAgain: (t) => acts.current.again(t),
+      onAgain: (t, anyway) => acts.current.again(t, anyway),
       onPrompt: (thread) => acts.current.copyPrompt(thread),
       onDraft: (item) => focusAfter({ id: `rd-${item}`, block: "nearest", flash: true }),
     }),
@@ -499,5 +514,8 @@ export function useFix(
     openFinding,
     openWith,
     copyPrompt,
+    ticks,
+    tick: setMany,
+    again: (t, anyway) => acts.current.again(t, anyway),
   };
 }

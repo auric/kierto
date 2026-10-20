@@ -176,6 +176,16 @@ ${rule}
     expect(buildFixPrompt({ ...input, threads })).not.toContain("findings.md");
   });
 
+  test("Fix anyway: the prompt says that the user chose the fix and asks for edits unless no edit can make the change", () => {
+    const anyway = buildFixPrompt({ ...input, threads, anyway: true });
+    expect(anyway).toContain(
+      "\nThe user wants this point fixed anyway. An earlier fix run gave no fix for it, such as a decision or a risk note, and the user chose the fix.\nPropose edits for it. Set fixed to false only when no edit can make the change, and say why in reason.\n",
+    );
+    expect(anyway.indexOf("Fix threads: 1")).toBeLessThan(anyway.indexOf("fixed anyway"));
+    expect(buildFixPrompt({ ...input, threads: [], findings: [11], anyway: true })).toContain("fixed anyway");
+    expect(buildFixPrompt({ ...input, threads })).not.toContain("fixed anyway");
+  });
+
   test("resolve: the Threads line says who started each thread; the reply agent proposes resolve only with proof", () => {
     const text = buildReplyPrompt({
       ...input,

@@ -31,12 +31,18 @@
 - A Fix commit keeps a reply draft that you edited or accepted and adds no "Fixed in" draft there. Undo of a Fix commit brings back the draft that its "Fixed in" draft replaced.
 - A "Fixed in" draft of an undone commit can no longer come back with Restore.
 - Post again of a reply no longer fails when the pull request got new commits.
-- When a fix run gives no fix for a thread, it drafts your answer to the commenter with the reason: already done, not valid, out of scope, or unclear. The draft says "From the fix run." and posts only after your Accept.
+- When a fix run gives no fix for a thread, it drafts your answer to the commenter with the reason: already done, not valid, out of scope, or unclear. The draft says "from the fix run" and posts only after your Accept.
 - An "already done" draft names the code that does it and proposes to resolve the thread. A choice that only you can make, or a risky fix, gets no draft.
 - A fix run never replaces a reply draft that you edited, accepted, or discarded, or a "Fixed in" draft. Draft replies keeps a "Fixed in" draft and a draft of a fix run too. Draft reply in that one thread replaces them.
 - A "Fixed in" draft keeps the answer that Claude drafted in the thread and adds "Fixed in X: <what the commit changes>".
 - A Fix commit with only a part of the edits of a thread drafts "Partly fixed in X" and proposes no resolve.
 - Draft replies sees the fix note, the fix commit, and the current draft of each thread. It no longer claims a fix without a commit.
+- Each thread with a reply draft or a fix card shows one outcome line on top: Open, Answered, To fix, Fix proposed, Fixed in X, Partly fixed in X, Already done, Won't fix, Needs your decision, Follow-up asked, Settled, Waiting on them, or Resolved. Marks say "Out of date", "Resolved since the draft", or "Waiting for push".
+- When the reply draft and the fix disagree, a note says so, for example a "Not valid" reply next to a ticked edit, or a valid reply next to "Already done". "Keep the reply" and "Keep the fix" settle it with one click.
+- A session accept without a reply now says "To fix", not "No reply needed".
+- Each reply draft names where it came from: the review, the reply run, your fix commit, the fix run, the re-review, or you.
+- The Draft replies button counts only the threads that still need a reply: no draft yet, or a draft that is out of date.
+- A "Fixed in" draft whose commit left your branch offers "Post as plain reply" on its card too.
 
 ### Fix
 
@@ -45,6 +51,8 @@
 - When Kierto cannot apply any edit of a proposed fix, the card says "Edits could not be applied" with the reasons, and offers "Fix again" and "Copy prompt". It drafts no reply.
 - "Don't fix…" on a proposed fix asks for your reason. It drafts a "Won't fix" reply and folds the proposal, also after a reload. Undo brings the proposal and the earlier reply draft back until the reply posts.
 - The Fix list shows the fix outcome of each row: Fix proposed, Fixed in, Partly fixed in, Already done, Won't fix, Follow-up asked, Needs your decision, or Declined. A row without a fix or with a declined fix starts unticked.
+- "Fix anyway" tells the fix run that you chose the fix, so it proposes edits despite the decision or risk note.
+- A finding that your session rejected, with its fix edits still ticked, gets a note with "Keep the reject" and "Keep the fix".
 
 ### Fixes
 

@@ -406,6 +406,41 @@ describe("thread selection and refusals", () => {
   });
 
   test(
+    "Fix anyway: one target only; the prompt asks for edits, and the run key differs from a plain run (docs/plans/thread-outcome.md)",
+    async () => {
+      const h = await setup();
+      const two = await h.json<ApiError>(`/api/prs/${h.pr}/fix-run`, { body: { threads: [101, 201], anyway: true } });
+      expect(two).toEqual({ status: 400, body: { error: "Fix anyway takes exactly one thread or finding." } });
+      const none = await h.json<ApiError>(`/api/prs/${h.pr}/fix-run`, { body: { anyway: true } });
+      expect(none.status).toBe(400);
+      expect(h.runCalls()).toEqual([]);
+
+      type Started = RunDto & RunConflict & ApiError;
+      h.scenario({ hang: true });
+      const plain = await h.start([101]);
+      expect(plain.status).toBe(202);
+      expect(await waitFor(() => h.runCalls().length === 1)).toBe(true);
+      // A start with the key of the running run gets that run. Fix anyway has its own key, so the slot refuses it instead.
+      const anyway = await h.json<Started>(`/api/prs/${h.pr}/fix-run`, { body: { threads: [101], anyway: true } });
+      expect(anyway.status).toBe(409);
+      expect(anyway.body.running).toEqual({ run: plain.body.id, pr: h.pr });
+      expect((await h.start([101])).body.id).toBe(plain.body.id);
+      expect((await h.json(`/api/runs/${plain.body.id}/cancel`, { method: "POST" })).status).toBe(202);
+      await h.finish(plain.body.id);
+
+      h.scenario({});
+      const r = await h.json<Started>(`/api/prs/${h.pr}/fix-run`, { body: { threads: [101], anyway: true } });
+      expect(r.status).toBe(202);
+      await h.finish(r.body.id);
+      const stdin = h.runCalls().at(-1)?.stdin ?? "";
+      expect(stdin).toContain("\nFix threads: 101 (comment 103)\n");
+      expect(stdin).toContain("The user wants this point fixed anyway.");
+      expect(h.runCalls()[0]?.stdin).not.toContain("fixed anyway");
+    },
+    SLOW,
+  );
+
+  test(
     "404, unsynced, non-author, Explain, no valid draft, and more than 25 threads give errors; a list passes the reply checks",
     async () => {
       const h = await setup();

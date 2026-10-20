@@ -848,7 +848,11 @@ test("no-fix notes: Already done points to its reply draft; a decision offers Fi
   await lock.getByRole("button", { name: "Go to the draft" }).click();
   await expect(draft(page, LOCK)).toBeFocused();
   await expect(draft(page, LOCK)).toContainText("The flush already does this at src/cache/flush.ts:5.");
-  await expect(draft(page, LOCK)).toContainText("From the fix run.");
+  // docs/plans/thread-outcome.md: the outcome line on top of each thread.
+  await expect(thread(page, LOCK).locator("[data-outcome]")).toHaveText("Outcome: Already done");
+  await expect(thread(page, LOOP).locator("[data-outcome]")).toHaveText("Outcome: Needs your decision");
+  await expect(thread(page, OWN).locator("[data-outcome]")).toHaveText("Outcome: Needs your decision: Edits could not be applied");
+  await expect(draft(page, LOCK).locator("[data-origin='nofix']")).toHaveText("from the fix run");
 
   // Needs your decision: the options from the note, Fix anyway, and Don't fix. No reply draft.
   const loop = fixCard(page, LOOP);
@@ -890,12 +894,17 @@ test("no-fix notes: Already done points to its reply draft; a decision offers Fi
   await control("claude", { stream: "tree", fix: FIX_LOOP });
   await loop.getByRole("button", { name: "Fix anyway" }).click();
   await expect(loop).toContainText("Proposed fix, 1 edit", { timeout: RUN_MS });
-  expect(await runStdin()).toContain(`\nFix threads: ${LOOP} (comment ${LOOP})\n`);
-  // Fix again does the same for the dropped note.
+  const anyway = await runStdin();
+  expect(anyway).toContain(`\nFix threads: ${LOOP} (comment ${LOOP})\n`);
+  // docs/plans/thread-outcome.md: Fix anyway tells the run that you chose the fix.
+  expect(anyway).toContain("\nThe user wants this point fixed anyway.");
+  // Fix again does the same for the dropped note, without the Fix anyway line.
   await control("claude", { stream: "tree", fix: FIX_OWN });
   await own.getByRole("button", { name: "Fix again" }).click();
   await expect(own).toContainText("Proposed fix, 1 edit", { timeout: RUN_MS });
-  expect(await runStdin()).toContain(`\nFix threads: ${OWN} (comment ${OWN})\n`);
+  const again = await runStdin();
+  expect(again).toContain(`\nFix threads: ${OWN} (comment ${OWN})\n`);
+  expect(again).not.toContain("fixed anyway");
   expect(await writes()).toEqual([]);
 });
 
@@ -941,6 +950,7 @@ test("Don't fix with a reason drafts Won't fix and folds the proposal; a reload 
   await expect(page.locator("p[role='status'].sr-only")).toContainText("Declined. A “Won't fix” reply draft is in the thread.");
   // The "Won't fix" draft replaces the reply draft. It waits for your Accept.
   await expect(draft(page, LOCK)).toContainText("Won't fix: The caller releases the lock.");
+  await expect(thread(page, LOCK).locator("[data-outcome]")).toHaveText("Outcome: Won't fix: The caller releases the lock.");
   await expect(draft(page, LOCK)).not.toContainText("Accepted");
   await card.getByRole("button", { name: "Go to the draft" }).click();
   await expect(draft(page, LOCK)).toBeFocused();

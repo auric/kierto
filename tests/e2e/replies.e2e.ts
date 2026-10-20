@@ -7,7 +7,7 @@
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI. The CLI echoes one reply per
 // thread of its "Threads:" line, and every third thread gets action none (tests/support/fake-claude.ts echoReplies).
 import { test as base, expect, type Locator, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, MARK, openApp, posts } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, MARK, openApp, posts, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -79,6 +79,12 @@ test("Draft replies: three your-turn threads get inline drafts, one needs no rep
   await btn.click();
   await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runline(page)).toContainText("2 reply drafts, 1 thread needs no reply");
+  // docs/plans/thread-outcome.md: each thread with an AI card gets one outcome line. A reviewer answers the point, so a valid
+  // judgement reads Answered. Every your-turn thread has a current draft now, so the button counts none.
+  await expect(thread(page, 1000101).locator("[data-outcome]")).toHaveText("Outcome: Answered");
+  await expect(thread(page, 1000103).locator("[data-outcome]")).toHaveText("Outcome: No reply needed");
+  await expect(card(page, 1000101).locator("[data-origin]")).toHaveText("from the reply run");
+  await expect(btn).toHaveAccessibleName("Draft replies");
   // Key 2 with no review drafts goes to the first reply draft.
   await page.keyboard.press("2");
   await expect(page.locator(":focus")).toHaveAttribute("id", /^rd-/);
@@ -166,12 +172,19 @@ test("a stale draft says new messages arrived; Draft again answers the newest me
   await expect(card(page, ROOT)).toContainText(echo(1000010), { timeout: RUN_MS });
   await expect(card(page, ROOT)).not.toContainText("New messages since this draft.");
 
+  await expect(repliesButton(page)).toHaveAccessibleName("Draft replies");
+
   await control("state", { reply: "two" });
   await expect(page.locator("#c-1000011")).toBeVisible();
   await expect(card(page, ROOT)).toContainText("New messages since this draft.");
+  // The outcome line marks the draft out of date, and Draft replies counts the thread again.
+  const outcome = thread(page, ROOT).locator("[data-outcome]");
+  await expect(outcome.locator("[data-marker='stale']")).toHaveText("Out of date");
+  await expect(repliesButton(page)).toHaveAccessibleName("Draft replies, 1 thread");
   await card(page, ROOT).getByRole("button", { name: "Draft again" }).click();
   await expect(card(page, ROOT)).toContainText(echo(1000011), { timeout: RUN_MS });
   await expect(card(page, ROOT)).not.toContainText("New messages since this draft.");
+  await expect(outcome.locator("[data-marker]")).toHaveCount(0);
 
   const text = "Done. The flush runs first now.";
   await card(page, ROOT).getByRole("button", { name: "Edit" }).click();
@@ -308,4 +321,118 @@ test("the thread footer: Draft reply only on a your-turn thread without a draft,
   await filter.getByRole("button", { name: "All" }).click();
   await expect(thread(page, ROOT)).toBeVisible();
   expect(await posts()).toEqual([]);
+});
+
+// docs/plans/thread-outcome.md on my PR 1004: two general threads by the reviewer. The reply run judges LOCK not valid and LOOP valid.
+// The fix run then proposes an edit for LOCK, so the reply and the fix disagree there.
+const OWN_TITLE = "Release the write lock after each entry";
+const LOCK = 5000001;
+const LOOP = 5000002;
+const NO_COVERAGE = { read: [], skipped: [], unavailable: [], notChecked: [] };
+const REPLIES = {
+  summary: "Two replies.",
+  replies: [
+    {
+      thread: LOCK,
+      action: "reply",
+      body: "The caller releases the lock, so the loop needs no change.",
+      reason: "The caller releases the lock.",
+      evidenceStatus: "code",
+      judgement: "invalid",
+    },
+    {
+      thread: LOOP,
+      action: "reply",
+      body: "Good point. I add the lock order.",
+      reason: "The order is not noted.",
+      evidenceStatus: "code",
+      judgement: "valid",
+    },
+  ],
+  coverage: NO_COVERAGE,
+};
+const FIX_LOCK = {
+  summary: "One fix.",
+  threads: [{ thread: LOCK, fixed: true, reason: "Release the lock in a `finally` block." }],
+  edits: [
+    {
+      thread: LOCK,
+      path: "src/cache/flush.ts",
+      old: "    write(entry);\n    lock.release();\n",
+      new: "    try {\n      write(entry);\n    } finally {\n      lock.release();\n    }\n",
+    },
+  ],
+  coverage: NO_COVERAGE,
+};
+
+test("the outcome line follows the reply and the fix; a Not valid reply next to a ticked edit gets the conflict note and both actions", async ({
+  page,
+}) => {
+  await openApp(page);
+  await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
+  await page.getByLabel("Access token").fill(E2E_TOKEN);
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByLabel("Access token")).toBeHidden();
+  await control("state", { author: true });
+  await page.locator("[data-row]", { hasText: OWN_TITLE }).first().click();
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(OWN_TITLE);
+
+  await control("claude", { stream: "tree", replies: REPLIES });
+  await expect(repliesButton(page)).toHaveAccessibleName("Draft replies, 2 threads");
+  await repliesButton(page).click();
+  await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  for (const id of [LOCK, LOOP]) await openThread(page, id);
+  const lockLine = thread(page, LOCK).locator("[data-outcome]");
+  // On my own PR a valid point is To fix. A not valid point is answered.
+  await expect(lockLine).toHaveText("Outcome: Answered");
+  await expect(thread(page, LOOP).locator("[data-outcome]")).toHaveText("Outcome: To fix");
+  await expect(thread(page, LOCK).locator("[data-conflict]")).toHaveCount(0);
+
+  // Fix in the footer of LOCK proposes one edit. The edit is ticked, so the note says that the reply and the fix disagree.
+  await control("claude", { stream: "tree", fix: FIX_LOCK });
+  await thread(page, LOCK).getByRole("button", { name: "Fix", exact: true }).click();
+  const list = page.getByRole("dialog", { name: "Fix comments on your pull request" });
+  await list.getByRole("button", { name: "Propose fixes for 1" }).click();
+  await expect(list).toBeHidden();
+  const fixCard = thread(page, LOCK).locator("[data-fix]");
+  await expect(fixCard).toContainText("Proposed fix, 1 edit", { timeout: RUN_MS });
+  await expect(lockLine).toHaveText("Outcome: Fix proposed");
+  const note = thread(page, LOCK).getByRole("note", { name: "The reply and the fix disagree" });
+  await expect(note).toContainText("The reply draft says the comment is not valid, but 1 edit is ticked for Apply.");
+  await expect(note).toContainText("Keep the reply unticks the edit, so Apply leaves it out. Keep the fix discards the reply draft.");
+  // The note sits between the outcome line and the cards.
+  const order = await thread(page, LOCK)
+    .locator("[data-outcome], [data-conflict], [data-reply-draft], [data-fix]")
+    .evaluateAll((els) =>
+      els.map((e) =>
+        e.hasAttribute("data-outcome")
+          ? "outcome"
+          : e.hasAttribute("data-conflict")
+            ? "note"
+            : e.hasAttribute("data-fix")
+              ? "fix"
+              : "reply",
+      ),
+    );
+  expect(order).toEqual(["outcome", "note", "reply", "fix"]);
+
+  // Keep the reply: the edit is unticked, the bar has nothing to apply, the reply states the outcome, and the fix card has the focus.
+  const box = fixCard.getByRole("checkbox", { name: /^Include in apply src\/cache\/flush\.ts/ });
+  await note.getByRole("button", { name: "Keep the reply" }).click();
+  await expect(box).not.toBeChecked();
+  await expect(note).toHaveCount(0);
+  await expect(page.locator("[data-fixbar]")).toHaveCount(0);
+  await expect(lockLine).toHaveText("Outcome: Answered");
+  await expect(page.locator(`#fx-${LOCK}`)).toBeFocused();
+  await expect(page.locator("p[role='status'].sr-only")).toContainText("Unticked 1 edit. Apply leaves it out.");
+
+  // A tick brings the note back. Keep the fix discards the reply, and the proposal states the outcome.
+  await box.check();
+  await expect(note).toBeVisible();
+  await note.getByRole("button", { name: "Keep the fix" }).click();
+  await expect(note).toHaveCount(0);
+  await expect(card(page, LOCK)).toContainText("Discarded reply draft");
+  await expect(lockLine).toHaveText("Outcome: Fix proposed");
+  await expect(box).toBeChecked();
+  expect(await writes()).toEqual([]);
 });

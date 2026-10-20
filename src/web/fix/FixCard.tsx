@@ -43,8 +43,8 @@ export type FixCtx = {
   // "Don't fix": resolves to true when the server stored the decline.
   onDecline: (target: FixTarget, run: number, reason: string) => Promise<boolean>;
   onUndecline: (target: FixTarget, run: number) => void;
-  // Fix again and Fix anyway: a new fix run for this target only.
-  onAgain: (target: FixTarget) => void;
+  // Fix again and Fix anyway: a new fix run for this target only. anyway: the run asks for edits despite the earlier note.
+  onAgain: (target: FixTarget, anyway?: boolean) => void;
   // Copies the runner prompt of the thread. Resolves to the next step, or null.
   onPrompt: (thread: number) => Promise<string | null>;
   // Moves the focus to the reply draft card of this review item.
@@ -342,7 +342,7 @@ export const FixCard = memo(function FixCard(props: {
       </Button>
     ),
     choose && (
-      <Button key="anyway" size="sm" variant="outline" onClick={() => ctx.onAgain(target)}>
+      <Button key="anyway" size="sm" variant="outline" onClick={() => ctx.onAgain(target, true)}>
         <Wrench aria-hidden data-icon="inline-start" />
         Fix anyway
       </Button>

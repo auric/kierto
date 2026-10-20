@@ -64,10 +64,15 @@ export async function openCloneFolder(pr: number): Promise<{ error: string; path
 }
 
 // POST /api/prs/:id/fix-run. findings: review item IDs. fixRunInput refuses an empty list, so pass undefined instead.
-// Absent threads and findings: each thread with a valid or partly valid reply draft.
+// Absent threads and findings: each thread with a valid or partly valid reply draft. anyway: "Fix anyway" for one target.
 export const useStartFix = (pr: number) =>
-  useStart(pr, async ({ findings, ...o }: RunStart & { findings?: number[] }) =>
-    started(await api.api.prs[":id"]["fix-run"].$post({ ...param(pr), json: { ...runBody(o), ...(findings && { findings }) } })),
+  useStart(pr, async ({ findings, anyway, ...o }: RunStart & { findings?: number[]; anyway?: boolean }) =>
+    started(
+      await api.api.prs[":id"]["fix-run"].$post({
+        ...param(pr),
+        json: { ...runBody(o), ...(findings && { findings }), ...(anyway && { anyway }) },
+      }),
+    ),
   );
 
 // 409 with problems: a clone check failed. 409 without problems: another refusal, such as a failed hook with the stderr tail;
