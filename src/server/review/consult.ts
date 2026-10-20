@@ -25,7 +25,7 @@ import {
   sessionTokens,
   threadKey,
 } from "../../shared/consult";
-import type { ChangedFile, CommentDto, FixDto, ReviewItemDto, RunSummary } from "../../shared/dto";
+import type { CommentDto, FixDto, ReviewItemDto, RunSummary } from "../../shared/dto";
 import { isMe } from "../../shared/me";
 import { type AnchoredFinding, parseFixNotes, type ReplyPayload, type SessionMark } from "../../shared/review";
 import { byThread, newestLive, threadTurn } from "../../shared/turn";
@@ -38,13 +38,10 @@ import type { FindInput, FoundSession } from "./sessions";
 import { longPath } from "./workspace";
 
 export const OWN_ONLY = "Copy for your session works only on your own pull requests.";
-// The git diff context of the diff viewer (workspace.ts diffArgs -U3).
-const AROUND = 3;
 // The diff viewer cuts each line at 2000 characters (diff.ts MAX_LINE).
 const MAX_LINE = 2000;
-// A larger file gets no code quote.
+// A larger file gets no anchor quote.
 const MAX_QUOTE_FILE = 2 * 1024 * 1024;
-const MAX_FILES = 200;
 
 const SEVERITY: Record<AnchoredFinding["severity"], string> = { blocker: "Blocker", major: "Major", minor: "Minor", nit: "Nit" };
 const EVIDENCE: Record<AnchoredFinding["evidenceStatus"], string> = {
@@ -160,24 +157,11 @@ function cacheReader(cache: { cache: string; env: Record<string, string> } | nul
   };
 }
 
-// hit: the lines of the place. The marker ">" names them.
-function quoteFile(lines: string[], from: number, to: number): string {
-  const first = Math.max(1, from - AROUND);
-  const last = Math.min(lines.length, to + AROUND);
-  const w = String(last).length;
-  const out: string[] = [];
-  for (let n = first; n <= last; n++)
-    out.push(`    ${n >= from && n <= to ? ">" : " "} ${String(n).padStart(w)} | ${oneLine(cut(lines[n - 1] ?? ""))}`);
-  return out.join("\n");
-}
-
-const SIGN = { add: "+", del: "-", ctx: " " } as const;
-function quoteExcerpt(lines: { n: number; kind: "add" | "del" | "ctx"; text: string; hit: boolean }[]): string {
-  const w = Math.max(...lines.map((l) => String(l.n).length));
-  return lines.map((l) => `    ${l.hit ? ">" : " "} ${String(l.n).padStart(w)} ${SIGN[l.kind]} | ${oneLine(cut(l.text))}`).join("\n");
-}
+const anchorLine = (n: number, where: string, text: string) => `Anchor line ${n} ${where}: ${oneLine(cut(text)).trim() || "(empty line)"}`;
 
 // ---------- The view of Kierto ----------
+
+const viewBlock = (view: string[]) => (view.length ? ["Kierto's AI view (may be wrong):", ...view] : []);
 
 function replyView(it: ReviewItemDto | undefined): string[] {
   if (!it || (it.status !== "new" && it.status !== "accepted")) return [];
@@ -260,21 +244,20 @@ async function threadItem(o: {
   if (root.task) lines.push(`Task: ${root.task}`);
   lines.push(`Place: ${oneLine(place)}${spot && spot.line !== null ? `, ${spot.side} side` : ""}`);
   if (spot && spot.line !== null) {
+    const n = spot.line;
     const excerpt = root.excerpt as CommentLine[] | undefined;
+    const other = spot.side === "new" ? "del" : "add";
+    const old = excerpt?.find((l) => l.n === n && l.kind !== other) ?? excerpt?.find((l) => l.hit);
     if (spot.orphaned) {
       lines.push("Outdated: yes. The code changed after this comment.");
-      if (excerpt?.length) lines.push("Code when the comment was written:", quoteExcerpt(excerpt));
+      if (old) lines.push(anchorLine(old.n, "when the comment was written", old.text));
     } else {
       lines.push("Outdated: no");
       const commit = spot.side === "new" ? o.head : o.mergeBase;
       const file = commit ? await o.read(commit, spot.path) : null;
-      if (file && commit && spot.line <= file.length)
-        lines.push(
-          `Code at ${spot.side === "new" ? "the head commit" : "the merge base"} ${short(commit)}:`,
-          quoteFile(file, spot.line, spot.lineEnd),
-        );
-      else if (excerpt?.length)
-        lines.push("Code from the diff when the comment was written. The app has no copy of the code at the head:", quoteExcerpt(excerpt));
+      if (file && commit && n <= file.length)
+        lines.push(anchorLine(n, `at ${spot.side === "new" ? "the head commit" : "the merge base"} ${short(commit)}`, file[n - 1] ?? ""));
+      else if (old) lines.push(anchorLine(old.n, "in the diff when the comment was written", old.text));
     }
   }
   lines.push(`Conversation (${plural(msgs.length, "message")}):`);
@@ -285,8 +268,7 @@ async function threadItem(o: {
       m.deleted || m.text === null ? "    (deleted)" : indentBlock(m.text),
     );
   }
-  const view = resolved ? [] : [...replyView(o.reply), ...fixView(o.fixes, { thread: rootId })];
-  if (view.length) lines.push("The view of Kierto:", ...view);
+  if (!resolved) lines.push(...viewBlock([...replyView(o.reply), ...fixView(o.fixes, { thread: rootId })]));
   return {
     id: `T${rootId}`,
     group,
@@ -298,10 +280,6 @@ async function threadItem(o: {
 }
 
 // ---------- Findings ----------
-
-// The lines of the place on the side of the finding, with the diff rows around them.
-const placeLines = (a: AnchoredFinding["anchor"], side: "new" | "old") =>
-  a.excerpt.map((l) => ({ ...l, hit: l.kind !== (side === "new" ? "del" : "add") && l.n >= a.line && l.n <= a.lineEnd }));
 
 async function findingItem(r: FindingRow, o: { head: string | null; mergeBase: string | null; read: Reader; fixes: FixDto[] }) {
   const it = toItemDto(r);
@@ -316,28 +294,29 @@ async function findingItem(r: FindingRow, o: { head: string | null; mergeBase: s
     `Place: ${oneLine(where)}${a ? `, ${a.side} side` : ""}${a?.state === "outside" ? ", outside the diff" : ""}`,
   ];
   if (a) {
-    const own = placeLines(a, a.side);
-    const hits = own.filter((l) => l.hit);
-    if (r.run_head === o.head)
-      lines.push("Outdated: no", `Code at the head commit ${short(r.run_head)}, from the review diff:`, quoteExcerpt(own));
-    else {
+    // The lines of the place on the side of the finding.
+    const other = a.side === "new" ? "del" : "add";
+    const hits = a.excerpt.filter((l) => l.kind !== other && l.n >= a.line && l.n <= a.lineEnd);
+    const first = hits[0];
+    if (r.run_head === o.head) {
+      lines.push("Outdated: no");
+      if (first) lines.push(anchorLine(first.n, `at the head commit ${short(r.run_head)}`, first.text));
+    } else {
       const commit = a.side === "new" ? o.head : o.mergeBase;
       const file = commit ? await o.read(commit, a.side === "new" ? a.path : (a.oldPath ?? a.path)) : null;
       const same = !!file && hits.length > 0 && hits.every((l) => file[l.n - 1] === l.text);
       if (file && commit && same)
         lines.push(
           `Outdated: no. The review read ${short(r.run_head)}. The lines are the same at ${short(commit)}.`,
-          `Code at ${a.side === "new" ? "the head commit" : "the merge base"} ${short(commit)}:`,
-          quoteFile(file, a.line, a.lineEnd),
+          anchorLine(a.line, `at ${a.side === "new" ? "the head commit" : "the merge base"} ${short(commit)}`, file[a.line - 1] ?? ""),
         );
       else {
         lines.push(
           file
             ? `Outdated: yes. The review read ${short(r.run_head)}. The code at the place changed after it.`
             : `Outdated: unknown. The review read ${short(r.run_head)}. The head is now ${o.head ? short(o.head) : "unknown"}. The app has no copy of the code at the head.`,
-          `Code at ${short(r.run_head)}, from the review diff:`,
-          quoteExcerpt(own),
         );
+        if (first) lines.push(anchorLine(first.n, `at ${short(r.run_head)}, from the review diff`, first.text));
       }
     }
   }
@@ -349,7 +328,7 @@ async function findingItem(r: FindingRow, o: { head: string | null; mergeBase: s
   if (f.carried?.verdict === "open") view.push(`- A re-review of ${short(f.carried.since)} found it still open.`);
   if (f.session) view.push(`- Your session: ${VERDICT[f.session.verdict]}. ${oneLine(f.session.reason)}`);
   view.push(...fixView(o.fixes, { finding: it.id }));
-  if (view.length) lines.push("The view of Kierto:", ...view);
+  lines.push(...viewBlock(view));
   return {
     id: `F${it.id}`,
     group: "findings",
@@ -362,15 +341,7 @@ async function findingItem(r: FindingRow, o: { head: string | null; mergeBase: s
 
 // ---------- Header ----------
 
-function header(o: {
-  key: string;
-  title: string;
-  source: string | null;
-  target: string | null;
-  head: string | null;
-  tasks: string[];
-  files?: ChangedFile[];
-}) {
+function header(o: { key: string; title: string; source: string | null; target: string | null; head: string | null; tasks: string[] }) {
   const lines = [
     `# Review points on my pull request ${oneLine(o.key)}`,
     "",
@@ -381,15 +352,6 @@ function header(o: {
     `- Head commit: ${o.head ?? "not synced yet"}`,
     `- Tasks: ${o.tasks.length ? o.tasks.map(oneLine).join(", ") : "none"}`,
   ];
-  const files = o.files;
-  if (!files) lines.push("- Changed files: not synced yet");
-  else if (!files.length) lines.push("- Changed files: none listed");
-  else {
-    lines.push(`- Changed files (${files.length}):`);
-    for (const f of files.slice(0, MAX_FILES))
-      lines.push(`  - ${oneLine(f.type)} ${f.srcPath && f.srcPath !== f.path ? `${oneLine(f.srcPath)} -> ` : ""}${oneLine(f.path)}`);
-    if (files.length > MAX_FILES) lines.push(`  - and ${files.length - MAX_FILES} more`);
-  }
   return lines.join("\n");
 }
 
@@ -432,7 +394,6 @@ export async function consultData(s: ConsultSource, prId: number, code = true): 
     target: p.targetBranch,
     head: h.source_head,
     tasks: p.tasks.map((t) => t.key),
-    files: detail.files,
   });
   return { head, items };
 }
