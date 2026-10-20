@@ -240,7 +240,7 @@ describe("comments", () => {
 });
 
 describe("thread resolve", () => {
-  // The fake PUT handler checks the version, bumps it, and fills the resolver (tests/support/scenarios.ts commentPosts).
+  // The fake PUT handler checks the version, keeps it, and fills the resolver (tests/support/scenarios.ts commentPosts).
   const ROOT = 1000003;
   const V0 = findComment(activities("activities-nested-reply.json"), ROOT).version;
   function world() {
@@ -258,7 +258,7 @@ describe("thread resolve", () => {
     const r = await p.setThreadResolved(PR_REF, ROOT, true);
     expect(r).toMatchObject({
       status: "done",
-      state: { version: V0 + 1, threadResolved: true, threadResolver: { slug: "jdoe" } },
+      state: { version: V0, threadResolved: true, threadResolver: { slug: "jdoe" } },
       from: V0,
       put: true,
     });
@@ -272,14 +272,20 @@ describe("thread resolve", () => {
     // The state is already resolved, so nothing is written.
     expect(await p.setThreadResolved(PR_REF, ROOT, true)).toMatchObject({
       status: "done",
-      state: { version: V0 + 1 },
-      from: V0 + 1,
+      state: { version: V0 },
+      from: V0,
       put: false,
     });
     expect(writes()).toHaveLength(1);
     const back = await p.setThreadResolved(PR_REF, ROOT, false);
-    expect(back).toEqual({ status: "done", state: { version: V0 + 2, threadResolved: false }, from: V0 + 1, put: true });
-    expect(posts.puts.at(-1)).toEqual({ id: ROOT, version: V0 + 1, threadResolved: false });
+    expect(back).toEqual({ status: "done", state: { version: V0, threadResolved: false }, from: V0, put: true });
+    expect(posts.puts.at(-1)).toEqual({ id: ROOT, version: V0, threadResolved: false });
+    expect(await p.threadState(PR_REF, ROOT)).toEqual({ version: V0, threadResolved: false });
+    // A reply in a resolved thread: the short exception name of the error body becomes the error code.
+    await p.setThreadResolved(PR_REF, ROOT, true);
+    const e = await caught(p.createComment(PR_REF, { text: "x", parentId: ROOT }));
+    expect([e.status, e.code]).toEqual([400, "ArgumentValidationException"]);
+    expect(posts.posted).toEqual([]);
   });
 
   test("409 gives changed, 401 and 403 give forbidden, 404 gives gone, a PUT without effect gives ignored; nothing repeats", async () => {

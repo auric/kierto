@@ -32,6 +32,7 @@ test("the dry run passes against its own loopback fake and prints no comment tex
   expect(r.code).toBe(0);
 }, 30_000);
 
+// The fake follows the Data Center 9.x gate (integration-check.md U62 to U67): the version stays, so the "stale" PUT reopens.
 test("the live path resolves, records the stale PUT, reopens, and writes only sanitized values", async () => {
   const me = findComment(activities("activities-nested-reply.json"), ROOT).author;
   const posts = commentPosts(PR_PATH, () => activities("activities-nested-reply.json"), me, 4_000_001);
@@ -51,16 +52,21 @@ test("the live path resolves, records the stale PUT, reopens, and writes only sa
   expect(r.out).toContain("resolve PUT: HTTP 200");
   expect(r.out).toContain("after resolve: version=");
   expect(r.out).toContain("threadResolved=true threadResolver=true threadResolvedDate=true text unchanged=true");
-  expect(r.out).toContain("stale PUT: HTTP 409");
-  expect(r.out).toContain("reply to resolved: HTTP 409 taken=false");
+  expect(r.out).toMatch(/activities: before=\d+ new=0/);
+  const versions = [...r.out.matchAll(/^(?:before|after resolve|after reopen): .*?version=(\d+)/gm)].map((m) => m[1]);
+  expect(versions).toHaveLength(3);
+  expect(new Set(versions).size).toBe(1);
+  expect(r.out).toContain("reply to resolved: HTTP 400 com.atlassian.bitbucket.validation.ArgumentValidationException taken=false");
+  expect(r.out).toContain("stale PUT: HTTP 200 threadResolved after=false");
+  expect(r.out).toContain("reopen PUT: skipped, the stale PUT reopened it");
   expect(r.out).toMatch(/after reopen: version=\d+ threadResolved=false threadResolver=false threadResolvedDate=false text unchanged=true/);
   expect(r.code).toBe(0);
   expect(posts.posted).toEqual([]);
-  expect(posts.puts.map((p) => p.threadResolved)).toEqual([true, false, false]);
+  expect(posts.puts.map((p) => p.threadResolved)).toEqual([true, false]);
   const saved = readFileSync(join(out, "result.json"), "utf8");
   const text = findComment(activities("activities-nested-reply.json"), ROOT).text;
   for (const leak of [text, FAKE_TOKEN, fake.url, (me as { displayName: string }).displayName]) expect(saved).not.toContain(leak);
-  expect(JSON.parse(saved)).toMatchObject({ ok: true, stale: { put: { status: 409 } }, reopen: { read: { threadResolved: false } } });
+  expect(JSON.parse(saved)).toMatchObject({ ok: true, stale: { put: { status: 200 } }, reopen: { read: { threadResolved: false } } });
 
   // A URL of another host stops the script before any request.
   const before = fake.requests.length;

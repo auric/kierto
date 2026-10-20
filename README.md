@@ -105,7 +105,7 @@ The run log shows each tool call of the review and of its subagents.
 
 Draft replies judges each thread where it is your turn: valid, partly valid, not valid, or a question. It drafts a reply for each one. You edit the reply and post it. A new run never replaces a draft that you edited, accepted, or discarded.
 
-Tick "Resolve after posting" to resolve the thread after the reply. Bitbucket takes no reply in a resolved thread, so Kierto reopens a resolved thread first. The confirm says "Reopen thread, post reply", and a draft says "Resolved since the draft" when someone resolved its thread after Claude drafted it.
+Each thread footer has "Resolve", or "Reopen" on a resolved thread. The key x does the same on the current thread. The change goes to Bitbucket at once. A thread that another person started asks first. Tick "Resolve after posting" to resolve the thread after the reply. Bitbucket takes no reply in a resolved thread, so Kierto reopens a resolved thread first. The confirm says "Reopen thread, post reply", and a draft says "Resolved since the draft" when someone resolved its thread after Claude drafted it.
 
 ### Fix it
 
@@ -157,6 +157,7 @@ Press `?` in the app for the full list.
 | `a` `e` `d` | Accept, edit, or discard the current draft |
 | `p` | Post the accepted items |
 | `f` `F` | Your pull request: open the Fix list |
+| `x` | Resolve the current thread, or reopen it when it is resolved |
 
 ## Configuration
 

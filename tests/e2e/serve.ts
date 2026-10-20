@@ -647,10 +647,10 @@ r[key("POST", "/__control/posts")] = async (req) => {
   if (change.drop !== undefined) postsA.drop = change.drop;
   if (change.fail !== undefined) postA.fail = change.fail;
   if (change.hide !== undefined) postA.hide = change.hide;
-  // Another person resolves a thread of PR A on Bitbucket. The version goes up, as a resolve does.
+  // Another person resolves a thread of PR A on Bitbucket. The version stays, as on Data Center 9.x (integration-check.md U64).
   if (change.resolve !== undefined) {
     const root = S.findComment(postsA.activities(), change.resolve);
-    postsA.threads.set(change.resolve, { version: root.version + 1, resolved: true, at: Date.now() });
+    postsA.threads.set(change.resolve, { version: root.version, resolved: true, at: Date.now() });
   }
   return ok({ bodies: postsA.bodies });
 };

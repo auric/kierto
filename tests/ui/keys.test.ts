@@ -155,6 +155,18 @@ describe("detail keys", () => {
     expect(text("F")).toBe("Your pull request: open the Fix list");
   });
 
+  test("x resolves or reopens the current thread; it does nothing while typing, in a dialog, behind the post confirm, in the help, or without a PR", () => {
+    expect(reduceKey({ ...S, selected: 20 }, "x", C)).toMatchObject({ effect: "resolve", state: { focus: "detail", mobile: "detail" } });
+    expect(reduceKey({ ...S, selected: 20, focus: "detail" }, "x", { ...C, layer: "brief" }).effect).toBe("resolve");
+    expect(reduceKey({ ...S, selected: 20 }, "x", { ...C, typing: true }).handled).toBe(false);
+    expect(reduceKey({ ...S, selected: 20 }, "x", { ...C, dialog: true }).handled).toBe(false);
+    expect(reduceKey({ ...S, selected: 20 }, "x", { ...C, layer: "confirm" }).handled).toBe(false);
+    expect(reduceKey({ ...S, selected: 20, help: true }, "x", C).handled).toBe(false);
+    expect(reduceKey(S, "x", C).handled).toBe(false);
+    const text = HELP_KEYS.flatMap((g) => g.keys).find((x) => x.keys[0] === "x")?.text;
+    expect(text).toBe("Resolve the current thread on the server, or reopen it when it is resolved");
+  });
+
   // Plan r2 UI-ASK, pr-view-v4 2.4: q opens Ask in the panel slot. In a text field, q is a letter.
   test("q asks; it does nothing while typing or without a PR", () => {
     expect(reduceKey({ ...S, selected: 20 }, "q", C)).toMatchObject({ effect: "ask", state: { focus: "detail", mobile: "detail" } });

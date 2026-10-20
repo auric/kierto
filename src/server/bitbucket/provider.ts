@@ -130,6 +130,16 @@ export type ResolveResult =
 export function createBitbucketProvider(opts: ClientOptions) {
   const client = createClient(opts);
   const origin = new URL(opts.baseUrl).origin;
+  // A GET without threadResolved reads as open.
+  const threadState = async (path: string): Promise<ThreadState> => {
+    const c = (await client.get(path, comment)).data;
+    return {
+      version: c.version,
+      threadResolved: c.threadResolved ?? false,
+      ...(c.threadResolved && c.threadResolver && { threadResolver: toUser(c.threadResolver) }),
+      ...(c.threadResolved && typeof c.threadResolvedDate === "number" && { threadResolvedAt: c.threadResolvedDate }),
+    };
+  };
 
   // A server link stays only when it has the configured origin.
   const own = (href: string | undefined): string | undefined => {
@@ -286,20 +296,12 @@ export function createBitbucketProvider(opts: ClientOptions) {
 
     // Resolves or reopens the thread of a root comment: GET for a fresh version, PUT {version, threadResolved}, then GET again.
     // Docs (7.21, 9.0): the PUT needs the current version. Only the comment author, the PR author, or a repo admin may change it.
-    // UNVERIFIED (integration-check.md U62 to U66): the PUT body field, the 409 on a stale version, and the version bump.
+    // Data Center 9.x gate (integration-check.md U62 to U64): the PUT works and keeps the version. A 409 on a stale version is not observed.
     // The second GET decides, so a PUT that Bitbucket takes without a state change gives "ignored", never "done".
     // Other errors throw a ForgeError. Nothing repeats the PUT.
     async setThreadResolved(ref: PrRef, rootId: number, resolved: boolean): Promise<ResolveResult> {
       const path = `${prPath(ref)}/comments/${rootId}`;
-      const read = async (): Promise<ThreadState> => {
-        const c = (await client.get(path, comment)).data;
-        return {
-          version: c.version,
-          threadResolved: c.threadResolved ?? false,
-          ...(c.threadResolved && c.threadResolver && { threadResolver: toUser(c.threadResolver) }),
-          ...(c.threadResolved && typeof c.threadResolvedDate === "number" && { threadResolvedAt: c.threadResolvedDate }),
-        };
-      };
+      const read = () => threadState(path);
       try {
         const before = await read();
         const from = before.version;
@@ -315,6 +317,9 @@ export function createBitbucketProvider(opts: ClientOptions) {
         throw e;
       }
     },
+
+    // The thread state of a root comment. Errors throw a ForgeError.
+    threadState: (ref: PrRef, rootId: number) => threadState(`${prPath(ref)}/comments/${rootId}`),
 
     // A deleted comment has no tombstone. Only a 404 proves the delete.
     async commentStatus(ref: PrRef, id: number): Promise<CommentStatus> {

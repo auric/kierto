@@ -78,10 +78,9 @@ async function showResolved(page: Page, n: number) {
   await page.getByRole("button", { name: `Show ${n} resolved` }).click();
 }
 
-async function more(page: Page, id: number, item: string) {
-  await thread(page, id).getByRole("button", { name: "More for this thread" }).click();
-  await page.getByRole("menuitem", { name: item }).click();
-}
+// The visible Resolve or Reopen button in the thread footer.
+const button = (page: Page, id: number, name: "Resolve thread" | "Reopen thread") =>
+  thread(page, id).getByRole("button", { name, exact: true });
 
 test("Draft replies proposes resolve; untick keeps a thread open; the post replies first, then resolves; the badge shows after the sync", async ({
   page,
@@ -180,31 +179,86 @@ test("a reply in a thread that another person resolved after the draft: the card
 test("manual Reopen and Resolve: my thread goes at once, another person's thread asks first", async ({ page }) => {
   await connect(page);
 
-  // My own thread: Resolve goes out with no question. Reopen brings it back.
+  // My own thread: the footer button resolves with no question. The More menu no longer has the item.
   await openThread(page, ONLY);
-  await more(page, ONLY, "Resolve thread");
+  await thread(page, ONLY).getByRole("button", { name: "More for this thread" }).click();
+  await expect(page.getByRole("menuitem", { name: "Resolve thread" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(button(page, ONLY, "Resolve thread")).toHaveText("Resolve");
+  await button(page, ONLY, "Resolve thread").click();
   await expect(page.getByRole("status").filter({ hasText: "Thread resolved." })).toHaveCount(1);
   await showResolved(page, 3);
   await expect(badge(page, ONLY)).toContainText("Resolved by you");
   await openThread(page, ONLY);
-  await more(page, ONLY, "Reopen thread");
+  await expect(button(page, ONLY, "Reopen thread")).toHaveText("Reopen");
+  await button(page, ONLY, "Reopen thread").click();
   await expect(badge(page, ONLY)).toHaveCount(0);
   expect(await writes()).toEqual([`PUT ${A}/comments/${ONLY}`, `PUT ${A}/comments/${ONLY}`]);
 
   // Alex started thread 1000401, and Maria resolved it. Reopen asks first; Cancel sends nothing.
   await openThread(page, THEIRS);
   await expect(badge(page, THEIRS)).toContainText("Resolved by Maria");
-  await more(page, THEIRS, "Reopen thread");
+  await button(page, THEIRS, "Reopen thread").click();
   const ask = thread(page, THEIRS).getByText("Alex Smith started this thread. Reopen it on Bitbucket?");
   await expect(ask).toBeVisible();
   await expect(thread(page, THEIRS).getByRole("button", { name: "Reopen", exact: true })).toBeFocused();
   await thread(page, THEIRS).getByRole("button", { name: "Cancel" }).click();
   await expect(ask).toHaveCount(0);
   expect(await writes()).toHaveLength(2);
-  await more(page, THEIRS, "Reopen thread");
+  await button(page, THEIRS, "Reopen thread").click();
   await thread(page, THEIRS).getByRole("button", { name: "Reopen", exact: true }).click();
   await expect(badge(page, THEIRS)).toHaveCount(0);
   expect(await writes()).toEqual([`PUT ${A}/comments/${ONLY}`, `PUT ${A}/comments/${ONLY}`, `PUT ${A}/comments/${THEIRS}`]);
   await control("state", {});
   await expect(badge(page, THEIRS)).toHaveCount(0);
+});
+
+test("x resolves the current thread and reopens it; it does nothing in a text field or behind a dialog", async ({ page }) => {
+  await connect(page);
+
+  // The thread head has the focus after the open, so the thread is current.
+  await openThread(page, ONLY);
+  await page.locator(`#th-${ONLY}`).focus();
+  await page.keyboard.press("x");
+  await expect(page.getByRole("status").filter({ hasText: "Thread resolved." })).toHaveCount(1);
+  await showResolved(page, 3);
+  await expect(badge(page, ONLY)).toContainText("Resolved by you");
+  expect(await writes()).toEqual([`PUT ${A}/comments/${ONLY}`]);
+
+  // A closed resolved thread opens, and x reopens it.
+  const head = page.locator(`#th-${ONLY}`);
+  if ((await head.getAttribute("aria-expanded")) === "true") await head.click();
+  await expect(head).toHaveAttribute("aria-expanded", "false");
+  await expect(button(page, ONLY, "Reopen thread")).toHaveCount(0);
+  await head.focus();
+  await page.keyboard.press("x");
+  await expect(badge(page, ONLY)).toHaveCount(0);
+  expect(await writes()).toEqual([`PUT ${A}/comments/${ONLY}`, `PUT ${A}/comments/${ONLY}`]);
+
+  // In the reply box, x is a letter.
+  await openThread(page, ONLY);
+  await thread(page, ONLY).getByRole("button", { name: "Write a reply" }).click();
+  const box = thread(page, ONLY).getByRole("textbox", { name: /^Reply to / });
+  await expect(box).toBeFocused();
+  await page.keyboard.press("x");
+  await expect(box).toHaveValue("x");
+  expect(await writes()).toHaveLength(2);
+
+  // Behind the help dialog, x does nothing.
+  await box.fill("");
+  await page.locator(`#th-${ONLY}`).focus();
+  await page.keyboard.press("?");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.keyboard.press("x");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(await writes()).toHaveLength(2);
+
+  // Another person's thread asks first: x shows the confirm with the focus on its button.
+  await openThread(page, THEIRS);
+  await page.locator(`#th-${THEIRS}`).focus();
+  await page.keyboard.press("x");
+  await expect(thread(page, THEIRS).getByRole("button", { name: "Reopen", exact: true })).toBeFocused();
+  await thread(page, THEIRS).getByRole("button", { name: "Cancel" }).click();
+  expect(await writes()).toHaveLength(2);
 });

@@ -13,7 +13,8 @@
 - Draft replies checks each thread against the new code and the answer in the thread. When the point is settled, it proposes to resolve the thread and shows its proof.
 - "Resolve after posting" on each reply draft. The reply posts first, then the thread resolves. A draft without text only resolves the thread. Claude ticks the box only on threads that you started.
 - "Review changes since" proposes to resolve the threads of your posted findings that the new commits fix. A Fix commit proposes it on its "Fixed in" reply.
-- Resolve or reopen any thread from its More menu. A thread that another person started asks first.
+- Resolve or reopen any thread with the "Resolve" or "Reopen" button in its footer, or with the key x. A thread that another person started asks first.
+- A reply that Bitbucket refuses because the thread is resolved again says "This thread is resolved. Reopen it first."
 - A resolve that fails after the reply keeps the reply and offers "Resolve again". It never posts the reply twice.
 - On threads where you made the point or asked the question, reply drafts show "Settled", "Not settled", or "Follow-up question". Only a settled thread gets a resolve proposal, with the answer quoted as proof.
 - A partly answered question gets a reply that asks the open part again. A thread with several questions resolves only when each one has an answer.

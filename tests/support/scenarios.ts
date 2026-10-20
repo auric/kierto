@@ -107,12 +107,26 @@ const findIn = (list: Activity[], id: number): RawComment | undefined => {
   }
 };
 
+// The Data Center 9.x answer to a reply in a resolved thread (integration-check.md U67). The message text is synthetic.
+export const RESOLVED_REPLY = {
+  status: 400,
+  body: {
+    errors: [
+      {
+        context: null,
+        message: "You cannot reply to a resolved comment thread.",
+        exceptionName: "com.atlassian.bitbucket.validation.ArgumentValidationException",
+      },
+    ],
+  },
+};
+
 // Comments that the app posts to one fake PR (plan v3 WP13a). routes: POST .../comments, GET .../comments/{id}, and
 // PUT .../comments/{id} (thread resolve). list: the PR activities without the posted comments. author: the token owner.
 // New comment IDs start at firstId. drop: the next POST stores the comment, then resets the connection (A9, accept-then-drop).
-// A reply in a resolved thread gets 409. A PUT needs the current version, else 409. forbid: the comment IDs that refuse a PUT with 403. conflict: one 409 per ID.
+// A reply in a resolved thread gets 400 ArgumentValidationException (integration-check.md U67). A PUT needs the current version, else 409. forbid: the comment IDs that refuse a PUT with 403. conflict: one 409 per ID.
 // ignore: the IDs whose PUT gives 200 and changes nothing. threads: the resolve state of each changed root comment.
-// The version bump and the resolver fields copy the Data Center 8.15 docs shape. A real 9.4 server is UNVERIFIED (U62 to U66).
+// A resolve or reopen keeps the version, and the resolver fields follow it (Data Center 9.x gate, integration-check.md U62 to U65).
 export function commentPosts(path: string, list: () => Activity[], author: unknown, firstId: number) {
   type Body = { text: string; parent?: { id: number }; anchor?: Record<string, unknown> };
   const state = {
@@ -156,9 +170,8 @@ export function commentPosts(path: string, list: () => Activity[], author: unkno
       const parentId = body.parent?.id ?? null;
       const now = all();
       if (parentId !== null && !findIn(now, parentId)) return NOT_FOUND;
-      // DC docs: a resolved thread takes no reply. The status code is UNVERIFIED (integration-check.md U67).
       const root = parentId === null ? undefined : now.find((a) => a.comment && findIn([a], parentId))?.comment;
-      if (root?.threadResolved === true) return { status: 409, body: { errors: [{ message: "The comment thread is resolved." }] } };
+      if (root?.threadResolved === true) return RESOLVED_REPLY;
       const at = Date.now();
       const comment: RawComment = {
         id: next++,
@@ -192,7 +205,7 @@ export function commentPosts(path: string, list: () => Activity[], author: unkno
       if (state.conflict.delete(id) || body.version !== c.version)
         return { status: 409, body: { errors: [{ message: "The comment has been updated since you last saw it." }] } };
       if (typeof body.threadResolved === "boolean" && !state.ignore.has(id))
-        state.threads.set(id, { version: c.version + 1, resolved: body.threadResolved, at: Date.now() });
+        state.threads.set(id, { version: c.version, resolved: body.threadResolved, at: Date.now() });
       return { status: 200, body: findIn(all(), id) };
     },
   };

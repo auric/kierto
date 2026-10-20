@@ -36,6 +36,8 @@ export type KeyContext = {
   narrow?: boolean;
   // Full width is on: the detail hides the sidebar and the list (plan pr-view-v4 4.3).
   full?: boolean;
+  // Focus is in a dialog, or a modal dialog is open. x then does nothing.
+  dialog?: boolean;
 };
 
 export type Layer = "brief" | "confirm" | "log" | null;
@@ -66,6 +68,7 @@ export type Effect =
   | "post"
   | "fix"
   | "fix-list"
+  | "resolve"
   | "close-brief"
   | "close-confirm"
   | "close-log"
@@ -158,6 +161,9 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
       return back(s, ctx);
     case "g":
       return hasPr ? done({ ...s, chord: ctx.now }) : ignore(s);
+    // x resolves the current thread, or reopens it when it is resolved. It never acts behind a dialog or the post confirm.
+    case "x":
+      return hasPr && !ctx.dialog && ctx.layer !== "confirm" ? done(inDetail, "resolve") : ignore(s);
     case "z":
       return hasPr && !ctx.narrow ? done(inDetail, ctx.full ? "full-off" : "full-on") : ignore(s);
     default: {
@@ -223,6 +229,7 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
       { keys: ["p"], text: "Post the accepted items, after a confirm" },
       { keys: ["f"], text: "Your pull request: open the Fix list with the current thread or finding ticked" },
       { keys: ["F"], text: "Your pull request: open the Fix list" },
+      { keys: ["x"], text: "Resolve the current thread on the server, or reopen it when it is resolved" },
       { keys: ["Ctrl", "Enter"], text: "In a reply box: show the reply and its destination before it posts" },
     ],
   },

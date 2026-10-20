@@ -305,8 +305,8 @@ export const Thread = memo(function Thread({
   );
 });
 
-// Plan pr-view-v4 2.8: the reply box, Draft reply on a your-turn thread without a draft, Fix on an open thread of the own PR, and
-// More. The note after a prompt copy stays, so the user can read the next step. More also resolves or reopens the thread.
+// Plan pr-view-v4 2.8: the reply box, Draft reply on a your-turn thread without a draft, Fix on an open thread of the own PR,
+// Resolve or Reopen, and More. The note after a prompt copy stays, so the user can read the next step.
 function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean; target?: ReplyTarget; ctx: ThreadCtx }) {
   const [next, setNext] = useState<string | null>(null);
   const open = t.turn !== "resolved" && t.last !== null;
@@ -341,7 +341,26 @@ function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean;
                 </Button>
               </Hint>
             )}
-            {(t.anchor || prompt || link || resolve.can) && (
+            {resolve.can && (
+              <Hint label={`${resolve.resolved ? "Reopen" : "Resolve"} this thread on ${ctx.forge}. Key: x`}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-resolve-thread
+                  aria-label={resolve.resolved ? "Reopen thread" : "Resolve thread"}
+                  aria-keyshortcuts="x"
+                  onClick={resolve.start}
+                >
+                  {resolve.resolved ? (
+                    <RotateCcw aria-hidden data-icon="inline-start" />
+                  ) : (
+                    <CircleCheck aria-hidden data-icon="inline-start" />
+                  )}
+                  {resolve.resolved ? "Reopen" : "Resolve"}
+                </Button>
+              </Hint>
+            )}
+            {(t.anchor || prompt || link) && (
               <DropdownMenu modal={false}>
                 <Hint label="More for this thread">
                   <DropdownMenuTrigger
@@ -356,12 +375,6 @@ function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean;
                       <DropdownMenuItem onClick={() => ctx.onShowInDiff(t.id)}>
                         <FileCode aria-hidden />
                         Show in diff
-                      </DropdownMenuItem>
-                    )}
-                    {resolve.can && (
-                      <DropdownMenuItem onClick={resolve.start}>
-                        {resolve.resolved ? <RotateCcw aria-hidden /> : <CircleCheck aria-hidden />}
-                        {resolve.resolved ? "Reopen thread" : "Resolve thread"}
                       </DropdownMenuItem>
                     )}
                     {prompt && (

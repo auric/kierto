@@ -759,8 +759,8 @@ describe("resolve after posting", () => {
     expect(post).toMatchObject({ state: "confirmed", remoteId: FIRST_ID, resolve: { root: ROOT, state: "done", error: null } });
     expect(writes(s)).toEqual([COMMENTS, PUT]);
     expect(s.posts.puts).toEqual([{ id: ROOT, version: V0, threadResolved: true }]);
-    // The read mark follows my own resolve, so the thread does not turn unread.
-    expect(root(s)).toMatchObject({ thread_resolved: 1, version: V0 + 1, ack_version: read === null ? null : V0 + 1 });
+    // Data Center 9.x keeps the version on a resolve (integration-check.md U64), so the read mark stays.
+    expect(root(s)).toMatchObject({ thread_resolved: 1, version: V0, ack_version: read });
     expect(JSON.parse(root(s).thread_resolver_json ?? "{}")).toMatchObject({ slug: FAKE_USER });
     await s.sync.syncNow();
     const detail = (await s.call<PrDetail>(`/api/prs/${s.pr}`)).body;
@@ -898,6 +898,32 @@ describe("resolve after posting", () => {
     expect(s.sent()).toBe(0);
   });
 
+  // Data Center 9.x gate (integration-check.md U62 to U65): a resolve and a reopen keep the version and the text.
+  test("version unchanged after resolve and reopen; text and read state unchanged", async () => {
+    const s = await setup();
+    const row = () =>
+      s.db.query("SELECT version, ack_version, text FROM comment WHERE comment_id = $id").get({ id: ROOT }) as {
+        version: number;
+        ack_version: number | null;
+        text: string;
+      };
+    const before = row();
+    const unread = async () => (await s.call<PrDetail>(`/api/prs/${s.pr}`)).body.comments.find((c) => c.id === ROOT)?.unread;
+    const was = await unread();
+    for (const resolved of [true, false]) {
+      expect((await s.call(`/api/prs/${s.pr}/resolve`, { thread: ROOT, resolved, seen: THEIRS })).status).toBe(200);
+      expect(row()).toEqual(before);
+      expect(await unread()).toBe(was);
+      await s.sync.syncNow();
+      expect(row()).toEqual(before);
+      expect(await unread()).toBe(was);
+    }
+    expect(s.posts.puts).toEqual([
+      { id: ROOT, version: V0, threadResolved: true },
+      { id: ROOT, version: V0, threadResolved: false },
+    ]);
+  });
+
   test("a resolve keeps an edit of the root that the app has not synced: the next sync brings the text, unread", async () => {
     const s = await setup();
     // The root is by another person, and I read it. A sync marks my own edits read, so the edit must be theirs.
@@ -913,7 +939,7 @@ describe("resolve after posting", () => {
     const set = await s.call(`/api/prs/${s.pr}/resolve`, { thread: ROOT, resolved: true, seen: THEIRS });
     expect(set.status).toBe(200);
     expect(s.posts.puts).toEqual([{ id: ROOT, version: V0 + 1, threadResolved: true }]);
-    // The read-back version is V0 + 2, but the stored text is of V0. Only the flags change.
+    // The read-back version is V0 + 1, but the stored text is of V0. Only the flags change.
     expect(root(s)).toMatchObject({ thread_resolved: 1, version: V0, ack_version: V0 });
     await s.sync.syncNow();
     const detail = (await s.call<PrDetail>(`/api/prs/${s.pr}`)).body;
@@ -927,7 +953,7 @@ describe("a reply in a resolved thread", () => {
   const writes = (s: S) => s.fake.requests.filter((r) => !r.startsWith("GET "));
   // Another person resolves the thread on Bitbucket. The sync stores it.
   const resolveOnForge = async (s: S) => {
-    s.posts.threads.set(ROOT, { version: V0 + 1, resolved: true, at: 1 });
+    s.posts.threads.set(ROOT, { version: V0, resolved: true, at: 1 });
     await s.sync.syncNow();
   };
 
@@ -939,7 +965,27 @@ describe("a reply in a resolved thread", () => {
       headers: { authorization: `Bearer ${FAKE_TOKEN}`, "content-type": "application/json" },
       body: JSON.stringify({ text: TEXT, parent: { id: THEIRS } }),
     });
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      errors: [{ exceptionName: "com.atlassian.bitbucket.validation.ArgumentValidationException" }],
+    });
+  });
+
+  test("a resolve between the reopen and the post: the refusal says to reopen first", async () => {
+    const s = await setup();
+    const draft = seedReply(s, THEIRS);
+    await accept(s, draft);
+    await resolveOnForge(s);
+    const route = key("POST", `${PR_PATH}/comments`);
+    const post = s.posts.routes[route] as (req: Request) => Promise<Reply>;
+    s.fake.routes[route] = (req: Request) => {
+      s.posts.threads.set(ROOT, { version: V0, resolved: true, at: 2 });
+      return post(req);
+    };
+    await s.call(`/api/prs/${s.pr}/confirm`, { items: [{ id: draft, revision: 1 }] });
+    await s.settle();
+    expect((await s.list())[0]).toMatchObject({ state: "failed", lastError: "This thread is resolved. Reopen it first." });
+    expect(writes(s)).toEqual([PUT, COMMENTS]);
   });
 
   test("the plan marks the reopen; the post reopens, replies, then resolves again", async () => {
@@ -955,8 +1001,8 @@ describe("a reply in a resolved thread", () => {
     expect(post).toMatchObject({ state: "confirmed", remoteId: FIRST_ID, resolve: { state: "done" } });
     expect(writes(s)).toEqual([PUT, COMMENTS, PUT]);
     expect(s.posts.puts.map((p) => [p.version, p.threadResolved])).toEqual([
-      [V0 + 1, false],
-      [V0 + 2, true],
+      [V0, false],
+      [V0, true],
     ]);
   });
 

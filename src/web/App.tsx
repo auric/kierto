@@ -433,6 +433,7 @@ function Shell({ stale }: { stale: boolean }) {
       else if (effect === "accept" || effect === "edit" || effect === "discard") api?.triage(effect);
       else if (effect === "post") api?.post();
       else if (effect === "fix" || effect === "fix-list") api?.fix(effect === "fix-list");
+      else if (effect === "resolve") api?.resolve();
       else if (effect === "close-brief" || effect === "close-confirm" || effect === "close-log")
         api?.close(effect.slice(6) as Exclude<Layer, null>);
     }
@@ -453,7 +454,18 @@ function Shell({ stale }: { stale: boolean }) {
     const typing = (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !box) || t.isContentEditable;
     const onButton = (t.tagName === "BUTTON" && !t.hasAttribute("data-row")) || t.tagName === "A" || t.tagName === "SUMMARY" || box;
     const layer = detailApi.current?.layer(e.target) ?? null;
-    const r = reduceKey(state, e.key, { ids, typing, onButton, settingsLocked: locked, now: Date.now(), layer, narrow, full: fullOn });
+    const dialog = !!t.closest('[role="dialog"]') || !!document.querySelector('[data-slot="dialog-content"]');
+    const r = reduceKey(state, e.key, {
+      ids,
+      typing,
+      onButton,
+      settingsLocked: locked,
+      now: Date.now(),
+      layer,
+      narrow,
+      full: fullOn,
+      dialog,
+    });
     if (!r.handled) return;
     e.preventDefault();
     // Esc leaves full width first. The text field keeps the focus, as in the prototype.

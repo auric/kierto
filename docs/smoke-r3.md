@@ -195,6 +195,8 @@ Part D (package S3): steps 20 to 27. Run them after step 19 and a B16 PASS. The 
 
 Part L writes to the test pull request: it resolves and reopens threads. Use only the test pull request.
 
+Gate run: steps 1 and 2 ran on 2026-10-20 against Bitbucket Data Center 9.x. integration-check.md U62 to U67 hold the result. Step 4 (U66) did not run. Run steps 1 and 2 again only after a Bitbucket upgrade.
+
 1. Run `bun scripts/gate0/resolve-thread.ts --dry-run`. Expect "dry run: PASS". It sends no request.
 2. Write a new general comment "Resolve gate." on the test pull request. Copy its comment ID from its link. Run `bun scripts/gate0/resolve-thread.ts --pr <TEST_PR_URL> --thread <ID>`. Expect the lines "resolve PUT", "after resolve", "activities", "reply to resolved", "stale PUT", "reopen PUT", and "after reopen". "reply to resolved" shows whether Bitbucket refused one reply in the resolved thread. If it shows "taken=true", the script deleted that reply again. Expect "threadResolved=false" in the last line, so the thread is open again. Send back the full console output. It holds status codes, versions, and booleans only.
 3. If a line says "text unchanged=false", stop part L and report it. The PUT then changes the comment text, and Resolve must not ship.
@@ -202,8 +204,8 @@ Part L writes to the test pull request: it resolves and reopens threads. Use onl
 5. Ask the second user to reply "Done?" in your "Resolve gate." thread. Click "Check now". Click Draft replies. Expect a draft card in that thread with the box "Resolve after posting". If Claude proposes the resolve, expect the box ticked and a line "Claude proposes it:" with its proof. Else tick the box yourself.
 6. Untick the box, then tick it again. Expect the live text "The thread resolves after the post." Accept the draft. Press p. Expect the line "Then resolves the thread." or, for a draft without text, "Resolves the thread. No reply is posted." Click Post.
 7. Expect "Posted and resolved." or "Resolved.", then the thread under "Resolved" with "Resolved by you". In Bitbucket, expect the reply first and the thread resolved.
-8. Open the thread. Open More (…) in its footer. Click "Reopen thread". Expect the thread open in the app and in Bitbucket. Click More, "Resolve thread". Expect it resolved again with no question.
-9. Open an open thread of the second user. Click More, "Resolve thread". Expect the question "<name> started this thread. Resolve it on Bitbucket?". Click Cancel. Expect no change in Bitbucket. Click "Resolve thread" again, then Resolve. As the PR author, expect the thread resolved. Reopen it.
+8. Open the thread. Click "Reopen" in its footer. Expect the thread open in the app and in Bitbucket. Press x. Expect it resolved again with no question.
+9. Open an open thread of the second user. Click "Resolve" in its footer. Expect the question "<name> started this thread. Resolve it on Bitbucket?". Click Cancel. Expect no change in Bitbucket. Press x, then click Resolve. As the PR author, expect the thread resolved. Reopen it.
 10. Ask questions in a general comment and as a reply in a thread of the second user. Ask the second user to answer all questions in your thread and only one question in the other. Click "Check now", then Draft replies. Expect a "Settled" chip with "Resolve after posting" ticked on your thread, with the quoted answer as proof and no text that announces the resolve. In the thread of the second user, expect a "Not settled" or "Follow-up question" chip, a reply that asks the open question, and the box not ticked.
 11. Optional, one run: post one finding of a review run as an inline comment. Push a commit that fixes it. Click "Check now", then "Review changes since". If the run finds the finding fixed, expect a "Resolve proposal" under its thread with the box ticked.
 12. Delete the "Resolve gate." comment by hand if the test branch needs it.

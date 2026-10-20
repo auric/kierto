@@ -27,6 +27,18 @@ export class ForgeError extends Error implements ForgeErrorInfo {
   }
 }
 
+// The class name of the first error in a Bitbucket error body, such as "ArgumentValidationException". Only a plain identifier
+// goes into the error message.
+function exceptionOf(text: string): string | undefined {
+  try {
+    const name = (JSON.parse(text) as { errors?: { exceptionName?: unknown }[] }).errors?.[0]?.exceptionName;
+    const short = typeof name === "string" ? name.slice(name.lastIndexOf(".") + 1) : "";
+    return /^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(short) ? short : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export type ClientOptions = { baseUrl: string; token: string; caFile?: string; timeoutMs?: number };
 
 function kindOf(status: number): ForgeErrorKind {
@@ -99,6 +111,7 @@ export function createClient(opts: ClientOptions) {
           endpoint,
           res.status,
           kindOf(res.status) === "rate" ? (res.headers.get("retry-after") ?? undefined) : undefined,
+          res.status >= 400 && res.status < 500 ? exceptionOf(text) : undefined,
         );
       }
       let json: unknown;

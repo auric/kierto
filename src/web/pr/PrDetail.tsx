@@ -49,6 +49,8 @@ export type DetailApi = {
   ask(): void;
   // Plan pr-view-v4 section 6: f opens the Fix list with the current thread or finding ticked. F opens it with the default ticks.
   fix(list: boolean): void;
+  // x: the Resolve or Reopen button of the current thread. A closed thread opens first.
+  resolve(): void;
   // Plan v3 WP11: r, Shift+R, 2, 3, and the Esc layers of the review. Plan r2 UI-RR: c.
   rerun(): void;
   rereview(): void;
@@ -437,6 +439,17 @@ export function PrDetail({
     if (t) jump(t.id);
   };
 
+  // x on a closed thread: the button mounts with the open thread, so the click waits for that render.
+  const wantResolve = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const id = wantResolve.current;
+    if (id === null) return;
+    wantResolve.current = null;
+    const button = document.querySelector<HTMLButtonElement>(`#t-${id} [data-resolve-thread]`);
+    if (button) button.click();
+    else toast.add({ title: "Every message of this thread is deleted. It cannot be resolved here." });
+  });
+
   useImperativeHandle(ref, () => ({
     cause() {
       wantCause.current = true;
@@ -516,6 +529,18 @@ export function PrDetail({
       }
       const t = at?.closest("[data-thread]")?.getAttribute("data-thread");
       review.api.fix(t ? Number(t) : cur, true);
+    },
+    resolve() {
+      const at = document.activeElement?.closest("[data-thread]")?.getAttribute("data-thread");
+      const id = at ? Number(at) : cur;
+      if (id === null) {
+        toast.add({ title: "Move to a thread first. Then x resolves or reopens it." });
+        return;
+      }
+      const button = document.querySelector<HTMLButtonElement>(`#t-${id} [data-resolve-thread]`);
+      if (button) return button.click();
+      wantResolve.current = id;
+      jump(id, undefined, false);
     },
     // prototype/v3 Esc order: an edit, the brief, the post confirm, the run log. Ask comes after the dialogs (plan pr-view-v4 4.4).
     // Ask uses the "brief" layer of keys.ts: both are the panel slot, and only one is open.

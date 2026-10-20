@@ -230,7 +230,7 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     forge: ForgeProvider,
     parentId: number,
   ): Promise<{ error: string } | { put: boolean }> {
-    const root = (db.query(SQL.parent).get({ pr: r.pr, id: parentId }) as { root_id: number } | null)?.root_id ?? parentId;
+    const root = rootOf(db, r.pr, parentId);
     let res: ResolveResult;
     try {
       res = await forge.setThreadResolved(ref, root, false);
@@ -241,6 +241,17 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     if (res.status !== "done") return { error: `${resolveText(res.status, false)} The reply was not sent.` };
     applyState(db, r.pr, root, res);
     return { put: res.put };
+  }
+
+  const rootOf = (db: Database, pr: number, parentId: number) =>
+    (db.query(SQL.parent).get({ pr, id: parentId }) as { root_id: number } | null)?.root_id ?? parentId;
+
+  // Data Center 9.x refuses a reply in a resolved thread with 400 ArgumentValidationException (integration-check.md U67).
+  // The reopen step runs first, so this needs a resolve between the reopen and the post.
+  async function resolvedRefusal(db: Database, r: PostRow, ref: PrRef, forge: ForgeProvider, dest: PostDestination, e: ForgeError) {
+    if (dest.kind !== "reply" || e.status !== 400 || e.code !== "ArgumentValidationException") return false;
+    const state = await forge.threadState(ref, rootOf(db, r.pr, dest.parentId)).catch(() => null);
+    return state?.threadResolved === true;
   }
 
   // The database of the configured origin. Its first use turns sent rows into unknown rows and resumes the outbox.
@@ -311,7 +322,9 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
           "failed",
           ctx
             ? "Bitbucket refused the inline comment on a context line (HTTP 400). Post the finding in the general comment."
-            : `Bitbucket refused the comment (${reason(e)}).${reopened}`,
+            : (await resolvedRefusal(db, r, ref, forge, dest, e))
+              ? "This thread is resolved. Reopen it first."
+              : `Bitbucket refused the comment (${reason(e)}).${reopened}`,
         );
       } else {
         if (!(e instanceof ForgeError)) log(`Post ${r.id}: ${(e as Error).message}`);
