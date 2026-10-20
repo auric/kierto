@@ -94,6 +94,10 @@ export const replyResult = z.object({
 
 export type ReplyDraft = z.infer<typeof replyDraft>;
 export type ReplyResult = z.infer<typeof replyResult>;
+// review: a review run. reply: a reply run. fix: a "Fixed in" draft. nofix: the reply of a fix note without a fix. session: an import of
+// your session. resolve: a resolve proposal without a reply. user: a draft that the user wrote or declined a fix with.
+export const replyOrigins = ["review", "reply", "fix", "nofix", "session", "resolve", "user"] as const;
+export type ReplyOrigin = (typeof replyOrigins)[number];
 // replyTo: the message that the reply answers. The post uses it as the parent.
 // judgement: absent in drafts stored before Release 3. Read it as null.
 // fix: a "Fixed in" reply. It posts only when the PR commits hold the commit (plan r3). replaced: the drafts that the commit
@@ -101,6 +105,8 @@ export type ReplyResult = z.infer<typeof replyResult>;
 // resolve, resolveEvidence: the proposal to resolve the thread. Absent in drafts stored before it existed.
 // resolveTick: the user's choice to resolve the thread after the post. Only a ticked draft resolves.
 // threadOpen: the thread was open when the app stored the draft. Absent in drafts stored before it existed.
+// origin: the writer of the draft (docs/plans/thread-outcome.md). Absent in drafts stored before it existed.
+// declined: the fix run whose proposal the user declined with this draft, else null.
 export type ReplyPayload = Omit<ReplyDraft, "judgement" | "resolve" | "resolveEvidence"> & {
   judgement?: Judgement | null;
   replyTo: number;
@@ -109,6 +115,8 @@ export type ReplyPayload = Omit<ReplyDraft, "judgement" | "resolve" | "resolveEv
   resolveEvidence?: string;
   resolveTick?: boolean;
   threadOpen?: boolean;
+  origin?: ReplyOrigin;
+  declined?: { run: number } | null;
 };
 
 export const replyJsonSchema = (): Record<string, unknown> => z.toJSONSchema(replyResult, { target: "draft-07" });
@@ -136,10 +144,26 @@ export const fixEdit = z.object({
   new: z.string().max(MAX_EDIT_TEXT).describe("The text that replaces old."),
 });
 
+// docs/plans/thread-outcome.md: why a note gives no fix. The app adds "dropped" when validateFix drops every edit of a note.
+export const fixWhys = ["already", "invalid", "scope", "decision", "risk", "unclear"] as const;
+export type FixWhy = (typeof fixWhys)[number] | "dropped";
+
 export const fixThread = z.object({
   ...fixTarget,
   fixed: z.boolean().describe("true: the edits of this thread or finding fix the review point."),
   reason: z.string().describe("One line: what the edits change, or why there is no fix."),
+  // The defaults keep notes stored before these keys valid. --json-schema still lists them as required.
+  why: z
+    .enum(fixWhys)
+    .nullable()
+    .default(null)
+    .describe(
+      "For fixed false: already: the code already does what the comment asks. invalid: the review point is wrong. scope: the change belongs outside this pull request. decision: the user must choose between options. risk: the fix can break other code. unclear: the comment does not say what to change. null for fixed true.",
+    ),
+  reply: z
+    .string()
+    .default("")
+    .describe("For fixed false on a thread: the reply to the thread as short Markdown in the user's voice. Else empty."),
 });
 
 export const fixResult = z.object({
@@ -151,9 +175,22 @@ export const fixResult = z.object({
 
 export type FixEdit = z.infer<typeof fixEdit>;
 export type FixThread = z.infer<typeof fixThread>;
+// A stored note. Only the app sets why to "dropped".
+export type FixNote = Omit<FixThread, "why"> & { why: FixWhy | null };
 export type FixResult = z.infer<typeof fixResult>;
 
 export const fixJsonSchema = (): Record<string, unknown> => z.toJSONSchema(fixResult, { target: "draft-07" });
+
+const fixNotes = z.array(
+  fixThread.extend({
+    why: z
+      .enum([...fixWhys, "dropped"])
+      .nullable()
+      .default(null),
+  }),
+);
+// review_run.fix_json. Notes stored before why and reply existed get the defaults.
+export const parseFixNotes = (json: string | null): FixNote[] => (json ? fixNotes.parse(JSON.parse(json)) : []);
 
 // The edit rules of every run that proposes edits: the fix agent (catalog.ts) and a session run that proposes fixes (consult.ts).
 // edits.ts deniedPath enforces the path rules. workspace.ts sanitize gives the *.untrusted.md names.

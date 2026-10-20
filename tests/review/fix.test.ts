@@ -314,7 +314,7 @@ async function setup(o: { baseUrl?: string } = {}) {
 }
 
 const edit = (thread: number, path: string, old: string, next = `${old} changed`): FixEdit => ({ thread, path, old, new: next });
-const note = (thread: number, reason = `Fixed ${thread}.`, fixed = true) => ({ thread, fixed, reason });
+const note = (thread: number, reason = `Fixed ${thread}.`, fixed = true) => ({ thread, fixed, reason, why: null, reply: "" });
 
 describe("turn cap", () => {
   test(
@@ -845,7 +845,7 @@ describe("review findings (docs/plans/fix-ux.md phase 2)", () => {
         { thread: null, item: f, path: "src/app.ts" },
       ]);
       const [fx] = await h.fixes();
-      expect(fx?.threads).toEqual([{ finding: f, fixed: true, reason: "Sets b to 3." }]);
+      expect(fx?.threads).toEqual([{ finding: f, fixed: true, reason: "Sets b to 3.", why: null, reply: "" }]);
       expect(fx?.edits.map((e) => [e.thread, e.finding, e.path, e.added, e.removed])).toEqual([[undefined, f, "src/app.ts", 1, 1]]);
     },
     SLOW,
@@ -862,7 +862,10 @@ describe("review findings (docs/plans/fix-ux.md phase 2)", () => {
       const stdin = h.runCalls()[0]?.stdin ?? "";
       expect(stdin).toContain(`\nFix threads: 101 (comment 103)\n\nRead the whole thread of each entry, not only its newest message.\n`);
       expect(stdin).toContain(`\nFix findings: ${f}\n`);
-      expect((await h.fixes())[0]?.threads).toEqual([note(101, "Echo", false), { finding: f, fixed: false, reason: "Echo" }]);
+      expect((await h.fixes())[0]?.threads).toEqual([
+        note(101, "Echo", false),
+        { finding: f, fixed: false, reason: "Echo", why: null, reply: "" },
+      ]);
 
       h.scenario({
         fix: {
@@ -937,11 +940,11 @@ describe("validateFix", () => {
     const v = validateFix(
       result({
         threads: [
-          { finding: 7, fixed: true, reason: "F7." },
+          { finding: 7, fixed: true, reason: "F7.", why: null, reply: "" },
           note(1),
-          { thread: 1, finding: 7, fixed: true, reason: "Both." },
-          { fixed: false, reason: "None." },
-          { finding: 8, fixed: false, reason: "Not asked." },
+          { thread: 1, finding: 7, fixed: true, reason: "Both.", why: null, reply: "" },
+          { fixed: false, reason: "None.", why: null, reply: "" },
+          { finding: 8, fixed: false, reason: "Not asked.", why: null, reply: "" },
         ],
         edits: [
           { finding: 7, path: "a.ts", old: "one", new: "ONE" },
@@ -954,7 +957,7 @@ describe("validateFix", () => {
       { threads: [1], findings: [9, 7] },
       new Map([["a.ts", file("one\ntwo\nthree\n")]]),
     );
-    expect(v.threads).toEqual([note(1), { finding: 7, fixed: true, reason: "F7." }]);
+    expect(v.threads).toEqual([note(1), { finding: 7, fixed: true, reason: "F7.", why: null, reply: "" }]);
     expect(v.edits.map((e) => [e.ord, e.thread, e.finding])).toEqual([
       [0, null, 7],
       [1, 1, null],

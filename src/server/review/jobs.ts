@@ -48,6 +48,7 @@ import {
   fixResult,
   MAX_EARLIER,
   MAX_REPLY_THREADS,
+  parseFixNotes,
   type Question,
   type ReplyPayload,
   type RereviewResult,
@@ -1981,7 +1982,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const now = effortsNow();
       return (db.query(`${SQL.run} ${SQL.fixes}`).all({ pr: id }) as RunRow[]).map((r) => ({
         run: toRunDto(r, now),
-        threads: r.fix_json ? (JSON.parse(r.fix_json) as FixThread[]) : [],
+        threads: parseFixNotes(r.fix_json),
         edits: (db.query(SQL.fixEdits).all({ run: r.id }) as FixEditRow[]).map(toFixEditDto),
         commits: (db.query(SQL.fixCommits).all({ run: r.id }) as FixCommitRow[]).map((c) => toFixCommitDto(c, cache)),
       }));

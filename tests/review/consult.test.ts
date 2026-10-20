@@ -262,7 +262,7 @@ describe("part D: judge and propose fixes", () => {
     const edit = fix.properties.edits?.items as Obj;
     expect(fix.properties.edits?.maxItems).toBe(50);
     expect(fix.properties.threads?.maxItems).toBe(25);
-    expect(note.required).toEqual(["fixed", "reason"]);
+    expect(note.required).toEqual(["fixed", "reason", "why", "reply"]);
     expect(edit.required).toEqual(["path", "old", "new"]);
     expect(note.properties.thread?.description).toBe("For item T123: 123. Leave it out for a finding.");
     expect(edit.properties.finding?.description).toBe("For item F45: 45. Leave it out for a thread.");

@@ -389,8 +389,8 @@ describe("selection per run", () => {
 
 describe("default commit message", () => {
   const notes = [
-    { thread: 101, fixed: true, reason: "Release the lock\nin finally." },
-    { thread: 102, fixed: true, reason: `${"x".repeat(250)}` },
+    { thread: 101, fixed: true, reason: "Release the lock\nin finally.", why: null, reply: "" },
+    { thread: 102, fixed: true, reason: `${"x".repeat(250)}`, why: null, reply: "" },
   ];
 
   test("one comment", () => {
@@ -406,7 +406,7 @@ describe("default commit message", () => {
     expect(m).toHaveLength(5);
   });
 
-  const findingNotes = [...notes, { finding: 12, fixed: true, reason: "Release the lock\nin finally." }];
+  const findingNotes = [...notes, { finding: 12, fixed: true, reason: "Release the lock\nin finally.", why: null, reply: "" }];
 
   test("one finding: the message names its place, because a finding ID is local to the app", () => {
     expect(defaultMessage(1004, [], findingNotes, [{ id: 12, place: "src/cache/flush.ts:6" }])).toBe(
@@ -429,7 +429,7 @@ describe("default commit message", () => {
   });
 
   test("control characters go, and a cut never splits a surrogate pair", () => {
-    const m = defaultMessage(1, [5], [{ thread: 5, fixed: true, reason: `a\u0007b\u001b[31mc ${"😀".repeat(210)}` }]);
+    const m = defaultMessage(1, [5], [{ thread: 5, fixed: true, reason: `a\u0007b\u001b[31mc ${"😀".repeat(210)}`, why: null, reply: "" }]);
     const line = m.split("\n")[2] as string;
     expect(line.startsWith("- Comment 5: ab[31mc ")).toBe(true);
     expect([...line.slice("- Comment 5: ".length)]).toHaveLength(200);
@@ -468,7 +468,7 @@ describe("fix card of a thread or a finding", () => {
     expect(fixState([fix(2, { run: run(2, { status: "failed", errorText: "x" }) })], thread(100), asked)?.kind).toBe("failed");
     expect(fixState([fix(2, { run: run(2, { status: "cancelled" }) })], thread(100), asked)?.kind).toBe("failed");
     // An older run with a note does not hide that the new run has none.
-    const old = fix(1, { threads: [{ thread: 100, fixed: false, reason: "Old" }] });
+    const old = fix(1, { threads: [{ thread: 100, fixed: false, reason: "Old", why: null, reply: "" }] });
     expect(fixState([fix(2), old], thread(100), asked)?.kind).toBe("none");
     expect(fixState([fix(2), old], thread(200), asked)).toBeNull();
   });
@@ -479,8 +479,8 @@ describe("fix card of a thread or a finding", () => {
     expect(fixState([], found(13), asked)).toBeNull();
     const f = fix(3, {
       threads: [
-        { thread: 12, fixed: false, reason: "Thread twelve" },
-        { finding: 12, fixed: true, reason: "Finding twelve" },
+        { thread: 12, fixed: false, reason: "Thread twelve", why: null, reply: "" },
+        { finding: 12, fixed: true, reason: "Finding twelve", why: null, reply: "" },
       ],
       edits: [edit(5, 12), findingEdit(6, 12)],
       commits: [commit(10, [6])],
@@ -501,11 +501,11 @@ describe("fix card of a thread or a finding", () => {
 
   test("the newest run with a note or an edit for the thread, its edits, and its commit", () => {
     const newer = fix(3, {
-      threads: [{ thread: 200, fixed: true, reason: "B" }],
+      threads: [{ thread: 200, fixed: true, reason: "B", why: null, reply: "" }],
       edits: [edit(7, 200)],
     });
     const older = fix(2, {
-      threads: [{ thread: 100, fixed: true, reason: "A" }],
+      threads: [{ thread: 100, fixed: true, reason: "A", why: null, reply: "" }],
       edits: [edit(5, 100), edit(6, 200)],
       commits: [commit(9, [5], { state: "undone" }), commit(10, [5, 6])],
     });

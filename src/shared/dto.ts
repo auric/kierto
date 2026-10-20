@@ -9,6 +9,7 @@ import {
   type Carried,
   type DiffKind,
   type FixedMark,
+  type FixNote,
   MAX_FIX_EDITS,
   MAX_QUESTION,
   MAX_REPLY_THREADS,
@@ -501,8 +502,14 @@ export type PlannedPost = {
   // Reply posts with a body only: the thread is resolved, so the post reopens it first. since: the thread was open at the draft.
   reopen?: "resolved" | "since";
 };
+// docs/plans/thread-outcome.md: a reply draft that confirm cannot post now. out-of-date: new messages or a deleted parent.
+// resolved-since: the thread was resolved after the draft. unpushed: the fix commit is not on the PR yet. commit-gone: the fix commit
+// was rebased or squashed away. thread: the root comment.
+export type BlockedReason = "out-of-date" | "resolved-since" | "unpushed" | "commit-gone";
+export type BlockedDraft = { item: number; thread: number; reason: BlockedReason };
 // posts: per run in run order, the inline comments and the replies in item order, then the general comment.
-export type PostPlanDto = { pr: number; posts: PlannedPost[] };
+// blocked: the drafts that the plan leaves out. Absent: none.
+export type PostPlanDto = { pr: number; posts: PlannedPost[]; blocked?: BlockedDraft[] };
 
 // ---------- Outbox (plan v3 WP13a) ----------
 
@@ -718,7 +725,7 @@ export type FixCommitDto = {
 // GET /api/prs/:id/fixes gives FixDto[], newest first, at most 10. Each note names exactly one of thread and finding.
 export type FixDto = {
   run: RunDto;
-  threads: { thread?: number; finding?: number; fixed: boolean; reason: string }[];
+  threads: FixNote[];
   edits: FixEditDto[];
   commits: FixCommitDto[];
 };
@@ -730,6 +737,18 @@ export const fixCommitInput = z.object({
   mode: z.enum(fixModes),
 });
 export type FixCommitInput = z.infer<typeof fixCommitInput>;
+
+// docs/plans/thread-outcome.md "Don't fix": decline the proposal of a fix run for one thread or one finding.
+// reason: the text of the "Won't fix" reply draft.
+export const fixDeclineInput = z
+  .object({
+    run: positiveInt,
+    thread: positiveInt.optional(),
+    finding: positiveInt.optional(),
+    reason: z.string().trim().min(1).max(MAX_NOTE),
+  })
+  .refine((v) => (v.thread === undefined) !== (v.finding === undefined), { message: "Name exactly one thread or one finding." });
+export type FixDeclineInput = z.infer<typeof fixDeclineInput>;
 
 export const cloneProblems = [
   "not_set",

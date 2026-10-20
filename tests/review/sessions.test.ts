@@ -589,7 +589,7 @@ describe("session routes and runs", () => {
       comment(104, 104, 0, 4);
       const LOCK_OLD = "    write(entry);\n    lock.release();\n";
       const LOCK_NEW = "    try {\n      write(entry);\n    } finally {\n      lock.release();\n    }\n";
-      const note = (thread: number) => ({ thread, fixed: true, reason: `Fix ${thread}.` });
+      const note = (thread: number) => ({ thread, fixed: true, reason: `Fix ${thread}.`, why: null, reply: "" });
       h.scenario({
         consult: {
           answers: [
