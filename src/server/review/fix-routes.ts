@@ -478,7 +478,11 @@ export function createFixRoutes(opts: {
     const staged = await stagedPaths(path);
     const want = await treeEntries(cache, env(), patch.tree, patch.paths);
     const have = await indexEntries(path, patch.paths);
-    if (staged.length !== patch.paths.length || patch.paths.some((p) => !staged.includes(p) || have.get(p) !== want.get(p))) return differ;
+    // A forward apply that passes means no part of the fix is in the clone, for example after `git reset --hard`. Undo then leaves the clone as it is.
+    if (staged.length !== patch.paths.length || patch.paths.some((p) => !staged.includes(p) || have.get(p) !== want.get(p))) {
+      const absent = await applyCheck(path, patch.patch);
+      return absent ? null : differ;
+    }
     if (!(await applyCheck(path, patch.patch, true))) return differ;
     await applyIndex(path, patch.patch, true);
     return null;

@@ -323,6 +323,8 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     if (db && !recovered.has(db)) {
       recovered.add(db);
       db.query(SQL.recover).run({ text: "The app stopped while the post was out.", now: now() });
+      // The row IDs of another database name other rows.
+      checking.clear();
       for (const { id } of db.query(SQL.unknown).all() as { id: number }[]) checking.add(id);
       void kick();
     }
@@ -484,11 +486,13 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
       try {
         while (again && !stopped) {
           again = false;
-          await drain();
+          try {
+            await drain();
+          } catch (e) {
+            // A settings change closes the database. A kick during the drain still runs the next pass.
+            log(`Outbox pass stopped: ${(e as Error).message}`);
+          }
         }
-      } catch (e) {
-        // A settings change closes the database. The next open resumes the outbox.
-        log(`Outbox stopped: ${(e as Error).message}`);
       } finally {
         busy = null;
       }

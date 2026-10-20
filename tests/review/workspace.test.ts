@@ -275,7 +275,7 @@ describe("workspace", () => {
     SLOW,
   );
 
-  test("the lstat walk removes junctions and keeps their targets", () => {
+  test("the lstat walk removes junctions and keeps their targets", async () => {
     const d = tempDir("walk");
     const repo = join(d, "repo");
     const outside = join(d, "outside");
@@ -284,13 +284,57 @@ describe("workspace", () => {
     writeFileSync(join(outside, "canary.txt"), "keep");
     symlinkSync(outside, join(repo, "a", "j"), "junction");
     writeFileSync(join(repo, "a", "Claude.md"), "x");
-    const r = sanitize(repo, []);
+    const r = await sanitize(repo, []);
     expect(r.removed).toEqual(["a/j"]);
     expect(tree(repo)).toEqual(["a", "a/Claude.untrusted.md"]);
     expect(readFileSync(join(outside, "canary.txt"), "utf8")).toBe("keep");
     // A link path from ls-tree never leaves the worktree.
-    expect(() => sanitize(repo, ["../outside/canary.txt"])).toThrow(/outside/);
+    await expect(sanitize(repo, ["../outside/canary.txt"])).rejects.toThrow(/outside/);
     expect(existsSync(join(outside, "canary.txt"))).toBe(true);
+  });
+
+  test("the sanitizer removes a nested .claude folder and a junction to outside the repo, and renames a mixed-case Claude.MD", async () => {
+    const d = tempDir("rules");
+    const repo = join(d, "repo");
+    const outside = join(d, "outside");
+    mkdirSync(join(repo, "sub", ".claude"), { recursive: true });
+    mkdirSync(join(repo, "deep", "er"), { recursive: true });
+    mkdirSync(outside);
+    writeFileSync(join(repo, "sub", ".claude", "settings.json"), '{"hooks":{}}');
+    writeFileSync(join(repo, "deep", "er", "Claude.MD"), "rules");
+    writeFileSync(join(outside, ".mcp.json"), "{}");
+    // Windows makes a junction. Other systems ignore the type and make a directory link.
+    symlinkSync(outside, join(repo, "sub", "out"), "junction");
+    const r = await sanitize(repo, []);
+    expect(r.removed.sort()).toEqual(["sub/.claude", "sub/out"]);
+    expect(r.renamed).toEqual(["deep/er/Claude.MD -> deep/er/Claude.untrusted.md"]);
+    expect(tree(repo)).toEqual(["deep", "deep/er", "deep/er/Claude.untrusted.md", "sub"]);
+    expect(readFileSync(join(repo, "deep", "er", "Claude.untrusted.md"), "utf8")).toBe("rules");
+    expect(readFileSync(join(outside, ".mcp.json"), "utf8")).toBe("{}");
+  });
+
+  test("sanitize and pruneWorkspaces run no blocking walk or delete, and pruneWorkspaces deletes nested run trees", async () => {
+    const d = tempDir("async");
+    const repo = join(d, "repo");
+    mkdirSync(join(repo, "a", "b", ".claude"), { recursive: true });
+    writeFileSync(join(repo, "a", "b", ".claude", "x.json"), "{}");
+    const nested = join(d, "data", "runs", "1", "work", "repo", "a", "b", "c");
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, "f.txt"), "x");
+    const fs = await import("node:fs");
+    const blocking = (["rmSync", "lstatSync", "renameSync"] as const).map((n) => spyOn(fs, n));
+    try {
+      const s = sanitize(repo, []);
+      const p = pruneWorkspaces(join(d, "data"));
+      expect([s instanceof Promise, p instanceof Promise]).toEqual([true, true]);
+      expect((await s).removed).toEqual(["a/b/.claude"]);
+      await p;
+      expect(blocking.map((b) => b.mock.calls.length)).toEqual([0, 0, 0]);
+    } finally {
+      for (const b of blocking) b.mockRestore();
+    }
+    expect(existsSync(join(d, "data", "runs"))).toBe(false);
+    expect(tree(repo)).toEqual(["a", "a/b"]);
   });
 
   test(
@@ -593,7 +637,13 @@ describe("workspace", () => {
       const s = await scenario("clean", { "src/new.ts": "new\n" });
       const a = await prepare(s, "1");
       expect(tree(a.run)).toEqual(expect.arrayContaining(["app", "work", "work/context", "work/repo", "work/context/pr.md"]));
-      await a.remove();
+      const blocking = spyOn(await import("node:fs"), "rmSync");
+      try {
+        await a.remove();
+        expect(blocking).not.toHaveBeenCalled();
+      } finally {
+        blocking.mockRestore();
+      }
       expect(existsSync(a.run)).toBe(false);
       expect(await worktrees(s, a.cache)).toHaveLength(1);
 

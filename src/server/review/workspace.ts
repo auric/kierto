@@ -3,19 +3,8 @@
 
 // The sanitized, pinned work folder of one review run (plan v3 WP6). The layout matches claude.ts:
 // <dataDir>/runs/<id>/work/{repo,context} is the CLI cwd, <dataDir>/runs/<id>/app holds the app files.
-import {
-  copyFileSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { lstat, readdir, rename, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { indentBlock, oneLine } from "../../shared/consult";
 import { RUN_TEXT_BYTES } from "../../shared/dto";
@@ -39,6 +28,8 @@ const CONFIG: [string, string][] = [
 // .codegraph: an index from the PR is untrusted. The run builds its own (codegraph.ts).
 const REMOVE = new Set([".claude", ".mcp.json", ".codegraph", ".codegraph-wsl"]);
 const RENAME = new Set(["claude.md", "claude.local.md", "agents.md"]);
+// fs.rm retries only on EBUSY, EMFILE, ENFILE, ENOTEMPTY, and EPERM. Windows gives these while another process holds a file.
+const RM_TREE = { recursive: true, force: true, maxRetries: 3 } as const;
 // Names of the extra context files. pr.md belongs to the workspace.
 const FILE_NAME = /^[a-z-]+\.md$/;
 // Plan r3: context/attachments/<attachment ID>.<ext>. Only .txt is text.
@@ -154,7 +145,7 @@ export function gitSetup(dataDir: string) {
 
 // Removes links, .claude and .codegraph folders, and .mcp.json files. Renames instruction files to *.untrusted.md.
 // links: the mode-120000 paths of the tree. The lstat walk also finds junctions and links that git did not make.
-export function sanitize(repo: string, links: string[]) {
+export async function sanitize(repo: string, links: string[]) {
   const removed: string[] = [];
   const renamed: string[] = [];
   const rel = (p: string) => relative(repo, p).replaceAll("\\", "/");
@@ -162,42 +153,42 @@ export function sanitize(repo: string, links: string[]) {
     const p = resolve(repo, l);
     const r = relative(repo, p);
     if (!r || r.startsWith("..") || isAbsolute(r)) throw new WorkspaceError(`A link path is outside the worktree: ${l}`);
-    rmSync(p, { force: true });
+    await rm(p, { force: true });
     removed.push(rel(p));
   }
   // Windows names ignore case, so claude.md loads as CLAUDE.md.
-  const walk = (dir: string) => {
-    for (const f of readdirSync(dir)) {
+  const walk = async (dir: string) => {
+    for (const f of await readdir(dir)) {
       if (dir === repo && f === ".git") continue;
       let p = join(dir, f);
-      const st = lstatSync(p);
+      const st = await lstat(p);
       if (st.isSymbolicLink() || REMOVE.has(f.toLowerCase())) {
-        rmSync(p, { recursive: true, force: true });
+        await rm(p, RM_TREE);
         removed.push(rel(p));
         continue;
       }
       if (RENAME.has(f.toLowerCase())) {
         const to = join(dir, f.replace(/\.md$/i, ".untrusted.md"));
-        renameSync(p, to);
+        await rename(p, to);
         renamed.push(`${rel(p)} -> ${rel(to)}`);
         p = to;
       }
-      if (st.isDirectory()) walk(p);
+      if (st.isDirectory()) await walk(p);
     }
   };
-  walk(repo);
+  await walk(repo);
   const left: string[] = [];
-  const check = (dir: string) => {
-    for (const f of readdirSync(dir)) {
+  const check = async (dir: string) => {
+    for (const f of await readdir(dir)) {
       if (dir === repo && f === ".git") continue;
       const p = join(dir, f);
-      const st = lstatSync(p);
+      const st = await lstat(p);
       const lower = f.toLowerCase();
       if (st.isSymbolicLink() || REMOVE.has(lower) || RENAME.has(lower)) left.push(rel(p));
-      else if (st.isDirectory()) check(p);
+      else if (st.isDirectory()) await check(p);
     }
   };
-  check(repo);
+  await check(repo);
   if (left.length) throw new WorkspaceError(`Sanitize left unsafe paths: ${left.join(", ")}`);
   return { removed, renamed };
 }
@@ -443,7 +434,7 @@ export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace
   const app = join(run, "app");
   const remove = async () => {
     try {
-      rmSync(run, { recursive: true, force: true, maxRetries: 3 });
+      await rm(run, RM_TREE);
       await g(["worktree", "prune"]);
     } catch (e) {
       log(`Could not remove the run folder ${run}: ${(e as Error).message}`);
@@ -459,7 +450,7 @@ export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace
       .split("\0")
       .filter((r) => r.startsWith("120000 "))
       .map((r) => r.slice(r.indexOf("\t") + 1));
-    sanitize(repo, links);
+    await sanitize(repo, links);
 
     const rangeBase = input.since === undefined ? mergeBase : ((await rangeBaseOf(g, input.since, mergeBase)) ?? mergeBase);
     const diff = await g(["diff", ...diffArgs, mergeBase, pr.sourceHead]);
@@ -476,7 +467,7 @@ export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace
 
 // Deletes every run folder and prunes the worktree entries of every cache. Call it only when no run is active.
 export async function pruneWorkspaces(dataDir: string) {
-  rmSync(join(dataDir, "runs"), { recursive: true, force: true, maxRetries: 3 });
+  await rm(join(dataDir, "runs"), RM_TREE);
   const { dir, env } = gitSetup(dataDir);
   for (const project of readdirSync(dir, { withFileTypes: true }))
     if (project.isDirectory())

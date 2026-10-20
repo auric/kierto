@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Fix it (plan r3 S-APPLY): the patch from the app cache, and git in the user's clone. Git in the clone runs no network command.
+import type { Database } from "bun:sqlite";
 import { existsSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -9,7 +10,7 @@ import type { CloneDto, CloneProblem, FixCommitDto, FixCommitState, FixMode } fr
 import { applyEdits, deniedPath, fold, type Located, locate, prepareFile } from "./edits";
 import { GitError, git, userGitEnv } from "./git";
 import { repoPath } from "./validate";
-import { diffArgs } from "./workspace";
+import { cachePath, diffArgs, gitSetup, locked, longPath } from "./workspace";
 
 const HASH = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 // Plan r3: hooks and signing run in the commit. Every git call in the clone stops after this time.
@@ -282,6 +283,34 @@ export async function cacheCommit(
 
 // The ref of a cache commit. The fix run keeps its head at refs/rl/<pr>/fix/<run>, so the commits use another folder.
 export const fixRef = (prId: number, id: number) => `refs/rl/${prId}/fix-commit/${id}`;
+
+// A staged or committed fix commit can still need the cache commits under refs/rl/<PR ID>/ for its undo or its fetch.
+const CLOSED_PRS = `SELECT p.project, p.repo, p.pr_id FROM pull_request p WHERE p.state IN ('MERGED', 'DECLINED')
+  AND NOT EXISTS (SELECT 1 FROM fix_commit c WHERE c.pr = p.id AND c.state <> 'undone') ORDER BY p.id`;
+
+// Deletes refs/rl/<PR ID>/* of each merged or declined PR without an open fix commit, so gc can drop the PR objects.
+// A reopened declined PR fetches its heads again at its next run.
+export async function pruneRefs(db: Database, dataDir: string) {
+  const dir = longPath(dataDir);
+  const { env } = gitSetup(dir);
+  for (const p of db.query(CLOSED_PRS).all() as { project: string; repo: string; pr_id: number }[]) {
+    let cache: string;
+    try {
+      cache = cachePath(dir, { project: p.project, repo: p.repo, id: p.pr_id });
+    } catch {
+      continue;
+    }
+    if (!Number.isSafeInteger(p.pr_id) || !existsSync(join(cache, "HEAD"))) continue;
+    await locked(cache, async () => {
+      // git-for-each-ref(1): a pattern without a glob matches up to a slash, so refs/rl/5 never matches refs/rl/50.
+      const refs = (await git([`--git-dir=${cache}`, "for-each-ref", "--format=%(refname)", `refs/rl/${p.pr_id}`], { env }))
+        .split("\n")
+        .filter(Boolean);
+      if (refs.length)
+        await git([`--git-dir=${cache}`, "update-ref", "--stdin"], { env, stdin: refs.map((r) => `delete ${r}\n`).join("") });
+    });
+  }
+}
 
 // "<mode> <sha>" of each index entry of the clone, per path.
 export async function indexEntries(path: string, paths: string[]): Promise<Map<string, string>> {

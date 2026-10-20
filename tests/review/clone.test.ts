@@ -673,6 +673,29 @@ describe("hooks", () => {
   );
 
   test(
+    "a staged row after `git reset --hard` is undone without a change to the clone, and the same commit applies again",
+    async () => {
+      const s = await setup();
+      const clone = await makeClone();
+      hook(clone, "pre-commit", "exit 1");
+      expect((await s.setClone(clone)).status).toBe(200);
+      expect((await s.apply(s.ids)).status).toBe(409);
+      const fix = (s.db.query("SELECT id FROM fix_commit").get() as { id: number }).id;
+      await cg(clone, ["reset", "-q", "--hard"]);
+      const before = await snapshot(clone);
+      expect(before).toEqual([heads.source, ""]);
+      const u = await s.undo(fix);
+      expect([u.status, u.body.error ?? "", u.body.state]).toEqual([200, "", "undone"]);
+      expect(await snapshot(clone)).toEqual(before);
+      rmSync(join(clone, ".git", "hooks", "pre-commit"));
+      const again = await s.apply(s.ids);
+      expect([again.status, again.body.state]).toEqual([201, "committed"]);
+      expect(again.body.id).not.toBe(fix);
+    },
+    SLOW,
+  );
+
+  test(
     "edits to .husky, the core.hooksPath folder, and the hook keys of package.json are refused before apply",
     async () => {
       const s = await setup();

@@ -11,6 +11,7 @@ import { sweep } from "./context/attachments";
 import { createLive } from "./live";
 import { log } from "./log";
 import { createOutbox } from "./publish/outbox";
+import { pruneRefs } from "./review/clone";
 import { runGitMcp } from "./review/git-mcp";
 import { createReviewJobs } from "./review/jobs";
 import { createSettings } from "./settings";
@@ -79,6 +80,8 @@ if (import.meta.main && gitMcpAt >= 0) {
   } catch (e) {
     log(`Could not clean up the attachments folder: ${(e as Error).message}`);
   }
+  if (db)
+    void pruneRefs(db, review.dataDir).catch((e) => log(`Could not delete the refs of closed pull requests: ${(e as Error).message}`));
   try {
     const server = startServer({
       port,

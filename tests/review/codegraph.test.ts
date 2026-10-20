@@ -58,14 +58,14 @@ describe("codegraph detection", () => {
     });
   });
 
-  test("the sanitizer removes .codegraph folders at any depth", () => {
+  test("the sanitizer removes .codegraph folders at any depth", async () => {
     const repo = join(root, "sanitize");
     for (const d of [".codegraph", "sub/.codegraph", "sub/.CodeGraph-WSL"]) {
       mkdirSync(join(repo, d), { recursive: true });
       writeFileSync(join(repo, d, "codegraph.db"), "pr index");
     }
     writeFileSync(join(repo, "keep.ts"), "");
-    const { removed } = sanitize(repo, []);
+    const { removed } = await sanitize(repo, []);
     expect(removed.sort()).toEqual([".codegraph", "sub/.CodeGraph-WSL", "sub/.codegraph"]);
     expect(existsSync(join(repo, "keep.ts"))).toBe(true);
   });

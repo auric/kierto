@@ -1152,3 +1152,70 @@ describe("a reply in a resolved thread", () => {
     expect((await s.list())[0]?.state).toBe("confirmed");
   });
 });
+
+// Audit: a pass that throws does not end the sender. A kick during the pass runs the next pass. A new database starts with no checks.
+describe("sender passes", () => {
+  test("a drain that throws once still runs the pass that a kick queued, on the new database without old checks", async () => {
+    const NEXT = "WHERE state = 'pending'";
+    const BY_ID = "SELECT * FROM post WHERE id = $id";
+    let outbox: Outbox | null = null;
+    let cur: unknown = null;
+    // next: the first pending row. onRun: each write.
+    const fakeDb = (unknown: { id: number }[], next: () => unknown, onRun: () => void) => {
+      const log: string[] = [];
+      const query = (sql: string) => ({
+        run: () => {
+          onRun();
+          return { changes: 0 };
+        },
+        all: () => (sql.includes("state = 'unknown'") ? unknown : []),
+        get: () => {
+          log.push(sql);
+          return sql.includes(NEXT) ? next() : null;
+        },
+      });
+      return { log, query };
+    };
+    const second = fakeDb(
+      [],
+      () => null,
+      () => {},
+    );
+    let armed = false;
+    let thrown = false;
+    // The pending row fails after the await of the provider. Its write throws, as on a closed database.
+    const row = { id: 1, pr: 1, body: "x", destination_json: JSON.stringify({ kind: "general" }) };
+    const first = fakeDb(
+      [{ id: 7 }],
+      () => {
+        if (thrown) return null;
+        armed = true;
+        return row;
+      },
+      () => {
+        if (!armed) return;
+        armed = false;
+        thrown = true;
+        // A settings change: the next open gets another database and kicks during this pass.
+        cur = second;
+        outbox?.start();
+        throw new Error("The database is closed.");
+      },
+    );
+    cur = first;
+    const settings = {
+      db: () => cur,
+      provider: async () => null,
+      config: () => null,
+      onSettingsChanged: () => {},
+    } as unknown as Parameters<typeof createOutbox>[0]["settings"];
+    outbox = createOutbox({ settings, live: createLive() });
+    outbox.start();
+    await outbox.wait();
+    expect(thrown).toBe(true);
+    expect(second.log.some((s) => s.includes(NEXT))).toBe(true);
+    // Row 7 of the first database is not checked on the second one.
+    expect(second.log).not.toContain(BY_ID);
+    await outbox.stop();
+  });
+});
