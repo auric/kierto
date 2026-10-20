@@ -27,7 +27,7 @@ import {
 } from "../../shared/consult";
 import type { ChangedFile, CommentDto, FixDto, ReviewItemDto, RunSummary } from "../../shared/dto";
 import { isMe } from "../../shared/me";
-import type { AnchoredFinding, FixThread, ReplyPayload, SessionMark } from "../../shared/review";
+import { type AnchoredFinding, parseFixNotes, type ReplyPayload, type SessionMark } from "../../shared/review";
 import { byThread, newestLive, threadTurn } from "../../shared/turn";
 import { type ExcerptLine as CommentLine, threadSpot } from "../../shared/types";
 import { prDetail } from "../inbox/queries";
@@ -449,7 +449,7 @@ function fixFromSession(db: Database, o: { pr: number; session: number; paste: n
   if (!p || db.query(SQL.fromSession).get({ pr: o.pr, session: o.session })) return null;
   const key = (thread: number | null | undefined, finding: number | null | undefined) => (thread != null ? `T${thread}` : `F${finding}`);
   const ticked = new Set([...o.ticks.threads.map((t) => `T${t}`), ...o.ticks.findings.map((f) => `F${f}`)]);
-  const notes = (JSON.parse(p.fix_json ?? "[]") as FixThread[]).filter((n) => ticked.has(key(n.thread, n.finding)));
+  const notes = parseFixNotes(p.fix_json).filter((n) => ticked.has(key(n.thread, n.finding)));
   const rows = db.query(SQL.proposed).all({ run: o.session }) as { id: number; thread: number | null; item: number | null }[];
   const edits = rows.filter((e) => ticked.has(key(e.thread, e.item)));
   if (!notes.length && !edits.length) return null;
@@ -524,6 +524,7 @@ export async function importAnswer(s: ConsultSource, prId: number, input: Consul
           judgement: r.verdict === "accept" ? "valid" : r.verdict === "reject" ? "invalid" : "question",
           replyTo: last.id,
           threadOpen: !(threads.get(target) ?? []).some((m) => m.threadResolved),
+          origin: "session",
           session: { run: id, verdict: r.verdict, reason: r.reason, replaced },
         };
         db.query(SQL.reply).run({ run: id, payload: JSON.stringify(payload), body, thread: target });

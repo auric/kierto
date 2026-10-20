@@ -25,6 +25,7 @@ import {
   type DiffRowDto,
   type FixDto,
   type FixEditDto,
+  MAX_NOTE,
   type PrTask,
   type ReviewItemDto,
   type RunConflict,
@@ -43,7 +44,8 @@ import {
   type Carried,
   type Finding,
   type FixedMark,
-  type FixThread,
+  type FixNote,
+  type FixWhy,
   fixJsonSchema,
   fixResult,
   MAX_EARLIER,
@@ -283,6 +285,16 @@ export const userDraft = (r: ItemRow | undefined, declined: boolean) =>
 
 export const keptText = (thread: number) => `Thread ${thread}: kept your draft. The new draft was not stored.`;
 
+// docs/plans/thread-outcome.md writer priority, after the user (userDraft): "Fixed in", then nofix, then the other writers, then a
+// resolve-only proposal. A lower rank wins. A draft stored before origin existed ranks by its fix field only.
+const writerRank = (p: ReplyPayload) => (p.fix ? 2 : p.origin === "nofix" ? 3 : p.origin === "resolve" ? 5 : 4);
+// The current draft is open, untouched, and from a higher writer than the new draft.
+const higherDraft = (r: ItemRow | undefined, payload: string) =>
+  r?.status === "new" && writerRank(JSON.parse(r.payload_json) as ReplyPayload) < writerRank(JSON.parse(payload) as ReplyPayload);
+
+// docs/plans/thread-outcome.md: the why values of a thread note that give a nofix reply draft. decision, risk, and dropped give none.
+const NOFIX_DRAFT: ReadonlySet<FixWhy | null> = new Set<FixWhy>(["already", "invalid", "scope", "unclear"]);
+
 // checked: the earlier findings of a re-review. fix: the notes and edits of a fix run.
 type Ending = {
   status: Exclude<RunStatus, "running">;
@@ -295,7 +307,7 @@ type Ending = {
     items: NewItem[];
     checked?: CheckedEarlier[];
     answer?: string;
-    fix?: { threads: FixThread[]; edits: ValidEdit[] };
+    fix?: { threads: FixNote[]; edits: ValidEdit[] };
   };
 };
 
@@ -861,6 +873,7 @@ function resolveProposals(
       resolveEvidence: c.reason,
       resolveTick: true,
       threadOpen: true,
+      origin: "resolve",
     };
     out.push({ kind: "reply", payload_json: JSON.stringify(payload), body: "", ...NO_ANCHOR, status: "new", thread, edited: 0 });
   }
@@ -913,7 +926,7 @@ async function judgeSession(o: RunOutcome, fix: { ws: Workspace; asked: string[]
   const n = parsed.data.answers.length;
   const answers = `${n} ${n === 1 ? "answer" : "answers"}`;
   const none = { read: [], skipped: [], unavailable: [], notChecked: [] };
-  const result = (summary: string, coverage: RunSummary["coverage"], edits?: { threads: FixThread[]; edits: ValidEdit[] }) =>
+  const result = (summary: string, coverage: RunSummary["coverage"], edits?: { threads: FixNote[]; edits: ValidEdit[] }) =>
     ended(raw, o, {
       summary: { summary, risks: [], coverage, dropped: [] },
       items: [],
@@ -993,7 +1006,27 @@ async function readFixFiles(ws: Workspace, paths: string[]): Promise<Map<string,
   return files;
 }
 
-// Plan r3 S-FIX: a fix run makes no items. Its notes go to fix_json and its edits to fix_edit.
+// docs/plans/thread-outcome.md: the unaccepted reply draft of a thread note without a fix. "already" proposes to resolve the thread.
+// As in validateReplies, only a thread that the user started gets the tick.
+function nofixItem(n: FixNote, t: ReplyThread, body: string): NewItem {
+  const already = n.why === "already";
+  const payload: ReplyPayload = {
+    thread: t.thread,
+    action: "reply",
+    body,
+    reason: n.reason,
+    evidenceStatus: "unverified",
+    judgement: null,
+    replyTo: t.replyTo,
+    resolve: already,
+    resolveEvidence: already ? n.reason.trim() : "",
+    resolveTick: already && !!t.mine,
+    origin: "nofix",
+  };
+  return replyItem({ payload, status: "new" });
+}
+
+// Plan r3 S-FIX: the notes of a fix run go to fix_json and its edits to fix_edit. Its only items are the nofix reply drafts.
 async function judgeFix(
   o: RunOutcome,
   ws: Workspace,
@@ -1011,10 +1044,19 @@ async function judgeFix(
     parsed.data.edits.map((e) => e.path),
   );
   const v = validateFix(parsed.data, { threads: threads.map((t) => t.thread), findings }, files);
-  const coverage = { ...v.coverage, unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)] };
+  const skipped = [...v.coverage.skipped];
+  const items = v.threads.flatMap((n): NewItem[] => {
+    const t = threads.find((x) => x.thread === n.thread);
+    const body = n.reply.trim();
+    if (!t || n.fixed || !NOFIX_DRAFT.has(n.why) || !body) return [];
+    if (body.length <= MAX_NOTE) return [nofixItem(n, t, body)];
+    skipped.push(`Reply for thread ${t.thread} dropped: the body is longer than ${MAX_NOTE} characters.`);
+    return [];
+  });
+  const coverage = { ...v.coverage, skipped, unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)] };
   return ended(raw, o, {
     summary: { summary: v.summary, risks: [], coverage, dropped: [] },
-    items: [],
+    items,
     fix: { threads: v.threads, edits: v.edits },
   });
 }
@@ -1215,11 +1257,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const flagged = j.session ? null : j.profile.effort;
     const ok = j.db.transaction(() => {
       if (o) upsertEvents(j.db, j.id, o.events);
-      // One open draft per thread. A new reply draft never replaces a draft that the user edited, accepted, or declined.
+      // One open draft per thread. A new reply draft never replaces a draft that the user edited, accepted, or declined. A run for
+      // threads that the user named is the user's choice, so only the other runs keep an untouched draft of a higher writer.
       const drafts = currentDrafts(j.db, j.pr);
       const kept = new Set<number>();
-      for (const it of e.result?.items ?? [])
-        if (it.kind === "reply" && it.thread !== null && userDraft(drafts.get(it.thread), !j.picked)) kept.add(it.thread);
+      for (const it of e.result?.items ?? []) {
+        if (it.kind !== "reply" || it.thread === null) continue;
+        const cur = drafts.get(it.thread);
+        if (userDraft(cur, !j.picked) || (!j.picked && higherDraft(cur, it.payload_json))) kept.add(it.thread);
+      }
       const summary = e.result?.summary;
       const coverage =
         summary && kept.size ? { ...summary.coverage, skipped: [...summary.coverage.skipped, ...[...kept].map(keptText)] } : null;
@@ -1734,11 +1780,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     }
     const newest = currentDrafts(db, pr.id);
     const threads = turnThreads(db, pr);
-    const out: ReplyThread[] = [];
+    const out: number[] = [];
     for (const [thread, r] of newest) {
       const judgement = r.status === "posted" ? null : (JSON.parse(r.payload_json) as ReplyPayload).judgement;
       const last = newestLive(threads.get(thread) ?? []);
-      if ((judgement === "valid" || judgement === "partly") && last) out.push({ thread, replyTo: last.id });
+      if ((judgement === "valid" || judgement === "partly") && last) out.push(thread);
     }
     if (!out.length) return { status: 409, error: "No reply draft finds a comment valid or partly valid. Draft replies first." };
     if (out.length > MAX_REPLY_THREADS)
@@ -1746,7 +1792,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         status: 409,
         error: `${out.length} threads have a valid reply draft. Fix at most ${MAX_REPLY_THREADS} at a time, per thread.`,
       };
-    return out.sort((a, b) => a.thread - b.thread);
+    // replyThreads adds mine: the resolve tick of a nofix draft needs it.
+    return replyThreads(db, pr, out);
   }
 
   // The findings of a fix run (docs/plans/fix-ux.md WP3): open findings of this PR that are not posted and have a place in the code.

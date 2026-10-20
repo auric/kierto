@@ -3,7 +3,7 @@
 
 // Fix run validator (plan r3 S-FIX). Pure: the caller reads each edit path at the source head S of the run.
 import type { DiffRowDto } from "../../shared/dto";
-import { type Coverage, type FixResult, type FixThread, MAX_FIX_BYTES } from "../../shared/review";
+import { type Coverage, type FixNote, type FixResult, type FixThread, MAX_FIX_BYTES } from "../../shared/review";
 import { deniedPath, editRows, type Located, locate, overlaps, prepareFile } from "./edits";
 import { MAX_FILE_CHARS, repoPath } from "./validate";
 
@@ -13,7 +13,7 @@ export type FixFile = { mode: string; bytes: Uint8Array } | "blocked" | "size";
 
 // ord: the index of the edit in the result. Exactly one of thread and finding is set.
 export type ValidEdit = Located & { ord: number; thread: number | null; finding: number | null; path: string; rows: DiffRowDto[] };
-export type ValidatedFix = { summary: string; coverage: Coverage; threads: FixThread[]; edits: ValidEdit[] };
+export type ValidatedFix = { summary: string; coverage: Coverage; threads: FixNote[]; edits: ValidEdit[] };
 // The threads and the findings that the run asked for.
 export type FixRequest = { threads: readonly number[]; findings: readonly number[] };
 
@@ -41,6 +41,7 @@ function targetOf(x: { thread?: number; finding?: number }): Target | string {
 }
 
 // Only requested threads and findings pass. Every drop, every target without a note, and every fixed note without a valid edit go to coverage.skipped.
+// docs/plans/thread-outcome.md: a fixed note without a valid edit stays, with why "dropped" and the drop reasons of its edits.
 export function validateFix(result: FixResult, requested: FixRequest, files: ReadonlyMap<string, FixFile>): ValidatedFix {
   const byNumber = (a: number, b: number) => a - b;
   const order = [
@@ -93,20 +94,26 @@ export function validateFix(result: FixResult, requested: FixRequest, files: Rea
     edited.add(at.key);
     return null;
   };
+  const drops = new Map<string, string[]>();
   for (const [ord, e] of result.edits.entries()) {
     const at = targetOf(e);
     const why = typeof at === "string" ? at : check(e, at, ord);
     const label = typeof at === "string" ? oneLine(e.path) : `${at.key}, ${oneLine(e.path)}`;
-    if (why) skipped.push(`Edit ${ord + 1} (${label}) dropped: ${why}.`);
+    if (!why) continue;
+    const line = `Edit ${ord + 1} (${label}) dropped: ${why}.`;
+    skipped.push(line);
+    if (typeof at !== "string") drops.set(at.key, [...(drops.get(at.key) ?? []), line]);
   }
 
-  const threads: FixThread[] = [];
+  const threads: FixNote[] = [];
   for (const key of order) {
     const name = key.charAt(0).toUpperCase() + key.slice(1);
     const note = notes.get(key);
     if (!note) skipped.push(`${name} has no note.`);
-    else if (note.fixed && !edited.has(key)) skipped.push(`${name} has no valid edit.`);
-    else threads.push(note);
+    else if (note.fixed && !edited.has(key)) {
+      skipped.push(`${name} has no valid edit.`);
+      threads.push({ ...note, why: "dropped", drops: drops.get(key) ?? [] });
+    } else threads.push(note);
   }
   return { summary: result.summary, coverage: { ...result.coverage, skipped }, threads, edits };
 }

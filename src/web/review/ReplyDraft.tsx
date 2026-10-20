@@ -257,7 +257,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
             </p>
           )}
           <p className="rl-indent m-0 mt-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-            {session ? "From your session." : `${EVIDENCE[p.evidenceStatus]}.`}{" "}
+            {session ? "From your session." : p.origin === "nofix" ? "From the fix run." : `${EVIDENCE[p.evidenceStatus]}.`}{" "}
             {/* A session draft without reply text holds the reason as its body. */}
             {!(session && p.reason.trim() === it.body.trim()) && <Inline text={p.reason} />}
           </p>

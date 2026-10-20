@@ -455,6 +455,35 @@ describe("drafts", () => {
   );
 
   test(
+    "thread-outcome writer priority: Draft replies keeps an untouched Fixed in or nofix draft; a run for the named thread replaces it",
+    async () => {
+      const h = await setup();
+      const first = await h.run();
+      const [a, b] = first.items as [ReviewItemDto, ReviewItemDto];
+      expect(payload(a).origin).toBe("reply");
+      // Thread 101 gets an untouched "Fixed in" draft, thread 501 an untouched nofix draft of a fix run.
+      const swap = (it: ReviewItemDto, extra: Partial<ReplyPayload>) =>
+        h.db
+          .query("UPDATE review_item SET payload_json = $p WHERE id = $id")
+          .run({ id: it.id, p: JSON.stringify({ ...payload(it), origin: undefined, ...extra }) });
+      swap(a, { fix: { id: 99, commit: "c0ffee" } });
+      swap(b, { origin: "nofix" });
+      const second = await h.run();
+      expect(second.items).toEqual([]);
+      expect(second.run.summary?.coverage.skipped).toEqual(expect.arrayContaining([keptText(101), keptText(501)]));
+      expect(h.item(a.id)).toMatchObject({ status: "new", revision: 0 });
+      expect(h.item(b.id)).toMatchObject({ status: "new", revision: 0 });
+
+      // Draft again for one thread is the user's choice, so it replaces the AI draft of a higher writer.
+      const third = await h.run([101]);
+      expect(third.items.map((i) => [payload(i).thread, payload(i).origin])).toEqual([[101, "reply"]]);
+      expect(h.item(a.id)).toMatchObject({ status: "discarded" });
+      expect(third.run.summary?.coverage.skipped).not.toContain(keptText(101));
+    },
+    SLOW,
+  );
+
+  test(
     "plan r3: a reply run stores each judgement and its tasks at launch; a draft stored without a judgement reads as null",
     async () => {
       const h = await setup();
@@ -694,7 +723,7 @@ describe("validateReplies", () => {
       requested,
     );
     expect(v.replies).toEqual([
-      { payload: { ...draft(101), body: "First.", replyTo: 103, resolveEvidence: "", resolveTick: false }, status: "new" },
+      { payload: { ...draft(101), body: "First.", replyTo: 103, resolveEvidence: "", resolveTick: false, origin: "reply" }, status: "new" },
     ]);
     expect(v.coverage.skipped).toEqual([
       "big.bin",

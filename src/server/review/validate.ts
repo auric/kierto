@@ -292,7 +292,7 @@ export function validateReplies(result: ReplyResult, requested: readonly ReplyTh
     // Only a thread that the user started gets the tick by default. A resolve proposal without a reply stays a draft.
     const resolveEvidence = resolve ? r.resolveEvidence.trim() : "";
     replies.push({
-      payload: { ...r, body, replyTo: to, resolve, resolveEvidence, resolveTick: resolve && mine.has(r.thread) },
+      payload: { ...r, body, replyTo: to, resolve, resolveEvidence, resolveTick: resolve && mine.has(r.thread), origin: "reply" },
       status: r.action === "none" && !resolve ? "discarded" : "new",
     });
   }

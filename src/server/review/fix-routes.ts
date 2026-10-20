@@ -223,6 +223,7 @@ export function createFixRoutes(opts: {
           resolveEvidence: `Commit ${made.short} changes ${paths.join(", ")}.`,
           resolveTick: !!root && isMe({ slug: root.authorSlug, login: root.authorLogin }, me),
           threadOpen: !msgs.some((m) => m.threadResolved),
+          origin: "fix",
         };
         db.query(SQL.item).run({ run: run.run, payload: JSON.stringify(payload), body, thread });
       }

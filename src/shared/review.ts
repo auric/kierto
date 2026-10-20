@@ -163,7 +163,9 @@ export const fixThread = z.object({
   reply: z
     .string()
     .default("")
-    .describe("For fixed false on a thread: the reply to the thread as short Markdown in the user's voice. Else empty."),
+    .describe(
+      "For a thread: short Markdown in the user's voice. For fixed false: the answer to the commenter. For fixed true: what the edits change. Empty for a finding.",
+    ),
 });
 
 export const fixResult = z.object({
@@ -175,8 +177,8 @@ export const fixResult = z.object({
 
 export type FixEdit = z.infer<typeof fixEdit>;
 export type FixThread = z.infer<typeof fixThread>;
-// A stored note. Only the app sets why to "dropped".
-export type FixNote = Omit<FixThread, "why"> & { why: FixWhy | null };
+// A stored note. Only the app sets why to "dropped". drops: the drop reasons of its edits, only with why "dropped".
+export type FixNote = Omit<FixThread, "why"> & { why: FixWhy | null; drops?: string[] };
 export type FixResult = z.infer<typeof fixResult>;
 
 export const fixJsonSchema = (): Record<string, unknown> => z.toJSONSchema(fixResult, { target: "draft-07" });
@@ -187,6 +189,7 @@ const fixNotes = z.array(
       .enum([...fixWhys, "dropped"])
       .nullable()
       .default(null),
+    drops: z.array(z.string()).optional(),
   }),
 );
 // review_run.fix_json. Notes stored before why and reply existed get the defaults.
@@ -199,6 +202,18 @@ export const FIX_EDIT_RULES = [
   "Leave old empty only for a new file.",
   "Never edit .claude folders, .mcp.json, CLAUDE.md, CLAUDE.local.md, AGENTS.md, .gitmodules, or the sources of git hooks: .githooks, .husky, and the pre-commit, lefthook, lint-staged, and commitlint configs.",
   "./repo shows CLAUDE.md, CLAUDE.local.md, and AGENTS.md as *.untrusted.md files. Never edit them under either name.",
+];
+
+// docs/plans/thread-outcome.md: the why rules of the fix agent (catalog.ts) and of a session run that proposes fixes (consult.ts).
+export const FIX_WHY_RULES = [
+  "When fixed is false, set why to one of these values.",
+  '"already": the code already does what the comment asks.',
+  '"invalid": the review point is wrong.',
+  '"scope": the change belongs outside this pull request.',
+  '"decision": the user must choose between options.',
+  '"risk": the fix can break other code.',
+  '"unclear": the comment does not say what to change.',
+  "When fixed is true, set why to null.",
 ];
 
 // ---------- Re-review (plan r2 S-RR) ----------

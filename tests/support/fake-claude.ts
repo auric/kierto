@@ -22,7 +22,7 @@ export type FakeScenario = {
   hang?: boolean;
   // The structured_output of the result, by the --json-schema shape. Absent: the echo of the stdin.
   // replies: a reply run (properties.replies). rereview: a re-review (properties.earlier). answer: an ask run (properties.answer).
-  // fix: a fix run (properties.edits). improve: a prompt proposal (properties.reasons). consult: a session run (properties.answers),
+  // fix: a fix run (properties.edits); its notes can carry why and reply. improve: a prompt proposal (properties.reasons). consult: a session run (properties.answers),
   // with properties.fix when the run also asks for fixes (session-consult.md part D).
   replies?: unknown;
   rereview?: unknown;
@@ -60,16 +60,15 @@ export function echoReplies(stdin: string) {
 }
 
 // A fix result with one note per thread of the stdin "Fix threads:" line and per ID of the "Fix findings:" line, no fix, and no edit.
+// why null and an empty reply: the app makes no nofix draft (docs/plans/thread-outcome.md). A scenario fix result can set both.
 export function echoFix(stdin: string) {
   const line = /^Fix threads: (.*)$/m.exec(stdin)?.[1] ?? "";
   const threads = [...line.matchAll(/(\d+)(?: \([^)]*\))?/g)].map((m) => Number(m[1]));
   const findings = [...(/^Fix findings: (.*)$/m.exec(stdin)?.[1] ?? "").matchAll(/\d+/g)].map((m) => Number(m[0]));
+  const none = { fixed: false, reason: "Echo", why: null, reply: "" };
   return {
     summary: findings.length ? `Checked ${threads.length} threads and ${findings.length} findings.` : `Checked ${threads.length} threads.`,
-    threads: [
-      ...threads.map((thread) => ({ thread, fixed: false, reason: "Echo" })),
-      ...findings.map((finding) => ({ finding, fixed: false, reason: "Echo" })),
-    ],
+    threads: [...threads.map((thread) => ({ thread, ...none })), ...findings.map((finding) => ({ finding, ...none }))],
     edits: [],
     coverage: NO_COVERAGE,
   };

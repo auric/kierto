@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   askAgent,
+  FIX_REPLY_RULES,
   fixAgent,
   LARGE_FILE_RULE,
   mainAgent,
@@ -24,7 +25,8 @@ import {
   buildRereviewPrompt,
   type PromptInput,
 } from "../../src/server/review/prompt";
-import { replyJsonSchema, replyResult } from "../../src/shared/review";
+import { SESSION_FIX_RULES } from "../../src/shared/consult";
+import { FIX_WHY_RULES, fixJsonSchema, replyJsonSchema, replyResult } from "../../src/shared/review";
 
 const general = SHIPPED_PROFILES[0] as (typeof SHIPPED_PROFILES)[number];
 const input: PromptInput = {
@@ -119,6 +121,23 @@ ${rule}
       "\nRead the whole thread. Set fixed to false, with the reason, when the code is already right or the thread asks for no change.\n",
     );
     expect(buildReplyPrompt({ ...input, threads })).not.toContain("Read the whole thread");
+  });
+
+  test("thread outcome: the fix agent and a session fix run set why; the fix agent writes reply; each rule sentence has at most 20 words", () => {
+    const prompt = fixAgent(general).prompt;
+    for (const rule of [...FIX_WHY_RULES, ...FIX_REPLY_RULES]) {
+      expect(prompt).toContain(`\n${rule}\n`);
+      for (const sentence of rule.split(/(?<=[.!?])\s+/)) expect(sentence.split(/\s+/).length).toBeLessThanOrEqual(20);
+    }
+    for (const rule of FIX_WHY_RULES) expect(SESSION_FIX_RULES).toContain(`\n- ${rule}\n`);
+    expect(SESSION_FIX_RULES).toContain(
+      "\n- When fixed is true, set reply to what the edits change, in one short sentence. Else leave reply empty. The reply of the answer goes to the thread.\n",
+    );
+    // The CLI schema tells the same: a reply for each thread, empty for a finding.
+    const schema = fixJsonSchema() as { properties: { threads: { items: { properties: { reply: { description: string } } } } } };
+    expect(schema.properties.threads.items.properties.reply.description).toBe(
+      "For a thread: short Markdown in the user's voice. For fixed false: the answer to the commenter. For fixed true: what the edits change. Empty for a finding.",
+    );
   });
 
   test("a fix run with findings lists their IDs only and names findings.md; a findings-only run has no thread lines (fix-ux.md WP3)", () => {

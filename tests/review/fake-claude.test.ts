@@ -134,11 +134,12 @@ describe("fake CLI", () => {
   test("a fix schema echoes one unfixed note per Fix threads and Fix findings ID and no edit; a scenario fix result replaces it", async () => {
     const r = await run(fixJsonSchema(), "Read,Grep,Glob");
     expect(fixResult.safeParse(r.output).success).toBe(true);
+    const none = { fixed: false, reason: "Echo", why: null, reply: "" };
     expect(r.output.threads).toEqual([
-      { thread: 101, fixed: false, reason: "Echo" },
-      { thread: 102, fixed: false, reason: "Echo" },
-      { finding: 31, fixed: false, reason: "Echo" },
-      { finding: 32, fixed: false, reason: "Echo" },
+      { thread: 101, ...none },
+      { thread: 102, ...none },
+      { finding: 31, ...none },
+      { finding: 32, ...none },
     ]);
     expect(r.output.edits).toEqual([]);
     expect(r.tools).not.toContain("Task");

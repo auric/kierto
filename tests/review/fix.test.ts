@@ -13,11 +13,11 @@ import { createLive } from "../../src/server/live";
 import { MIN_EDIT_TURNS, SHIPPED_PROFILES } from "../../src/server/review/catalog";
 import { type FixFile, validateFix } from "../../src/server/review/fix";
 import { git, gitEnv } from "../../src/server/review/git";
-import { createReviewJobs } from "../../src/server/review/jobs";
+import { createReviewJobs, keptText } from "../../src/server/review/jobs";
 import type { GitRemote } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
-import type { ApiError, CloneDto, FixCommitDto, FixDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
+import type { ApiError, CloneDto, FixCommitDto, FixDto, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
 import { type FixEdit, type FixResult, fixJsonSchema, MAX_FIX_BYTES, type ReplyPayload } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER, key, startFakeBitbucket } from "../support/fake-bitbucket";
 import type { FakeScenario } from "../support/fake-claude";
@@ -703,7 +703,13 @@ describe("edits through a full run", () => {
 
       const [f] = await h.fixes();
       expect(f?.run).toMatchObject({ id: d.run.id, kind: "fix", status: "incomplete" });
-      expect(f?.threads).toEqual([note(101), note(501)]);
+      // docs/plans/thread-outcome.md: thread 801 lost every edit, so its note stays with why dropped and the drop reasons.
+      expect(f?.threads).toEqual([
+        note(101),
+        note(501),
+        { ...note(801), why: "dropped", drops: [dropped(23, 801, "src/gone.ts", "the file does not exist at the head commit")] },
+      ]);
+      expect(d.items).toEqual([]);
       expect(f?.edits.map((e) => [e.thread, e.path, e.added, e.removed])).toEqual([
         [101, "src/app.ts", 1, 1],
         [101, "src/crlf.ts", 1, 1],
@@ -772,6 +778,133 @@ describe("edits through a full run", () => {
       const d = await h.finish(r.body.id);
       expect(d.run).toMatchObject({ status: "failed", errorKind: "restart" });
       expect(h.editRows(r.body.id)).toEqual([]);
+    },
+    SLOW,
+  );
+});
+
+describe("thread outcome (docs/plans/thread-outcome.md WP-S1)", () => {
+  const nofix = (thread: number, why: string, reply: string) => ({ thread, fixed: false, reason: `R${thread}.`, why, reply });
+  const insertComment = (h: Awaited<ReturnType<typeof setup>>, id: number, author: string, root = id) =>
+    h.db
+      .query(
+        `INSERT INTO comment (pr, comment_id, version, parent_id, root_id, author_slug, text, thread_resolved, created_at, updated_at)
+        VALUES ($pr, $id, 0, $parent, $root, $author, 'x', 0, $id, $id)`,
+      )
+      .run({ pr: h.pr, id, parent: root === id ? null : root, root, author });
+
+  test(
+    "a note without a fix makes an unaccepted nofix draft for already, invalid, scope, and unclear; user drafts and Fixed in stay",
+    async () => {
+      const h = await setup();
+      // 1001: a thread that the user started. 1101, 1201, 1301: threads with a user draft.
+      insertComment(h, 1001, FAKE_USER);
+      insertComment(h, 1002, ALEX, 1001);
+      for (const id of [1101, 1201, 1301]) insertComment(h, id, ALEX);
+      const old = h.draft(101, 103, "valid");
+      const accepted = h.draft(1101, 1101, "valid", "accepted");
+      const edited = h.draft(1201, 1201, "valid");
+      h.db.query("UPDATE review_item SET edited = 1, body = 'My words.' WHERE id = $id").run({ id: edited });
+      const declined = h.draft(1301, 1301, "valid", "discarded");
+      // An untouched "Fixed in" draft of an earlier commit.
+      const fixedIn = h.draft(901, 901, null);
+      const payloadOf = (id: number) =>
+        JSON.parse(
+          (h.db.query("SELECT payload_json FROM review_item WHERE id = $id").get({ id }) as { payload_json: string }).payload_json,
+        );
+      h.db
+        .query("UPDATE review_item SET payload_json = $p, body = 'Fixed in c0f.' WHERE id = $id")
+        .run({ id: fixedIn, p: JSON.stringify({ ...payloadOf(fixedIn), body: "Fixed in c0f.", fix: { id: 99, commit: "c0ffee" } }) });
+      const f = h.finding();
+      h.scenario({
+        fix: {
+          summary: "No fixes.",
+          threads: [
+            nofix(101, "already", "src/app.ts:1 already sets `a`."),
+            nofix(201, "invalid", "B is right as it is."),
+            nofix(301, "scope", "This belongs in a later pull request."),
+            nofix(401, "unclear", "What should change here?"),
+            nofix(501, "decision", "Pick A or B."),
+            nofix(601, "risk", "This can break the cache."),
+            { thread: 801, fixed: true, reason: "Fix 801.", why: null, reply: "Changes gone.ts." },
+            nofix(901, "already", "Done."),
+            nofix(1001, "already", "src/app.ts:3 does it."),
+            nofix(1101, "invalid", "AI text."),
+            nofix(1201, "scope", "AI text."),
+            nofix(1301, "unclear", "AI text."),
+            { finding: f, fixed: false, reason: "F.", why: "invalid", reply: "Not for a finding." },
+          ],
+          edits: [edit(801, "src/gone.ts", "x")],
+          coverage: emptyCoverage,
+        },
+      });
+      const threads = [101, 201, 301, 401, 501, 601, 801, 901, 1001, 1101, 1201, 1301];
+      const d = await h.finish((await h.startFix({ threads, findings: [f] })).body.id);
+      expect(d.run).toMatchObject({ kind: "fix", status: "incomplete" });
+
+      const items = d.items.map((i) => ({ ...i, p: i.payload as ReplyPayload }));
+      expect(items.map((i) => [i.kind, i.p.thread, i.status, i.body, i.edited])).toEqual([
+        ["reply", 101, "new", "src/app.ts:1 already sets `a`.", false],
+        ["reply", 201, "new", "B is right as it is.", false],
+        ["reply", 301, "new", "This belongs in a later pull request.", false],
+        ["reply", 401, "new", "What should change here?", false],
+        ["reply", 1001, "new", "src/app.ts:3 does it.", false],
+      ]);
+      for (const i of items) expect(i.p).toMatchObject({ origin: "nofix", action: "reply", judgement: null, threadOpen: true });
+      // "already" proposes resolve. Only the thread that the user started gets the tick.
+      expect(items.map((i) => [i.p.thread, i.p.replyTo, i.p.resolve, i.p.resolveEvidence, i.p.resolveTick])).toEqual([
+        [101, 103, true, "R101.", false],
+        [201, 201, false, "", false],
+        [301, 301, false, "", false],
+        [401, 401, false, "", false],
+        [1001, 1002, true, "R1001.", true],
+      ]);
+
+      // The untouched draft of the reply run gives way. The user drafts and the "Fixed in" draft stay.
+      const row = (id: number) => h.db.query("SELECT status, edited, body FROM review_item WHERE id = $id").get({ id });
+      expect(row(old)).toMatchObject({ status: "discarded" });
+      expect(row(accepted)).toMatchObject({ status: "accepted" });
+      expect(row(edited)).toMatchObject({ status: "new", edited: 1, body: "My words." });
+      expect(row(declined)).toMatchObject({ status: "discarded" });
+      expect(row(fixedIn)).toMatchObject({ status: "new", body: "Fixed in c0f." });
+      expect(d.run.summary?.coverage.skipped).toEqual(
+        expect.arrayContaining([keptText(901), keptText(1101), keptText(1201), keptText(1301), "Thread 801 has no valid edit."]),
+      );
+      expect(d.run.summary?.coverage.skipped.filter((s) => s.startsWith("Thread ") && s.includes("kept your draft"))).toHaveLength(4);
+
+      // decision, risk, and dropped make no draft. The finding keeps its why on the note only.
+      const [fx] = await h.fixes();
+      const noteOf = (t: { thread?: number; finding?: number }) =>
+        fx?.threads.find((n) => n.thread === t.thread && n.finding === t.finding);
+      expect(noteOf({ thread: 501 })?.why).toBe("decision");
+      expect(noteOf({ thread: 601 })?.why).toBe("risk");
+      expect(noteOf({ thread: 801 })).toMatchObject({
+        fixed: true,
+        why: "dropped",
+        drops: ["Edit 1 (thread 801, src/gone.ts) dropped: the file does not exist at the head commit."],
+      });
+      expect(noteOf({ finding: f })).toEqual({ finding: f, fixed: false, reason: "F.", why: "invalid", reply: "Not for a finding." });
+      const drafted = h.db
+        .query("SELECT DISTINCT thread FROM review_item WHERE kind = 'reply' AND run = $run ORDER BY thread")
+        .all({ run: d.run.id }) as { thread: number }[];
+      expect(drafted.map((r) => r.thread)).toEqual([101, 201, 301, 401, 1001]);
+    },
+    SLOW,
+  );
+
+  test(
+    "a later fix run replaces an untouched nofix draft of an earlier fix run",
+    async () => {
+      const h = await setup();
+      h.scenario({ fix: { summary: "S.", threads: [nofix(101, "already", "First.")], edits: [], coverage: emptyCoverage } });
+      const first = await h.finish((await h.start([101])).body.id);
+      const a = first.items[0] as ReviewItemDto;
+      expect(a.body).toBe("First.");
+      h.scenario({ fix: { summary: "S.", threads: [nofix(101, "scope", "Second.")], edits: [], coverage: emptyCoverage } });
+      const second = await h.finish((await h.start([101])).body.id);
+      expect(second.items.map((i) => [i.body, (i.payload as ReplyPayload).origin])).toEqual([["Second.", "nofix"]]);
+      expect(h.db.query("SELECT status FROM review_item WHERE id = $id").get({ id: a.id })).toEqual({ status: "discarded" });
+      expect(second.run.summary?.coverage.skipped).toEqual([]);
     },
     SLOW,
   );
@@ -1027,5 +1160,22 @@ describe("validateFix", () => {
     expect(v.edits).toEqual([]);
     expect(v.coverage.skipped.slice(0, -1).map((s) => s.endsWith("the app never edits this path."))).toEqual(paths.map(() => true));
     expect(v.coverage.skipped.at(-1)).toBe("Thread 1 has no valid edit.");
+    // docs/plans/thread-outcome.md: the note stays with why dropped and the drop reasons of its edits.
+    expect(v.threads).toEqual([{ ...note(1), why: "dropped", drops: v.coverage.skipped.slice(0, -1) }]);
+  });
+
+  test("a fixed note without any edit is kept as dropped with no reasons; an unfixed note keeps its why and reply", () => {
+    const v = validateFix(
+      result({
+        threads: [note(1), { thread: 2, fixed: false, reason: "R.", why: "already", reply: "Done in a.ts:1." }],
+      }),
+      { threads: [1, 2], findings: [] },
+      new Map(),
+    );
+    expect(v.threads).toEqual([
+      { ...note(1), why: "dropped", drops: [] },
+      { thread: 2, fixed: false, reason: "R.", why: "already", reply: "Done in a.ts:1." },
+    ]);
+    expect(v.coverage.skipped).toEqual(["Thread 1 has no valid edit."]);
   });
 });
