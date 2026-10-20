@@ -20,7 +20,7 @@ import { Hint, type Hints } from "../shell/Hint";
 import { prKey, repoOf } from "../shell/model";
 import { ApplyDialog, type ApplyTarget } from "./ApplyDialog";
 import { CloneFolder } from "./CloneDialog";
-import { cloneKey, fixesKey, getClone, undoFix, useClone, useClones, useFixes, useStartFix } from "./data";
+import { cloneKey, declineFix, fixesKey, getClone, undeclineFix, undoFix, useClone, useClones, useFixes, useStartFix } from "./data";
 import { FixCard, type FixCtx } from "./FixCard";
 import { FixPicker } from "./FixPicker";
 import { handoffText } from "./handoff";
@@ -33,6 +33,7 @@ import {
   fixReason,
   fixState,
   fixTargets,
+  noteDraft,
   OWN_ONLY,
   selection,
   threadFixWhy,
@@ -67,23 +68,31 @@ export type FixUi = {
 const NO_CARDS: ReadonlyMap<number, ReactNode> = new Map();
 const NO_TICKS: ReadonlySet<string> = new Set();
 
-// The fix card of each thread or finding with fix state, keyed by thread or review item ID.
+// The fix card of each thread or finding with fix state, keyed by thread or review item ID. of: the threads, or the finding drafts
+// with their status. replies: the current reply draft of each thread. declining: the cardKey of each card with a decline request out.
 function fixCards(
   kind: FixTarget["kind"],
-  of: { id: number }[],
+  of: { id: number; status?: ReviewItemDto["status"] }[],
   list: FixDto[] | undefined,
   asked: Asked | null,
   ticks: ReadonlyMap<number, boolean>,
   undoing: ReadonlySet<number>,
+  replies: ReviewItemDto[] | undefined,
+  declining: ReadonlySet<string>,
   ctx: FixCtx,
 ) {
   const out = new Map<number, ReactNode>();
-  for (const { id } of of) {
+  for (const { id, status } of of) {
     const target = { kind, id };
     const s = fixState(list, target, asked);
     if (!s) continue;
-    const busy = s.kind === "done" && !!s.commit && undoing.has(s.commit.id);
-    out.set(id, <FixCard state={s} target={target} ticks={ticks} busy={busy} ctx={ctx} />);
+    const done = s.kind === "done" ? s : null;
+    const busy = (!!done?.commit && undoing.has(done.commit.id)) || declining.has(cardKey(target));
+    const draft = done ? noteDraft(done.fix, done.note, target, replies) : null;
+    // The server refuses the undo once the "Won't fix" reply or the finding is posted. replies holds only the current, unposted draft
+    // of each thread.
+    const undecline = !!done?.note?.declined && (kind === "thread" ? draft !== null : status !== "posted");
+    out.set(id, <FixCard state={s} target={target} ticks={ticks} busy={busy} draft={draft} undecline={undecline} ctx={ctx} />);
   }
   return out;
 }
@@ -123,6 +132,7 @@ export function useFix(
   const [asked, setAsked] = useState<Asked | null>(null);
   const [ticks, setTicks] = useState<ReadonlyMap<number, boolean>>(new Map());
   const [undoing, setUndoing] = useState<ReadonlySet<number>>(new Set());
+  const [declining, setDeclining] = useState<ReadonlySet<string>>(new Set());
   const [target, setTarget] = useState<ApplyTarget | null>(null);
   const clone = useClone(pr.id, author && target !== null);
   // The element that takes the focus when the apply dialog closes. The dialog can read it more than once, so only an open clears it.
@@ -177,10 +187,8 @@ export function useFix(
     showList(targets.map(cardKey), false);
   };
 
-  const propose = () => {
-    if (reason.kind !== "ok" || start.isPending) return;
-    const ts = tickedThreads;
-    const fs = tickedFindings;
+  // focus: the element that takes the focus after the start, or null.
+  const runFor = (ts: number[], fs: number[], focus: string | null = null) => {
     const n = ts.length + fs.length;
     start.mutate(
       // fixRunInput refuses an empty list.
@@ -194,10 +202,23 @@ export function useFix(
           o.showFindings(fs);
           void qc.invalidateQueries({ queryKey: fixesKey(pr.id) });
           announce(n === 1 ? "Proposing a fix." : `Proposing fixes for ${plural(n, "point")}.`);
+          if (focus) focusAfter({ id: focus, block: "nearest", flash: false });
         },
         onError: (e) => toast.add({ title: "The fix run did not start", description: e.message }),
       },
     );
+  };
+  const propose = () => {
+    if (reason.kind !== "ok" || start.isPending) return;
+    runFor(tickedThreads, tickedFindings);
+  };
+  // Fix again and Fix anyway on a card: the same checks as the Fix list with one ticked row.
+  const again = (t: FixTarget) => {
+    if (start.isPending) return;
+    const why = fixReason({ rows: rowCount, ticked: 1, synced: o.synced, profile: o.profile, busy: o.busy });
+    if (why.kind !== "ok") return void toast.add({ title: why.text });
+    // The button leaves with the card, so the focus goes to the running card.
+    runFor(t.kind === "thread" ? [t.id] : [], t.kind === "finding" ? [t.id] : [], `fx-${cardKey(t)}`);
   };
 
   const refresh = () => {
@@ -251,38 +272,41 @@ export function useFix(
       });
     }
   };
-  const onUndo = useRef(undo);
-  onUndo.current = undo;
+
+  // "Don't fix" with a reason, or its undo with reason null. The card keeps the focus, so a keyboard user stays at the outcome.
+  const decline = async (t: FixTarget, run: number, reason: string | null) => {
+    const key = cardKey(t);
+    if (declining.has(key)) return false;
+    setDeclining((s) => new Set(s).add(key));
+    const at = t.kind === "thread" ? { run, thread: t.id } : { run, finding: t.id };
+    try {
+      if (reason === null) await undeclineFix(at);
+      else await declineFix({ ...at, reason });
+      announce(
+        reason === null
+          ? "Undone. The proposal is back."
+          : t.kind === "thread"
+            ? "Declined. A “Won't fix” reply draft is in the thread."
+            : "Declined. The finding is discarded.",
+      );
+      focusAfter({ id: `fx-${key}`, block: "nearest", flash: false });
+      return true;
+    } catch (e) {
+      toast.add({ title: reason === null ? "The undo did not run" : "The decline did not save", description: (e as Error).message });
+      return false;
+    } finally {
+      refresh();
+      setDeclining((s) => {
+        const out = new Set(s);
+        out.delete(key);
+        return out;
+      });
+    }
+  };
 
   const { meta, hints, onLog } = o;
   const onLogRef = useRef(onLog);
   onLogRef.current = onLog;
-  // Stable, so the memo cards render again only when their own data changes.
-  const ctx = useMemo<FixCtx>(
-    () => ({
-      meta,
-      hints,
-      announce,
-      onLog: (r) => onLogRef.current(r),
-      onTick: (id, on) => setTicks((m) => new Map(m).set(id, on)),
-      onUndo: (c, target) => void onUndo.current(c, target),
-    }),
-    [meta, hints, announce],
-  );
-
-  const cards = useMemo(
-    () => (author ? fixCards("thread", o.threads, list, asked, ticks, undoing, ctx) : NO_CARDS),
-    [author, o.threads, list, asked, ticks, undoing, ctx],
-  );
-  const findingCards = useMemo(
-    () => (author ? fixCards("finding", o.findings, list, asked, ticks, undoing, ctx) : NO_CARDS),
-    [author, o.findings, list, asked, ticks, undoing, ctx],
-  );
-  const places = useMemo(
-    () => new Map(o.findings.flatMap((f) => (f.anchor ? [[f.id, `${f.anchor.path}:${lineText(f.anchor)}`] as const] : []))),
-    [o.findings],
-  );
-
   const copyPrompt = async (thread: number) => {
     const t = threads.current.find((x) => x.id === thread);
     if (!t) return null;
@@ -307,6 +331,40 @@ export function useFix(
     const command = meta.runner.login.split(" ")[0] ?? meta.runner.short;
     return `Open a terminal in ${path ?? `your clone of ${repoOf(pr)}`}, run ${command}, and paste.`;
   };
+  // The newest actions. The stable ctx calls them, so a card never runs a stale one.
+  const acts = useRef({ undo, decline, again, copyPrompt });
+  acts.current = { undo, decline, again, copyPrompt };
+  // Stable, so the memo cards render again only when their own data changes.
+  const ctx = useMemo<FixCtx>(
+    () => ({
+      meta,
+      hints,
+      announce,
+      onLog: (r) => onLogRef.current(r),
+      onTick: (id, on) => setTicks((m) => new Map(m).set(id, on)),
+      onUndo: (c, target) => void acts.current.undo(c, target),
+      onDecline: (t, run, reason) => acts.current.decline(t, run, reason),
+      onUndecline: (t, run) => void acts.current.decline(t, run, null),
+      onAgain: (t) => acts.current.again(t),
+      onPrompt: (thread) => acts.current.copyPrompt(thread),
+      onDraft: (item) => focusAfter({ id: `rd-${item}`, block: "nearest", flash: true }),
+    }),
+    [meta, hints, announce, focusAfter],
+  );
+
+  const { replies } = o;
+  const cards = useMemo(
+    () => (author ? fixCards("thread", o.threads, list, asked, ticks, undoing, replies, declining, ctx) : NO_CARDS),
+    [author, o.threads, list, asked, ticks, undoing, replies, declining, ctx],
+  );
+  const findingCards = useMemo(
+    () => (author ? fixCards("finding", o.findings, list, asked, ticks, undoing, replies, declining, ctx) : NO_CARDS),
+    [author, o.findings, list, asked, ticks, undoing, replies, declining, ctx],
+  );
+  const places = useMemo(
+    () => new Map(o.findings.flatMap((f) => (f.anchor ? [[f.id, `${f.anchor.path}:${lineText(f.anchor)}`] as const] : []))),
+    [o.findings],
+  );
 
   const free = (list ?? []).flatMap((f, i) => {
     if (f.run.status === "running") return [];

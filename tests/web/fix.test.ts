@@ -7,18 +7,20 @@
 import { describe, expect, test } from "bun:test";
 import { fixRef } from "../../src/server/review/clone";
 import type { CommentDto, CommitDto, FixCommitDto, FixDto, FixEditDto, ReviewItemDto, RunDto } from "../../src/shared/dto";
-import type { AnchoredFinding, ReplyPayload } from "../../src/shared/review";
+import type { AnchoredFinding, FixNote, ReplyPayload } from "../../src/shared/review";
 import { HANDOFF_RULE, handoffText, indentBlock } from "../../src/web/fix/handoff";
 import {
   applyText,
   appRefPrefix,
   askerSide,
+  cardHead,
   cardKey,
   commitText,
   defaultMessage,
   fetchCommands,
   findingFixWhy,
   fixable,
+  fixOutcome,
   fixReason,
   fixState,
   fixTargets,
@@ -26,8 +28,11 @@ import {
   freeEdits,
   JUDGEMENT,
   leftOutText,
+  noteDraft,
+  outcomeText,
   selection,
   threadFixWhy,
+  WHY,
 } from "../../src/web/fix/model";
 import { buildThreads } from "../../src/web/pr/threads";
 import { closedLabel, fixedNote } from "../../src/web/review/model";
@@ -207,6 +212,7 @@ describe("Fix list", () => {
       badge: null,
       judgement: "valid",
       fixed: null,
+      outcome: null,
       text: "Point 10.",
       tick: true,
     });
@@ -307,6 +313,7 @@ describe("Fix list", () => {
       place: "src/cache/flush.ts:6",
       accepted: true,
       fixed: null,
+      outcome: null,
       text: "Finding 1.",
       tick: true,
     });
@@ -534,6 +541,138 @@ describe("fix card of a thread or a finding", () => {
     expect(fixWaiting(p, undefined, undefined)).toBe("fffffff");
     expect(fixWaiting(p, listed, fixes)).toBeNull();
     expect(fixWaiting(reply(100).payload as ReplyPayload, [], fixes)).toBeNull();
+  });
+});
+
+// docs/plans/thread-outcome.md WP-U1b: the fix side of the thread outcome.
+describe("fix outcome", () => {
+  const note = (o: Partial<FixNote>): FixNote => ({ fixed: false, reason: "R", why: null, reply: "", ...o });
+
+  test("card labels: each why, a decline, a proposal, and a note without why", () => {
+    expect(WHY).toEqual({
+      already: "Already done",
+      invalid: "Not valid",
+      scope: "Out of scope",
+      unclear: "Unclear",
+      decision: "Needs your decision",
+      risk: "Risky",
+      dropped: "Edits could not be applied",
+    });
+    expect(cardHead(2, note({ thread: 1, fixed: true }))).toBe("Proposed fix, 2 edits");
+    expect(cardHead(1, null)).toBe("Proposed fix, 1 edit");
+    expect(cardHead(0, note({ thread: 1 }))).toBe("No fix proposed");
+    expect(cardHead(0, note({ thread: 1, why: "risk" }))).toBe("Risky: needs your decision");
+    expect(cardHead(0, note({ thread: 1, why: "decision" }))).toBe("Needs your decision");
+    expect(cardHead(0, note({ thread: 1, fixed: true, why: "dropped", drops: ["Edit 1 dropped: x."] }))).toBe("Edits could not be applied");
+    expect(cardHead(1, note({ thread: 1, fixed: true, declined: { reason: "No.", draft: 5 } }))).toBe("Won't fix");
+  });
+
+  test("Fix list outcome: proposal, commit, partial commit, staged and undone commits", () => {
+    const label = (f: FixDto) => {
+      const o = fixOutcome([f], thread(100));
+      return o && outcomeText(o);
+    };
+    const two = { threads: [note({ thread: 100, fixed: true })], edits: [edit(1, 100), edit(2, 100)] };
+    expect(label(fix(1, two))).toBe("Fix proposed");
+    expect(label(fix(1, { ...two, commits: [commit(1, [1, 2])] }))).toBe("Fixed in eeeeeee");
+    expect(label(fix(1, { ...two, commits: [commit(1, [1])] }))).toBe("Partly fixed in eeeeeee");
+    // Two commits of one run together hold every edit of the thread.
+    expect(label(fix(1, { ...two, commits: [commit(2, [2], { short: "abc1234" }), commit(1, [1])] }))).toBe("Fixed in abc1234");
+    expect(label(fix(1, { ...two, commits: [commit(1, [1, 2], { state: "staged" })] }))).toBe("Fix proposed");
+    expect(label(fix(1, { ...two, commits: [commit(1, [1, 2], { state: "undone" })] }))).toBe("Fix proposed");
+    expect(fixOutcome([fix(1, two)], thread(200))).toBeNull();
+    expect(fixOutcome(undefined, thread(100))).toBeNull();
+  });
+
+  test("Fix list outcome: each why and a decline; all of them are no-fix outcomes", () => {
+    const of = (n: Partial<FixNote>, edits: FixEditDto[] = []) =>
+      fixOutcome([fix(1, { threads: [note({ thread: 100, ...n })], edits })], thread(100));
+    expect(of({ why: "already" })).toEqual({ label: "Already done", short: null, noFix: true });
+    expect(of({ why: "invalid" })?.label).toBe("Won't fix");
+    expect(of({ why: "scope" })?.label).toBe("Won't fix");
+    expect(of({ why: "unclear" })?.label).toBe("Follow-up asked");
+    expect(of({ why: "decision" })?.label).toBe("Needs your decision");
+    expect(of({ why: "risk" })?.label).toBe("Needs your decision");
+    expect(of({ fixed: true, why: "dropped", drops: [] })?.label).toBe("Needs your decision");
+    expect(of({})).toEqual({ label: "No fix proposed", short: null, noFix: true });
+    expect(of({ fixed: true, declined: { reason: "No.", draft: 5 } }, [edit(1, 100)])).toEqual({
+      label: "Declined",
+      short: null,
+      noFix: true,
+    });
+    expect(of({ fixed: true }, [edit(1, 100)])).toEqual({ label: "Fix proposed", short: null, noFix: false });
+  });
+
+  test("ticks: a no-fix note or a decline unticks a valid thread and an accepted finding; a proposal keeps the tick", () => {
+    const ME = "jdoe";
+    const c = (id: number): CommentDto => ({
+      id,
+      version: 0,
+      parentId: null,
+      rootId: id,
+      authorSlug: "asmith",
+      authorName: "Alex Smith",
+      authorLogin: "asmith",
+      text: `Point ${id}.`,
+      anchor: null,
+      threadResolved: false,
+      createdAt: id,
+      updatedAt: id,
+      unread: false,
+      deleted: false,
+    });
+    const threads = buildThreads([c(1), c(2), c(3), c(4)], new Set(), ME, { role: "AUTHOR", authorSlug: ME, authorName: "Jordan Doe" });
+    const replies = [1, 2, 3, 4].map((t) => reply(t, { judgement: "valid" }));
+    const f = fix(1, {
+      threads: [
+        note({ thread: 1, why: "already" }),
+        note({ thread: 2, fixed: true, declined: { reason: "No.", draft: 9 } }),
+        note({ thread: 3, fixed: true }),
+        note({ finding: 50, why: "decision" }),
+      ],
+      edits: [edit(1, 2), edit(2, 3)],
+    });
+    const t = fixTargets(threads, replies, [f], [finding(50, { status: "accepted" }), finding(51, { status: "accepted" })]);
+    expect(t.rows.map((r) => [r.thread, r.outcome?.label ?? null, r.tick])).toEqual([
+      [4, null, true],
+      [3, "Fix proposed", true],
+      [2, "Declined", false],
+      [1, "Already done", false],
+    ]);
+    expect(t.findings.map((r) => [r.finding, r.outcome?.label ?? null, r.tick])).toEqual([
+      [50, "Needs your decision", false],
+      [51, null, true],
+    ]);
+  });
+
+  test("a declined note keeps its edits out of the selection, so Apply never sends them", () => {
+    const f = fix(1, {
+      threads: [note({ thread: 100, fixed: true, declined: { reason: "No.", draft: 9 } }), note({ thread: 200, fixed: true })],
+      edits: [edit(1, 100), edit(2, 200), findingEdit(3, 12)],
+    });
+    expect(freeEdits(f).map((e) => e.id)).toEqual([2, 3]);
+    expect(selection(f, true, new Map([[1, true]]))).toEqual({ edits: [2, 3], threads: [200], findings: [12], first: thread(200) });
+    const declinedFinding = { ...f, threads: [note({ finding: 12, fixed: true, declined: { reason: "No." } })] };
+    expect(freeEdits(declinedFinding).map((e) => e.id)).toEqual([1, 2]);
+  });
+
+  test("the reply draft of a note: the nofix draft of the run, or the Won't fix draft of a decline", () => {
+    const already = note({ thread: 100, why: "already" });
+    const f = fix(4, { threads: [already] });
+    const nofix = { ...reply(100, { origin: "nofix" }), run: 4 };
+    expect(noteDraft(f, already, thread(100), [nofix])).toBe(nofix);
+    // Another run, another writer, a "Won't fix" draft, another thread, a finding, and no note do not count.
+    expect(noteDraft(f, already, thread(100), [{ ...nofix, run: 3 }])).toBeNull();
+    expect(noteDraft(f, already, thread(100), [{ ...reply(100, { origin: "reply" }), run: 4 }])).toBeNull();
+    expect(noteDraft(f, already, thread(100), [{ ...reply(100, { origin: "nofix", declined: { run: 4 } }), run: 4 }])).toBeNull();
+    expect(noteDraft(f, already, thread(200), [nofix])).toBeNull();
+    expect(noteDraft(f, note({ finding: 100, why: "already" }), found(100), [nofix])).toBeNull();
+    expect(noteDraft(f, null, thread(100), [nofix])).toBeNull();
+    const declined = note({ thread: 100, fixed: true, declined: { reason: "No.", draft: 77 } });
+    const wont = { ...reply(100, { origin: "nofix", declined: { run: 4 } }), id: 77, run: 4, body: "Won't fix: No." };
+    expect(noteDraft(f, declined, thread(100), [nofix, wont])).toBe(wont);
+    expect(noteDraft(f, declined, thread(100), [nofix])).toBeNull();
+    expect(noteDraft(f, declined, thread(100), undefined)).toBeNull();
   });
 });
 

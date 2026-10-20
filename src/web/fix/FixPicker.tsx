@@ -14,7 +14,18 @@ import { Severity } from "../review/Drafts";
 import { SEVERITY } from "../review/model";
 import { JudgementChip } from "../review/ReplyDraft";
 import { dialogKeys } from "./CloneDialog";
-import { cardKey, type FixFindingRow, type FixReason, type FixRow, type FixTargets, JUDGEMENT, leftOutText, NOTHING_TO_FIX } from "./model";
+import {
+  cardKey,
+  type FixFindingRow,
+  type FixOutcome,
+  type FixReason,
+  type FixRow,
+  type FixTargets,
+  JUDGEMENT,
+  leftOutText,
+  NOTHING_TO_FIX,
+  outcomeText,
+} from "./model";
 
 const icon = "size-[15px] shrink-0";
 const rowBox = "grid cursor-pointer grid-cols-[18px_minmax(0,1fr)_auto] items-start gap-x-2.5 gap-y-0.5 rounded px-1 py-2 hover:bg-hover";
@@ -22,20 +33,29 @@ const groupHead = "m-0 flex items-baseline gap-2 text-xs font-semibold text-mute
 
 type Tick = (key: string, on: boolean) => void;
 
-function FixedIn({ short }: { short: string }) {
+// docs/plans/thread-outcome.md: the fix outcome of a row. A commit outcome names its short hash.
+function Outcome({ o }: { o: FixOutcome }) {
   return (
-    <span className="inline-flex items-center gap-1 font-medium text-ink-2">
-      <GitCommitHorizontal aria-hidden className="size-[13px] shrink-0" />
-      Fixed in{" "}
-      <code translate="no" className="font-mono">
-        {short}
-      </code>
+    <span data-outcome className="inline-flex items-center gap-1 font-medium text-ink-2">
+      {o.short && <GitCommitHorizontal aria-hidden className="size-[13px] shrink-0" />}
+      {o.label}
+      {o.short && (
+        <>
+          {" "}
+          <code translate="no" className="font-mono">
+            {o.short}
+          </code>
+        </>
+      )}
     </span>
   );
 }
 
+const fixedIn = (short: string): FixOutcome => ({ label: "Fixed in", short, noFix: false });
+
 function Row({ r, ticked, onTick }: { r: FixRow; ticked: boolean; onTick: Tick }) {
   const about = `fx-pick-${r.thread}-about`;
+  const outcome = r.outcome ?? (r.fixed ? fixedIn(r.fixed) : null);
   return (
     <li className="border-b">
       <label className={rowBox}>
@@ -60,11 +80,11 @@ function Row({ r, ticked, onTick }: { r: FixRow; ticked: boolean; onTick: Tick }
         </span>
         {/* The description of the checkbox repeats this column for screen readers. */}
         <span aria-hidden className="justify-self-end text-xs text-muted-foreground">
-          {r.fixed ? <FixedIn short={r.fixed} /> : r.judgement ? <JudgementChip j={r.judgement} /> : "No judgement yet"}
+          {outcome ? <Outcome o={outcome} /> : r.judgement ? <JudgementChip j={r.judgement} /> : "No judgement yet"}
         </span>
         <span id={about} className="col-span-2 col-start-2 truncate text-sm text-ink-2">
           <span className="sr-only">
-            {r.fixed ? `Fixed in ${r.fixed}. ` : r.judgement ? `${JUDGEMENT[r.judgement]}. ` : "No judgement yet. "}
+            {outcome ? `${outcomeText(outcome)}. ` : r.judgement ? `${JUDGEMENT[r.judgement]}. ` : "No judgement yet. "}
             {r.badge === "own" ? "Your comment. " : r.badge === "posted" ? "Posted finding. " : ""}
           </span>
           {r.text}
@@ -77,7 +97,8 @@ function Row({ r, ticked, onTick }: { r: FixRow; ticked: boolean; onTick: Tick }
 // One open finding: severity, place, and state, then the title. The state explains the tick at the start.
 function FindingRow({ r, ticked, onTick }: { r: FixFindingRow; ticked: boolean; onTick: Tick }) {
   const about = `fx-pick-f${r.finding}-about`;
-  const state = r.fixed ? `Fixed in ${r.fixed}.` : r.accepted ? "Accepted." : "Not accepted yet.";
+  const outcome = r.outcome ?? (r.fixed ? fixedIn(r.fixed) : null);
+  const state = outcome ? `${outcomeText(outcome)}.` : r.accepted ? "Accepted." : "Not accepted yet.";
   return (
     <li className="border-b">
       <label className={rowBox}>
@@ -99,8 +120,8 @@ function FindingRow({ r, ticked, onTick }: { r: FixFindingRow; ticked: boolean; 
         </span>
         {/* The description of the checkbox repeats this column for screen readers. */}
         <span aria-hidden className="justify-self-end text-xs text-muted-foreground">
-          {r.fixed ? (
-            <FixedIn short={r.fixed} />
+          {outcome ? (
+            <Outcome o={outcome} />
           ) : r.accepted ? (
             <span className="inline-flex items-center gap-1 font-semibold text-ink-2">
               <Check aria-hidden className="size-[13px] shrink-0" />
@@ -173,7 +194,8 @@ export function FixPicker(props: {
                 </ul>
                 <p className="m-0 mt-1.5 text-xs text-muted-foreground">
                   {left && `${left} `}A reply judgement of Valid or Partly valid ticks a thread at the start. Your own comments and posted
-                  findings start unticked, unless your session accepted them.
+                  findings start unticked, unless your session accepted them. A fixed thread, a fix run without a fix, and a declined fix
+                  start unticked too.
                 </p>
               </>
             )}
@@ -193,8 +215,8 @@ export function FixPicker(props: {
                   ))}
                 </ul>
                 <p className="m-0 mt-1.5 text-xs text-muted-foreground">
-                  {!rows.length && left && `${left} `}Accepted findings, and findings that your session accepted, start ticked. A commit
-                  that fixes a finding takes it out of Ready to post.
+                  {!rows.length && left && `${left} `}Accepted findings, and findings that your session accepted, start ticked, unless a fix
+                  run gave no fix. A commit that fixes a finding takes it out of Ready to post.
                 </p>
               </>
             )}

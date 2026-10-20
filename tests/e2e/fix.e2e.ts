@@ -4,7 +4,7 @@
 // Fix it (plan r3 UI-FIX, pr-view-v4 2.7 to 2.12, docs/plans/fix-ux.md): judgement chips, the Fix list and its default ticks, Fix in
 // the thread footer, the proposed edits with their checkboxes, the clone, Apply and commit with the user's git, the "Fixed in" reply
 // and its post rule, a dirty clone, Undo, the runner prompt, Fix on your own comment, Fix on a review finding that is not posted,
-// one run for threads and findings, and no Fix on a reviewer PR.
+// one run for threads and findings, the fix outcomes without a fix, "Don't fix" with its fold and Undo, and no Fix on a reviewer PR.
 // Runs against serve.ts only: the fake Bitbucket with the author PR 1004, a temp git remote with temp clones, and the fake CLI.
 // The CLI echoes the reply judgements valid, partly, invalid, question, null per thread (tests/support/fake-claude.ts echoReplies).
 import { execFileSync } from "node:child_process";
@@ -781,6 +781,205 @@ test("one run takes threads and findings: f on a finding ticks only it; F ticks 
   await page.locator("#runline").getByRole("button", { name: "Cancel" }).click();
   await expect(runRow(page, "fix")).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
   expect(await writes()).toEqual([]);
+});
+
+// docs/plans/thread-outcome.md: three notes without a fix. LOCK is done already, with an answer to the commenter. LOOP needs a
+// decision. The edit of OWN fails the checks, so the validator keeps its note with why dropped.
+const NOFIX = {
+  summary: "No fixes.",
+  threads: [
+    {
+      thread: LOCK,
+      fixed: false,
+      why: "already",
+      reason: "The flush already releases the lock in a `finally` block.",
+      reply: "The flush already does this at src/cache/flush.ts:5.",
+    },
+    {
+      thread: LOOP,
+      fixed: false,
+      why: "decision",
+      reason: "Two ways to take the lock once.",
+      reply: "Take the lock once per batch, or keep one lock per entry. Which one do you want?",
+    },
+    { thread: OWN, fixed: true, why: null, reason: "Say in the README that the flush takes the lock once per entry.", reply: "" },
+  ],
+  edits: [{ thread: OWN, path: "README.md", old: "# No such heading\n", new: "# Sample\n" }],
+  coverage: { read: ["src/cache/flush.ts", "README.md"], skipped: [], unavailable: [], notChecked: [] },
+};
+
+// The fix result for LOOP alone: the README edit of FIX.
+const FIX_LOOP = {
+  summary: "One fix.",
+  threads: [{ thread: LOOP, fixed: true, reason: "Document the lock order." }],
+  edits: [{ thread: LOOP, path: "README.md", old: "# Sample\n", new: "# Sample\n\nThe flush takes the lock once per entry.\n" }],
+  coverage: { read: ["README.md"], skipped: [], unavailable: [], notChecked: [] },
+};
+
+test("no-fix notes: Already done points to its reply draft; a decision offers Fix anyway and Don't fix; a dropped edit offers Fix again and Copy prompt", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: APP });
+  await connect(page);
+  await control("state", { own: true });
+  await control("claude", { stream: "tree", fix: NOFIX });
+  // No reply draft yet, so the Fix list ticks nothing at the start.
+  await page.locator("#fix-btn").click();
+  const list = fixList(page);
+  await expect(list.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  for (const text of ["Release the lock", "Take the lock once", "Note to self"]) await pickRow(page, text).getByRole("checkbox").check();
+  await list.getByRole("button", { name: "Propose fixes for 3" }).click();
+  await expect(list).toBeHidden();
+  await expect(runRow(page, "fix")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+
+  // Already done: the label, the reason, and a pointer to the reply draft. The card never repeats the answer.
+  const lock = fixCard(page, LOCK);
+  await expect(lock).toHaveAttribute("data-fix-outcome", "already");
+  await expect(lock).toContainText("Already done");
+  await expect(lock).toContainText("The flush already releases the lock in a finally block.");
+  await expect(lock).toContainText("Reply drafted");
+  await expect(lock).not.toContainText("src/cache/flush.ts:5");
+  await expect(lock.getByRole("button", { name: "Don't fix…" })).toHaveCount(0);
+  await lock.getByRole("button", { name: "Go to the draft" }).click();
+  await expect(draft(page, LOCK)).toBeFocused();
+  await expect(draft(page, LOCK)).toContainText("The flush already does this at src/cache/flush.ts:5.");
+  await expect(draft(page, LOCK)).toContainText("From the fix run.");
+
+  // Needs your decision: the options from the note, Fix anyway, and Don't fix. No reply draft.
+  const loop = fixCard(page, LOOP);
+  await expect(loop).toContainText("Needs your decision");
+  await expect(loop).toContainText("Take the lock once per batch, or keep one lock per entry. Which one do you want?");
+  await expect(loop.getByRole("button")).toHaveText(["Log", "Fix anyway", "Don't fix…"]);
+  await expect(draft(page, LOOP)).toHaveCount(0);
+
+  // Edits could not be applied: the drop reason, Fix again, and Copy prompt. Never a reply.
+  const own = fixCard(page, OWN);
+  await expect(own).toContainText("Edits could not be applied");
+  const drops = own.getByRole("list", { name: "Why the edits could not be applied" }).getByRole("listitem");
+  await expect(drops).toHaveCount(1);
+  await expect(drops).toContainText("dropped:");
+  await expect(drops).toContainText("README.md");
+  await expect(own.getByRole("button")).toHaveText(["Log", "Fix again", "Copy prompt"]);
+  await expect(draft(page, OWN)).toHaveCount(0);
+  await own.getByRole("button", { name: "Copy prompt" }).click();
+  await expect(own).toContainText("Open a terminal in your clone of PROJ1/sample-repo-4, run claude, and paste.");
+  expect((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n")).toContain(`Comment ${OWN} by `);
+
+  // The Fix list shows each outcome, and a no-fix row starts unticked.
+  await page.locator("#fix-btn").click();
+  await expect(pickRow(page, "Release the lock")).toContainText("Already done");
+  await expect(pickRow(page, "Take the lock once")).toContainText("Needs your decision");
+  await expect(pickRow(page, "Note to self")).toContainText("Needs your decision");
+  await expect(list.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(list).toBeHidden();
+
+  // The notes stay after a reload.
+  await page.reload();
+  await page.locator("[data-row]", { hasText: TITLE }).first().click();
+  for (const id of [LOOP, OWN]) await openThread(page, id);
+  await expect(loop).toContainText("Needs your decision");
+  await expect(own).toContainText("Edits could not be applied");
+
+  // Fix anyway runs the fix again for that thread only.
+  await control("claude", { stream: "tree", fix: FIX_LOOP });
+  await loop.getByRole("button", { name: "Fix anyway" }).click();
+  await expect(loop).toContainText("Proposed fix, 1 edit", { timeout: RUN_MS });
+  expect(await runStdin()).toContain(`\nFix threads: ${LOOP} (comment ${LOOP})\n`);
+  // Fix again does the same for the dropped note.
+  await control("claude", { stream: "tree", fix: FIX_OWN });
+  await own.getByRole("button", { name: "Fix again" }).click();
+  await expect(own).toContainText("Proposed fix, 1 edit", { timeout: RUN_MS });
+  expect(await runStdin()).toContain(`\nFix threads: ${OWN} (comment ${OWN})\n`);
+  expect(await writes()).toEqual([]);
+});
+
+test("Don't fix with a reason drafts Won't fix and folds the proposal; a reload keeps the fold; Undo brings both back; a posted decline has no Undo", async ({
+  page,
+}) => {
+  await connect(page);
+  await draftReplies(page);
+  await control("claude", { stream: "tree", fix: FIX });
+  await fixOne(page, LOCK);
+  const card = fixCard(page, LOCK);
+  await expect(card).toContainText("Proposed fix, 1 edit", { timeout: RUN_MS });
+  const bar = page.locator("[data-fixbar]");
+  await expect(bar.getByRole("button", { name: /^Apply / })).toHaveText("Apply 1 edit from 1 comment");
+
+  // Esc closes the reason field and gives the focus back to Don't fix.
+  const dont = card.getByRole("button", { name: "Don't fix…" });
+  await dont.click();
+  const reason = card.getByRole("textbox", { name: "Why not fix it?" });
+  await expect(reason).toBeFocused();
+  await expect(dont).toHaveAttribute("aria-expanded", "true");
+  await reason.press("Escape");
+  await expect(reason).toHaveCount(0);
+  await expect(dont).toBeFocused();
+  await expect(dont).toHaveAttribute("aria-expanded", "false");
+
+  // An empty reason stays in the field with the error next to it.
+  await dont.press("Enter");
+  await card.getByRole("button", { name: "Don't fix", exact: true }).click();
+  await expect(card.getByRole("alert")).toHaveText("Type the reason first.");
+  await expect(reason).toHaveAttribute("aria-invalid", "true");
+  await expect(reason).toBeFocused();
+  await reason.fill("The caller releases the lock.");
+  await expect(card.getByRole("alert")).toHaveCount(0);
+  await card.getByRole("button", { name: "Don't fix", exact: true }).click();
+  // The proposal folds, the bar has no edit to apply, and the card keeps the focus.
+  await expect(card).toHaveAttribute("data-fix-outcome", "declined");
+  await expect(card).toContainText("Won't fix");
+  await expect(card).toContainText("You declined the fix: The caller releases the lock.");
+  await expect(card.getByRole("figure")).toHaveCount(0);
+  await expect(card).toBeFocused();
+  await expect(bar).toHaveCount(0);
+  await expect(page.locator("p[role='status'].sr-only")).toContainText("Declined. A “Won't fix” reply draft is in the thread.");
+  // The "Won't fix" draft replaces the reply draft. It waits for your Accept.
+  await expect(draft(page, LOCK)).toContainText("Won't fix: The caller releases the lock.");
+  await expect(draft(page, LOCK)).not.toContainText("Accepted");
+  await card.getByRole("button", { name: "Go to the draft" }).click();
+  await expect(draft(page, LOCK)).toBeFocused();
+  await page.locator("#fix-btn").click();
+  await expect(pickRow(page, "Release the lock")).toContainText("Declined");
+  await expect(pickRow(page, "Release the lock").getByRole("checkbox")).not.toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(fixList(page)).toBeHidden();
+
+  // A reload keeps the fold and the draft.
+  await page.reload();
+  await page.locator("[data-row]", { hasText: TITLE }).first().click();
+  await openThread(page, LOCK);
+  await expect(card).toContainText("You declined the fix: The caller releases the lock.");
+  await expect(draft(page, LOCK)).toContainText("Won't fix: The caller releases the lock.");
+  await expect(bar).toHaveCount(0);
+
+  // Undo unfolds the proposal and brings back the reply draft that the decline replaced.
+  await card.getByRole("button", { name: "Undo" }).click();
+  await expect(card).toContainText("Proposed fix, 1 edit");
+  await expect(card.getByRole("checkbox", { name: /^Include in apply src\/cache\/flush\.ts/ })).toBeChecked();
+  await expect(card).toBeFocused();
+  await expect(page.locator("p[role='status'].sr-only")).toContainText("Undone. The proposal is back.");
+  await expect(draft(page, LOCK)).toContainText("Reply draft to Alex Smith");
+  await expect(draft(page, LOCK)).not.toContainText("Won't fix");
+  await expect(bar.getByRole("button", { name: /^Apply / })).toHaveText("Apply 1 edit from 1 comment");
+  expect(await writes()).toEqual([]);
+
+  // A posted "Won't fix" reply keeps the decline: the card has no Undo.
+  await card.getByRole("button", { name: "Don't fix…" }).click();
+  await reason.fill("The caller releases the lock.");
+  await reason.press("Control+Enter");
+  await expect(draft(page, LOCK)).toContainText("Won't fix: The caller releases the lock.");
+  await draft(page, LOCK).getByRole("button", { name: "Accept" }).click();
+  await expect(page.getByText("Ready to post: 1 reply", { exact: true })).toBeVisible();
+  await page.locator("#post-btn").click();
+  const confirm = page.getByRole("dialog", { name: "Post 1 reply to PROJ1/sample-repo-4 #1004?" });
+  await confirm.getByRole("button", { name: "Post", exact: true }).click();
+  await expect(confirm).toBeHidden();
+  await expect(thread(page, LOCK).locator("[data-post]")).toContainText("Posted.");
+  expect(await writes()).toEqual([`POST ${PR_PATH}/comments`]);
+  await expect(card).toContainText("You declined the fix: The caller releases the lock.");
+  await expect(card.getByRole("button", { name: "Undo" })).toHaveCount(0);
 });
 
 test("a reviewer PR has no Fix; f and F show why", async ({ page }) => {

@@ -1,20 +1,36 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// The fix card under a thread (plan r3 UI-FIX): the run state with its log, the note of the run for the thread, each proposed edit
-// with a checkbox and its diff rows, and the commit with Undo. Dashed: a proposal. Solid: a commit holds the edits.
-import { Check, CircleAlert, Copy, GitCommitHorizontal, LoaderCircle, ScrollText, Undo2 } from "lucide-react";
-import { memo, type ReactNode, useEffect, useState } from "react";
+// The fix card under a thread (plan r3 UI-FIX, docs/plans/thread-outcome.md): the run state with its log, the note of the run for the
+// thread with its outcome, each proposed edit with a checkbox and its diff rows, the commit with Undo, and "Don't fix" with Undo.
+// Dashed: a proposal. Solid: a commit holds the edits.
+import {
+  Ban,
+  Check,
+  CircleAlert,
+  ClipboardCopy,
+  Copy,
+  GitCommitHorizontal,
+  LoaderCircle,
+  MessageSquareReply,
+  ScrollText,
+  Undo2,
+  Wrench,
+} from "lucide-react";
+import { memo, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import type { FixCommitDto, FixEditDto, MetaDto } from "../../shared/dto";
+import { type FixCommitDto, type FixEditDto, MAX_NOTE, type MetaDto, type ReviewItemDto } from "../../shared/dto";
 import { Rows } from "../diff/FileDiff";
+import { Text } from "../pr/Thread";
 import { AiAvatar, Inline } from "../review/Drafts";
-import { plural, RUN_TEXT } from "../review/model";
+import { RUN_TEXT } from "../review/model";
 import { type Hints, HintTrigger } from "../shell/Hint";
-import { cardKey, commitText, type FixState, type FixTarget, fetchCommands } from "./model";
+import { cardHead, cardKey, commitText, type FixState, type FixTarget, fetchCommands } from "./model";
 
 export type FixCtx = {
   meta: MetaDto;
@@ -24,6 +40,15 @@ export type FixCtx = {
   onTick: (edit: number, on: boolean) => void;
   // target: the card to focus after the undo. null: the focus stays.
   onUndo: (c: FixCommitDto, target: FixTarget | null) => void;
+  // "Don't fix": resolves to true when the server stored the decline.
+  onDecline: (target: FixTarget, run: number, reason: string) => Promise<boolean>;
+  onUndecline: (target: FixTarget, run: number) => void;
+  // Fix again and Fix anyway: a new fix run for this target only.
+  onAgain: (target: FixTarget) => void;
+  // Copies the runner prompt of the thread. Resolves to the next step, or null.
+  onPrompt: (thread: number) => Promise<string | null>;
+  // Moves the focus to the reply draft card of this review item.
+  onDraft: (item: number) => void;
 };
 
 const icon = "size-[15px] shrink-0";
@@ -157,21 +182,97 @@ function Commit({ c, target, busy, ctx }: { c: FixCommitDto; target: FixTarget; 
   );
 }
 
-// target: the thread or the finding of the card. ticks: the checkbox state of each free edit. busy: an undo of the commit of this card is out.
+// The body of the "Won't fix" draft is this prefix and the reason. A draft body holds at most MAX_NOTE characters.
+const WONT_FIX = "Won't fix: ";
+
+// "Don't fix": the reason field. Ctrl+Enter declines. Esc closes the field.
+function DeclineField(props: { id: string; finding: boolean; busy: boolean; onCancel: () => void; onSubmit: (reason: string) => void }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const [empty, setEmpty] = useState(false);
+  useLayoutEffect(() => {
+    ref.current?.focus({ preventScroll: true });
+    ref.current?.scrollIntoView({ block: "nearest" });
+  }, []);
+  const submit = () => {
+    const reason = ref.current?.value.trim() ?? "";
+    setEmpty(!reason);
+    if (!reason) return ref.current?.focus();
+    props.onSubmit(reason);
+  };
+  return (
+    <Field data-invalid={empty || undefined} className="rl-indent mt-2.5 max-w-[60ch] gap-1.5">
+      <FieldLabel htmlFor={props.id}>Why not fix it?</FieldLabel>
+      <Textarea
+        ref={ref}
+        id={props.id}
+        rows={2}
+        aria-invalid={empty || undefined}
+        onChange={() => empty && setEmpty(false)}
+        maxLength={MAX_NOTE - WONT_FIX.length}
+        spellCheck
+        className="field-sizing-fixed min-h-[4.5em] resize-y bg-pane leading-normal"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            props.onCancel();
+          } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            submit();
+          }
+        }}
+      />
+      <FieldDescription className="text-xs">
+        {props.finding
+          ? "The finding is discarded with this reason."
+          : "Your reason becomes a “Won't fix” reply draft. It posts only after your Accept."}
+      </FieldDescription>
+      {empty && <FieldError className="text-xs">Type the reason first.</FieldError>}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button size="sm" disabled={props.busy} aria-keyshortcuts="Control+Enter" title="Key: Ctrl+Enter" onClick={submit}>
+          {props.busy ? (
+            <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin" />
+          ) : (
+            <Ban aria-hidden data-icon="inline-start" />
+          )}
+          Don't fix
+        </Button>
+        <Button size="sm" variant="outline" title="Key: Esc" onClick={props.onCancel}>
+          Cancel
+        </Button>
+        <span className="ml-1 text-xs text-muted-foreground">Ctrl+Enter declines. Esc cancels.</span>
+      </div>
+    </Field>
+  );
+}
+
+// target: the thread or the finding of the card. ticks: the checkbox state of each free edit. busy: an undo of the commit of this card,
+// or a decline or its undo, is out. draft: the reply draft that the note made (noteDraft). undecline: Undo of the decline can run.
 export const FixCard = memo(function FixCard(props: {
   state: FixState;
   target: FixTarget;
   ticks: ReadonlyMap<number, boolean>;
   busy: boolean;
+  draft: ReviewItemDto | null;
+  undecline: boolean;
   ctx: FixCtx;
 }) {
   const { state: s, target, ctx } = props;
   const key = cardKey(target);
   const short = ctx.meta.runner.short;
+  // The reason field of "Don't fix", and the next step after Copy prompt.
+  const [asking, setAsking] = useState(false);
+  const [next, setNext] = useState<string | null>(null);
+  const opener = useRef<HTMLButtonElement>(null);
   // The running card answers Propose, often from a key, so it does not move. A card that a run result brings plays rl-enter.
   if (s.kind === "running") {
     return (
-      <p data-fix={key} className="mt-3.5 mb-0 flex items-center gap-2 text-sm text-ink-2">
+      <p
+        id={`fx-${key}`}
+        data-fix={key}
+        tabIndex={-1}
+        className="mt-3.5 mb-0 flex scroll-mt-3 items-center gap-2 rounded text-sm text-ink-2"
+      >
         <AiAvatar meta={ctx.meta} />
         <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
         {short} is proposing a fix…
@@ -201,36 +302,143 @@ export const FixCard = memo(function FixCard(props: {
   }
   const { fix, note, edits, commit, newest } = s;
   const held = new Set(fix.commits.filter((c) => c.state !== "undone").flatMap((c) => c.edits));
-  const fixed = edits.length > 0;
+  const declined = note?.declined;
+  const why = declined ? null : (note?.why ?? null);
+  const head = cardHead(edits.length, note);
+  // decision and risk: the user chooses. The note reply names the options or the risk, and no reply draft holds it.
+  const choose = why === "decision" || why === "risk";
+  // Plan: the decline route refuses a fix that a commit holds.
+  const proposal = edits.length > 0 && !commit && !declined;
+  const draft = props.draft && (props.draft.status === "new" || props.draft.status === "accepted") ? props.draft : null;
+  const drops = why === "dropped" ? (note?.drops ?? []) : [];
   // session-consult.md part D: the fix run of a session import. Its log is the log of the session run.
   const session = fix.run.consult?.run;
+  const closeField = () => {
+    setAsking(false);
+    opener.current?.focus();
+  };
+  const decline = (reason: string) =>
+    void ctx.onDecline(target, fix.run.id, reason).then((ok) => {
+      if (ok) setAsking(false);
+    });
+  const actions = [
+    draft && (
+      <span key="draft" className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-2">
+        <MessageSquareReply aria-hidden className={icon} />
+        Reply drafted
+        <button type="button" className={linkish} onClick={() => ctx.onDraft(draft.id)}>
+          Go to the draft
+        </button>
+      </span>
+    ),
+    declined && props.undecline && (
+      <Button key="undecline" size="sm" variant="outline" disabled={props.busy} onClick={() => ctx.onUndecline(target, fix.run.id)}>
+        {props.busy ? (
+          <LoaderCircle aria-hidden data-icon="inline-start" className="animate-spin" />
+        ) : (
+          <Undo2 aria-hidden data-icon="inline-start" />
+        )}
+        Undo
+      </Button>
+    ),
+    choose && (
+      <Button key="anyway" size="sm" variant="outline" onClick={() => ctx.onAgain(target)}>
+        <Wrench aria-hidden data-icon="inline-start" />
+        Fix anyway
+      </Button>
+    ),
+    why === "dropped" && (
+      <Button key="again" size="sm" variant="outline" onClick={() => ctx.onAgain(target)}>
+        <Wrench aria-hidden data-icon="inline-start" />
+        Fix again
+      </Button>
+    ),
+    why === "dropped" && target.kind === "thread" && (
+      <Button key="prompt" size="sm" variant="outline" onClick={() => void ctx.onPrompt(target.id).then((text) => text && setNext(text))}>
+        <ClipboardCopy aria-hidden data-icon="inline-start" />
+        Copy prompt
+      </Button>
+    ),
+    (choose || proposal) && (
+      <Button
+        key="dont"
+        ref={opener}
+        size="sm"
+        variant="outline"
+        aria-expanded={asking}
+        aria-controls={asking ? `fxd-${key}` : undefined}
+        onClick={() => setAsking((on) => !on)}
+      >
+        <Ban aria-hidden data-icon="inline-start" />
+        Don't fix…
+      </Button>
+    ),
+  ].filter(Boolean);
   return (
     <article
       id={`fx-${key}`}
       data-fix={key}
       data-fix-session={session !== undefined ? true : undefined}
+      data-fix-outcome={declined ? "declined" : (why ?? (edits.length ? "proposed" : "none"))}
       tabIndex={-1}
-      aria-label={`Proposed fix from ${session !== undefined ? "your session" : short}: ${plural(edits.length, "edit")}.${commit ? ` ${commit.state === "staged" ? "Staged" : "Committed"}.` : ""}`}
+      aria-label={`${head}, from ${session !== undefined ? "your session" : short}.${commit ? ` ${commit.state === "staged" ? "Staged" : "Committed"}.` : ""}`}
       className={cn(box, commit && "border-solid")}
     >
       <div className="flex min-h-(--av) flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-muted-foreground">
         <AiAvatar meta={ctx.meta} />
         <b className="font-semibold text-foreground">{short}</b>
-        <span>{fixed ? `Proposed fix, ${plural(edits.length, "edit")}` : "No fix proposed"}</span>
+        <span className={cn((declined || why) && "font-medium text-ink-2")}>{head}</span>
         {session !== undefined ? <span>from your session</span> : !newest && <span>from an earlier fix run</span>}
         <span className="ml-auto flex items-center">
           <LogButton run={session ?? fix.run.id} ctx={ctx} />
         </span>
       </div>
-      {note && (
+      {declined ? (
         <p className="rl-indent m-0 mt-px text-ink-2 [overflow-wrap:anywhere]">
-          <Inline text={note.reason} />
+          You declined the fix: <Inline text={declined.reason} />
+        </p>
+      ) : (
+        note && (
+          <p className="rl-indent m-0 mt-px text-ink-2 [overflow-wrap:anywhere]">
+            <Inline text={note.reason} />
+          </p>
+        )
+      )}
+      {choose && note?.reply.trim() && (
+        <div className="rl-indent mt-1.5 [overflow-wrap:anywhere]">
+          <Text text={note.reply} />
+        </div>
+      )}
+      {drops.length > 0 && (
+        <ul aria-label="Why the edits could not be applied" className="rl-indent m-0 mt-1.5 grid list-none gap-0.5 p-0 text-xs text-ink-2">
+          {drops.map((d) => (
+            <li key={d} className="flex items-start gap-1.5 [overflow-wrap:anywhere]">
+              <CircleAlert aria-hidden className="mt-px size-[13px] shrink-0" />
+              <span>{d}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!declined && edits.map((e) => <Edit key={e.id} e={e} free={!held.has(e.id)} ticked={props.ticks.get(e.id) ?? newest} ctx={ctx} />)}
+      {commit && <Commit c={commit} target={target} busy={props.busy} ctx={ctx} />}
+      {actions.length > 0 && <div className="rl-indent mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">{actions}</div>}
+      {next && (
+        <p className="rl-fade rl-indent m-0 mt-1.5 text-xs text-ink-2 [overflow-wrap:anywhere]">
+          <Check aria-hidden className="mr-1 inline size-[13px] align-[-2px]" />
+          {next}
         </p>
       )}
-      {edits.map((e) => (
-        <Edit key={e.id} e={e} free={!held.has(e.id)} ticked={props.ticks.get(e.id) ?? newest} ctx={ctx} />
-      ))}
-      {commit && <Commit c={commit} target={target} busy={props.busy} ctx={ctx} />}
+      {asking && (choose || proposal) && (
+        <div id={`fxd-${key}`}>
+          <DeclineField
+            id={`fxd-${key}-reason`}
+            finding={target.kind === "finding"}
+            busy={props.busy}
+            onCancel={closeField}
+            onSubmit={decline}
+          />
+        </div>
+      )}
     </article>
   );
 });

@@ -1,6 +1,6 @@
 # Thread outcome plan: one outcome per thread
 
-Status: in progress, 2026-10-20. WP-D, WP-C, WP-S1, WP-S4, WP-S2, and WP-S3 are done. Line references point to the code at HEAD 0db727e.
+Status: in progress, 2026-10-20. WP-D, WP-C, WP-S1, WP-S4, WP-S2, WP-S3, and WP-U1b are done. Line references point to the code at HEAD 0db727e.
 
 ## 1. Goal
 
@@ -14,9 +14,9 @@ Already landed: 0fe5659 keeps drafts that the user edited or accepted on AI runs
 
 | ID | Problem | Status |
 |---|---|---|
-| P1 | A note with fixed false shows only the card "No fix proposed" (FixCard.tsx:219). It makes no reply draft. The reason is written for the user, not for the reviewer (review.ts fixThread, catalog.ts:344-359). | Partly: WP-S1 makes the nofix draft from the note reply (jobs.ts judgeFix). The fix card is WP-U1b. |
-| P2 | A note with fixed true loses all its edits in validateFix, so validateFix removes the note (fix.ts:108). The reason shows only in the coverage. The pending card lives only while the page is open (fix/model.ts:297-301, FixBar.tsx:123). | Partly: WP-S1 keeps the note with why dropped and drops (fix.ts validateFix). Until WP-U1b, the fix card shows it as "No fix proposed". |
-| P3 | The fix card has no Discard. An untick lives only in memory (FixBar.tsx:124). A reload ticks the newest run again (fix/model.ts:210-213). | Partly: WP-S2 stores a decline on the note (declined) and Apply refuses its edits. The UI is WP-U1b. |
+| P1 | A note with fixed false shows only the card "No fix proposed" (FixCard.tsx:219). It makes no reply draft. The reason is written for the user, not for the reviewer (review.ts fixThread, catalog.ts:344-359). | Landed: WP-S1 makes the nofix draft from the note reply (jobs.ts judgeFix). WP-U1b labels the fix card with the why and points to the draft (FixCard.tsx). |
+| P2 | A note with fixed true loses all its edits in validateFix, so validateFix removes the note (fix.ts:108). The reason shows only in the coverage. The pending card lives only while the page is open (fix/model.ts:297-301, FixBar.tsx:123). | Landed: WP-S1 keeps the note with why dropped and drops (fix.ts validateFix). WP-U1b shows "Edits could not be applied" with the drops, Fix again, and Copy prompt. |
+| P3 | The fix card has no Discard. An untick lives only in memory (FixBar.tsx:124). A reload ticks the newest run again (fix/model.ts:210-213). | Landed: WP-S2 stores a decline on the note (declined) and Apply refuses its edits. WP-U1b adds "Don't fix…" with a reason, the stored fold, and Undo. An untick still lives only in memory. |
 | P4 | A commit discarded edited or accepted drafts, and Undo did not restore them. | Landed in 0fe5659 (fix-routes.ts:203-206, 366-370, items.ts:51-53) |
 | P5 | A commit replaces an untouched AI answer with "Fixed in X." (fix-routes.ts:207-210). A commit with only a part of the edits of a thread still says fixed and proposes resolve (fix-routes.ts:222). | Landed: WP-S2 keeps the answer, adds "Fixed in X: <what>", and gives "Partly fixed in X" without resolve. |
 | P6 | Draft replies discarded edited, accepted, and "Fixed in" drafts. | Landed: 0fe5659 protects edited and accepted drafts. WP-S1 keeps an untouched "Fixed in" or nofix draft on Draft replies (jobs.ts writerRank, end). |
@@ -25,7 +25,7 @@ Already landed: 0fe5659 keeps drafts that the user edited or accepted on AI runs
 | P9 | Confirm is all or nothing. The first stale reply or unpushed fix stops all posts with one message and no thread (publish/routes.ts:99-105, outbox.ts:449-468). Accept stays on a stale card. | Partly: WP-S3 lists the blocked drafts with item, thread, and reason, and confirm posts the rest (outbox.ts blockedDrafts). Accept on a stale card is WP-U2. |
 | P10 | A draft goes into a thread that another person resolved after the draft. | Landed: WP-S3 leaves a resolved-since draft out of the plan. The user reopens the thread to post it. A draft written while the thread was resolved keeps reopen-first. |
 | P11 | A rebased or squashed fix commit never reaches the PR, so the "Fixed in" draft waits forever (outbox.ts:460-468). An edit keeps the commit link (items.ts:81-85). | Partly: WP-S2 adds the item action plain. WP-S3 marks commit-gone when the clone branch no longer holds the commit, and the confirm offers "Post as plain reply". The card button is WP-U1a. An edit still keeps the link. |
-| P12 | The Fix list ignores fix notes (fix/model.ts:28-37, 150). | Open |
+| P12 | The Fix list ignores fix notes (fix/model.ts:28-37, 150). | Landed: WP-U1b shows the fix outcome of each row, and a no-fix note or a decline starts unticked (fix/model.ts fixOutcome). |
 | P13 | A reply run does not see the fix state of a thread (catalog.ts:312-341). | Landed: WP-S4 adds context/fix-state.md (jobs.ts fixStateFile). |
 | P14 | A thread has no history of its drafts and fixes. | Later |
 | P15 | A BLOCKER task has no actions (Thread.tsx:150). | Later |
@@ -89,7 +89,7 @@ Markers on the outcome line:
 | WP-S4 | The reply run context shows the fix state of each thread: proposal, commit, decline. | Done |
 | WP-S2 | Commit: "Partly fixed in X" without resolve; "Fixed in X: <what>" keeps any answer. Decline route "Don't fix…" (fixDeclineInput). "Post as plain reply" for a rebased fix. | Done |
 | WP-S3 | Partial confirm: the plan lists blocked drafts per item and thread. Confirm posts the rest. | Done |
-| WP-U1b | Fix UI: Don't fix…, the persistent fold, the dropped note with Fix again and Copy prompt, the Fix list with fix notes. | implementer-xhigh |
+| WP-U1b | Fix UI: Don't fix…, the persistent fold, the dropped note with Fix again and Copy prompt, the Fix list with fix notes. | Done |
 | WP-U1a | The outcome line per thread, the markers, and a note when the reply and the fix disagree. | implementer-xhigh |
 | WP-U2 | Post UI: the blocked list in the confirm dialog, no Accept on a stale card. | implementer |
 | Later | Per-thread history (P14), the stale-draft notice (P16), BLOCKER task done (P15). | - |

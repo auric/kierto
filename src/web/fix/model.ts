@@ -3,7 +3,7 @@
 
 // Pure Fix it rules (plan r3 UI-FIX, docs/plans/fix-ux.md). No DOM access, so bun test runs them directly.
 import type { CommitDto, FixCommitDto, FixDto, FixEditDto, ReviewItemDto, RunDto } from "../../shared/dto";
-import { type AnchoredFinding, type Judgement, MAX_REPLY_THREADS, type ReplyPayload } from "../../shared/review";
+import { type AnchoredFinding, type FixWhy, type Judgement, MAX_REPLY_THREADS, type ReplyPayload } from "../../shared/review";
 import { ordered, snippet, type ThreadModel } from "../pr/threads";
 import { lineText, plural, shortHash } from "../review/model";
 
@@ -24,7 +24,7 @@ export const askerSide = (j: Judgement) => j === "settled" || j === "unsettled" 
 
 // One open, unresolved thread with a live message. badge: own for your comment, posted for a finding that the app posted.
 // judgement: the newest unposted reply draft. fixed: the short hash of a fix commit that holds an edit of the thread.
-// tick: the tick at the start.
+// outcome: the fix outcome of the newest fix run for the thread. tick: the tick at the start.
 export type FixRow = {
   thread: number;
   who: string;
@@ -32,6 +32,7 @@ export type FixRow = {
   badge: "own" | "posted" | null;
   judgement: Judgement | null;
   fixed: string | null;
+  outcome: FixOutcome | null;
   text: string;
   tick: boolean;
 };
@@ -44,6 +45,7 @@ export type FixFindingRow = {
   place: string;
   accepted: boolean;
   fixed: string | null;
+  outcome: FixOutcome | null;
   text: string;
   tick: boolean;
 };
@@ -89,6 +91,7 @@ const placeText = (t: ThreadModel) => {
 // Decision D6: your own comments and posted findings start unticked. Valid and partly valid start ticked, unless a commit fixed them.
 // The plans give no default tick for a finding. Accepted findings start ticked and new ones do not. A restore returns the status of a fixed one.
 // session-consult.md part C: an accept of your session ticks any thread or finding.
+// docs/plans/thread-outcome.md: a no-fix note or a decline unticks any row.
 export function fixTargets(
   threads: ThreadModel[],
   replies: ReviewItemDto[] | undefined,
@@ -116,14 +119,16 @@ export function fixTargets(
     if (!fixable(it) || !it.anchor) continue;
     const ok = it.status === "accepted";
     const fixed = it.payload.fixed?.short ?? null;
+    const outcome = fixOutcome(fixes, { kind: "finding", id: it.id });
     out.findings.push({
       finding: it.id,
       severity: (it.payload as AnchoredFinding).severity,
       place: `${it.anchor.path}:${lineText(it.anchor)}`,
       accepted: ok,
       fixed,
+      outcome,
       text: snippet(it.body, 160),
-      tick: ok || it.payload.session?.verdict === "accept",
+      tick: !outcome?.noFix && (ok || it.payload.session?.verdict === "accept"),
     });
   }
   for (const t of ordered(threads, false)) {
@@ -139,6 +144,7 @@ export function fixTargets(
     const badge = t.root.posted === "run" ? "posted" : t.root.who.me ? "own" : null;
     const judgement = judged.get(t.id) ?? null;
     const fixed = fixedIn.get(t.id) ?? null;
+    const outcome = fixOutcome(fixes, { kind: "thread", id: t.id });
     out.rows.push({
       thread: t.id,
       who: head.who.me ? "You" : head.who.name,
@@ -146,8 +152,10 @@ export function fixTargets(
       badge,
       judgement,
       fixed,
+      outcome,
       text: snippet(head.text, 160),
-      tick: fixed === null && (accepted.has(t.id) || (badge === null && (judgement === "valid" || judgement === "partly"))),
+      tick:
+        fixed === null && !outcome?.noFix && (accepted.has(t.id) || (badge === null && (judgement === "valid" || judgement === "partly"))),
     });
   }
   return out;
@@ -201,10 +209,10 @@ export const OWN_ONLY = "Fix works only on your own pull requests.";
 
 // ---------- Edits and their selection ----------
 
-// The edits of a run that no commit holds. An undone commit frees its edits.
+// The edits of a run that no commit holds. An undone commit frees its edits. Apply refuses the edits of a declined note.
 export function freeEdits(f: FixDto): FixEditDto[] {
   const used = new Set(f.commits.filter((c) => c.state !== "undone").flatMap((c) => c.edits));
-  return f.edits.filter((e) => !used.has(e.id));
+  return f.edits.filter((e) => !used.has(e.id) && !f.threads.some((n) => n.declined && names(n, targetOf(e))));
 }
 
 // ticks: the choice of the user per edit ID. Without a choice, the edits of the newest run are ticked and older ones are not.
@@ -307,6 +315,72 @@ export function fixState(fixes: FixDto[] | undefined, target: FixTarget, asked: 
   const ids = new Set(edits.map((e) => e.id));
   const commit = fix.commits.find((c) => c.state !== "undone" && c.edits.some((id) => ids.has(id))) ?? null;
   return { kind: "done", fix, newest: i === 0, note: fix.threads.find((n) => names(n, target)) ?? null, edits, commit };
+}
+
+// docs/plans/thread-outcome.md: the label of a fix card for each why of a note without a fix.
+export const WHY: Record<FixWhy, string> = {
+  already: "Already done",
+  invalid: "Not valid",
+  scope: "Out of scope",
+  unclear: "Unclear",
+  decision: "Needs your decision",
+  risk: "Risky",
+  dropped: "Edits could not be applied",
+};
+
+// The head of a fix card with a note or edits. edits: the edit count of the target in the run.
+// A risk needs your decision too (thread-outcome.md section 3).
+export function cardHead(edits: number, note: FixNote | null): string {
+  if (note?.declined) return "Won't fix";
+  if (note?.why === "risk") return `${WHY.risk}: ${WHY.decision.toLowerCase()}`;
+  if (note?.why) return WHY[note.why];
+  return edits ? `Proposed fix, ${plural(edits, "edit")}` : "No fix proposed";
+}
+
+// The outcome of each why in the Fix list (thread-outcome.md section 3).
+const OUTCOME: Record<FixWhy, string> = {
+  already: "Already done",
+  invalid: "Won't fix",
+  scope: "Won't fix",
+  unclear: "Follow-up asked",
+  decision: "Needs your decision",
+  risk: "Needs your decision",
+  dropped: "Needs your decision",
+};
+
+// The fix outcome of a thread or finding from its newest fix run. short: the commit of "Fixed in" and "Partly fixed in".
+// noFix: a note without a fix or a decline, so the row starts unticked.
+export type FixOutcome = { label: string; short: string | null; noFix: boolean };
+
+export function fixOutcome(fixes: FixDto[] | undefined, target: FixTarget): FixOutcome | null {
+  const s = fixState(fixes, target, null);
+  if (s?.kind !== "done") return null;
+  const { fix, note, edits, commit } = s;
+  if (commit?.state === "committed") {
+    // BRIEF "Fixed in" text: the commits of the run that are not undone hold every edit of the target, or only a part.
+    const held = new Set(fix.commits.filter((c) => c.state !== "undone").flatMap((c) => c.edits));
+    const label = edits.every((e) => held.has(e.id)) ? "Fixed in" : "Partly fixed in";
+    return { label, short: commit.short ?? shortHash(commit.commit ?? ""), noFix: false };
+  }
+  if (note?.declined) return { label: "Declined", short: null, noFix: true };
+  if (note && (note.why || !note.fixed)) return { label: note.why ? OUTCOME[note.why] : "No fix proposed", short: null, noFix: true };
+  return edits.length ? { label: "Fix proposed", short: null, noFix: false } : null;
+}
+
+export const outcomeText = (o: FixOutcome) => (o.short ? `${o.label} ${o.short}` : o.label);
+
+// The reply draft that a fix note made in a thread: the "Won't fix" draft of a decline, else the nofix draft of the run.
+// replies: the current draft of each thread, so a draft that a newer one replaced or that posted is absent.
+export function noteDraft(fix: FixDto, note: FixNote | null, target: FixTarget, replies: ReviewItemDto[] | undefined) {
+  if (target.kind !== "thread" || !note) return null;
+  const id = note.declined?.draft;
+  const ours = (it: ReviewItemDto) => {
+    if (it.kind !== "reply") return false;
+    if (id !== undefined) return it.id === id;
+    const p = it.payload as ReplyPayload;
+    return it.run === fix.run.id && p.thread === target.id && p.origin === "nofix" && !p.declined;
+  };
+  return replies?.find(ours) ?? null;
 }
 
 // The "Fixed in" reply posts only when the PR commits hold its commit (outbox.ts fixCheck). Returns the short hash to wait for.

@@ -35,6 +35,14 @@
 - A Fix commit with only a part of the edits of a thread drafts "Partly fixed in X" and proposes no resolve.
 - Draft replies sees the fix note, the fix commit, and the current draft of each thread. It no longer claims a fix without a commit.
 
+### Fix
+
+- When a fix run gives no fix, its card names the reason: Already done, Not valid, Out of scope, Unclear, Needs your decision, or Risky. When the fix run drafted your answer, the card says "Reply drafted" and takes you to the draft.
+- "Needs your decision" shows the options of the fix run, with "Fix anyway" and "Don't fix…".
+- When Kierto cannot apply any edit of a proposed fix, the card says "Edits could not be applied" with the reasons, and offers "Fix again" and "Copy prompt". It drafts no reply.
+- "Don't fix…" on a proposed fix asks for your reason. It drafts a "Won't fix" reply and folds the proposal, also after a reload. Undo brings the proposal and the earlier reply draft back until the reply posts.
+- The Fix list shows the fix outcome of each row: Fix proposed, Fixed in, Partly fixed in, Already done, Won't fix, Follow-up asked, Needs your decision, or Declined. A row without a fix or with a declined fix starts unticked.
+
 ### Fixes
 
 - After you resolve or reopen a thread, an edit of its first comment from before the resolve still arrives and shows as new.

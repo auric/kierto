@@ -4,7 +4,16 @@
 // Fix it server state (plan r3 UI-FIX). Keys ["pr", pr, "fixes"] and ["pr", pr, "clone"]: a live `changed` that names the PR
 // refreshes both. A commit or an undo names the PR too.
 import { type QueryClient, useQuery } from "@tanstack/react-query";
-import type { CloneDto, CloneRowDto, FixCommitDto, FixCommitInput, FixConflict, FixDto } from "../../shared/dto";
+import type {
+  CloneDto,
+  CloneRowDto,
+  FixCommitDto,
+  FixCommitInput,
+  FixConflict,
+  FixDeclineInput,
+  FixDto,
+  FixUndeclineInput,
+} from "../../shared/dto";
 import { api } from "../api";
 import { type RunStart, runBody, started, useStart } from "../review/data";
 import { read } from "../shell/data";
@@ -78,3 +87,15 @@ export async function commitFix(run: number, input: FixCommitInput): Promise<Com
 }
 
 export const undoFix = async (id: number) => read<FixCommitDto>(await api.api["fix-commits"][":id"].undo.$post(param(id)));
+
+// "Don't fix" (docs/plans/thread-outcome.md): 204, or 409 when a commit holds the fix or the decline exists.
+export async function declineFix(input: FixDeclineInput) {
+  const res = await api.api["fix-declines"].$post({ json: input });
+  if (!res.ok) await read(res);
+}
+
+// Undo of a decline: 204, or 409 when the "Won't fix" reply is posted.
+export async function undeclineFix(input: FixUndeclineInput) {
+  const res = await api.api["fix-declines"].undo.$post({ json: input });
+  if (!res.ok) await read(res);
+}

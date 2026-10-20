@@ -113,6 +113,8 @@ The post confirm lists the drafts that cannot post now, each with its thread and
 
 On your own pull request, the Fix list holds the open threads and the review findings. Valid threads and accepted findings start ticked. A read-only run checks each ticked point and proposes exact edits. You review each edit. Apply commits the edits into your clone and drafts a "Fixed in" reply in each fixed thread, unless you already edited or accepted a reply there. You push. Before the push, Undo removes the commit and brings back the reply draft that it replaced.
 
+When the run gives no fix, the card says why: Already done, Not valid, Out of scope, Unclear, or Needs your decision. Where the run drafted your answer, the card points to the draft. A decision card offers "Fix anyway". "Don't fix…" asks for your reason, drafts a "Won't fix" reply, and folds the proposal until you Undo it. The Fix list shows the outcome of each row, and a row without a fix starts unticked.
+
 ![The Fix list](docs/screenshots/fix-list.webp)
 
 ### Ask
