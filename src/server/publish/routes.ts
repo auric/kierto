@@ -27,6 +27,7 @@ const SQL = {
   items: `SELECT i.* FROM review_item i JOIN review_run r ON r.id = i.run WHERE r.pr = $pr AND i.status = 'accepted' ORDER BY i.id`,
   comments: `SELECT comment_id AS id, author_slug AS authorSlug, author_login AS authorLogin, author_name AS authorName, anchor_json
     FROM comment WHERE pr = $pr AND parent_id IS NULL AND tombstoned_at IS NULL AND anchor_json IS NOT NULL`,
+  resolved: "SELECT comment_id AS id FROM comment WHERE pr = $pr AND parent_id IS NULL AND thread_resolved = 1",
 };
 
 const parse = (s: string): unknown => {
@@ -49,6 +50,7 @@ export function planInput(review: ReviewJobs, settings: Settings, pr: number): P
     runs: db.query(SQL.runs).all({ pr }) as PlanRun[],
     items: (db.query(SQL.items).all({ pr }) as ItemRow[]).map(toItemDto),
     comments: (db.query(SQL.comments).all({ pr }) as C[]).map(({ anchor_json, ...c }) => ({ ...c, anchor: parse(anchor_json) })),
+    resolved: (db.query(SQL.resolved).all({ pr }) as { id: number }[]).map((r) => r.id),
   };
 }
 

@@ -88,7 +88,7 @@ import {
   withMcp,
   withSkills,
 } from "./catalog";
-import { createClaudeRunner, type RunnerCheck, type RunOutcome } from "./claude";
+import { createClaudeRunner, RUN_TIMEOUT_MS, type RunnerCheck, type RunOutcome } from "./claude";
 import { type FixCommitRow, toFixCommitDto } from "./clone";
 import { codegraphEntry, codegraphIndex, indexCodegraph } from "./codegraph";
 import { runEffort } from "./defaults";
@@ -261,6 +261,26 @@ export type ItemRow = {
 };
 type NewItem = Omit<ItemRow, "id" | "run" | "revision">;
 
+// The current reply draft of each thread: the newest open draft, else the newest draft. A draft of an undone fix commit never
+// counts: it cannot post (outbox.ts fixCheck). An open draft sorts last, so it wins.
+const CURRENT_DRAFTS = `SELECT i.* FROM review_item i JOIN review_run r ON r.id = i.run
+  WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM fix_commit f WHERE f.id = json_extract(i.payload_json, '$.fix.id') AND f.state = 'undone')
+  ORDER BY i.status IN ('new', 'accepted'), i.id`;
+
+export function currentDrafts(db: Database, pr: number): Map<number, ItemRow> {
+  const out = new Map<number, ItemRow>();
+  for (const r of db.query(CURRENT_DRAFTS).all({ pr }) as ItemRow[]) out.set(r.thread as number, r);
+  return out;
+}
+
+// A draft that no writer replaces: the user edited or accepted it, or declined it (the current draft is discarded).
+// declined false: the user asked for a new draft of this thread, so a declined draft does not block it.
+export const userDraft = (r: ItemRow | undefined, declined: boolean) =>
+  !!r && (r.status === "accepted" || (r.status === "new" && r.edited === 1) || (declined && r.status === "discarded"));
+
+export const keptText = (thread: number) => `Thread ${thread}: kept your draft. The new draft was not stored.`;
+
 // checked: the earlier findings of a re-review. fix: the notes and edits of a fix run.
 type Ending = {
   status: Exclude<RunStatus, "running">;
@@ -293,6 +313,8 @@ type Job = {
   db: Database;
   profile: Profile;
   threads: ReplyThread[] | null;
+  // A reply run for threads that the user named. Its drafts replace a draft that the user declined.
+  picked: boolean;
   findings: number[];
   carry: Carry | null;
   question: string | null;
@@ -374,14 +396,12 @@ const SQL = {
       AND json_extract(p.items_json, '$[0].id') = i.id
     JOIN comment c ON c.pr = r.pr AND c.comment_id = p.remote_id AND c.parent_id IS NULL AND c.tombstoned_at IS NULL AND c.thread_resolved = 0
     WHERE r.pr = $pr AND i.kind = 'finding' AND i.status = 'posted' ORDER BY i.id DESC LIMIT $limit`,
-  openDraft: `SELECT 1 FROM review_item i JOIN review_run r ON r.id = i.run
-    WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread = $thread AND i.status IN ('new', 'accepted')`,
   // The copy in the re-review replaces the source.
   carried: "UPDATE review_item SET status = 'discarded', revision = revision + 1 WHERE id = $id",
-  // A new reply draft replaces the open drafts of its thread. Posted drafts stay.
+  // A new reply draft replaces the open drafts of its thread that the user did not touch. Posted drafts stay.
   supersede: `UPDATE review_item SET status = 'discarded', revision = revision + 1
-    WHERE kind = 'reply' AND thread = $thread AND status IN ('new', 'accepted') AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
-  replyItems: "SELECT i.* FROM review_item i JOIN review_run r ON r.id = i.run WHERE r.pr = $pr AND i.kind = 'reply' ORDER BY i.id",
+    WHERE kind = 'reply' AND thread = $thread AND status = 'new' AND edited = 0 AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
+  threadResolved: "SELECT thread_resolved FROM comment WHERE pr = $pr AND comment_id = $thread",
   // Deleted messages too: the turn rule reads them.
   turns: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr`,
@@ -806,7 +826,8 @@ function carryOver(db: Database, carry: Carry, checked: CheckedEarlier[]) {
 }
 
 // A fixed verdict on a posted finding proposes to resolve its thread: a ticked draft without a reply.
-// A thread with an open reply draft keeps that draft, so no proposal replaces the user's text. threads: the messages by root ID.
+// A thread with an open or a declined reply draft keeps that draft, so no proposal replaces the user's text or choice.
+// threads: the messages by root ID.
 function resolveProposals(
   db: Database,
   pr: number,
@@ -816,10 +837,12 @@ function resolveProposals(
   threads: Map<number, TurnMsg[]>,
 ): NewItem[] {
   const roots = new Map(carry.posted.map((r) => [r.id, r.root]));
+  const drafts = currentDrafts(db, pr);
   const out: NewItem[] = [];
   for (const c of checked) {
     const thread = roots.get(c.id);
-    if (thread === undefined || c.verdict !== "fixed" || db.query(SQL.openDraft).get({ pr, thread })) continue;
+    const draft = thread === undefined ? undefined : drafts.get(thread);
+    if (thread === undefined || c.verdict !== "fixed" || (draft && draft.status !== "posted")) continue;
     const msgs = threads.get(thread) ?? [];
     const root = msgs.find((m) => m.id === thread);
     const last = newestLive(msgs);
@@ -835,6 +858,7 @@ function resolveProposals(
       resolve: true,
       resolveEvidence: c.reason,
       resolveTick: true,
+      threadOpen: true,
     };
     out.push({ kind: "reply", payload_json: JSON.stringify(payload), body: "", ...NO_ANCHOR, status: "new", thread, edited: 0 });
   }
@@ -1189,6 +1213,14 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const flagged = j.session ? null : j.profile.effort;
     const ok = j.db.transaction(() => {
       if (o) upsertEvents(j.db, j.id, o.events);
+      // One open draft per thread. A new reply draft never replaces a draft that the user edited, accepted, or declined.
+      const drafts = currentDrafts(j.db, j.pr);
+      const kept = new Set<number>();
+      for (const it of e.result?.items ?? [])
+        if (it.kind === "reply" && it.thread !== null && userDraft(drafts.get(it.thread), !j.picked)) kept.add(it.thread);
+      const summary = e.result?.summary;
+      const coverage =
+        summary && kept.size ? { ...summary.coverage, skipped: [...summary.coverage.skipped, ...[...kept].map(keptText)] } : null;
       const done = j.db.query(SQL.end).run({
         id: j.id,
         status: e.status,
@@ -1201,7 +1233,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         init_effort: !flagged && !!o?.init?.model,
         effort_default: !flagged && o?.init?.model ? runEffort(o.init.model) : null,
         usage: usage ? JSON.stringify(usage) : null,
-        summary: e.result ? JSON.stringify(e.result.summary) : null,
+        summary: summary ? JSON.stringify(coverage ? { ...summary, coverage } : summary) : null,
         answer: e.result?.answer ?? null,
         fix: e.result?.fix ? JSON.stringify(e.result.fix.threads) : null,
         raw: e.raw,
@@ -1222,7 +1254,13 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
           start: x.start,
           rows: JSON.stringify(x.rows),
         });
-      const items = e.result?.items ?? [];
+      const resolved = j.db.query(SQL.threadResolved);
+      const items = (e.result?.items ?? []).flatMap((it): NewItem[] => {
+        if (it.kind !== "reply" || it.thread === null) return [it];
+        if (kept.has(it.thread)) return [];
+        const shut = (resolved.get({ pr: j.pr, thread: it.thread }) as { thread_resolved: number } | null)?.thread_resolved === 1;
+        return [{ ...it, payload_json: JSON.stringify({ ...(JSON.parse(it.payload_json) as ReplyPayload), threadOpen: !shut }) }];
+      });
       const supersede = j.db.query(SQL.supersede);
       for (const thread of new Set(items.map((it) => it.thread))) if (thread !== null) supersede.run({ thread, pr: j.pr });
       const q = j.db.query(SQL.item);
@@ -1287,7 +1325,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         : []),
       ...(history ? [history] : []),
     ];
+    // Cancel stops the fetch and `worktree add`. A large repository can take as long as the run may take.
+    j.abort = new AbortController();
     try {
+      if (j.cancelled) return cancelled();
       ws = await prepareWorkspace({
         dataDir,
         runId: String(j.id),
@@ -1297,9 +1338,13 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         files: [...files, ...extra],
         attachments,
         ...(carry && { since: carry.since }),
+        long: { signal: j.abort.signal, timeoutMs: RUN_TIMEOUT_MS },
       });
     } catch (e) {
+      if (j.cancelled) return cancelled();
       return failure("workspace", noUrl((e as Error).message));
+    } finally {
+      j.abort = undefined;
     }
     held.ws = ws;
     j.db.query(SQL.workspace).run({ id: j.id, base: ws.mergeBase, range: ws.rangeBase, via: ws.via });
@@ -1597,14 +1642,14 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     profile: Profile,
     key: string,
     kind: RunKind,
-    o: { threads?: ReplyThread[]; findings?: number[]; carry?: Carry; question?: string } = {},
+    o: { threads?: ReplyThread[]; picked?: boolean; findings?: number[]; carry?: Carry; question?: string } = {},
   ): StartResult {
     const busy = taken(db, key);
     if (busy) return busy;
     // A missing always-use skill refuses the start, so no failed run is stored.
     const missing = alwaysProblems(profile.alwaysSkills, opts.claudeConfigDir ?? claudeConfigDir());
     if (missing.length) return { status: 409, error: missing.join(" ") };
-    const { threads = null, findings = [], carry = null, question = null } = o;
+    const { threads = null, picked = false, findings = [], carry = null, question = null } = o;
     const { id: runId } = db.query(SQL.insert).get({
       pr: pr.id,
       kind,
@@ -1633,6 +1678,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         db,
         profile,
         threads,
+        picked,
         findings,
         carry,
         question,
@@ -1675,7 +1721,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   }
 
   // The threads of a fix run (plan r3 S-FIX). A given list passes the reply-run checks, and each thread must be unresolved (fix-ux.md).
-  // Absent list: each thread whose newest reply item is not posted and judges the comment valid or partly valid, and that has a live message.
+  // Absent list: each thread whose current reply draft (currentDrafts) is not posted and judges the comment valid or partly valid, and that
+  // has a live message.
   function fixThreads(db: Database, pr: PrRow, list?: number[]): ReplyThread[] | { status: 400 | 409; error: string } {
     if (list) {
       const threads = turnThreads(db, pr);
@@ -1683,8 +1730,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (resolved !== undefined) return { status: 400, error: `Thread ${resolved} is resolved. Fix works only on open threads.` };
       return replyThreads(db, pr, list);
     }
-    const newest = new Map<number, ItemRow>();
-    for (const r of db.query(SQL.replyItems).all({ pr: pr.id }) as ItemRow[]) if (r.thread !== null) newest.set(r.thread, r);
+    const newest = currentDrafts(db, pr.id);
     const threads = turnThreads(db, pr);
     const out: ReplyThread[] = [];
     for (const [thread, r] of newest) {
@@ -1837,7 +1883,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const profile = profileOf(settings.profiles(), profileId ?? brief.profile);
       const at = threads.map((t) => `${t.thread}@${t.replyTo}`);
       const key = [id, "reply", source_head, target_head, profile.id, profileRevision(profile), sha256(brief.note), ...at].join(":");
-      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "reply", { threads });
+      return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "reply", { threads, picked: list !== undefined });
     },
 
     // Plan r3 S-FIX: proposes edits for the review points on the user's own PR. It shares the run slot.
@@ -1900,6 +1946,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         db,
         profile,
         threads: null,
+        picked: false,
         findings: [],
         carry: null,
         question: null,
@@ -1938,12 +1985,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       }));
     },
 
-    // The newest reply item of each thread, unless it is posted. null for an unknown PR.
+    // The current reply draft of each thread (currentDrafts), unless it is posted. null for an unknown PR.
     replyDrafts(db: Database, pr: number): ReviewItemDto[] | null {
       if (!prRow(db, pr)) return null;
-      const newest = new Map<number, ItemRow>();
-      for (const r of db.query(SQL.replyItems).all({ pr }) as ItemRow[]) if (r.thread !== null) newest.set(r.thread, r);
-      return [...newest.values()]
+      return [...currentDrafts(db, pr).values()]
         .filter((r) => r.status !== "posted")
         .sort((a, b) => (a.thread ?? 0) - (b.thread ?? 0))
         .map(toItemDto);

@@ -55,7 +55,7 @@ import {
 } from "./clone";
 import { GitError, git } from "./git";
 import { GLOBAL_FILE, instructionSettings, projectInstructions, saveInstructionSettings } from "./instructions";
-import type { ReviewJobs } from "./jobs";
+import { currentDrafts, keptText, type ReviewJobs, userDraft } from "./jobs";
 import { cachePath, gitSetup, locked, longPath } from "./workspace";
 
 type PrRow = {
@@ -94,15 +94,23 @@ const SQL = {
   committed: "UPDATE fix_commit SET state = 'committed', commit_hash = $hash, short_hash = $short, updated_at = $now WHERE id = $id",
   undone: "UPDATE fix_commit SET state = 'undone', updated_at = $now WHERE id = $id",
   remove: "DELETE FROM fix_commit WHERE id = $id",
-  // jobs.ts supersede: a new reply draft replaces the open drafts of its thread. Posted drafts stay.
-  supersede: `UPDATE review_item SET status = 'discarded', revision = revision + 1
-    WHERE kind = 'reply' AND thread = $thread AND status IN ('new', 'accepted') AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
+  // jobs.ts supersede: a new reply draft replaces the open drafts of its thread that the user did not touch. Posted drafts stay.
+  replaceable: `SELECT i.id FROM review_item i JOIN review_run r ON r.id = i.run
+    WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread = $thread AND i.status = 'new' AND i.edited = 0 ORDER BY i.id`,
+  supersede: "UPDATE review_item SET status = 'discarded', revision = revision + 1 WHERE id = $id AND status = 'new'",
   thread: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr AND root_id = $root`,
   item: `INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited)
     VALUES ($run, 'reply', $payload, $body, 'new', $thread, 0)`,
+  // The fix run records each thread where the commit kept the user's draft. A second commit adds no second line.
+  kept: `UPDATE review_run SET summary_json = json_insert(summary_json, '$.coverage.skipped[#]', $text)
+    WHERE id = $run AND json_valid(summary_json) AND NOT EXISTS (SELECT 1 FROM json_each(summary_json, '$.coverage.skipped') WHERE value = $text)`,
+  fixDrafts: "SELECT thread, payload_json FROM review_item WHERE kind = 'reply' AND json_extract(payload_json, '$.fix.id') = $id",
   discard: `UPDATE review_item SET status = 'discarded', revision = revision + 1
     WHERE kind = 'reply' AND status IN ('new', 'accepted') AND json_extract(payload_json, '$.fix.id') = $id`,
+  openDraft: `SELECT 1 FROM review_item i JOIN review_run r ON r.id = i.run
+    WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread = $thread AND i.status IN ('new', 'accepted')`,
+  bringBack: "UPDATE review_item SET status = 'new', revision = revision + 1 WHERE id = $id AND status = 'discarded'",
   pushed: "SELECT 1 FROM pr_commit WHERE pr = $pr AND hash = $hash",
   // docs/plans/fix-ux.md decision 3: the commit discards each open finding that it covers. In SQLite, SET reads the old status.
   fixed: `UPDATE review_item SET status = 'discarded', revision = revision + 1,
@@ -179,17 +187,25 @@ export function createFixRoutes(opts: {
   }
 
   // One transaction: the commit, the superseded drafts of each thread, one "Fixed in" reply draft per thread, and the fixed mark of each finding.
+  // A thread keeps a draft that the user edited or accepted: it gets no "Fixed in" draft, and the fix run records it in its coverage.
   function finish(db: Database, run: RunRow, id: number, edits: EditRow[], made: { commit: string; short: string }) {
     db.transaction(() => {
       db.query(SQL.committed).run({ id, hash: made.commit, short: made.short, now: Date.now() });
       for (const item of new Set(edits.flatMap((e) => (e.item === null ? [] : [e.item]))))
         db.query(SQL.fixed).run({ item, pr: run.pr, id, commit: made.commit, short: made.short });
       const me = settings.config()?.userSlug ?? null;
+      const drafts = currentDrafts(db, run.pr);
       for (const thread of new Set(edits.flatMap((e) => (e.thread === null ? [] : [e.thread])))) {
-        db.query(SQL.supersede).run({ thread, pr: run.pr });
         const msgs = db.query(SQL.thread).all({ pr: run.pr, root: thread }) as TurnMsg[];
         const last = newestLive(msgs);
         if (!last) continue;
+        // The user asked for this fix, so a declined draft does not block the "Fixed in" draft.
+        if (userDraft(drafts.get(thread), false)) {
+          db.query(SQL.kept).run({ run: run.run, text: keptText(thread) });
+          continue;
+        }
+        const replaced = (db.query(SQL.replaceable).all({ thread, pr: run.pr }) as { id: number }[]).map((r) => r.id);
+        for (const r of replaced) db.query(SQL.supersede).run({ id: r });
         const root = msgs.find((m) => m.id === thread);
         const body = `Fixed in ${made.short}.`;
         const paths = [...new Set(edits.filter((e) => e.thread === thread).map((e) => e.path))];
@@ -202,10 +218,11 @@ export function createFixRoutes(opts: {
           evidenceStatus: "code",
           judgement: null,
           replyTo: last.id,
-          fix: { id, commit: made.commit },
+          fix: { id, commit: made.commit, ...(replaced.length > 0 && { replaced }) },
           resolve: true,
           resolveEvidence: `Commit ${made.short} changes ${paths.join(", ")}.`,
           resolveTick: !!root && isMe({ slug: root.authorSlug, login: root.authorLogin }, me),
+          threadOpen: !msgs.some((m) => m.threadResolved),
         };
         db.query(SQL.item).run({ run: run.run, payload: JSON.stringify(payload), body, thread });
       }
@@ -344,7 +361,14 @@ export function createFixRoutes(opts: {
       }
       db.transaction(() => {
         db.query(SQL.undone).run({ id, now: Date.now() });
+        const drafts = db.query(SQL.fixDrafts).all({ id }) as { thread: number; payload_json: string }[];
         db.query(SQL.discard).run({ id });
+        // The drafts that the commit replaced come back. One open draft per thread: only the newest, and only into a thread without one.
+        for (const d of drafts) {
+          const replaced = (JSON.parse(d.payload_json) as ReplyPayload).fix?.replaced ?? [];
+          if (replaced.length && !db.query(SQL.openDraft).get({ pr: r.pr, thread: d.thread }))
+            db.query(SQL.bringBack).run({ id: Math.max(...replaced) });
+        }
         db.query(SQL.unfixed).run({ id });
       })();
       return { status: 200, dto: dtoOf(db, id) };

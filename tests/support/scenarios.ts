@@ -110,7 +110,7 @@ const findIn = (list: Activity[], id: number): RawComment | undefined => {
 // Comments that the app posts to one fake PR (plan v3 WP13a). routes: POST .../comments, GET .../comments/{id}, and
 // PUT .../comments/{id} (thread resolve). list: the PR activities without the posted comments. author: the token owner.
 // New comment IDs start at firstId. drop: the next POST stores the comment, then resets the connection (A9, accept-then-drop).
-// A PUT needs the current version, else 409. forbid: the comment IDs that refuse a PUT with 403. conflict: one 409 per ID.
+// A reply in a resolved thread gets 409. A PUT needs the current version, else 409. forbid: the comment IDs that refuse a PUT with 403. conflict: one 409 per ID.
 // ignore: the IDs whose PUT gives 200 and changes nothing. threads: the resolve state of each changed root comment.
 // The version bump and the resolver fields copy the Data Center 8.15 docs shape. A real 9.4 server is UNVERIFIED (U62 to U66).
 export function commentPosts(path: string, list: () => Activity[], author: unknown, firstId: number) {
@@ -154,7 +154,11 @@ export function commentPosts(path: string, list: () => Activity[], author: unkno
       const body = (await req.json()) as Body;
       state.bodies.push(body);
       const parentId = body.parent?.id ?? null;
-      if (parentId !== null && !findIn(all(), parentId)) return NOT_FOUND;
+      const now = all();
+      if (parentId !== null && !findIn(now, parentId)) return NOT_FOUND;
+      // DC docs: a resolved thread takes no reply. The status code is UNVERIFIED (integration-check.md U67).
+      const root = parentId === null ? undefined : now.find((a) => a.comment && findIn([a], parentId))?.comment;
+      if (root?.threadResolved === true) return { status: 409, body: { errors: [{ message: "The comment thread is resolved." }] } };
       const at = Date.now();
       const comment: RawComment = {
         id: next++,

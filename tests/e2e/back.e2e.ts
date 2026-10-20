@@ -12,6 +12,8 @@ const A = "Batch cache writes in the sync worker";
 const A_PATH = "/needs/PROJ1/sample-repo-2/1001";
 // PR 77 of PROJ1/sample-repo-3: the token owner is a reviewer, so it is in Reviewing and not in My PRs.
 const C = "Drop the legacy export endpoint";
+// PR 210: the tall scenario gives it a long thread.
+const B = "Show build status on the release page";
 
 const test = base.extend<{ seen: { urls: string[]; reads: string[] } }>({
   seen: [
@@ -257,4 +259,50 @@ test("Skip to the list focuses the list with no history entry", async ({ page })
   await expect(page.locator("#rows")).toBeFocused();
   expect(page.url()).toBe(url);
   expect(await depth(page)).toBe(before);
+});
+
+test("the next PR opens at the top: a key press after a scroll keeps no old scroll position and acks nothing below the fold", async ({
+  page,
+  request,
+}) => {
+  await connect(page);
+  // PR 210 gets a long thread of unread messages.
+  await control("state", { tall: 6 });
+  await page.getByRole("button", { name: /^Reviewing/ }).click();
+  const titles = await page.locator("[data-row]").evaluateAll((rows) => rows.map((r) => r.textContent ?? ""));
+  const at = titles.findIndex((t) => t.includes(B));
+  // The neighbour row of PR 210, and the key that moves from it to PR 210.
+  const [from, key] = at > 0 ? [at - 1, "j"] : [at + 1, "k"];
+  const unread = async () => {
+    const rows = (await (await request.get(`${APP}/api/prs`)).json()) as { id: number; title: string }[];
+    const id = rows.find((r) => r.title === B)?.id;
+    const detail = (await (await request.get(`${APP}/api/prs/${id}`)).json()) as { comments: { id: number; unread: boolean }[] };
+    return detail.comments.filter((c) => c.unread).map((c) => c.id);
+  };
+  // A first visit puts PR 210 in the query cache, so the key press below shows it at once, without a loading state.
+  await page.locator("[data-row]").nth(at).click();
+  await expect(h1(page)).toHaveText(B);
+  await expect(page.locator("#c-2000000")).toBeVisible();
+  // Longer than the 1 s ack batch.
+  await page.waitForTimeout(2500);
+  const before = await unread();
+  await page.locator("[data-row]").nth(from).click();
+  await expect(h1(page)).not.toHaveText(B);
+  await pane(page).evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+  await expect.poll(() => pane(page).evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await page.locator("[data-row]").nth(from).focus();
+  await page.keyboard.press(key);
+  await expect(h1(page)).toHaveText(B);
+  expect(await pane(page).evaluate((el) => el.scrollTop)).toBe(0);
+  // The unread messages below the fold of PR 210 stay unread after the ack batch.
+  const below = (
+    await page.locator("[data-scroll] [data-id]").evaluateAll((els) => {
+      const box = els[0]?.closest("[data-scroll]")?.getBoundingClientRect();
+      return els.filter((e) => box && e.getBoundingClientRect().top >= box.bottom).map((e) => Number(e.getAttribute("data-id")));
+    })
+  ).filter((m) => before.includes(m));
+  expect(below.length).toBeGreaterThan(0);
+  await page.waitForTimeout(2500);
+  const after = await unread();
+  for (const m of below) expect(after).toContain(m);
 });

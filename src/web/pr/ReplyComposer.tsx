@@ -282,6 +282,7 @@ export function ReplyComposer({
               dest: replyText({ name: nameOf(confirm.parent), place }),
               body: confirm.text,
               warning: null,
+              reopen: t.turn === "resolved" ? "The thread is resolved. Reopen thread, post reply." : null,
               resolve: null,
             },
           ]}

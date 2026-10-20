@@ -103,11 +103,13 @@ The run log shows each tool call of the review and of its subagents.
 
 ### Replies
 
-Draft replies judges each thread where it is your turn: valid, partly valid, not valid, or a question. It drafts a reply for each one. You edit the reply and post it.
+Draft replies judges each thread where it is your turn: valid, partly valid, not valid, or a question. It drafts a reply for each one. You edit the reply and post it. A new run never replaces a draft that you edited, accepted, or discarded.
+
+Tick "Resolve after posting" to resolve the thread after the reply. Bitbucket takes no reply in a resolved thread, so Kierto reopens a resolved thread first. The confirm says "Reopen thread, post reply", and a draft says "Resolved since the draft" when someone resolved its thread after Claude drafted it.
 
 ### Fix it
 
-On your own pull request, the Fix list holds the open threads and the review findings. Valid threads and accepted findings start ticked. A read-only run checks each ticked point and proposes exact edits. You review each edit. Apply commits the edits into your clone. You push.
+On your own pull request, the Fix list holds the open threads and the review findings. Valid threads and accepted findings start ticked. A read-only run checks each ticked point and proposes exact edits. You review each edit. Apply commits the edits into your clone and drafts a "Fixed in" reply in each fixed thread, unless you already edited or accepted a reply there. You push. Before the push, Undo removes the commit and brings back the reply draft that it replaced.
 
 ![The Fix list](docs/screenshots/fix-list.webp)
 

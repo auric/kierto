@@ -28,6 +28,9 @@ const SQL = {
   update: `UPDATE review_item SET status = $status, body = $body, edited = $edited, line = $line, line_end = $line_end,
       anchor_state = $anchor_state, payload_json = $payload_json, revision = revision + 1
     WHERE id = $id AND revision = $revision AND status != 'posted'`,
+  undone: "SELECT 1 FROM fix_commit WHERE id = $id AND state = 'undone'",
+  otherOpen: `SELECT 1 FROM review_item i JOIN review_run r ON r.id = i.run
+    WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread = $thread AND i.id <> $id AND i.status IN ('new', 'accepted')`,
 };
 
 type Row = ItemRow & { pr: number };
@@ -43,7 +46,15 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
   if (row.kind === "finding" && input.action !== "discard" && (row.path === null || row.side === null || row.line === null))
     return { status: 400, error: "The finding has no place in the code." };
   const next = { ...row };
-  const ticked = row.kind === "reply" && (JSON.parse(row.payload_json) as ReplyPayload).resolveTick === true;
+  const reply = row.kind === "reply" ? (JSON.parse(row.payload_json) as ReplyPayload) : null;
+  const ticked = reply?.resolveTick === true;
+  // A "Fixed in" draft of an undone commit can never post (outbox.ts fixCheck), so it stays discarded.
+  if (reply?.fix && input.action !== "discard" && db.query(SQL.undone).get({ id: reply.fix.id }))
+    return conflict("The fix commit was undone, so this draft cannot post. Draft the reply again.");
+  // One open draft per thread.
+  const opens = row.status === "discarded" && (input.action === "accept" || input.action === "restore" || input.action === "edit");
+  if (reply && opens && db.query(SQL.otherOpen).get({ pr: row.pr, thread: row.thread, id }))
+    return conflict("Another reply draft of this thread is open. Discard it first.");
   switch (input.action) {
     case "accept":
       // A reply draft with action none has no body. A ticked draft without a body only resolves the thread.

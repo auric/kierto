@@ -13,6 +13,7 @@ export type PlanRun = { id: number; sourceHead: string; targetHead: string; merg
 // A live root comment. anchor: the stored forge anchor, absent for a general comment.
 export type PlanComment = { id: number; authorSlug: string; authorLogin: string | null; authorName: string | null; anchor: unknown };
 // mark: the markAi setting at build time. severity: the markSeverity setting. The outbox keeps the built body, so a later change never alters a queued row.
+// resolved: the root comments of the resolved threads.
 export type PlanInput = {
   me: string | null;
   mark: boolean;
@@ -20,6 +21,7 @@ export type PlanInput = {
   runs: PlanRun[];
   items: ReviewItemDto[];
   comments: PlanComment[];
+  resolved?: number[];
 };
 
 export const AI_MARK = "🤖 ";
@@ -85,6 +87,7 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
   const out: PlannedPost[] = [];
   const text = input.mark ? marked : (body: string) => body;
   const sev = (it: ReviewItemDto) => (input.severity ? severityOf(it) : undefined);
+  const resolved = new Set(input.resolved);
   for (const run of input.runs) {
     const heads = { run: run.id, sourceHead: run.sourceHead, targetHead: run.targetHead, mergeBase: run.mergeBase };
     const items = input.items.filter((i) => i.run === run.id && i.status === "accepted").sort((a, b) => a.id - b.id);
@@ -96,6 +99,7 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
       const a = it.anchor;
       // R15: a reply item has no anchor, but it never joins the general comment.
       // A ticked draft resolves its thread after the post. A ticked draft without text only resolves, so it gets no AI mark.
+      // A reply in a resolved thread reopens it first (outbox.ts reopenFor).
       if (it.kind === "reply") {
         const p = it.payload as ReplyPayload;
         const body = it.body.trim() ? text(it.body) : "";
@@ -107,6 +111,7 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
           items: [ref],
           duplicate: null,
           ...(p.resolveTick && { resolve: p.thread }),
+          ...(body && resolved.has(p.thread) && { reopen: p.threadOpen === true ? "since" : "resolved" }),
         });
         continue;
       }

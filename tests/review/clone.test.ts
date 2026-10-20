@@ -25,12 +25,12 @@ import { createLive } from "../../src/server/live";
 import { createOutbox } from "../../src/server/publish/outbox";
 import { buildPatch } from "../../src/server/review/clone";
 import { git, gitEnv } from "../../src/server/review/git";
-import { createReviewJobs } from "../../src/server/review/jobs";
+import { createReviewJobs, keptText } from "../../src/server/review/jobs";
 import { cachePath, gitSetup, syncCache } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { createSyncEngine } from "../../src/server/sync/engine";
-import type { CloneDto, CloneProblem, FixCommitDto, FixConflict } from "../../src/shared/dto";
+import type { CloneDto, CloneProblem, FixCommitDto, FixConflict, ReviewItemDto } from "../../src/shared/dto";
 import type { ReplyPayload } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
 import { ACTIVITIES_PATH, activities, DASHBOARD_PATH, onePage, ownPr, PR_PATH, PR_REF } from "../support/scenarios";
@@ -461,7 +461,13 @@ describe("apply and commit", () => {
       expect(draft).toMatchObject({ id: s.draft, status: "discarded", revision: 1 });
       expect(fixed).toMatchObject({ status: "new", body: `Fixed in ${r.body.short}.` });
       const payload = JSON.parse(fixed?.payload_json ?? "{}") as ReplyPayload;
-      expect(payload).toMatchObject({ thread: ROOT, action: "reply", replyTo: s.newest(), fix: { id: r.body.id, commit: head } });
+      expect(payload).toMatchObject({
+        thread: ROOT,
+        action: "reply",
+        replyTo: s.newest(),
+        fix: { id: r.body.id, commit: head, replaced: [s.draft] },
+        threadOpen: true,
+      });
     },
     SLOW,
   );
@@ -699,6 +705,39 @@ describe("hooks", () => {
 
 describe("undo", () => {
   test(
+    "a commit keeps a reply draft that you accepted or edited: no Fixed in draft, and the fix run says so in its coverage",
+    async () => {
+      const s = await setup();
+      const summary = {
+        summary: "S",
+        risks: [],
+        coverage: { read: [], skipped: [] as string[], unavailable: [], notChecked: [] },
+        dropped: [],
+      };
+      s.db.query("UPDATE review_run SET summary_json = $j WHERE id = $id").run({ id: s.run, j: JSON.stringify(summary) });
+      // Cache mode takes the commit identity from the clone.
+      expect((await s.setClone(await makeClone())).status).toBe(200);
+      expect((await s.call("POST", `/api/items/${s.draft}`, { action: "accept", revision: 0 })).status).toBe(200);
+      const r = await s.apply(s.ids, "cache");
+      expect(r.status).toBe(201);
+      expect(s.items()).toEqual([expect.objectContaining({ id: s.draft, status: "accepted", revision: 1, body: "Will do." })]);
+      const skipped = () =>
+        (
+          JSON.parse(
+            (s.db.query("SELECT summary_json FROM review_run WHERE id = $id").get({ id: s.run }) as { summary_json: string }).summary_json,
+          ) as typeof summary
+        ).coverage.skipped;
+      expect(skipped()).toEqual([keptText(ROOT)]);
+      // Undo brings nothing back: the commit replaced no draft. A second commit adds no second line.
+      expect((await s.undo(r.body.id)).body.state).toBe("undone");
+      expect(s.items()).toEqual([expect.objectContaining({ id: s.draft, status: "accepted" })]);
+      expect((await s.apply(s.ids, "cache")).status).toBe(201);
+      expect(skipped()).toEqual([keptText(ROOT)]);
+    },
+    SLOW,
+  );
+
+  test(
     "a moved HEAD or a commit on the PR gives 409; else HEAD returns to before and the Fixed in draft is discarded",
     async () => {
       const s = await setup();
@@ -727,6 +766,16 @@ describe("undo", () => {
       expect(existsSync(join(clone, "docs/flush.md"))).toBe(false);
       const fixed = s.items().at(-1);
       expect(fixed).toMatchObject({ status: "discarded", revision: 1 });
+      // The draft that the commit replaced comes back. The Fixed in draft of the undone commit cannot come back.
+      expect(s.items()[0]).toMatchObject({ id: s.draft, status: "new", revision: 2 });
+      for (const action of ["restore", "accept"]) {
+        const back = await s.call<{ error: string }>("POST", `/api/items/${fixed?.id}`, { action, revision: 1 });
+        expect([back.status, back.body.error]).toEqual([
+          409,
+          "The fix commit was undone, so this draft cannot post. Draft the reply again.",
+        ]);
+      }
+      expect((await s.call<ReviewItemDto[]>("GET", `/api/prs/${s.id}/reply-drafts`)).body.map((i) => i.id)).toEqual([s.draft]);
       // The undone row frees its key.
       const again = await s.apply(s.ids);
       expect(again.status).toBe(201);

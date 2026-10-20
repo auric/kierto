@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -55,6 +55,21 @@ export function dataDir(): string {
   return join(env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "review-loop");
 }
 
+// A copy of config.json before the app drops a part of it. The next save writes the file without that part.
+// An older copy with other text stays: the copy goes to the first free name config.json.bak, config.json.1.bak, and so on.
+const MAX_BACKUPS = 100;
+function backup(dir: string, text: string): string | null {
+  for (let i = 0; i < MAX_BACKUPS; i++) {
+    const file = join(dir, i ? `config.json.${i}.bak` : "config.json.bak");
+    if (!existsSync(file)) {
+      writeFileSync(file, text);
+      return file;
+    }
+    if (readFileSync(file, "utf8") === text) return file;
+  }
+  return null;
+}
+
 export function readConfig(dir: string): Config | null {
   let text: string;
   try {
@@ -62,12 +77,32 @@ export function readConfig(dir: string): Config | null {
   } catch {
     return null;
   }
+  const kept = (what: string) => {
+    let copy: string | null = null;
+    try {
+      copy = backup(dir, text);
+    } catch (e) {
+      log(`Could not copy config.json in ${dir}: ${(e as Error).message}`);
+    }
+    log(`Ignored ${what} in config.json in ${dir}. ${copy ? `The original file is in ${copy}.` : "No copy was made."}`);
+  };
+  let raw: unknown;
   try {
-    return config.parse(JSON.parse(text));
+    raw = JSON.parse(text);
   } catch {
-    log(`Ignored an invalid config.json in ${dir}.`);
+    kept("the whole file: it is not valid JSON");
     return null;
   }
+  const r = config.safeParse(raw);
+  if (!r.success) {
+    kept(`the whole file: ${[...new Set(r.error.issues.map((i) => String(i.path[0] ?? "the top level")))].join(", ")} is invalid`);
+    return null;
+  }
+  // A key with .catch(undefined) reads as absent when its value is invalid.
+  const given = raw as Record<string, unknown>;
+  const dropped = Object.keys(config.shape).filter((k) => given[k] !== undefined && r.data[k as keyof Config] === undefined);
+  if (dropped.length) kept(`the invalid ${dropped.join(", ")}`);
+  return r.data;
 }
 
 export function writeConfig(dir: string, value: Config) {

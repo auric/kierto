@@ -1,6 +1,6 @@
 # Release 3 manual smoke test: Fix it, Jira Markdown, and Jira attachments
 
-This test checks the Release 3 features against a real Bitbucket Server, a real Jira server, your own git clone, and the real `claude` CLI. The user runs it. The automated suites use fixtures, the fake CLI, the fake Bitbucket, the fake Jira, and temp clones only. The results fill the "Release 3 (not run)" rows in integration-check.md: U21 to U29, B11, B12, B15, and B16. Part I checks the prompt features that came after Release 3. Part L checks thread resolve and fills U62 to U66.
+This test checks the Release 3 features against a real Bitbucket Server, a real Jira server, your own git clone, and the real `claude` CLI. The user runs it. The automated suites use fixtures, the fake CLI, the fake Bitbucket, the fake Jira, and temp clones only. The results fill the "Release 3 (not run)" rows in integration-check.md: U21 to U29, B11, B12, B15, and B16. Part I checks the prompt features that came after Release 3. Part L checks thread resolve and fills U62 to U67.
 
 ## Rules
 
@@ -48,7 +48,7 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 8. Expect the default message "Fix review comment <id> on PR <n>" with one body line for T1. Click "Apply and commit". Expect "Committed <short> on <source branch> in your clone. Push it when you are ready." on the fix card.
 9. In the clone, run `git log -1 --format="%an <%ae>%n%s"`. Expect your identity from step 7 of the preparation and the message. Run `git show --stat HEAD`. Expect only the edited files. Run `git status --porcelain --untracked-files=no`. Expect no output. Expect one line in `$HOME/rl-smoke-hook.txt`.
 10. Expect a "Fixed in <short>." reply draft on T1 in place of its earlier draft. Expect "Waiting for <short> on the PR branch. Push it. The next sync finds it."
-11. Click Undo on the fix card. Expect "You undid the fix commit <short>." In the clone, expect HEAD at the old commit and a clean status. Expect the "Fixed in" draft to be gone.
+11. Click Undo on the fix card. Expect "You undid the fix commit <short>." In the clone, expect HEAD at the old commit and a clean status. Expect the "Fixed in" draft to be gone and the reply draft from before the commit back under the thread.
 12. Click Apply and commit again with the same edit. Expect a new commit and a second line in the marker file.
 13. Accept the "Fixed in" draft. Press p. Expect the 409 text "Commit <short> is not on the PR source branch yet. Push it. The next sync finds it." Expect no new comment in Bitbucket.
 14. Run `git -C <CLONE> push`. Click "Check now". Expect the waiting text to go. Press p and confirm. Expect exactly one reply "Fixed in <short>." under T1 in Bitbucket.
@@ -196,7 +196,7 @@ Part D (package S3): steps 20 to 27. Run them after step 19 and a B16 PASS. The 
 Part L writes to the test pull request: it resolves and reopens threads. Use only the test pull request.
 
 1. Run `bun scripts/gate0/resolve-thread.ts --dry-run`. Expect "dry run: PASS". It sends no request.
-2. Write a new general comment "Resolve gate." on the test pull request. Copy its comment ID from its link. Run `bun scripts/gate0/resolve-thread.ts --pr <TEST_PR_URL> --thread <ID>`. Expect the lines "resolve PUT", "after resolve", "activities", "stale PUT", "reopen PUT", and "after reopen". Expect "threadResolved=false" in the last line, so the thread is open again. Send back the full console output. It holds status codes, versions, and booleans only.
+2. Write a new general comment "Resolve gate." on the test pull request. Copy its comment ID from its link. Run `bun scripts/gate0/resolve-thread.ts --pr <TEST_PR_URL> --thread <ID>`. Expect the lines "resolve PUT", "after resolve", "activities", "reply to resolved", "stale PUT", "reopen PUT", and "after reopen". "reply to resolved" shows whether Bitbucket refused one reply in the resolved thread. If it shows "taken=true", the script deleted that reply again. Expect "threadResolved=false" in the last line, so the thread is open again. Send back the full console output. It holds status codes, versions, and booleans only.
 3. If a line says "text unchanged=false", stop part L and report it. The PUT then changes the comment text, and Resolve must not ship.
 4. Optional: the second user runs step 2 with `--forbidden <ID>` and the ID of a thread that you started. They need their own token from `bun scripts/gate0/set-token.ts`. Record the status of the "forbidden PUT" line.
 5. Ask the second user to reply "Done?" in your "Resolve gate." thread. Click "Check now". Click Draft replies. Expect a draft card in that thread with the box "Resolve after posting". If Claude proposes the resolve, expect the box ticked and a line "Claude proposes it:" with its proof. Else tick the box yourself.
@@ -217,5 +217,5 @@ Part L writes to the test pull request: it resolves and reopens threads. Use onl
 - For each fix run: the proposed edits and the skipped edits. This gives the rate of dropped edits.
 - From part J: the reason that the fix run gave for T9 in step 4.
 - From part K: the item count and the size of the copy, the count of entries per verdict, and the count of skipped rows. From steps 14 to 17: the count of listed sessions, the size and the token estimate of the picked session, the token count of the session run (hint of its time), and the count of new transcripts. Record no text and no path.
-- From part L: the gate lines of steps 2 and 4. Update U62 to U66 in integration-check.md.
+- From part L: the gate lines of steps 2 and 4. Update U62 to U67 in integration-check.md.
 - B11, B12, B15, and B16, the tag names from E5, and the shapes from F1. From part I: the languages of step 4, the severity counts of step 6, and any coverage line from step 5. Update the "Release 3 (not run)" rows in integration-check.md.

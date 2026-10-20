@@ -511,6 +511,7 @@ export function useReview(
               mode={it ? modeOf(triage, it.id) : null}
               busy={!!it && triage.busy.has(it.id)}
               waiting={p ? fixWaiting(p, commits, fixes) : null}
+              resolved={t.turn !== "resolved" ? null : p?.threadOpen ? "since" : "now"}
               ctx={replyCtx}
             />
           )}

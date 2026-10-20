@@ -12,6 +12,21 @@
 - On threads where you made the point or asked the question, reply drafts show "Settled", "Not settled", or "Follow-up question". Only a settled thread gets a resolve proposal, with the answer quoted as proof.
 - A partly answered question gets a reply that asks the open part again. A thread with several questions resolves only when each one has an answer.
 - Draft replies can propose to resolve a thread of another person where you replied. The box stays unticked there.
+- A reply to a resolved thread reopens the thread first, because Bitbucket takes no reply there. The post confirm and Ready to post say "Reopen thread, post reply". A ticked draft resolves the thread again after the reply.
+- A reply draft says "Resolved since the draft" when someone resolved its thread after Claude drafted it.
+- If the reply fails after the reopen, the post says so. Retry posts the reply without a second reopen.
+- Claude never replaces a reply draft that you edited, accepted, or discarded. The run says "kept your draft" for that thread. Draft reply in that one thread replaces a discarded draft.
+- A Fix commit keeps a reply draft that you edited or accepted and adds no "Fixed in" draft there. Undo of a Fix commit brings back the draft that its "Fixed in" draft replaced.
+- A "Fixed in" draft of an undone commit can no longer come back with Restore.
+- Post again of a reply no longer fails when the pull request got new commits.
+
+### Fixes
+
+- After you resolve or reopen a thread, an edit of its first comment from before the resolve still arrives and shows as new.
+- The next pull request opens at the top. A key press after a scroll no longer keeps the old position or marks messages below the fold as read.
+- Cancel stops a review while it fetches the repository. A fetch can now take up to the 60-minute run limit, and a stopped fetch does not start a second one.
+- A comment can no longer pose as another message in the pull request text that Claude reads.
+- An invalid profile or rule in config.json no longer gets lost silently on the next save. Kierto keeps a copy in config.json.bak and logs what it ignored.
 
 ### Runs
 

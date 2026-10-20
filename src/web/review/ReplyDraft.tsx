@@ -19,6 +19,7 @@ import {
   type LucideIcon,
   MessageCircleQuestionMark,
   Reply,
+  RotateCcw,
 } from "lucide-react";
 import { memo, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -124,6 +125,7 @@ function Head({ meta, who, children }: { meta: MetaDto; who: string; children?: 
 // thread: the root comment ID. mine: the user started the thread. to: the author of the message that the draft answers.
 // mode: the open editor of this draft. busy: a triage request of this draft is out.
 // waiting: the short hash of a "Fixed in" commit that the PR commits do not list yet.
+// resolved: the thread is resolved now. since: it was open when the app stored the draft. null: the thread is open.
 export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   card: ReplyCard;
   thread: number;
@@ -132,6 +134,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   mode: TriageMode;
   busy: boolean;
   waiting: string | null;
+  resolved: "since" | "now" | null;
   ctx: ReplyCtx;
 }) {
   const { card, thread, ctx } = props;
@@ -212,13 +215,20 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   const accepted = it.status === "accepted";
   const text = it.body.trim() !== "";
   const resolves = p.resolveTick === true;
+  // The forge takes no reply in a resolved thread, so the post reopens it first. A draft without text posts no reply.
+  const reopen =
+    text && props.resolved
+      ? props.resolved === "since"
+        ? "Resolved since the draft. The post reopens the thread first."
+        : "The thread is resolved. The post reopens it first."
+      : null;
   return (
     <article
       id={id}
       data-item={it.id}
       data-reply-draft={thread}
       tabIndex={-1}
-      aria-label={`${text ? "Reply draft" : "Resolve proposal"} from ${session ? "your session" : short}${text && props.to ? ` to ${props.to}` : ""}.${judged}${resolves ? " Resolves the thread after the post." : ""}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}`}
+      aria-label={`${text ? "Reply draft" : "Resolve proposal"} from ${session ? "your session" : short}${text && props.to ? ` to ${props.to}` : ""}.${judged}${reopen ? ` ${reopen}` : ""}${resolves ? " Resolves the thread after the post." : ""}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}`}
       className={cn(box, accepted && "border-solid")}
     >
       <Head meta={ctx.meta} who={who}>
@@ -261,6 +271,12 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
                 </code>{" "}
                 on the PR branch. Push it. The next sync finds it.
               </span>
+            </p>
+          )}
+          {reopen && (
+            <p data-reopen className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-2">
+              <RotateCcw aria-hidden className="size-[13px] shrink-0" />
+              {reopen}
             </p>
           )}
           <ResolveTick it={it} p={p} mine={props.mine} who={who} busy={props.busy} ctx={ctx} />

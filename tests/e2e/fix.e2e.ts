@@ -289,7 +289,9 @@ test("the Fix list ticks the valid threads; the edits show, one is unticked, App
   expect(await writes()).toEqual([`POST ${PR_PATH}/comments`]);
 });
 
-test("a dirty clone keeps Apply disabled; a clean one commits; Undo resets the clone and discards the Fixed in draft", async ({ page }) => {
+test("a dirty clone keeps Apply disabled; a clean one commits; Undo resets the clone and brings back the draft that Fixed in replaced", async ({
+  page,
+}) => {
   await connect(page);
   await draftReplies(page);
   await control("claude", { stream: "tree", fix: FIX });
@@ -334,13 +336,14 @@ test("a dirty clone keeps Apply disabled; a clean one commits; Undo resets the c
   const short = git(path, ["rev-parse", "--short", "HEAD"]);
   await expect(draft(page, LOCK)).toContainText(`Fixed in ${short}.`);
 
-  // Undo: HEAD goes back, the tree stays clean, and the Fixed in draft is discarded.
+  // Undo: HEAD goes back, the tree stays clean, the Fixed in draft is discarded, and the draft that it replaced comes back.
   await fixCard(page, LOCK).getByRole("button", { name: "Undo" }).click();
   await expect(page.locator("p[role='status'].sr-only")).toContainText(`Undone. Your clone is back at ${before.slice(0, 7)}.`);
   await expect(fixCard(page, LOCK)).toBeFocused();
   expect((await cloneState(path)).head).toBe(before);
   expect(git(path, ["status", "--porcelain"])).toBe("");
-  await expect(draft(page, LOCK)).toContainText(`Discarded reply draft: Fixed in ${short}.`);
+  await expect(draft(page, LOCK)).toContainText("Reply draft to Alex Smith");
+  await expect(draft(page, LOCK)).not.toContainText(`Fixed in ${short}.`);
   // The edit is free again, so the bar offers it again.
   await expect(page.locator("[data-fixbar]").getByRole("button", { name: /^Apply / })).toHaveText("Apply 1 edit from 1 comment");
   expect(await writes()).toEqual([]);

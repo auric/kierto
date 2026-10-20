@@ -220,7 +220,10 @@ const DOC_TOOLS: Record<string, string[]> = {
 };
 const stubTools: ListTools = async (url) => DOC_TOOLS[url] ?? [];
 
-async function setup(o: { forgeRemote?: boolean; listTools?: ListTools; claudeConfigDir?: string; source?: Record<string, Entry> } = {}) {
+// remoteUrl: a git remote URL in place of the temp repository.
+async function setup(
+  o: { forgeRemote?: boolean; listTools?: ListTools; claudeConfigDir?: string; source?: Record<string, Entry>; remoteUrl?: string } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "rl-wp10-"));
   dirs.push(root);
   const repo = await remoteRepo(join(root, "remote"), o.source);
@@ -290,7 +293,7 @@ async function setup(o: { forgeRemote?: boolean; listTools?: ListTools; claudeCo
     live,
     dataDir: dir,
     runnerCommand: [process.execPath, FAKE, scenarioFile],
-    gitRemote: o.forgeRemote ? undefined : async () => remoteOf(repo.remote),
+    gitRemote: o.forgeRemote ? undefined : async () => remoteOf(o.remoteUrl ?? repo.remote),
     listTools: o.listTools ?? stubTools,
     claudeConfigDir: o.claudeConfigDir,
   });
@@ -609,6 +612,38 @@ describe("acceptance", () => {
       expect(existsSync(join(h.dir, "runs", String(body.id)))).toBe(false);
       expect((await h.call(`/api/runs/${body.id}/cancel`, { method: "POST" })).status).toBe(409);
       expect((await h.call("/api/runs/999/cancel", { method: "POST" })).status).toBe(404);
+    },
+    SLOW,
+  );
+
+  test(
+    "cancel stops a fetch that never answers within seconds, with no second fetch of the source branch",
+    async () => {
+      // A loopback git remote that takes each request and never answers.
+      let asked = 0;
+      const hang = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        // 0: no idle timeout, so the request stays open.
+        idleTimeout: 0,
+        fetch: () => {
+          asked++;
+          return new Promise<Response>(() => {});
+        },
+      });
+      cleanup.push(() => hang.stop(true));
+      const h = await setup({ remoteUrl: `http://127.0.0.1:${hang.port}/repo.git` });
+      const { status, body } = await h.start();
+      expect(status).toBe(202);
+      expect(await waitFor(() => asked > 0)).toBe(true);
+      const at = Date.now();
+      expect((await h.call(`/api/runs/${body.id}/cancel`, { method: "POST" })).status).toBe(202);
+      const d = await h.finish(body.id);
+      expect(d.run).toMatchObject({ status: "cancelled", errorKind: null });
+      // git() waits up to 5 s for the pipes of a killed git.
+      expect(Date.now() - at).toBeLessThan(15_000);
+      expect(asked).toBe(1);
+      expect(h.runCall()).toBeUndefined();
     },
     SLOW,
   );

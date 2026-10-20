@@ -256,7 +256,12 @@ describe("thread resolve", () => {
   test("resolve: GET, PUT {version, threadResolved}, GET; reopen clears the resolver; a second resolve sends no PUT", async () => {
     const { posts, p } = world();
     const r = await p.setThreadResolved(PR_REF, ROOT, true);
-    expect(r).toMatchObject({ status: "done", state: { version: V0 + 1, threadResolved: true, threadResolver: { slug: "jdoe" } } });
+    expect(r).toMatchObject({
+      status: "done",
+      state: { version: V0 + 1, threadResolved: true, threadResolver: { slug: "jdoe" } },
+      from: V0,
+      put: true,
+    });
     expect(r.status === "done" && typeof r.state.threadResolvedAt).toBe("number");
     expect(posts.puts).toEqual([{ id: ROOT, version: V0, threadResolved: true }]);
     expect(fake.requests.filter((x) => x.includes(`/comments/${ROOT}`))).toEqual([
@@ -265,10 +270,15 @@ describe("thread resolve", () => {
       `GET ${PR_PATH}/comments/${ROOT}`,
     ]);
     // The state is already resolved, so nothing is written.
-    expect(await p.setThreadResolved(PR_REF, ROOT, true)).toMatchObject({ status: "done", state: { version: V0 + 1 } });
+    expect(await p.setThreadResolved(PR_REF, ROOT, true)).toMatchObject({
+      status: "done",
+      state: { version: V0 + 1 },
+      from: V0 + 1,
+      put: false,
+    });
     expect(writes()).toHaveLength(1);
     const back = await p.setThreadResolved(PR_REF, ROOT, false);
-    expect(back).toEqual({ status: "done", state: { version: V0 + 2, threadResolved: false } });
+    expect(back).toEqual({ status: "done", state: { version: V0 + 2, threadResolved: false }, from: V0 + 1, put: true });
     expect(posts.puts.at(-1)).toEqual({ id: ROOT, version: V0 + 1, threadResolved: false });
   });
 

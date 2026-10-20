@@ -9,8 +9,15 @@ const STDERR_TAIL = 2_000;
 // Bun docs: BUN_BE_BUN=1 turns a compiled binary into the bun CLI. BUN_OPTIONS and NODE_OPTIONS add runtime flags. No child gets them.
 export const RUNTIME_ENV = /^(?:BUN_BE_BUN|BUN_OPTIONS|NODE_OPTIONS)$/i;
 
+// stopped: the time limit or the abort signal killed git. git itself reported no error.
 export class GitError extends Error {
   override name = "GitError";
+  constructor(
+    message: string,
+    readonly stopped = false,
+  ) {
+    super(message);
+  }
 }
 
 function baseEnv(): Record<string, string> {
@@ -44,11 +51,16 @@ export function gitEnv(emptyGlobal: string, config: [string, string][] = []): Re
   return env;
 }
 
-// Returns stdout. A non-zero exit throws a GitError with the stderr tail.
+// Returns stdout. A non-zero exit throws a GitError with the stderr tail. signal: an abort kills git.
 export async function git(
   args: string[],
-  opts: { env: Record<string, string>; cwd?: string; stdin?: string; timeoutMs?: number },
+  opts: { env: Record<string, string>; cwd?: string; stdin?: string; timeoutMs?: number; signal?: AbortSignal },
 ): Promise<string> {
+  const cmd = args.find((a) => !a.startsWith("-") && !a.includes("=")) ?? "";
+  const stopped = () =>
+    new GitError(`git ${cmd} stopped: ${opts.signal?.aborted ? "the run was cancelled" : "the time limit ran out"}.`, true);
+  // Bun.spawn throws an AbortError for a signal that is aborted already.
+  if (opts.signal?.aborted) throw stopped();
   const p = Bun.spawn(["git", ...args], {
     cwd: opts.cwd,
     env: opts.env,
@@ -57,14 +69,16 @@ export async function git(
     stderr: "pipe",
     timeout: opts.timeoutMs ?? TIMEOUT_MS,
     killSignal: "SIGKILL",
+    ...(opts.signal && { signal: opts.signal }),
   });
   const output = Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   const code = await p.exited;
   // A leftover child can hold the pipes open. It must not block the caller.
   const [out, err] = await Promise.race([output, Bun.sleep(DRAIN_MS).then(() => ["", ""])]);
   if (code !== 0) {
-    const cmd = args.find((a) => !a.startsWith("-") && !a.includes("=")) ?? "";
-    throw new GitError(`git ${cmd} failed (exit ${code ?? p.signalCode}): ${err.trim().slice(-STDERR_TAIL)}`);
+    // Bun gives signalCode only when a signal ended the process: here the time limit (SIGKILL) or the abort (SIGTERM).
+    if (p.signalCode !== null) throw stopped();
+    throw new GitError(`git ${cmd} failed (exit ${code}): ${err.trim().slice(-STDERR_TAIL)}`);
   }
   return out;
 }

@@ -76,10 +76,12 @@ const SQL = {
     "UPDATE post SET resolve_state = $state, resolve_error = $text, updated_at = $now WHERE id = $id AND resolve_state = 'pending'",
   resolveAgain: `UPDATE post SET resolve_state = 'pending', resolve_error = NULL, updated_at = $now
     WHERE id = $id AND state = 'confirmed' AND resolve_state = 'failed'`,
-  // The thread state that a resolve or reopen read back. A newer synced version wins. The read mark moves on when it covered the old version.
+  // The thread state that a resolve or reopen read back. A newer synced version wins. from: the version of the first read.
+  // The version and the read mark move only when the stored root has version from. Else the stored text is older than the read:
+  // only the flags change, and the next sync brings the text. The read mark moves on when it covered the old version.
   // In SQLite, SET reads the old values.
   threadState: `UPDATE comment SET thread_resolved = $resolved, thread_resolver_json = $resolver, thread_resolved_at = $at,
-      ack_version = IIF(ack_version >= version, MAX(version, $version), ack_version), version = MAX(version, $version)
+      ack_version = IIF(version = $from AND ack_version >= version, $version, ack_version), version = IIF(version = $from, $version, version)
     WHERE pr = $pr AND comment_id = $root AND parent_id IS NULL AND version <= $version`,
   // The turn rule reads the flag of every message of a thread (shared/turn.ts), so the replies follow the root.
   threadReplies: "UPDATE comment SET thread_resolved = $resolved WHERE pr = $pr AND root_id = $root AND parent_id IS NOT NULL",
@@ -202,7 +204,8 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     };
   }
 
-  function applyState(db: Database, pr: number, root: number, s: ThreadState) {
+  function applyState(db: Database, pr: number, root: number, res: { state: ThreadState; from: number }) {
+    const s = res.state;
     const resolved = s.threadResolved ? 1 : 0;
     db.transaction(() => {
       const moved = db.query(SQL.threadState).run({
@@ -212,9 +215,32 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
         resolver: s.threadResolver ? JSON.stringify(s.threadResolver) : null,
         at: s.threadResolvedAt ?? null,
         version: s.version,
+        from: res.from,
       });
       if (moved.changes) db.query(SQL.threadReplies).run({ pr, root, resolved });
     })();
+  }
+
+  // Bitbucket takes no reply in a resolved thread (integration-check.md U67). So the reply step reopens the thread first.
+  // A retry reads the thread again, so it never reopens an open thread. Returns the reason that stops the reply, else put: a PUT went out.
+  async function reopenFor(
+    db: Database,
+    r: PostRow,
+    ref: PrRef,
+    forge: ForgeProvider,
+    parentId: number,
+  ): Promise<{ error: string } | { put: boolean }> {
+    const root = (db.query(SQL.parent).get({ pr: r.pr, id: parentId }) as { root_id: number } | null)?.root_id ?? parentId;
+    let res: ResolveResult;
+    try {
+      res = await forge.setThreadResolved(ref, root, false);
+    } catch (e) {
+      if (!(e instanceof ForgeError)) log(`Post ${r.id} reopen: ${(e as Error).message}`);
+      return { error: `Could not read the thread state on Bitbucket (${reason(e)}). The reply was not sent.` };
+    }
+    if (res.status !== "done") return { error: `${resolveText(res.status, false)} The reply was not sent.` };
+    applyState(db, r.pr, root, res);
+    return { put: res.put };
   }
 
   // The database of the configured origin. Its first use turns sent rows into unknown rows and resumes the outbox.
@@ -245,11 +271,16 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
     const forge = await provider();
     if (!ref || !forge) return fail(UNCONFIGURED);
     let anchor: NewAnchor | undefined;
+    // The words after a failed post when the reply step reopened the thread.
+    let reopened = "";
     if (dest.kind === "reply") {
       // D14: a reply checks its parent, not the heads.
       const status = await forge.commentStatus(ref, dest.parentId).catch((e: unknown) => e);
       if (status === "deleted") return fail("The comment was deleted. The reply was not sent.");
       if (status !== "present") return fail(`Could not check the comment (${reason(status)}). The reply was not sent.`);
+      const open = await reopenFor(db, r, ref, forge, dest.parentId);
+      if ("error" in open) return fail(open.error);
+      if (open.put) reopened = " The app reopened the thread before the post.";
     } else if (dest.kind === "inline") {
       if (dest.lineType === "ctx" && dest.srcLine === undefined)
         return fail("The context line has no old line number. Move the finding to the general comment.");
@@ -280,11 +311,11 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
           "failed",
           ctx
             ? "Bitbucket refused the inline comment on a context line (HTTP 400). Post the finding in the general comment."
-            : `Bitbucket refused the comment (${reason(e)}).`,
+            : `Bitbucket refused the comment (${reason(e)}).${reopened}`,
         );
       } else {
         if (!(e instanceof ForgeError)) log(`Post ${r.id}: ${(e as Error).message}`);
-        move(db, r.id, "sent", "unknown", `No clear answer from Bitbucket (${reason(e)}).`);
+        move(db, r.id, "sent", "unknown", `No clear answer from Bitbucket (${reason(e)}).${reopened}`);
         checking.add(r.id);
       }
     }
@@ -342,7 +373,7 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
       return end("failed", `No clear answer from Bitbucket (${reason(e)}). Resolve again reads the thread first.`);
     }
     if (res.status !== "done") return end("failed", resolveText(res.status, true));
-    applyState(db, r.pr, r.resolve_root, res.state);
+    applyState(db, r.pr, r.resolve_root, res);
     end("done", null);
   }
 
@@ -559,7 +590,8 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
         }
       }
       if (r.state !== "unknown" && r.state !== "failed") return { status: 409, error: "Only an unknown or failed post can post again." };
-      if (r.run !== null) {
+      // D14: a reply post checks its parent, never the heads. A reply post of a review run too.
+      if (r.run !== null && r.kind !== "reply") {
         const heads = await headCheck(db, r.pr, [r.run]);
         if ("error" in heads) return heads;
       }
@@ -599,7 +631,7 @@ export function createOutbox(opts: { settings: Settings; live: Live; now?: () =>
         return { status: 502, error: `No clear answer from Bitbucket (${reason(e)}). Try again: the app reads the thread first.` };
       }
       if (res.status === "done") {
-        applyState(db, pr, input.thread, res.state);
+        applyState(db, pr, input.thread, res);
         notify(pr);
         return { status: 200, thread: input.thread, resolved: input.resolved };
       }

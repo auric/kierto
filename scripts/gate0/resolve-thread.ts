@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Gate for U62 to U66 (integration-check.md, "Thread resolve"): resolve and reopen one comment thread with the REST PUT.
+// Gate for U62 to U67 (integration-check.md, "Thread resolve"): resolve and reopen one comment thread with the REST PUT.
+// U67: one reply POST into the resolved thread. A server that takes it gets a DELETE of that reply.
 // It WRITES to the server. Run it only on your test PR, on a thread that you started and that is open.
 // Usage: bun scripts/gate0/resolve-thread.ts --pr <PR URL> --thread <root comment ID> [--forbidden <root comment ID>] [--out <dir>]
 //        bun scripts/gate0/resolve-thread.ts --dry-run
@@ -56,7 +57,7 @@ async function gate(base: string, token: string, pr: PrRef, thread: number, forb
   const prPath = `/rest/api/1.0/projects/${encodeURIComponent(pr.project)}/repos/${encodeURIComponent(pr.repo)}/pull-requests/${pr.id}`;
   const commentPath = (id: number) => `${prPath}/comments/${id}`;
   // Requests run one at a time. That stays under the limit of 2 concurrent requests.
-  async function call(method: "GET" | "PUT", path: string, body?: unknown): Promise<Call> {
+  async function call(method: "GET" | "PUT" | "POST" | "DELETE", path: string, body?: unknown): Promise<Call> {
     try {
       const res = await fetch(base + path, {
         method,
@@ -125,6 +126,13 @@ async function gate(base: string, token: string, pr: PrRef, thread: number, forb
   const newActs = [...(await activityIds())].filter(([id]) => !acts.has(id)).map(([, a]) => ({ ...a, sameThread: a.comment === thread }));
   out.activities = { before: acts.size, new: newActs };
 
+  // U67: the DC docs say that a resolved thread takes no reply. The app reopens the thread before a reply.
+  const r5 = await call("POST", `${prPath}/comments`, { text: "Gate check: a reply in a resolved thread.", parent: { id: thread } });
+  const posted = r5.body as { id?: unknown; version?: unknown } | null;
+  const taken = r5.status >= 200 && r5.status < 300 && typeof posted?.id === "number";
+  const r6 = taken ? await call("DELETE", `${commentPath(posted?.id as number)}?version=${String(posted?.version ?? 0)}`) : null;
+  out.replyResolved = { post: { status: r5.status, exceptions: exceptionNames(r5.body) }, taken, deleted: r6 && r6.status };
+
   // U63: a PUT with the old version.
   const r2 = await put(thread, before.version, false);
   const afterStale = await read(thread);
@@ -175,6 +183,7 @@ function lines(out: Record<string, unknown>): string[] {
           `resolve PUT: ${put(o.resolve.put)} body keys=${typeof o.resolve.put.body === "object" && o.resolve.put.body ? Object.keys(o.resolve.put.body).join(",") : String(o.resolve.put.body)}`,
           `after resolve: version=${o.resolve.read.version} threadResolved=${o.resolve.read.threadResolved} threadResolver=${o.resolve.read.threadResolver} threadResolvedDate=${o.resolve.read.threadResolvedDate} text unchanged=${o.resolve.read.textUnchanged}`,
           `activities: before=${o.activities.before} new=${o.activities.new.length}${o.activities.new.map((a: any) => ` [${a.action}/${a.commentAction} same thread=${a.sameThread}]`).join("")}`,
+          `reply to resolved: ${put(o.replyResolved.post)} taken=${o.replyResolved.taken}${o.replyResolved.taken ? ` deleted=HTTP ${o.replyResolved.deleted}` : ""}`,
           `stale PUT: ${put(o.stale.put)} threadResolved after=${o.stale.threadResolved} version=${o.stale.version}`,
           `reopen PUT: ${o.reopen.skipped ? "skipped, the stale PUT reopened it" : put(o.reopen.put)}`,
           `after reopen: version=${o.reopen.read.version} threadResolved=${o.reopen.read.threadResolved} threadResolver=${o.reopen.read.threadResolver} threadResolvedDate=${o.reopen.read.threadResolvedDate} text unchanged=${o.reopen.read.textUnchanged}`,
@@ -199,6 +208,13 @@ function fakeServer(token: string) {
       if (req.headers.get("authorization") !== `Bearer ${token}`) return json(401, { errors: [{ message: "Authentication failed." }] });
       const url = new URL(req.url);
       if (url.pathname.endsWith("/activities")) return json(200, { values: activities, isLastPage: true, start: 0 });
+      // A reply in a resolved thread is refused, as the DC docs say. The exception name is synthetic.
+      if (req.method === "POST" && url.pathname.endsWith("/comments")) {
+        const parent = comments.get(((await req.json()) as { parent?: { id?: number } }).parent?.id ?? 0);
+        if (!parent) return json(404, { errors: [{ message: "Not found." }] });
+        if (parent.threadResolved === true) return json(409, { errors: [{ exceptionName: "dry.ResolvedThreadReply" }] });
+        return json(201, { id: 303, version: 0, text: "Synthetic reply.", threadResolved: false, comments: [] });
+      }
       const id = Number(url.pathname.split("/").pop());
       const c = comments.get(id);
       if (!c) return json(404, { errors: [{ message: "Not found." }] });
@@ -232,6 +248,8 @@ if (argv.includes("--dry-run")) {
       o.resolve.put.status === 200 &&
       o.resolve.read.threadResolved === true &&
       o.stale.put.status === 409 &&
+      o.replyResolved.post.status === 409 &&
+      o.replyResolved.taken === false &&
       o.reopen.read.threadResolved === false &&
       o.forbidden.put.status === 403 &&
       o.resolve.read.textUnchanged === true;
@@ -275,5 +293,5 @@ const dir = resolve(opt("--out") ?? join(ROOT, ".gate0", "resolve"));
 mkdirSync(dir, { recursive: true });
 writeFileSync(join(dir, "result.json"), JSON.stringify({ at: new Date().toISOString(), ok: r.ok, why: r.why, ...r.out }, null, 2));
 for (const l of lines(r.out)) console.log(l);
-console.log(r.ok ? `Recorded in ${join(dir, "result.json")}. Copy the lines above into integration-check.md U62 to U66.` : `Stopped: ${r.why}`);
+console.log(r.ok ? `Recorded in ${join(dir, "result.json")}. Copy the lines above into integration-check.md U62 to U67.` : `Stopped: ${r.why}`);
 process.exit(r.ok ? 0 : 1);

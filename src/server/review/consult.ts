@@ -527,6 +527,7 @@ export async function importAnswer(s: ConsultSource, prId: number, input: Consul
           evidenceStatus: "unverified",
           judgement: r.verdict === "accept" ? "valid" : r.verdict === "reject" ? "invalid" : "question",
           replyTo: last.id,
+          threadOpen: !(threads.get(target) ?? []).some((m) => m.threadResolved),
           session: { run: id, verdict: r.verdict, reason: r.reason, replaced },
         };
         db.query(SQL.reply).run({ run: id, payload: JSON.stringify(payload), body, thread: target });

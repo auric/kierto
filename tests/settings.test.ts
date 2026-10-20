@@ -297,6 +297,41 @@ describe("settings API", () => {
     expect(await again.get()).toMatchObject({ baseUrl: fake.url, notifications: true, profiles: SHIPPED_PROFILES, checkSeconds: 60 });
   });
 
+  test("an invalid profile goes to config.json.bak before a save drops it; an invalid file keeps its copy too", async () => {
+    const lines: string[] = [];
+    const spy = spyOn(console, "log").mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(" ")));
+    try {
+      const s = setup();
+      expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
+      s.settings.close();
+      const file = join(dir, "config.json");
+      const mine = { ...SHIPPED_PROFILES[0], id: "mine", name: "Mine" };
+      // One custom profile with a field that no longer parses.
+      const text = JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), profiles: [{ ...mine, maxTurns: "many" }] });
+      writeFileSync(file, text);
+      // The settings read config.json at the first use.
+      const again = setup();
+      expect((await again.get()).profiles).toEqual(SHIPPED_PROFILES);
+      expect(lines.join("\n")).toContain("Ignored the invalid profiles in config.json");
+      expect((await again.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
+      expect(readFileSync(join(dir, "config.json.bak"), "utf8")).toBe(text);
+      expect(JSON.parse(readFileSync(join(dir, "config.json.bak"), "utf8")).profiles[0].id).toBe("mine");
+      // A second start with the same file makes no second copy.
+      for (const x of opened.splice(0)) x.close();
+      writeFileSync(file, text);
+      await setup().get();
+      expect(existsSync(join(dir, "config.json.1.bak"))).toBe(false);
+      // A file that is not JSON keeps a copy under the next free name. The first copy stays.
+      for (const x of opened.splice(0)) x.close();
+      writeFileSync(file, "{ not json");
+      await setup().get();
+      expect(readFileSync(join(dir, "config.json.1.bak"), "utf8")).toBe("{ not json");
+      expect(readFileSync(join(dir, "config.json.bak"), "utf8")).toBe(text);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   // The shipped profiles before PROFILES_VERSION 3, as the configs of that time stored them: without languageChecks.
   const [general, over, security, explain] = SHIPPED_PROFILES as [Profile, Profile, Profile, Profile];
   const OLD_GENERAL =

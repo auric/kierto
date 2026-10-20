@@ -17,10 +17,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { indentBlock, oneLine } from "../../shared/consult";
 import { RUN_TEXT_BYTES } from "../../shared/dto";
 import { type Comment, commentLines, type ExcerptLine, type PrRef, type PullRequest } from "../../shared/types";
 import { log } from "../log";
-import { git, gitEnv } from "./git";
+import { GitError, git, gitEnv } from "./git";
 
 const HEAD = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 // Project keys (also ~USER), repository slugs, and run IDs become folder names.
@@ -100,6 +101,8 @@ export type WorkspaceInput = {
   attachments?: AttachmentFile[];
   // A re-review: the head that its base run reviewed.
   since?: string;
+  // The fetch and `worktree add` of a run.
+  long?: LongGit;
 };
 
 export type Workspace = {
@@ -124,8 +127,15 @@ export type Workspace = {
   remove: () => Promise<void>;
 };
 
+// stopped: the time limit or Cancel killed git (GitError.stopped).
 export class WorkspaceError extends Error {
   override name = "WorkspaceError";
+  constructor(
+    message: string,
+    readonly stopped = false,
+  ) {
+    super(message);
+  }
 }
 
 function name(v: string, what: string) {
@@ -197,19 +207,21 @@ const SIGN = { add: "+", del: "-", ctx: " " } as const;
 const excerptLine = (l: ExcerptLine) =>
   `    ${l.hit ? ">" : " "} ${String(l.n).padStart(5)} ${SIGN[l.kind]} ${l.text.replace(/[\r\n]/g, " ")}`;
 
+// Other people write every text and name in pr.md. Free text goes in indented blocks and names stay on one line, so no text can
+// start a heading such as "### Reply M to P" (prompt.ts PR_HEADINGS).
 function prText(pr: PullRequest, comments: Comment[]): string {
-  const who = (u: { name: string; slug: string }) => `${u.name} (${u.slug})`;
+  const who = (u: { name: string; slug: string }) => oneLine(`${u.name} (${u.slug})`);
   const out = [
     "## Pull request",
     "",
-    `- Title: ${pr.title}`,
+    `- Title: ${oneLine(pr.title)}`,
     `- Author: ${who(pr.author)}`,
-    `- Source: ${pr.sourceBranch} at ${pr.sourceHead}`,
-    `- Target: ${pr.targetBranch} at ${pr.targetHead}`,
+    `- Source: ${oneLine(pr.sourceBranch)} at ${pr.sourceHead}`,
+    `- Target: ${oneLine(pr.targetBranch)} at ${pr.targetHead}`,
     "",
     "## Description",
     "",
-    pr.description?.trim() || "(none)",
+    indentBlock(pr.description?.trim() || "(none)"),
     "",
     "## Comments",
     "",
@@ -224,14 +236,14 @@ function prText(pr: PullRequest, comments: Comment[]): string {
     const a = (c.anchor ?? {}) as { path?: unknown };
     const l = commentLines(c);
     const lines = !l ? "" : l.lineEnd > l.line ? ` lines ${l.line}-${l.lineEnd}` : ` line ${l.line}`;
-    const at = typeof a.path === "string" ? `, on ${a.path}${lines}` : "";
+    const at = typeof a.path === "string" ? `, on ${oneLine(a.path)}${lines}` : "";
     const head = c.parentId === null ? `Comment ${c.id}` : `Reply ${c.id} to ${c.parentId}`;
     // Gate v3 U14: a task is a BLOCKER comment. RESOLVED marks it done.
     const task = c.severity === "BLOCKER" ? (c.state === "RESOLVED" ? " (task, resolved)" : " (task, open)") : "";
     out.push(`### ${head} by ${who(c.author)}${at}${task}${c.threadResolved ? " (resolved)" : ""}`, "");
     // replies.md step 5: the stored excerpt of an inline root. An indented block, so no line of it can end the block.
     if (c.parentId === null && c.excerpt?.length) out.push("Code at the comment:", "", ...c.excerpt.map(excerptLine), "");
-    out.push(c.text, "");
+    out.push(indentBlock(c.text), "");
     for (const k of kids.get(c.id) ?? []) visit(k);
   };
   for (const c of kids.get(null) ?? []) visit(c);
@@ -239,19 +251,23 @@ function prText(pr: PullRequest, comments: Comment[]): string {
   return UNTRUSTED + out.join("\n");
 }
 
+// The long git steps of a run: the fetch and `worktree add`. signal: Cancel. timeoutMs: the time limit of the run.
+export type LongGit = { signal?: AbortSignal; timeoutMs?: number };
+
 // Fetches the PR head and the target head into the cache. Returns the fetch path that worked.
-async function fetchHeads(cache: string, empty: string, id: number, remote: GitRemote) {
+async function fetchHeads(cache: string, empty: string, id: number, remote: GitRemote, long: LongGit) {
   const fetchEnv = gitEnv(empty, remote.fetchConfig);
   const secret = remote.fetchConfig.map(([, v]) => v);
   const fetch = async (url: string, refspecs: string[]) => {
     try {
       await git([`--git-dir=${cache}`, "fetch", "--no-tags", "--no-write-fetch-head", "--quiet", "--end-of-options", url, ...refspecs], {
         env: fetchEnv,
+        ...long,
       });
     } catch (e) {
       let m = (e as Error).message;
       for (const s of secret) if (s) m = m.replaceAll(s, "[redacted]");
-      throw new WorkspaceError(m);
+      throw new WorkspaceError(m, e instanceof GitError && e.stopped);
     }
   };
   const source = `refs/rl/${id}/source`;
@@ -260,6 +276,8 @@ async function fetchHeads(cache: string, empty: string, id: number, remote: GitR
     await fetch(remote.url, [`+refs/pull-requests/${id}/from:${source}`, target]);
     return "pull-request-ref" as const;
   } catch (e) {
+    // A time limit or a Cancel is no refusal of the PR refs. A second full fetch would take as long.
+    if (e instanceof WorkspaceError && e.stopped) throw e;
     // BRIEF 10.2: a server can refuse the PR refs. The source branch by name is the fallback.
     log(`The fetch of refs/pull-requests/${id}/from failed. The run uses the source branch. ${(e as Error).message}`);
   }
@@ -312,6 +330,7 @@ export async function syncCache(input: {
   dataDir: string;
   pr: Pick<PullRequest, "ref" | "sourceHead" | "targetHead">;
   remote: GitRemote;
+  long?: LongGit;
 }): Promise<SyncedCache> {
   const { pr, remote } = input;
   if (!Number.isSafeInteger(pr.ref.id) || pr.ref.id < 1) throw new WorkspaceError(`Invalid pull request ID: ${pr.ref.id}`);
@@ -340,7 +359,7 @@ export async function syncCache(input: {
       writeFileSync(attributes, ATTRIBUTES);
     }
 
-    const via = await fetchHeads(cache, empty, pr.ref.id, remote);
+    const via = await fetchHeads(cache, empty, pr.ref.id, remote, input.long ?? {});
     const pinned = async (side: "source" | "target", want: string) => {
       const got = (await g(["rev-parse", "--verify", "--quiet", `refs/rl/${pr.ref.id}/${side}^{commit}`])).trim();
       if (got !== want)
@@ -409,7 +428,7 @@ export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace
       throw new WorkspaceError(`Invalid attachment name: ${a.name}`);
     names.add(a.name);
   }
-  const { dataDir, cache, env, via, mergeBase } = await syncCache({ dataDir: input.dataDir, pr, remote: input.remote });
+  const { dataDir, cache, env, via, mergeBase } = await syncCache({ dataDir: input.dataDir, pr, remote: input.remote, long: input.long });
   const g = (args: string[], extra: Record<string, string> = {}) => git([`--git-dir=${cache}`, ...args], { env: { ...env, ...extra } });
   const keep = async (ref = "reviewed") => {
     const full = `refs/rl/${pr.ref.id}/${ref}`;
@@ -435,7 +454,7 @@ export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace
   try {
     mkdirSync(context, { recursive: true });
     mkdirSync(app, { recursive: true });
-    await g(["worktree", "add", "--detach", repo, pr.sourceHead]);
+    await git([`--git-dir=${cache}`, "worktree", "add", "--detach", repo, pr.sourceHead], { env, ...input.long });
     const links = (await g(["ls-tree", "-r", "-z", "--full-tree", pr.sourceHead]))
       .split("\0")
       .filter((r) => r.startsWith("120000 "))

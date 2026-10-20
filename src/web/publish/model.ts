@@ -9,13 +9,16 @@ import { lineText, plural } from "../review/model";
 const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
 // prototype/v3 destText: "2 inline comments and 1 general comment". A reply post without a body only resolves its thread.
-export function destText(posts: { destination: PostDestination; body: string }[]): string {
+// A reply in a resolved thread reopens the thread first.
+export function destText(posts: { destination: PostDestination; body: string; reopen?: PlannedPost["reopen"] }[]): string {
   const n = (k: PostDestination["kind"]) => posts.filter((p) => p.destination.kind === k && p.body).length;
   const resolves = posts.filter((p) => !p.body).length;
+  const reopens = posts.filter((p) => p.body && p.reopen).length;
   return [
     n("inline") ? plural(n("inline"), "inline comment") : "",
     n("general") ? plural(n("general"), "general comment") : "",
     n("reply") ? plural(n("reply"), "reply", "replies") : "",
+    reopens ? plural(reopens, "thread reopen") : "",
     resolves ? plural(resolves, "thread resolve") : "",
   ]
     .filter(Boolean)
@@ -56,6 +59,12 @@ export function resolveLabel(d: PostDestination, comments: CommentDto[]): string
 // The resolve line of a planned post. null: the post resolves nothing.
 export const resolveNote = (p: { body: string; resolve?: number }) =>
   p.resolve === undefined ? null : p.body ? "Then resolves the thread." : "Resolves the thread. No reply is posted.";
+
+// The reopen line of a planned post. The forge takes no reply in a resolved thread. null: the thread is open.
+export const reopenNote = (p: { body: string; reopen?: PlannedPost["reopen"] }) =>
+  !p.body || !p.reopen
+    ? null
+    : `${p.reopen === "since" ? "Resolved since the draft. " : "The thread is resolved. "}Reopen thread, post reply.`;
 
 // The destination words of a planned post or an outbox row.
 export function destLabel(d: PostDestination, comments: CommentDto[]): { code: string | null; text: string } {

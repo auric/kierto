@@ -16,7 +16,7 @@ import { ApiError } from "../shell/data";
 import { prKey } from "../shell/model";
 import { Confirm, type ConfirmEntry } from "./Confirm";
 import { confirmPosts, fetchPlan, planKey, postsKey, usePostPlan } from "./data";
-import { destLabel, destText, mergePosts, planItems, resolveLabel, resolveNote } from "./model";
+import { destLabel, destText, mergePosts, planItems, reopenNote, resolveLabel, resolveNote } from "./model";
 
 type Open = { plan: PostPlanDto | null; posting: boolean; error: string | null };
 
@@ -33,6 +33,7 @@ const entries = (plan: PostPlanDto, comments: CommentDto[]): ConfirmEntry[] =>
       dest: p.body ? d.text : resolveLabel(p.destination, comments),
       body: p.body,
       warning: p.duplicate ? `${p.duplicate.author} raised a similar point on this line.` : null,
+      reopen: reopenNote(p),
       resolve: resolveNote(p),
     };
   });
@@ -106,14 +107,17 @@ export function usePostBar(
     if (!shown.length) return "Reading the comments to post…";
     const review = shown.filter((p) => p.destination.kind !== "reply");
     const replies = review.length < shown.length;
+    const reopen = shown.some((p) => p.body && p.reopen)
+      ? ` ${o.forge} takes no reply in a resolved thread, so the app reopens it first.`
+      : "";
     if (!review.length)
-      return "Each reply goes under the message it answers. A resolve runs after its reply. The app checks for newer messages when you post.";
+      return `Each reply goes under the message it answers. A resolve runs after its reply. The app checks for newer messages when you post.${reopen}`;
     const at = [...new Set(review.map((p) => p.sourceHead))].map(shortHash).join(", ");
     const reviewed = runs?.filter((r) => review.some((p) => p.run === r.id)) ?? [];
     if (reviewed.some((r) => r.stale?.source))
       return `The source branch has new commits since ${at}. ${o.forge} gets nothing until you review again.`;
     const moved = reviewed.some((r) => r.stale?.target) ? " The target branch moved since the review." : "";
-    const also = replies ? " Replies go under the messages they answer." : "";
+    const also = replies ? ` Replies go under the messages they answer.${reopen}` : "";
     return `Review comments attach to the reviewed commit ${at}.${moved} The app checks the source branch again when you post.${also}`;
   })();
 

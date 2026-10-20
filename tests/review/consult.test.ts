@@ -633,8 +633,9 @@ describe("POST /prs/:id/consult/import and undo", () => {
     expect(s.item(21).status).toBe("new");
     expect(JSON.parse(s.item(21).payload_json).session).toBeUndefined();
     expect(JSON.parse(s.item(22).payload_json).session).toBeUndefined();
+    // The thread shows the draft that came back, not the discarded session draft.
     const back = (await (await s.call("GET", "/prs/1/reply-drafts")).json()) as ReviewItemDto[];
-    expect(back.find((x) => (x.payload as { thread: number }).thread === 101)?.status).toBe("discarded");
+    expect(back.find((x) => (x.payload as { thread: number }).thread === 101)).toMatchObject({ id: 30, status: "accepted" });
     expect((await s.call("POST", "/prs/1/consult/999/undo")).status).toBe(404);
   });
 

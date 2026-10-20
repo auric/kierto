@@ -27,6 +27,7 @@ import {
   type Activity,
   activities,
   addReply,
+  byUser,
   commentPosts,
   DASHBOARD_PATH,
   findComment,
@@ -225,15 +226,15 @@ function seedRun(s: S, heads = { source: SOURCE, target: TARGET }) {
   return { run, item };
 }
 
-// A completed reply run with one reply draft to the given message. body "": a draft without reply text.
-function seedReply(s: S, replyTo: number, body = "Reply text.") {
+// A completed reply run with one reply draft to the given message. body "": a draft without reply text. extra: more payload fields.
+function seedReply(s: S, replyTo: number, body = "Reply text.", extra: Record<string, unknown> = {}) {
   const { id: run } = s.db
     .query(
       `INSERT INTO review_run (pr, profile, note, idem_key, source_head, target_head, merge_base, status, started_at, finished_at, kind)
       VALUES ($pr, 'general', '', $k, $s, $t, $t, 'completed', 1, 2, 'reply') RETURNING id`,
     )
     .get({ pr: s.pr, k: `r${replyTo}`, s: SOURCE, t: TARGET }) as { id: number };
-  const payload = { thread: ROOT, action: body ? "reply" : "none", body, reason: "R.", evidenceStatus: "code", replyTo };
+  const payload = { thread: ROOT, action: body ? "reply" : "none", body, reason: "R.", evidenceStatus: "code", replyTo, ...extra };
   return (
     s.db
       .query(
@@ -895,5 +896,144 @@ describe("resolve after posting", () => {
     // Nothing went to the outbox: a manual change is no post.
     expect(await s.list()).toEqual([]);
     expect(s.sent()).toBe(0);
+  });
+
+  test("a resolve keeps an edit of the root that the app has not synced: the next sync brings the text, unread", async () => {
+    const s = await setup();
+    // The root is by another person, and I read it. A sync marks my own edits read, so the edit must be theirs.
+    s.db
+      .query("UPDATE comment SET ack_version = version, author_slug = $slug, author_login = $login WHERE comment_id = $id")
+      .run({ id: ROOT, slug: OTHER.slug, login: OTHER.name as string });
+    // The other person edits the root on Bitbucket before the sync: version V0 + 1.
+    s.world.list = () => {
+      const list = byUser(thread(), ROOT, OTHER);
+      Object.assign(findComment(list, ROOT), { text: "Edited root text.", version: V0 + 1 });
+      return list;
+    };
+    const set = await s.call(`/api/prs/${s.pr}/resolve`, { thread: ROOT, resolved: true, seen: THEIRS });
+    expect(set.status).toBe(200);
+    expect(s.posts.puts).toEqual([{ id: ROOT, version: V0 + 1, threadResolved: true }]);
+    // The read-back version is V0 + 2, but the stored text is of V0. Only the flags change.
+    expect(root(s)).toMatchObject({ thread_resolved: 1, version: V0, ack_version: V0 });
+    await s.sync.syncNow();
+    const detail = (await s.call<PrDetail>(`/api/prs/${s.pr}`)).body;
+    expect(detail.comments.find((c) => c.id === ROOT)).toMatchObject({ text: "Edited root text.", unread: true, threadResolved: true });
+  });
+});
+
+describe("a reply in a resolved thread", () => {
+  const V0 = findComment(activities("activities-nested-reply.json"), ROOT).version;
+  const PUT = `PUT ${PR_PATH}/comments/${ROOT}`;
+  const writes = (s: S) => s.fake.requests.filter((r) => !r.startsWith("GET "));
+  // Another person resolves the thread on Bitbucket. The sync stores it.
+  const resolveOnForge = async (s: S) => {
+    s.posts.threads.set(ROOT, { version: V0 + 1, resolved: true, at: 1 });
+    await s.sync.syncNow();
+  };
+
+  test("the fake refuses a reply in a resolved thread", async () => {
+    const s = await setup();
+    await resolveOnForge(s);
+    const res = await fetch(`${s.fake.url}${PR_PATH}/comments`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${FAKE_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ text: TEXT, parent: { id: THEIRS } }),
+    });
+    expect(res.status).toBe(409);
+  });
+
+  test("the plan marks the reopen; the post reopens, replies, then resolves again", async () => {
+    const s = await setup();
+    const draft = seedReply(s, THEIRS, "Reply text.", { threadOpen: true });
+    await tick(s, draft);
+    expect((await s.plan())[0]?.reopen).toBeUndefined();
+    await resolveOnForge(s);
+    expect((await s.plan())[0]).toMatchObject({ body: "Reply text.", resolve: ROOT, reopen: "since" });
+    expect((await s.call(`/api/prs/${s.pr}/confirm`, { items: [{ id: draft, revision: 2 }] })).status).toBe(202);
+    await s.settle();
+    const [post] = await s.list();
+    expect(post).toMatchObject({ state: "confirmed", remoteId: FIRST_ID, resolve: { state: "done" } });
+    expect(writes(s)).toEqual([PUT, COMMENTS, PUT]);
+    expect(s.posts.puts.map((p) => [p.version, p.threadResolved])).toEqual([
+      [V0 + 1, false],
+      [V0 + 2, true],
+    ]);
+  });
+
+  test("a draft from before the field shows a plain reopen; a resolve-only draft needs no reopen", async () => {
+    const s = await setup();
+    const draft = seedReply(s, THEIRS);
+    await accept(s, draft);
+    await resolveOnForge(s);
+    expect((await s.plan())[0]?.reopen).toBe("resolved");
+    const t = await setup();
+    const only = seedReply(t, THEIRS, "");
+    await tick(t, only);
+    await resolveOnForge(t);
+    expect((await t.plan())[0]).toMatchObject({ body: "", resolve: ROOT });
+    expect((await t.plan())[0]?.reopen).toBeUndefined();
+  });
+
+  test("a refused post after the reopen says so; Post again never reopens twice", async () => {
+    const s = await setup();
+    const draft = seedReply(s, THEIRS);
+    await accept(s, draft);
+    await resolveOnForge(s);
+    const route = key("POST", `${PR_PATH}/comments`);
+    s.fake.routes[route] = refuse(400);
+    await s.call(`/api/prs/${s.pr}/confirm`, { items: [{ id: draft, revision: 1 }] });
+    await s.settle();
+    const [post] = await s.list();
+    expect(post).toMatchObject({
+      state: "failed",
+      lastError: "Bitbucket refused the comment (HTTP 400). The app reopened the thread before the post.",
+    });
+    // The thread shows open at once.
+    const detail = (await s.call<PrDetail>(`/api/prs/${s.pr}`)).body;
+    expect(detail.comments.find((c) => c.id === ROOT)?.threadResolved).toBe(false);
+    s.fake.routes[route] = s.posts.routes[route] as Route;
+    expect((await s.call(`/api/posts/${post?.id}/retry`, {})).status).toBe(202);
+    await s.settle();
+    expect((await s.list())[0]).toMatchObject({ state: "confirmed", remoteId: FIRST_ID });
+    expect(writes(s)).toEqual([PUT, COMMENTS, COMMENTS]);
+  });
+
+  test("a refused reopen posts no reply; a manual reply reopens too", async () => {
+    const s = await setup();
+    const draft = seedReply(s, THEIRS);
+    await accept(s, draft);
+    await resolveOnForge(s);
+    s.posts.forbid.add(ROOT);
+    await s.call(`/api/prs/${s.pr}/confirm`, { items: [{ id: draft, revision: 1 }] });
+    await s.settle();
+    const [post] = await s.list();
+    expect(post?.state).toBe("failed");
+    expect(post?.lastError).toStartWith("Bitbucket refused to reopen the thread.");
+    expect(post?.lastError).toEndWith("The reply was not sent.");
+    expect(s.sent()).toBe(0);
+
+    const t = await setup();
+    await resolveOnForge(t);
+    expect((await t.reply()).status).toBe(202);
+    await t.settle();
+    expect((await t.list())[0]).toMatchObject({ state: "confirmed", remoteId: FIRST_ID });
+    expect(writes(t)).toEqual([PUT, COMMENTS]);
+  });
+
+  test("Post again of a reply run post checks no heads", async () => {
+    const s = await setup();
+    const draft = seedReply(s, THEIRS);
+    await accept(s, draft);
+    const route = key("POST", `${PR_PATH}/comments`);
+    s.fake.routes[route] = refuse(500);
+    await s.call(`/api/prs/${s.pr}/confirm`, { items: [{ id: draft, revision: 1 }] });
+    await s.settle();
+    const [post] = await s.list();
+    expect(post?.state).toBe("unknown");
+    s.world.pr.fromRef.latestCommit = "f".repeat(40);
+    s.fake.routes[route] = s.posts.routes[route] as Route;
+    expect((await s.call(`/api/posts/${post?.id}/retry`, {})).status).toBe(202);
+    await s.settle();
+    expect((await s.list())[0]?.state).toBe("confirmed");
   });
 });

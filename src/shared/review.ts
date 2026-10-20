@@ -96,16 +96,19 @@ export type ReplyDraft = z.infer<typeof replyDraft>;
 export type ReplyResult = z.infer<typeof replyResult>;
 // replyTo: the message that the reply answers. The post uses it as the parent.
 // judgement: absent in drafts stored before Release 3. Read it as null.
-// fix: a "Fixed in" reply. It posts only when the PR commits hold the commit (plan r3).
+// fix: a "Fixed in" reply. It posts only when the PR commits hold the commit (plan r3). replaced: the drafts that the commit
+// discarded. Undo brings them back.
 // resolve, resolveEvidence: the proposal to resolve the thread. Absent in drafts stored before it existed.
 // resolveTick: the user's choice to resolve the thread after the post. Only a ticked draft resolves.
+// threadOpen: the thread was open when the app stored the draft. Absent in drafts stored before it existed.
 export type ReplyPayload = Omit<ReplyDraft, "judgement" | "resolve" | "resolveEvidence"> & {
   judgement?: Judgement | null;
   replyTo: number;
-  fix?: { id: number; commit: string };
+  fix?: { id: number; commit: string; replaced?: number[] };
   resolve?: boolean;
   resolveEvidence?: string;
   resolveTick?: boolean;
+  threadOpen?: boolean;
 };
 
 export const replyJsonSchema = (): Record<string, unknown> => z.toJSONSchema(replyResult, { target: "draft-07" });

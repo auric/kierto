@@ -643,14 +643,15 @@ function Shell({ stale }: { stale: boolean }) {
           ) : current ? (
             <>
               <BackBar onBack={goBack} />
-              {/* The sticky post bar covers the bottom of the pane, so focus and scroll targets stop above it. */}
+              {/* The sticky post bar covers the bottom of the pane, so focus and scroll targets stop above it.
+                  The key gives each PR a new scroll box, so the next PR starts at the top. */}
               <div
+                key={current.id}
                 data-scroll
                 className="relative flex-1 overflow-auto overscroll-contain has-[[data-postbar]]:scroll-pb-16"
                 onScroll={(e) => noteScroll(e.currentTarget.scrollTop)}
               >
                 <PrDetail
-                  key={current.id}
                   ref={detailApi}
                   pr={current}
                   me={s?.user ?? null}

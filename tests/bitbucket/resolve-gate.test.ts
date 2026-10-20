@@ -26,6 +26,7 @@ async function run(args: string[], env: Record<string, string> = {}) {
 test("the dry run passes against its own loopback fake and prints no comment text", async () => {
   const r = await run(["--dry-run"]);
   expect(r.out).toContain("stale PUT: HTTP 409");
+  expect(r.out).toContain("reply to resolved: HTTP 409 dry.ResolvedThreadReply taken=false");
   expect(r.out).toContain("dry run: PASS");
   expect(r.out).not.toContain("Synthetic");
   expect(r.code).toBe(0);
@@ -51,8 +52,10 @@ test("the live path resolves, records the stale PUT, reopens, and writes only sa
   expect(r.out).toContain("after resolve: version=");
   expect(r.out).toContain("threadResolved=true threadResolver=true threadResolvedDate=true text unchanged=true");
   expect(r.out).toContain("stale PUT: HTTP 409");
+  expect(r.out).toContain("reply to resolved: HTTP 409 taken=false");
   expect(r.out).toMatch(/after reopen: version=\d+ threadResolved=false threadResolver=false threadResolvedDate=false text unchanged=true/);
   expect(r.code).toBe(0);
+  expect(posts.posted).toEqual([]);
   expect(posts.puts.map((p) => p.threadResolved)).toEqual([true, false, false]);
   const saved = readFileSync(join(out, "result.json"), "utf8");
   const text = findComment(activities("activities-nested-reply.json"), ROOT).text;

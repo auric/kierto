@@ -14,6 +14,7 @@ import {
   parseDraft,
   planItems,
   postView,
+  reopenNote,
   resolveLabel,
   resolveNote,
   shownPosts,
@@ -181,6 +182,16 @@ describe("post states", () => {
     expect(resolveNote({ body: "Text", resolve: 100 })).toBe("Then resolves the thread.");
     expect(resolveNote({ body: "", resolve: 100 })).toBe("Resolves the thread. No reply is posted.");
     expect(resolveNote({ body: "Text" })).toBeNull();
+  });
+
+  test("a reply in a resolved thread names the reopen in the count and in the confirm line", () => {
+    const planned = (body: string, reopen?: PlannedPost["reopen"]) => ({ destination: reply(5), body, ...(reopen && { reopen }) });
+    expect(destText([planned("Text", "since"), planned("Text")])).toBe("2 replies and 1 thread reopen");
+    expect(destText([planned("Text", "resolved"), planned("")])).toBe("1 reply, 1 thread reopen and 1 thread resolve");
+    expect(reopenNote({ body: "Text", reopen: "since" })).toBe("Resolved since the draft. Reopen thread, post reply.");
+    expect(reopenNote({ body: "Text", reopen: "resolved" })).toBe("The thread is resolved. Reopen thread, post reply.");
+    expect(reopenNote({ body: "Text" })).toBeNull();
+    expect(reopenNote({ body: "", reopen: "since" })).toBeNull();
   });
 });
 

@@ -12,7 +12,7 @@ import { writeConfig } from "../../src/server/config";
 import { createLive } from "../../src/server/live";
 import { buildPlan } from "../../src/server/publish/plan";
 import { MIN_EDIT_TURNS, SHIPPED_PROFILES } from "../../src/server/review/catalog";
-import { createReviewJobs } from "../../src/server/review/jobs";
+import { createReviewJobs, keptText } from "../../src/server/review/jobs";
 import { validateReplies } from "../../src/server/review/validate";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
@@ -396,14 +396,13 @@ describe("drafts", () => {
       const h = await setup();
       const first = await h.run();
       const [a, b] = first.items as [ReviewItemDto, ReviewItemDto];
-      expect((await h.act(a.id, { action: "accept", revision: 0 })).status).toBe(200);
 
       const second = await h.run([101]);
       const a2 = second.items[0] as ReviewItemDto;
-      expect(h.item(a.id)).toMatchObject({ status: "discarded", revision: 2 });
+      expect(h.item(a.id)).toMatchObject({ status: "discarded", revision: 1 });
       expect(h.item(b.id)).toMatchObject({ status: "new", revision: 0 });
       // A second page that edits the old draft reloads (R13).
-      expect((await h.act(a.id, { action: "edit", revision: 1, body: "Late edit." })).status).toBe(409);
+      expect((await h.act(a.id, { action: "edit", revision: 0, body: "Late edit." })).status).toBe(409);
 
       h.db.query("UPDATE review_item SET status = 'posted' WHERE id = $id").run({ id: a2.id });
       const third = await h.run([101]);
@@ -416,6 +415,41 @@ describe("drafts", () => {
       h.db.query("UPDATE review_item SET status = 'posted' WHERE id = $id").run({ id: a3.id });
       expect(await drafts()).toEqual([b.id]);
       expect((await h.json(`/api/prs/999/reply-drafts`)).status).toBe(404);
+    },
+    SLOW,
+  );
+
+  test(
+    "a new draft never replaces a draft that you accepted, edited, or declined; coverage says so; a thread you name takes a new draft",
+    async () => {
+      const h = await setup();
+      const first = await h.run();
+      const [a, b] = first.items as [ReviewItemDto, ReviewItemDto];
+      expect(payload(a).threadOpen).toBe(true);
+      expect((await h.act(a.id, { action: "accept", revision: 0 })).status).toBe(200);
+      expect((await h.act(b.id, { action: "edit", revision: 0, body: "My own words." })).status).toBe(200);
+      // Draft replies again: both threads keep the user's draft.
+      const second = await h.run();
+      expect(second.items).toEqual([]);
+      expect(second.run.summary?.coverage.skipped).toEqual(expect.arrayContaining([keptText(101), keptText(501)]));
+      expect(h.item(a.id)).toMatchObject({ status: "accepted", revision: 1 });
+      expect(h.item(b.id)).toMatchObject({ status: "accepted", revision: 1, body: "My own words." });
+      // Draft again for thread 101 keeps the accepted draft too.
+      expect((await h.run([101])).items).toEqual([]);
+
+      // A declined draft stays the answer of Draft replies. A run for the named thread takes a new draft.
+      expect((await h.act(b.id, { action: "discard", revision: 1 })).status).toBe(200);
+      const third = await h.run();
+      expect(third.items).toEqual([]);
+      expect(third.run.summary?.coverage.skipped).toContain(keptText(501));
+      const fourth = await h.run([501]);
+      const b2 = fourth.items[0] as ReviewItemDto;
+      expect(payload(b2).thread).toBe(501);
+      expect(h.item(b.id)).toMatchObject({ status: "discarded" });
+      const drafts = (await h.json<ReviewItemDto[]>(`/api/prs/${h.pr}/reply-drafts`)).body.map((i) => i.id);
+      expect(drafts).toEqual([a.id, b2.id]);
+      // One open draft per thread: the declined draft cannot come back next to the new one.
+      expect((await h.act(b.id, { action: "restore", revision: 2 })).status).toBe(409);
     },
     SLOW,
   );

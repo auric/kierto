@@ -20,7 +20,7 @@ export const NAME = /^[A-Za-z0-9_-]+$/;
 const STDERR_TAIL = 16_384;
 const EXEC_TIMEOUT_MS = 30_000;
 const DRAIN_TIMEOUT_MS = 5_000;
-const RUN_TIMEOUT_MS = 60 * 60_000;
+export const RUN_TIMEOUT_MS = 60 * 60_000;
 // CreateProcess limits the Windows command line to 32,767 characters.
 const MAX_ARGV = 32_000;
 

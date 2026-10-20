@@ -498,6 +498,8 @@ export type PlannedPost = {
   duplicate: { commentId: number; author: string } | null;
   // Reply posts only: the root comment of the thread to resolve after the post. An empty body resolves without a reply.
   resolve?: number;
+  // Reply posts with a body only: the thread is resolved, so the post reopens it first. since: the thread was open at the draft.
+  reopen?: "resolved" | "since";
 };
 // posts: per run in run order, the inline comments and the replies in item order, then the general comment.
 export type PostPlanDto = { pr: number; posts: PlannedPost[] };

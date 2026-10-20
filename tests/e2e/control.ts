@@ -107,7 +107,8 @@ export type ClaudeScenario = {
 
 // PR 1001 comment posts. drop: the next POST is stored, then the connection drops (A9). fail: the next POST gets this status
 // and stores nothing. hide: the activities of PR 1001 drop, so neither the sync nor the outbox check can read them.
-export type PostControl = { drop?: boolean; fail?: number | null; hide?: boolean };
+// resolve: another person resolves the thread of this root comment. The fake then refuses a reply in it.
+export type PostControl = { drop?: boolean; fail?: number | null; hide?: boolean; resolve?: number };
 export type PostBody = { text: string; parent?: { id: number }; anchor?: Record<string, unknown> };
 
 // Test-only control routes on the fake Bitbucket. The app has no such route.

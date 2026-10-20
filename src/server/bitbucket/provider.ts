@@ -120,9 +120,12 @@ export type NewComment = { text: string; parentId?: number; anchor?: NewAnchor }
 
 // The thread state after a resolve or a reopen, read back from the root comment.
 export type ThreadState = { version: number; threadResolved: boolean; threadResolver?: User; threadResolvedAt?: number };
-// done: the root comment has the wanted state. changed: the version moved between the read and the PUT (HTTP 409).
+// done: the root comment has the wanted state. from: the version of the first read. put: the app sent a PUT.
+// changed: the version moved between the read and the PUT (HTTP 409).
 // forbidden: HTTP 401 or 403. gone: no such comment (HTTP 404). ignored: Bitbucket took the PUT, but the state stayed.
-export type ResolveResult = { status: "done"; state: ThreadState } | { status: "changed" | "forbidden" | "gone" | "ignored" };
+export type ResolveResult =
+  | { status: "done"; state: ThreadState; from: number; put: boolean }
+  | { status: "changed" | "forbidden" | "gone" | "ignored" };
 
 export function createBitbucketProvider(opts: ClientOptions) {
   const client = createClient(opts);
@@ -299,10 +302,11 @@ export function createBitbucketProvider(opts: ClientOptions) {
       };
       try {
         const before = await read();
-        if (before.threadResolved === resolved) return { status: "done", state: before };
+        const from = before.version;
+        if (before.threadResolved === resolved) return { status: "done", state: before, from, put: false };
         await client.put(path, { version: before.version, threadResolved: resolved }, z.unknown());
         const after = await read();
-        return after.threadResolved === resolved ? { status: "done", state: after } : { status: "ignored" };
+        return after.threadResolved === resolved ? { status: "done", state: after, from, put: true } : { status: "ignored" };
       } catch (e) {
         if (!(e instanceof ForgeError)) throw e;
         if (e.status === 409) return { status: "changed" };
