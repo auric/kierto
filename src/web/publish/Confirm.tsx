@@ -20,8 +20,17 @@ export type ConfirmEntry = {
   resolve: string | null;
 };
 
-// docs/plans/thread-outcome.md: a draft that the post leaves out. action: a button that can make the draft postable, else null.
-export type BlockedEntry = { key: string; dest: string; reason: string; action: { label: string; run: () => void } | null };
+// docs/plans/thread-outcome.md: a draft that the post leaves out. onThread: go to its thread. detail: the fix commit, else null.
+// action: a button that can make the draft postable, else null.
+export type BlockedEntry = {
+  key: string;
+  dest: string;
+  detail: string | null;
+  onThread: () => void;
+  action: { label: string; run: () => void } | null;
+};
+// The blocked drafts of one reason. text: what the user can do.
+export type BlockedGroup = { key: string; title: string; text: string; items: BlockedEntry[] };
 
 // entries: null while the plan loads. blocked: the drafts that the post leaves out. error: the answer of the last post, shown in the dialog.
 export function Confirm(props: {
@@ -29,7 +38,7 @@ export function Confirm(props: {
   title: string;
   note: ReactNode;
   entries: ConfirmEntry[] | null;
-  blocked?: BlockedEntry[];
+  blocked?: BlockedGroup[];
   posting: boolean;
   error: string | null;
   // canPost: false keeps Post off, for example while the plan loads or when no draft can post.
@@ -110,33 +119,41 @@ export function Confirm(props: {
         )
       )}
       {props.entries && props.blocked && props.blocked.length > 0 && (
-        <>
-          <h3 id={`${props.id}-b`} className="m-0 text-xs font-semibold text-ink-2">
-            Cannot post now
-          </h3>
-          <ul aria-labelledby={`${props.id}-b`} className="m-0 min-h-0 flex-[0_1_auto] list-none overflow-auto border-t p-0">
-            {props.blocked.map((b) => (
-              <li
-                key={b.key}
-                data-blocked
-                className="grid grid-cols-[minmax(0,1fr)] gap-x-4 gap-y-0.5 border-b py-2 @min-[560px]/detail:grid-cols-[24ch_minmax(0,1fr)]"
-              >
-                <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{b.dest}</span>
-                <div className="max-w-[72ch] text-sm text-ink-2 [overflow-wrap:anywhere]">
-                  <p className="m-0 flex items-start gap-1.5">
-                    <Ban aria-hidden className="mt-0.5 size-[13px] shrink-0" />
-                    {b.reason}
-                  </p>
-                  {b.action && (
-                    <Button size="sm" variant="outline" className="mt-1.5" onClick={b.action.run}>
-                      {b.action.label}
-                    </Button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </>
+        <div data-blocked-list className="flex min-h-0 flex-[0_1_auto] flex-col gap-1 overflow-auto border-t pt-2">
+          <h3 className="m-0 text-xs font-semibold text-ink-2">Cannot post now</h3>
+          {props.blocked.map((g) => (
+            <section key={g.key} data-blocked-group={g.key} aria-labelledby={`${props.id}-${g.key}`} className="grid gap-0.5">
+              <h4 id={`${props.id}-${g.key}`} className="m-0 flex items-center gap-1.5 text-sm font-semibold">
+                <Ban aria-hidden className="size-[13px] shrink-0 text-ink-2" />
+                {g.title} ({g.items.length})
+              </h4>
+              <p className="m-0 text-xs text-ink-2">{g.text}</p>
+              <ul aria-label={g.title} className="m-0 list-none p-0">
+                {g.items.map((b) => (
+                  <li key={b.key} data-blocked className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b py-1.5 text-sm">
+                    <button
+                      type="button"
+                      className="min-w-0 cursor-pointer rounded text-left font-medium text-pen [overflow-wrap:anywhere] hover:underline"
+                      onClick={b.onThread}
+                    >
+                      {b.dest}
+                    </button>
+                    {b.detail && (
+                      <code translate="no" className="font-mono text-xs text-muted-foreground">
+                        {b.detail}
+                      </code>
+                    )}
+                    {b.action && (
+                      <Button size="sm" variant="outline" className="ml-auto" onClick={b.action.run}>
+                        {b.action.label}
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
       )}
       {props.error && (
         <p role="alert" className="m-0 flex items-start gap-1.5 text-sm text-destructive">

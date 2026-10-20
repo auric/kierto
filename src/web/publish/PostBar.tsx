@@ -6,22 +6,36 @@
 // server gives 409 and a new plan.
 import { useQueryClient } from "@tanstack/react-query";
 import { Send } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import type { BlockedDraft, CommentDto, PostDto, PostPlanDto, PrRow } from "../../shared/dto";
 import { itemsSettled, sendItem, usePrRuns } from "../review/data";
-import { plural, shortHash } from "../review/model";
+import { shortHash } from "../review/model";
 import { ApiError } from "../shell/data";
 import { prKey } from "../shell/model";
-import { type BlockedEntry, Confirm, type ConfirmEntry } from "./Confirm";
-import { confirmPosts, fetchPlan, planKey, postsKey, usePostPlan } from "./data";
-import { blockedText, destLabel, destText, mergePosts, planItems, reopenNote, resolveLabel, resolveNote, threadText } from "./model";
+import { type BlockedGroup, Confirm, type ConfirmEntry } from "./Confirm";
+import { confirmPosts, fetchPlan, planKey, postsKey, type ResolveOutcome, usePostPlan } from "./data";
+import {
+  BLOCKED,
+  blockedGroups,
+  blockedNote,
+  destLabel,
+  destText,
+  mergePosts,
+  planItems,
+  planSig,
+  reopenNote,
+  resolveLabel,
+  resolveNote,
+  threadText,
+} from "./model";
 
 type Open = { plan: PostPlanDto | null; posting: boolean; error: string | null };
 
 const NOTHING = "Nothing is accepted yet. Accept drafts, questions, or replies first.";
-const NONE_NOW = "No accepted draft can post now. Each draft below says why.";
+const NONE_NOW = "No accepted draft can post now. Each group below says why.";
+const CHANGED = "The list changed while it was open. Read it again before you post.";
 
 export type PostBarApi = { open(): void; close(): void; isOpen: boolean };
 
@@ -39,19 +53,43 @@ const entries = (plan: PostPlanDto, comments: CommentDto[]): ConfirmEntry[] =>
     };
   });
 
-// docs/plans/thread-outcome.md: a fix commit that left the clone branch offers "Post as plain reply" (item action plain).
-const blockedEntries = (blocked: BlockedDraft[], comments: CommentDto[], plain: (b: BlockedDraft) => void): BlockedEntry[] =>
-  blocked.map((b) => ({
-    key: `b:${b.item}`,
-    dest: threadText(b.thread, comments),
-    reason: blockedText(b),
-    action: b.reason === "commit-gone" ? { label: "Post as plain reply", run: () => plain(b) } : null,
-  }));
+// docs/plans/thread-outcome.md: the blocked drafts by reason. act runs the action of the reason (BLOCKED) on one draft.
+const blockedList = (
+  blocked: BlockedDraft[],
+  comments: CommentDto[],
+  thread: (b: BlockedDraft) => void,
+  act: (b: BlockedDraft) => void,
+): BlockedGroup[] =>
+  blockedGroups(blocked).map((g) => {
+    const { title, text, action } = BLOCKED[g.reason];
+    return {
+      key: g.reason,
+      title,
+      text,
+      items: g.items.map((b) => ({
+        key: `b:${b.item}`,
+        dest: threadText(b.thread, comments),
+        detail: b.commit ?? null,
+        onThread: () => thread(b),
+        action: action ? { label: action, run: () => act(b) } : null,
+      })),
+    };
+  });
 
-// onPosted: the rows of the confirm, for the focus. announce: the live region of the detail.
+// onPosted: the rows of the confirm, for the focus. announce: the live region of the detail. jump: show and focus a thread.
+// draftAgain: a new reply run for one thread. reopen: reopen a resolved thread now. "ask": another person started the thread, so
+// its own Reopen button asks first (Thread.tsx useResolve).
 export function usePostBar(
   pr: PrRow,
-  o: { comments: CommentDto[]; forge: string; onPosted: (rows: PostDto[]) => void; announce: (text: string) => void },
+  o: {
+    comments: CommentDto[];
+    forge: string;
+    onPosted: (rows: PostDto[]) => void;
+    announce: (text: string) => void;
+    jump: (thread: number) => void;
+    draftAgain: (thread: number) => void;
+    reopen: (thread: number) => Promise<ResolveOutcome | "ask">;
+  },
 ) {
   const qc = useQueryClient();
   const plan = usePostPlan(pr.id);
@@ -94,6 +132,54 @@ export function usePostBar(
       await load((e as Error).message);
     }
   };
+
+  // The thread of a blocked draft. The confirm closes, so the thread takes the focus.
+  const toThread = (b: BlockedDraft) => {
+    if (c?.posting) return;
+    setC(null);
+    o.jump(b.thread);
+  };
+
+  const act = async (b: BlockedDraft) => {
+    if (b.reason === "commit-gone") return void (await plain(b));
+    // A reply run keeps an accepted draft (jobs.ts userDraft), so Draft again discards it first. The discarded card keeps Restore.
+    if (b.reason === "out-of-date") {
+      try {
+        const r = await sendItem(b.item, { action: "discard", revision: b.revision });
+        if ("conflict" in r) return void (await load(r.conflict.error));
+      } catch (e) {
+        return void (await load((e as Error).message));
+      }
+      toThread(b);
+      o.draftAgain(b.thread);
+      return;
+    }
+    if (b.reason !== "resolved-since") return;
+    const out = await o.reopen(b.thread).catch((e: unknown) => ({ error: (e as Error).message, reason: null }));
+    if (out === "ask") return toThread(b);
+    if (!out) o.announce("The thread is open again.");
+    await load(out?.error ?? null);
+  };
+
+  // A plan change while the confirm is open shows the new lists. A change in the posts asks for a new read before Post.
+  const fresh = plan.data;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new plan from the server starts this.
+  useEffect(() => {
+    const shownPlan = c?.plan;
+    if (!fresh || !shownPlan || c.posting || planSig(fresh) === planSig(shownPlan)) return;
+    // A14: another page can post the shown items, so they leave the plan. The confirm keeps them, and Post answers that they were
+    // posted already. A shown item that is blocked now refreshes the confirm.
+    const nowBlocked = new Set(fresh.blocked?.map((b) => b.item));
+    if (!fresh.posts.length && shownPlan.posts.length && !planItems(shownPlan.posts).some((i) => nowBlocked.has(i.id))) return;
+    if (!fresh.blocked?.length && !fresh.posts.length) {
+      setC(null);
+      toast.add({ title: NOTHING });
+      return;
+    }
+    const moved = shownPlan.posts.length > 0 && planSig({ posts: fresh.posts }) !== planSig({ posts: shownPlan.posts });
+    setC({ plan: fresh, posting: false, error: moved ? CHANGED : c.error });
+    o.announce("The list to post changed.");
+  }, [fresh]);
 
   // The cached plan can miss a triage request that is still out. Only a plan read after those requests end decides.
   const open = () => {
@@ -150,8 +236,11 @@ export function usePostBar(
     api,
     part: !c && (posts.length > 0 || blocked.length > 0) && (
       <span data-post-part className="flex min-w-0 flex-[1_1_auto] flex-wrap items-center gap-x-3.5 gap-y-2">
-        {posts.length > 0 && <span>Ready to post: {destText(posts)}</span>}
-        {blocked.length > 0 && <span className="text-ink-2">{plural(blocked.length, "draft")} cannot post now</span>}
+        {/* The counts are a live region, so a change reads out while the bar shows. */}
+        <span role="status" className="contents">
+          {posts.length > 0 && <span>Ready to post: {destText(posts)}</span>}
+          {blocked.length > 0 && <span className="text-ink-2">{blockedNote(blocked)}</span>}
+        </span>
         <Button id="post-btn" size="sm" title="Key: p" aria-keyshortcuts="p" className="ml-auto" onClick={open}>
           <Send aria-hidden data-icon="inline-start" />
           Post to {o.forge}
@@ -164,7 +253,7 @@ export function usePostBar(
         title={shown.length ? `Post ${destText(shown)} to ${key}?` : `Post to ${key}?`}
         note={note}
         entries={c.plan && entries(c.plan, o.comments)}
-        blocked={c.plan?.blocked && blockedEntries(c.plan.blocked, o.comments, (b) => void plain(b))}
+        blocked={c.plan?.blocked && blockedList(c.plan.blocked, o.comments, toThread, (b) => void act(b))}
         posting={c.posting}
         error={c.error}
         canPost={!!c.plan && c.plan.posts.length > 0}

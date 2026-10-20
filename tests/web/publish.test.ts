@@ -3,9 +3,11 @@
 
 // Plan v3 WP14a: the pure publish UI rules. Post states, confirm text, the place of outbox rows, and the reply draft store.
 import { describe, expect, test } from "bun:test";
-import type { CommentDto, PlannedPost, PostDestination, PostDto } from "../../src/shared/dto";
+import type { BlockedDraft, CommentDto, PlannedPost, PostDestination, PostDto } from "../../src/shared/dto";
 import {
-  blockedText,
+  BLOCKED,
+  blockedGroups,
+  blockedNote,
   destLabel,
   destText,
   draftKey,
@@ -14,7 +16,9 @@ import {
   parentOf,
   parseDraft,
   planItems,
+  planSig,
   postView,
+  readyLine,
   reopenNote,
   resolveLabel,
   resolveNote,
@@ -200,18 +204,57 @@ describe("post states", () => {
     expect(threadText(100, [root])).toBe("Thread of mlopez in src/cache/flush.ts:3");
     expect(threadText(200, [comment(200)])).toBe("Thread of Alex Smith in the general comment");
     expect(threadText(999, [root])).toBe("Thread 999");
-    expect(blockedText({ reason: "out-of-date" })).toBe(
-      "Out of date: new messages arrived after the draft, or its comment was deleted. Read the thread and draft the reply again.",
-    );
-    expect(blockedText({ reason: "resolved-since" })).toBe(
-      "Resolved since the draft. Reopen the thread to post this reply, or discard the draft.",
-    );
-    expect(blockedText({ reason: "unpushed", commit: "c0ffee0" })).toBe(
-      "Commit c0ffee0 is not on the PR source branch yet. Push it. The next sync finds it.",
-    );
-    expect(blockedText({ reason: "commit-gone", commit: "c0ffee0" })).toBe(
-      "Commit c0ffee0 is not in your branch now, so it cannot reach the PR. Post the draft as a plain reply, or discard it.",
-    );
+    expect(BLOCKED["out-of-date"]).toEqual({
+      title: "Out of date",
+      text: "New messages since the draft. Draft again or edit.",
+      action: "Draft again",
+    });
+    expect(BLOCKED["resolved-since"]).toEqual({
+      title: "Resolved since the draft",
+      text: "Reopen the thread to post.",
+      action: "Reopen thread",
+    });
+    expect(BLOCKED.unpushed).toEqual({ title: "Fix commit not pushed", text: "Push the fix commit first.", action: null });
+    expect(BLOCKED["commit-gone"]).toEqual({
+      title: "Commit not on the branch",
+      text: "The commit is not on the branch. Post as plain reply.",
+      action: "Post as plain reply",
+    });
+  });
+
+  test("thread outcome: blocked drafts group by reason in a fixed order, and the bar counts the out-of-date ones", () => {
+    const b = (item: number, reason: BlockedDraft["reason"], commit?: string): BlockedDraft => ({
+      item,
+      revision: 1,
+      thread: 100 + item,
+      reason,
+      ...(commit && { commit }),
+    });
+    const list = [b(1, "commit-gone", "c0ffee0"), b(2, "out-of-date"), b(3, "unpushed", "abc1234"), b(4, "out-of-date")];
+    expect(blockedGroups(list).map((g) => [g.reason, g.items.map((i) => i.item)])).toEqual([
+      ["out-of-date", [2, 4]],
+      ["unpushed", [3]],
+      ["commit-gone", [1]],
+    ]);
+    expect(blockedGroups([])).toEqual([]);
+    expect(blockedNote([])).toBe("");
+    expect(blockedNote([b(1, "unpushed")])).toBe("1 draft cannot post now");
+    expect(blockedNote([b(1, "out-of-date")])).toBe("1 draft out of date");
+    expect(blockedNote(list)).toBe("4 drafts cannot post now, 2 out of date");
+  });
+
+  test("thread outcome: the Ready to post line names the posts and the drafts that cannot post", () => {
+    const p = { run: 1, destination: reply(5), body: "Text", items: [{ id: 7, revision: 2 }] } as unknown as PlannedPost;
+    const blocked: BlockedDraft[] = [{ item: 8, revision: 1, thread: 5, reason: "unpushed", commit: "c0ffee0" }];
+    expect(readyLine({ posts: [] })).toBeNull();
+    expect(readyLine({ posts: [], blocked: [] })).toBeNull();
+    expect(readyLine({ posts: [p] })).toEqual({ posts: "1 reply", blocked: null });
+    expect(readyLine({ posts: [], blocked })).toEqual({ posts: null, blocked: "1 cannot post" });
+    expect(readyLine({ posts: [p], blocked })).toEqual({ posts: "1 reply", blocked: "1 cannot post" });
+    // The confirm refreshes on a new signature only.
+    expect(planSig({ posts: [p], blocked })).toBe(planSig({ posts: [{ ...p }], blocked: blocked.map((x) => ({ ...x })) }));
+    expect(planSig({ posts: [p], blocked })).not.toBe(planSig({ posts: [p] }));
+    expect(planSig({ posts: [p] })).not.toBe(planSig({ posts: [{ ...p, items: [{ id: 7, revision: 3 }] }] }));
   });
 });
 

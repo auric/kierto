@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { PrRow, RunDto } from "../../shared/dto";
 import type { PrRef } from "../../shared/types";
+import type { ReadyLine } from "../publish/model";
 import { runWhy } from "../review/model";
 import { createHints, Hint, type Hints, HintTrigger, SharedHint } from "./Hint";
 import { ago, archiveWhy, incompleteText, type ListGroup, prKey, restoreWords, taskHint, why } from "./model";
@@ -60,8 +61,8 @@ export function ListPane(props: {
   forge: string;
   // The Review runs view: the newest run of each row. Its why-line names the run, not the inbox reason.
   runs: ReadonlyMap<number, RunDto> | null;
-  // The Ready to post view: what each row posts. Its why-line names the comments (prototype/v3 whyPost).
-  ready: ReadonlyMap<number, string> | null;
+  // The Ready to post view: what each row posts and how many drafts cannot post. Its why-line names the comments (prototype/v3 whyPost).
+  ready: ReadonlyMap<number, ReadyLine> | null;
   // The Archive view: each row names why it is there and has a Restore button.
   onRestore: ((p: PrRow) => void) | null;
   candidate: PrRef | null;
@@ -282,7 +283,7 @@ const Row = memo(function Row({
   forge: string;
   hints: Hints;
   run: RunDto | undefined;
-  ready: string | undefined;
+  ready: ReadyLine | undefined;
   selected: boolean;
   onSelect: (id: number) => void;
   onOpen: (id: number) => void;
@@ -346,7 +347,13 @@ const Row = memo(function Row({
         )}
         {ready ? (
           <span className="min-w-0 truncate text-sm text-ink-2">
-            <b className="font-semibold text-foreground">Ready:</b> {ready}
+            {ready.posts && (
+              <>
+                <b className="font-semibold text-foreground">Ready:</b> {ready.posts}
+              </>
+            )}
+            {ready.posts && ready.blocked && " · "}
+            {ready.blocked}
           </span>
         ) : run ? (
           <RunWhyLine run={run} />

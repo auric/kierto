@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Pure publish UI rules (plan v3 WP14a, docs/plans/replies.md step 4). No DOM access, so bun test runs them directly.
-import type { BlockedDraft, CommentDto, PlannedPost, PostDestination, PostDto } from "../../shared/dto";
+import type { BlockedDraft, BlockedReason, CommentDto, PlannedPost, PostDestination, PostDto } from "../../shared/dto";
 import { commentLines } from "../../shared/types";
 import { lineText, plural } from "../review/model";
 
@@ -70,19 +70,47 @@ export function threadText(thread: number, comments: CommentDto[]): string {
   return root ? `Thread of ${root.authorName ?? root.authorSlug} in ${placeOf(root)}` : `Thread ${thread}`;
 }
 
-// Why the post leaves a draft out, and what the user can do.
-export function blockedText(b: Pick<BlockedDraft, "reason" | "commit">): string {
-  switch (b.reason) {
-    case "out-of-date":
-      return "Out of date: new messages arrived after the draft, or its comment was deleted. Read the thread and draft the reply again.";
-    case "resolved-since":
-      return "Resolved since the draft. Reopen the thread to post this reply, or discard the draft.";
-    case "unpushed":
-      return `Commit ${b.commit} is not on the PR source branch yet. Push it. The next sync finds it.`;
-    case "commit-gone":
-      return `Commit ${b.commit} is not in your branch now, so it cannot reach the PR. Post the draft as a plain reply, or discard it.`;
-  }
+// Why the post leaves a draft out, and what the user can do. action: the button of each draft, null: none. The key order is the group order.
+export const BLOCKED: Record<BlockedReason, { title: string; text: string; action: string | null }> = {
+  "out-of-date": { title: "Out of date", text: "New messages since the draft. Draft again or edit.", action: "Draft again" },
+  "resolved-since": { title: "Resolved since the draft", text: "Reopen the thread to post.", action: "Reopen thread" },
+  unpushed: { title: "Fix commit not pushed", text: "Push the fix commit first.", action: null },
+  "commit-gone": {
+    title: "Commit not on the branch",
+    text: "The commit is not on the branch. Post as plain reply.",
+    action: "Post as plain reply",
+  },
+};
+
+// The blocked drafts grouped by reason, in the order of BLOCKED. Empty groups are left out.
+export const blockedGroups = (blocked: BlockedDraft[]): { reason: BlockedReason; items: BlockedDraft[] }[] =>
+  (Object.keys(BLOCKED) as BlockedReason[])
+    .map((reason) => ({ reason, items: blocked.filter((b) => b.reason === reason) }))
+    .filter((g) => g.items.length > 0);
+
+// The blocked count of the post bar, with the out-of-date drafts called out. "" when nothing is blocked.
+export function blockedNote(blocked: Pick<BlockedDraft, "reason">[]): string {
+  const stale = blocked.filter((b) => b.reason === "out-of-date").length;
+  const all = plural(blocked.length, "draft");
+  if (!blocked.length) return "";
+  if (stale === blocked.length) return `${all} out of date`;
+  return stale ? `${all} cannot post now, ${stale} out of date` : `${all} cannot post now`;
 }
+
+// The line of a PR in the Ready to post view. null: the PR has nothing to post and nothing blocked.
+export type ReadyLine = { posts: string | null; blocked: string | null };
+export function readyLine(plan: { posts: PlannedPost[]; blocked?: BlockedDraft[] }): ReadyLine | null {
+  const n = plan.blocked?.length ?? 0;
+  if (!plan.posts.length && !n) return null;
+  return { posts: plan.posts.length ? destText(plan.posts) : null, blocked: n ? `${n} cannot post` : null };
+}
+
+// A key that changes when the posts or the blocked drafts of a plan change.
+export const planSig = (plan: { posts: PlannedPost[]; blocked?: BlockedDraft[] }) =>
+  JSON.stringify([
+    plan.posts.map((p) => [p.run, p.body, p.items]),
+    (plan.blocked ?? []).map((b) => [b.item, b.revision, b.reason, b.commit]),
+  ]);
 
 // The destination words of a planned post or an outbox row.
 export function destLabel(d: PostDestination, comments: CommentDto[]): { code: string | null; text: string } {

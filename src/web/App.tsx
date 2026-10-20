@@ -34,7 +34,7 @@ import { useMeta } from "./meta";
 import { useClaims } from "./notify";
 import { type DetailApi, type DetailAt, type DetailPatch, PrDetail } from "./pr/PrDetail";
 import { useReadyToPost } from "./publish/data";
-import { destText } from "./publish/model";
+import { readyLine } from "./publish/model";
 import { useRuns } from "./review/data";
 import { latestByPr, runRows } from "./review/model";
 import { Settings, type SettingsAt } from "./settings/Settings";
@@ -203,7 +203,16 @@ function Shell({ stale }: { stale: boolean }) {
   const running = runs?.some((r) => r.status === "running") ?? false;
   // Accepted items sit in review runs, so only PRs with a run can have a post plan.
   const ready = useReadyToPost([...latest.keys()]);
-  const readyWhy = useMemo(() => new Map([...ready].map(([id, posts]) => [id, destText(posts)])), [ready]);
+  const readyWhy = useMemo(
+    () =>
+      new Map(
+        [...ready].flatMap(([id, plan]) => {
+          const line = readyLine(plan);
+          return line ? [[id, line] as const] : [];
+        }),
+      ),
+    [ready],
+  );
   // A repository replaces the view (prototype/v3 aiMode), so filterRows then ignores the view argument.
   const aiView = (view === "runs" || view === "post") && !repo;
   const archiveView = view === "archive" && !repo;

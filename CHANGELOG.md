@@ -23,6 +23,9 @@
 - A reply draft says "Resolved since the draft" when someone resolved its thread after Claude drafted it. The post leaves that reply out until you reopen the thread.
 - The post confirm lists the drafts that cannot post now, with the thread and the reason: new messages after the draft, a thread resolved since the draft, or a "Fixed in" commit that is not on the pull request yet. Post sends the other drafts. Before, one such draft stopped the whole post.
 - A "Fixed in" draft whose commit left your branch, for example after a rebase or a squash, offers "Post as plain reply" in the post confirm.
+- The post confirm groups the drafts that cannot post by reason. Each group says what to do. Each draft links to its thread and has its action: "Draft again", "Reopen thread", or "Post as plain reply".
+- The post confirm updates its lists when the drafts change while it is open. When the list to post changes, it asks you to read it again before you post.
+- The post bar counts the out-of-date drafts. Ready to post also lists pull requests with only drafts that cannot post, with "N cannot post". Screen readers announce count changes.
 - If the reply fails after the reopen, the post says so. Retry posts the reply without a second reopen.
 - Claude never replaces a reply draft that you edited, accepted, or discarded. The run says "kept your draft" for that thread. Draft reply in that one thread replaces a discarded draft.
 - A Fix commit keeps a reply draft that you edited or accepted and adds no "Fixed in" draft there. Undo of a Fix commit brings back the draft that its "Fixed in" draft replaced.

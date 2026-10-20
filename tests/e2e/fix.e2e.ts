@@ -277,9 +277,13 @@ test("the Fix list ticks the valid threads; the edits show, one is unticked, App
   await expect(page.getByText("1 draft cannot post now", { exact: true })).toBeVisible();
   await page.keyboard.press("p");
   const waiting = page.getByRole("dialog", { name: "Post to PROJ1/sample-repo-4 #1004?" });
-  const blocked = waiting.getByRole("list", { name: "Cannot post now" }).getByRole("listitem");
+  const group = waiting.locator("[data-blocked-group='unpushed']");
+  await expect(group.getByRole("heading")).toHaveText("Fix commit not pushed (1)");
+  await expect(group).toContainText("Push the fix commit first.");
+  const blocked = group.getByRole("listitem");
   await expect(blocked).toHaveCount(1);
-  await expect(blocked).toContainText(`Commit ${short} is not on the PR source branch yet. Push it. The next sync finds it.`);
+  await expect(blocked).toContainText(short);
+  await expect(blocked.getByRole("button")).toHaveCount(1);
   await expect(waiting.getByRole("list", { name: "Comments to post" })).toHaveCount(0);
   await expect(waiting.getByRole("button", { name: "Post", exact: true })).toBeDisabled();
   await page.keyboard.press("Escape");

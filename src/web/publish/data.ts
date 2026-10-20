@@ -7,7 +7,6 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type {
   ConfirmDto,
-  PlannedPost,
   PostDto,
   PostPlanDto,
   ReplyConflict,
@@ -76,15 +75,15 @@ export async function setThreadResolved(pr: number, input: ThreadResolveInput): 
 export const dropPost = async (id: number, general: boolean) =>
   read<{ items: { id: number; revision: number }[] }>(await api.api.posts[":id"].drop.$post({ ...param(id), json: { general } }));
 
-// The Ready to post view: the planned posts of each PR with a review run. One local request per PR.
-// ponytail: one plan request per PR with a run; a server count in PrRow replaces it if the list grows.
-export function useReadyToPost(prs: number[]): ReadonlyMap<number, PlannedPost[]> {
+// The Ready to post view: the plan of each PR with a review run that has posts or blocked drafts. One local request per PR.
+// shortcut: one plan request per PR with a run; a server count in PrRow replaces it if the list grows.
+export function useReadyToPost(prs: number[]): ReadonlyMap<number, PostPlanDto> {
   const results = useQueries({ queries: prs.map((pr) => ({ queryKey: planKey(pr), queryFn: () => fetchPlan(pr) })) });
   const sig = results.map((r) => r.dataUpdatedAt).join();
   // biome-ignore lint/correctness/useExhaustiveDependencies: sig changes with every new plan.
   return useMemo(() => {
-    const out = new Map<number, PlannedPost[]>();
-    for (const r of results) if (r.data?.posts.length) out.set(r.data.pr, r.data.posts);
+    const out = new Map<number, PostPlanDto>();
+    for (const r of results) if (r.data?.posts.length || r.data?.blocked?.length) out.set(r.data.pr, r.data);
     return out;
   }, [sig]);
 }

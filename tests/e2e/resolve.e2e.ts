@@ -166,10 +166,12 @@ test("thread outcome: a thread that another person resolved after the draft keep
   const items = box.getByRole("list", { name: "Comments to post" }).getByRole("listitem");
   await expect(items).toHaveCount(1);
   await expect(items).toContainText("Resolves the thread. No reply is posted.");
-  const blocked = box.getByRole("list", { name: "Cannot post now" }).getByRole("listitem");
+  const group = box.locator("[data-blocked-group='resolved-since']");
+  await expect(group.getByRole("heading")).toHaveText("Resolved since the draft (1)");
+  await expect(group).toContainText("Reopen the thread to post.");
+  const blocked = group.getByRole("list", { name: "Resolved since the draft" }).getByRole("listitem");
   await expect(blocked).toHaveCount(1);
   await expect(blocked).toContainText("in the general comment");
-  await expect(blocked).toContainText("Resolved since the draft. Reopen the thread to post this reply, or discard the draft.");
   await box.getByRole("button", { name: "Post", exact: true }).click();
   await expect(box).toBeHidden();
   await expect(badge(page, ONLY)).toContainText("Resolved by you");
@@ -177,13 +179,15 @@ test("thread outcome: a thread that another person resolved after the draft keep
   expect(await posts()).toEqual([]);
   await expect(page.getByText("1 draft cannot post now", { exact: true })).toBeVisible();
 
-  // My own thread reopens at once. Then the reply posts with no second reopen, and the tick resolves the thread again.
-  await button(page, BOTH, "Reopen thread").click();
-  await expect(badge(page, BOTH)).toHaveCount(0);
-  await expect(page.getByText("Ready to post: 1 reply", { exact: true })).toBeVisible();
+  // Reopen thread in the confirm reopens my own thread at once, and the confirm lists the reply. It posts with no second reopen,
+  // and the tick resolves the thread again.
   await page.keyboard.press("p");
+  const waiting = page.getByRole("dialog", { name: "Post to PROJ1/sample-repo-2 #1001?" });
+  await expect(waiting.getByRole("button", { name: "Post", exact: true })).toBeDisabled();
+  await waiting.locator("[data-blocked-group='resolved-since']").getByRole("button", { name: "Reopen thread" }).click();
   const again = page.getByRole("dialog", { name: "Post 1 reply to PROJ1/sample-repo-2 #1001?" });
-  await expect(again.getByRole("list", { name: "Cannot post now" })).toHaveCount(0);
+  await expect(again.locator("[data-blocked-list]")).toHaveCount(0);
+  await expect(badge(page, BOTH)).toHaveCount(0);
   await expect(again.locator("[data-reopen]")).toHaveCount(0);
   await again.getByRole("button", { name: "Post", exact: true }).click();
   await expect(badge(page, BOTH)).toContainText("Resolved by you");
