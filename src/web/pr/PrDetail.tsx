@@ -239,7 +239,7 @@ export function PrDetail({
   const draftReply = useRef((_: number) => {});
   // The diff view needs the drafts of the review hook. The thread context and the drafts read its action through this ref.
   const showDiff = useRef((_: Card) => {});
-  const fixRef = useRef<{ open: (thread: number) => void; copy: (thread: number) => Promise<string | null> }>({
+  const fixRef = useRef<{ open: (thread: number) => void; copy: ThreadCtx["copyPrompt"] }>({
     open: () => {},
     copy: async () => null,
   });

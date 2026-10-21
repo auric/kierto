@@ -247,3 +247,9 @@ export function statusInfo(s: SyncStatus, now: number, forge: string): StatusInf
       return { text: "Waiting for the first check", tone: "idle" };
   }
 }
+
+// The description of a failure toast: the error, then the next step.
+export function failText(e: unknown): string {
+  const m = (e instanceof Error ? e.message : String(e)).trim();
+  return `${m}${m && !/[.!?]$/.test(m) ? "." : ""} Try again, or reload the pull request.`.trim();
+}

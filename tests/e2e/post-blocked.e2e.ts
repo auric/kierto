@@ -61,6 +61,11 @@ test("an out-of-date draft: the open confirm refreshes into its group, the bar a
   await expect(box.getByRole("button", { name: "Post", exact: true })).toBeDisabled();
   await expect(box.getByRole("alert")).toHaveText("The list changed while it was open. Read it again before you post.");
   await expect(box.getByRole("button", { name: "Cancel" })).toBeFocused();
+  // The reason sits next to the buttons, and both buttons name it. The focus is on Cancel, so a screen reader reads it there.
+  const off = "Post is off: no accepted draft can post now.";
+  await expect(box.getByText(off)).toBeVisible();
+  await expect(box.getByRole("button", { name: "Cancel" })).toHaveAccessibleDescription(off);
+  await expect(box.getByRole("button", { name: "Post", exact: true })).toHaveAccessibleDescription(off);
 
   // The actions are reachable by keyboard: Shift+Tab goes back from Cancel over the disabled Post to the action, then to the thread.
   await page.keyboard.press("Shift+Tab");

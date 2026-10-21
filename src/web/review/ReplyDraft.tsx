@@ -32,7 +32,7 @@ import {
   Undo2,
   Wrench,
 } from "lucide-react";
-import { Fragment, memo, type ReactNode, useId } from "react";
+import { type FocusEvent, Fragment, memo, type ReactNode, useCallback, useId, useLayoutEffect, useRef } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,7 +47,7 @@ import { CopyButton, Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
 import { Hint, type Hints } from "../shell/Hint";
 import { AiAvatar, Inline } from "./Drafts";
-import { EVIDENCE, plural, type ReplyCard, repliesButton, replyOf, touchedDraft } from "./model";
+import { type CardState, cardFocus, EVIDENCE, plural, type ReplyCard, repliesButton, replyOf, touchedDraft, turnedStale } from "./model";
 import { asksFix, type ConflictText, MARKER, type Outcome, type OutcomeKind } from "./outcome";
 import { Acts, Editor, RestoreButton, type TriageCtx, type TriageMode } from "./Triage";
 
@@ -108,7 +108,37 @@ export type ReplyCtx = {
 // Dashed: a draft that nobody accepted yet. Solid: accepted, so the post bar holds it.
 const box = "rl-enter mt-3.5 max-w-[72ch] scroll-mt-3 rounded-lg border border-dashed border-rule-strong px-2.5 pt-2 pb-2.5";
 const icon = "size-[15px] shrink-0";
-const linkButton = "cursor-pointer rounded font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-50";
+// A text button in a line of small text. The target is 24 px high (WCAG 2.5.8). The negative margins keep the line as it was.
+const linkButton =
+  "-mx-1 -my-1 inline-flex min-h-6 cursor-pointer items-center rounded px-1 font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-50";
+
+// A sync, a run, or an action can remove the focused control of a card: Accept on a draft that goes out of date, Draft again, or
+// Use revision. The focus then goes to the card, or to Draft again (model.ts cardFocus). say: the words when the card goes out of date.
+function useCardFocus(now: CardState, say: string, announce: (text: string) => void) {
+  const root = useRef<HTMLElement | null>(null);
+  const last = useRef<HTMLElement | null>(null);
+  const was = useRef<CardState | null>(null);
+  useLayoutEffect(() => {
+    const before = was.current;
+    was.current = now;
+    const el = root.current;
+    if (!el) return;
+    const a = document.activeElement;
+    const to = cardFocus({ before, now, lost: !a || a === document.body, gone: !!last.current && !last.current.isConnected });
+    if (to) {
+      last.current = null;
+      ((to === "again" && el.querySelector<HTMLElement>("[data-again]:enabled")) || el).focus({ preventScroll: true });
+    }
+    if (turnedStale(before, now) && el.contains(document.activeElement)) announce(say);
+  });
+  const ref = useCallback((el: HTMLElement | null) => {
+    root.current = el;
+  }, []);
+  const onFocus = (e: FocusEvent<HTMLElement>) => {
+    last.current = e.target;
+  };
+  return { ref, onFocus };
+}
 
 const JUDGEMENT_ICON: Record<Judgement, LucideIcon> = {
   valid: CircleCheck,
@@ -262,9 +292,26 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
 }) {
   const { card, thread, ctx } = props;
   const short = ctx.meta.runner.short;
+  // docs/plans/thread-outcome.md: a reply run revises a draft that you edited or accepted, so the button says what it does.
+  // Reply to the newest keeps the text. A thread resolved after the draft must open again first, so that choice waits.
+  const mineText = card.kind !== "pending" && touchedDraft(card.it);
+  const asIs = card.kind === "draft" && card.it.body.trim() !== "" && props.resolved !== "since";
+  const focus = useCardFocus(
+    { kind: card.kind, stale: card.kind !== "pending" && card.kind !== "discarded" && card.stale },
+    `New messages arrived after this draft. ${mineText ? "Revise your reply" : "Draft it again"}${asIs ? ", or reply to the newest as is" : ""}.`,
+    ctx.announce,
+  );
   if (card.kind === "pending") {
     return (
-      <p data-reply-draft={thread} className="rl-enter mt-3.5 mb-0 flex items-center gap-2 text-sm text-ink-2">
+      <p
+        ref={focus.ref}
+        id={card.id === null ? undefined : `rd-${card.id}`}
+        role="status"
+        tabIndex={-1}
+        data-reply-draft={thread}
+        onFocus={focus.onFocus}
+        className="rl-enter mt-3.5 mb-0 flex scroll-mt-3 items-center gap-2 text-sm text-ink-2"
+      >
         <AiAvatar meta={ctx.meta} />
         <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
         {short} is {card.revise ? "revising your reply" : "drafting a reply"}…
@@ -277,31 +324,30 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   const session = !!it.payload.session;
   const who = session ? "Your session" : short;
   if (card.kind === "discarded") {
+    const line = it.body.trim() ? `Discarded reply draft: ${snippet(it.body, 140)}` : "Discarded resolve proposal";
     return (
       <article
+        ref={focus.ref}
         id={id}
         data-item={it.id}
         data-reply-draft={thread}
         tabIndex={-1}
         aria-label="Discarded reply draft"
+        onFocus={focus.onFocus}
         className="mt-3.5 flex max-w-[72ch] scroll-mt-3 items-center gap-2"
       >
-        <p className="rl-fade m-0 min-w-0 flex-1 truncate text-sm text-muted-foreground">
-          {it.body.trim() ? `Discarded reply draft: ${snippet(it.body, 140)}` : "Discarded resolve proposal"}
+        <p title={line} className="rl-fade m-0 min-w-0 flex-1 truncate text-sm text-muted-foreground">
+          {line}
         </p>
         <RestoreButton it={it} busy={props.busy} ctx={ctx.triage} />
       </article>
     );
   }
-  // docs/plans/thread-outcome.md: a reply run revises a draft that you edited or accepted, so the button says what it does.
-  // Reply to the newest keeps the text. A thread resolved after the draft must open again first, so that choice waits.
-  const mineText = touchedDraft(it);
-  const asIs = card.kind === "draft" && it.body.trim() !== "" && props.resolved !== "since";
   const stale = card.stale && (
     <p className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-2">
       <History aria-hidden className="size-[13px] shrink-0" />
       New messages since this draft.
-      <button type="button" disabled={props.busy} className={linkButton} onClick={() => ctx.again(thread)}>
+      <button type="button" data-again disabled={props.busy} className={linkButton} onClick={() => ctx.again(thread)}>
         {mineText ? "Revise my reply" : "Draft again"}
       </button>
       {asIs && (
@@ -330,10 +376,12 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
     const lead = asksFix(it, ctx.author) ? "To fix" : "No reply needed";
     return (
       <article
+        ref={focus.ref}
         id={id}
         data-reply-draft={thread}
         tabIndex={-1}
         aria-label={`${who}: ${lead.toLowerCase()}${judged && `.${judged}`}`}
+        onFocus={focus.onFocus}
         className={box}
       >
         <Head meta={ctx.meta} who={who}>
@@ -360,10 +408,12 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
       : null;
   return (
     <article
+      ref={focus.ref}
       id={id}
       data-item={it.id}
       data-reply-draft={thread}
       tabIndex={-1}
+      onFocus={focus.onFocus}
       aria-label={`${text ? "Reply draft" : "Resolve proposal"} from ${session ? "your session" : short}${text && props.to ? ` to ${props.to}` : ""}.${judged}${reopen ? ` ${reopen}` : ""}${resolves ? " Resolves the thread after the post." : ""}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}${it.revised ? " A revision waits." : ""}`}
       className={cn(box, accepted && "border-solid")}
     >
@@ -411,12 +461,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
                     </code>{" "}
                     is not on the branch of your clone. A rebase or a squash can do that.
                   </span>
-                  <button
-                    type="button"
-                    disabled={props.busy}
-                    className="cursor-pointer rounded font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-50"
-                    onClick={() => ctx.plain(it)}
-                  >
+                  <button type="button" disabled={props.busy} className={linkButton} onClick={() => ctx.plain(it)}>
                     Post as plain reply
                   </button>
                 </>

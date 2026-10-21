@@ -11,13 +11,14 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import type { FixCommitDto, FixDto, MetaDto, PrRow, ReviewItemDto, RunConflict } from "../../shared/dto";
+import type { PromptCopy } from "../pr/Thread";
 import type { ThreadModel } from "../pr/threads";
 import { planKey } from "../publish/data";
 import { replyKey } from "../review/data";
 import { lineText, plural, shortHash } from "../review/model";
 import type { Focus } from "../review/useReview";
 import { Hint, type Hints } from "../shell/Hint";
-import { prKey, repoOf } from "../shell/model";
+import { failText, prKey, repoOf } from "../shell/model";
 import { ApplyDialog, type ApplyTarget } from "./ApplyDialog";
 import { CloneFolder } from "./CloneDialog";
 import { cloneKey, declineFix, fixesKey, getClone, undeclineFix, undoFix, useClone, useClones, useFixes, useStartFix } from "./data";
@@ -62,7 +63,7 @@ export type FixUi = {
   // Opens the Fix list with exactly these targets ticked: the accepts of a session answer (session-consult.md part C).
   openWith: (targets: FixTarget[]) => void;
   // Copies the runner prompt of the thread. Call it in the click handler. Resolves to the next step, or null.
-  copyPrompt: (thread: number) => Promise<string | null>;
+  copyPrompt: (thread: number) => Promise<PromptCopy | null>;
   // The choice of the user per free edit ID. Without a choice, selection() ticks the edits of the newest run.
   ticks: ReadonlyMap<number, boolean>;
   // Ticks or unticks these edits: "Keep the reply" of a conflict note (docs/plans/thread-outcome.md).
@@ -210,7 +211,7 @@ export function useFix(
           announce(n === 1 ? "Proposing a fix." : `Proposing fixes for ${plural(n, "point")}.`);
           if (focus) focusAfter({ id: focus, block: "nearest", flash: false });
         },
-        onError: (e) => toast.add({ title: "The fix run did not start", description: e.message }),
+        onError: (e) => toast.add({ title: "The fix run did not start", description: failText(e) }),
       },
     );
   };
@@ -268,7 +269,7 @@ export function useFix(
       announce(r.mode === "clone" ? `Undone. Your clone is back at ${shortHash(r.before)}.` : "Undone. The app branch is deleted.");
       if (target !== null) focusAfter({ id: `fx-${cardKey(target)}`, block: "nearest", flash: false });
     } catch (e) {
-      toast.add({ title: "The undo did not run", description: (e as Error).message });
+      toast.add({ title: "The undo did not run", description: failText(e) });
     } finally {
       refresh();
       setUndoing((s) => {
@@ -298,7 +299,7 @@ export function useFix(
       focusAfter({ id: `fx-${key}`, block: "nearest", flash: false });
       return true;
     } catch (e) {
-      toast.add({ title: reason === null ? "The undo did not run" : "The decline did not save", description: (e as Error).message });
+      toast.add({ title: reason === null ? "The undo did not run" : "The decline did not save", description: failText(e) });
       return false;
     } finally {
       refresh();
@@ -324,18 +325,16 @@ export function useFix(
       root: { id: t.root.id, author: t.root.who.name, text: t.root.text ?? "" },
       newest: newest && { id: newest.id, author: newest.who.name, text: newest.text ?? "" },
     });
-    if (!(await copyText(text))) {
-      toast.add({ title: "The clipboard is blocked here. Copy the comment by hand." });
-      return null;
-    }
-    announce("Copied the prompt.");
+    const copied = await copyText(text);
+    if (copied) announce("Copied the prompt.");
     const path = await qc
       .fetchQuery({ queryKey: cloneKey(pr.id), queryFn: () => getClone(pr.id), staleTime: 30_000 })
       .then((c) => c.path)
       .catch(() => null);
     // runner.login is the command that signs the runner in. Its first word is the command of the runner.
     const command = meta.runner.login.split(" ")[0] ?? meta.runner.short;
-    return `Open a terminal in ${path ?? `your clone of ${repoOf(pr)}`}, run ${command}, and paste.`;
+    const next = `Open a terminal in ${path ?? `your clone of ${repoOf(pr)}`}, run ${command}, and paste.`;
+    return copied ? { next } : { next, text };
   };
   const setMany = useCallback(
     (ids: number[], on: boolean) =>

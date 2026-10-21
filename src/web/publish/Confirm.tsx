@@ -41,8 +41,9 @@ export function Confirm(props: {
   blocked?: BlockedGroup[];
   posting: boolean;
   error: string | null;
-  // canPost: false keeps Post off, for example while the plan loads or when no draft can post.
+  // canPost: false keeps Post off, for example while the plan loads or when no draft can post. off: why Post is off, shown next to it.
   canPost: boolean;
+  off?: string;
   onPost: () => void;
   onCancel: () => void;
   className?: string;
@@ -50,6 +51,8 @@ export function Confirm(props: {
   const post = useRef<HTMLButtonElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const ready = props.entries !== null;
+  // The focus goes to Cancel when Post is off, so both buttons name the reason.
+  const off = ready && !props.canPost && props.off ? `${props.id}-off` : undefined;
   // prototype/v3 openConfirm: focus goes to Post once the list shows. Posting removes the button, so a post that ends
   // with the dialog still open (an error, a new plan) puts the focus back on it. A disabled Post takes no focus.
   useLayoutEffect(() => {
@@ -131,9 +134,10 @@ export function Confirm(props: {
               <ul aria-label={g.title} className="m-0 list-none p-0">
                 {g.items.map((b) => (
                   <li key={b.key} data-blocked className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b py-1.5 text-sm">
+                    {/* The target is 24 px high (WCAG 2.5.8). The negative margins keep the row as it was. */}
                     <button
                       type="button"
-                      className="min-w-0 cursor-pointer rounded text-left font-medium text-pen [overflow-wrap:anywhere] hover:underline"
+                      className="-my-[3px] inline-flex min-h-6 min-w-0 cursor-pointer items-center rounded text-left font-medium text-pen [overflow-wrap:anywhere] hover:underline"
                       onClick={b.onThread}
                     >
                       {b.dest}
@@ -169,13 +173,18 @@ export function Confirm(props: {
           </span>
         ) : (
           <>
-            <Button ref={post} size="sm" disabled={!props.canPost} onClick={props.onPost}>
+            <Button ref={post} size="sm" disabled={!props.canPost} aria-describedby={off} onClick={props.onPost}>
               <Send aria-hidden data-icon="inline-start" />
               Post
             </Button>
-            <Button ref={cancel} size="sm" variant="outline" title="Key: Esc" onClick={props.onCancel}>
+            <Button ref={cancel} size="sm" variant="outline" title="Key: Esc" aria-describedby={off} onClick={props.onCancel}>
               Cancel
             </Button>
+            {off && (
+              <span id={off} className="ml-1 text-xs text-ink-2">
+                {props.off}
+              </span>
+            )}
             <span className="ml-1 text-xs text-muted-foreground">Esc cancels.</span>
           </>
         )}

@@ -193,6 +193,8 @@ test("a stale draft says new messages arrived; Draft again answers the newest me
   await expect(card(page, ROOT)).toContainText(echo(1000011), { timeout: RUN_MS });
   await expect(card(page, ROOT)).not.toContainText("New messages since this draft.");
   await expect(outcome.locator("[data-marker]")).toHaveCount(0);
+  // The pending line and then the new draft took the place of Draft again, so the focus followed them.
+  await expect(card(page, ROOT)).toBeFocused();
 
   const text = "Done. The flush runs first now.";
   await card(page, ROOT).getByRole("button", { name: "Edit" }).click();
@@ -206,6 +208,42 @@ test("a stale draft says new messages arrived; Draft again answers the newest me
   await postButton(confirmBox(page)).click();
   await expect(thread(page, ROOT).locator("[data-post]")).toContainText("Posted.");
   expect(await posts()).toMatchObject([{ text: MARK + text, parent: { id: 1000011 } }]);
+});
+
+test("focus: a sync that puts a draft out of date moves the focus from Accept to Draft again; the pending line keeps the card ID and the focus", async ({
+  page,
+}) => {
+  await connect(page);
+  await control("state", { reply: "new" });
+  await repliesButton(page).click();
+  await expect(card(page, ROOT)).toContainText(echo(1000010), { timeout: RUN_MS });
+  const id = (await card(page, ROOT).getAttribute("id")) ?? "";
+  expect(id).toMatch(/^rd-\d+$/);
+
+  // Accept leaves the card in the sync. The focus goes to Draft again, and the live region says why once.
+  await card(page, ROOT).getByRole("button", { name: "Accept" }).focus();
+  await control("state", { reply: "two" });
+  await expect(page.locator("#c-1000011")).toBeVisible();
+  const again = card(page, ROOT).getByRole("button", { name: "Draft again" });
+  await expect(again).toBeFocused();
+  const live = page.locator("p[role='status'].sr-only");
+  await expect(live).toContainText("New messages arrived after this draft. Draft it again, or reply to the newest as is.");
+
+  // Draft again leaves too. The pending line takes the focus and the ID of the card.
+  await control("claude", { stream: "tree", hang: true });
+  await page.keyboard.press("Enter");
+  await expect(card(page, ROOT)).toContainText("Claude is drafting a reply…");
+  await expect(card(page, ROOT)).toHaveAttribute("role", "status");
+  await expect(card(page, ROOT)).toHaveAttribute("id", id);
+  await expect(card(page, ROOT)).toBeFocused();
+
+  // A cancel brings the out-of-date draft back under the same ID.
+  await expect(runline(page)).toContainText("Drafting replies…", { timeout: RUN_MS });
+  await runline(page).getByRole("button", { name: "Cancel" }).click();
+  await expect(card(page, ROOT)).toContainText("New messages since this draft.", { timeout: RUN_MS });
+  await expect(card(page, ROOT)).toHaveAttribute("id", id);
+  await expect(card(page, ROOT)).not.toHaveAttribute("role", "status");
+  expect(await posts()).toEqual([]);
 });
 
 // docs/plans/thread-outcome.md decision C: a reply run revises a draft that you edited, and never replaces it.
@@ -243,10 +281,11 @@ test("revise my reply: the revision shows a word diff against your text; Keep mi
   // The revision answers the newest message, so Draft replies has nothing new to do.
   await expect(repliesButton(page)).toHaveAccessibleName("Draft replies");
 
-  // Keep mine by keyboard: your exact text stays, still accepted and out of date.
+  // Keep mine by keyboard: your exact text stays, still accepted and out of date. The focus goes to your draft.
   await revision.getByRole("button", { name: "Keep mine" }).focus();
   await page.keyboard.press("Enter");
   await expect(revision).toHaveCount(0);
+  await expect(card(page, ROOT)).toBeFocused();
   await expect(card(page, ROOT).locator(".rl-indent").first()).toHaveText(mine);
   await expect(card(page, ROOT)).toContainText("Accepted");
   await expect(outcome.locator("[data-marker='revision']")).toHaveCount(0);
@@ -257,6 +296,8 @@ test("revise my reply: the revision shows a word diff against your text; Keep mi
   await expect(revision).toBeVisible({ timeout: RUN_MS });
   await revision.getByRole("button", { name: "Use revision" }).click();
   await expect(card(page, ROOT)).toContainText(echo(1000011));
+  // The card of your draft holds the revision now, and it keeps the focus.
+  await expect(card(page, ROOT)).toBeFocused();
   await expect(card(page, ROOT)).not.toContainText(mine);
   await expect(card(page, ROOT)).not.toContainText("Accepted");
   await expect(card(page, ROOT)).toContainText("from the reply run");
@@ -293,6 +334,9 @@ test("cancel stops a reply run: the pending card goes, and no draft appears", as
   await control("claude", { stream: "tree", hang: true });
   await thread(page, 1000101).getByRole("button", { name: "Draft reply" }).click();
   await expect(card(page, 1000101)).toContainText("Claude is drafting a reply…");
+  // The pending line takes the place of Draft reply, so it takes the focus too.
+  await expect(card(page, 1000101)).toHaveAttribute("role", "status");
+  await expect(card(page, 1000101)).toBeFocused();
   await expect(runline(page)).toContainText("Drafting replies…", { timeout: RUN_MS });
   await runline(page).getByRole("button", { name: "Cancel" }).click();
   await expect(runRow(page, "reply")).toContainText(/Cancelled after \d+ tool calls?/, { timeout: RUN_MS });
@@ -451,6 +495,31 @@ const FIX_LOCK = {
   ],
   coverage: NO_COVERAGE,
 };
+
+test("a blocked clipboard shows the runner prompt in a field with the focus and the text selected", async ({ page }) => {
+  await openApp(page);
+  await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
+  await page.getByLabel("Access token").fill(E2E_TOKEN);
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByLabel("Access token")).toBeHidden();
+  await control("state", { author: true });
+  await page.locator("[data-row]", { hasText: OWN_TITLE }).first().click();
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(OWN_TITLE);
+  await openThread(page, LOCK);
+
+  await page.evaluate(() => Object.defineProperty(navigator.clipboard, "writeText", { value: () => Promise.reject(new Error("blocked")) }));
+  await thread(page, LOCK).getByRole("button", { name: "More for this thread" }).click();
+  await page.getByRole("menuitem", { name: "Copy prompt for Claude Code" }).click();
+  const field = thread(page, LOCK).getByRole("textbox", {
+    name: "The clipboard is blocked here. The prompt is selected: press Ctrl+C to copy it.",
+  });
+  await expect(field).toBeFocused();
+  await expect(field).toHaveJSProperty("readOnly", true);
+  await expect(field).toHaveValue(/A reviewer commented on my pull request PROJ1\/sample-repo-4 #1004\./);
+  expect(await field.evaluate((el: HTMLTextAreaElement) => el.selectionEnd - el.selectionStart === el.value.length)).toBe(true);
+  await expect(thread(page, LOCK)).toContainText("Open a terminal in your clone of PROJ1/sample-repo-4, run claude, and paste.");
+  await expect(page.locator("[data-slot='toast']")).toHaveCount(0);
+});
 
 test("the outcome line follows the reply and the fix; a Not valid reply next to a ticked edit gets the conflict note and both actions", async ({
   page,

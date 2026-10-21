@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommitDto, MetaDto, PrRow, ReviewItemDto, RunDetail, RunDto } from "../../shared/dto";
 import { type ConsultUi, useConsult } from "../consult/Consult";
-import { useFix } from "../fix/FixBar";
+import { type FixUi, useFix } from "../fix/FixBar";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
 import { ordered, type ThreadModel } from "../pr/threads";
@@ -74,7 +74,7 @@ export type ReviewUi = {
   // Plan r2 UI-DIFF: the finding drafts, the source head of their run, and the reply draft of each thread.
   diff: { drafts: ReviewItemDto[]; head: string | null; replies: ReadonlyMap<number, ReviewItemDto> };
   // Plan pr-view-v4 2.11 and 2.12: the fix parts of the bottom bar, the Fix list and the apply dialog, and the runner prompt.
-  fix: { bar: ReactNode; dialog: ReactNode; copyPrompt: (thread: number) => Promise<string | null> };
+  fix: { bar: ReactNode; dialog: ReactNode; copyPrompt: FixUi["copyPrompt"] };
   // docs/plans/session-consult.md parts A to C: the More menu items, the Fix list footer link, the session run row, and their dialogs.
   consult: ConsultUi;
 };

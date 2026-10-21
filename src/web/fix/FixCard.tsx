@@ -26,7 +26,7 @@ import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { type FixCommitDto, type FixEditDto, MAX_NOTE, type MetaDto, type ReviewItemDto } from "../../shared/dto";
 import { Rows } from "../diff/FileDiff";
-import { Text } from "../pr/Thread";
+import { type PromptCopy, PromptNote, Text } from "../pr/Thread";
 import { AiAvatar, Inline } from "../review/Drafts";
 import { RUN_TEXT } from "../review/model";
 import { type Hints, HintTrigger } from "../shell/Hint";
@@ -46,7 +46,7 @@ export type FixCtx = {
   // Fix again and Fix anyway: a new fix run for this target only. anyway: the run asks for edits despite the earlier note.
   onAgain: (target: FixTarget, anyway?: boolean) => void;
   // Copies the runner prompt of the thread. Resolves to the next step, or null.
-  onPrompt: (thread: number) => Promise<string | null>;
+  onPrompt: (thread: number) => Promise<PromptCopy | null>;
   // Moves the focus to the reply draft card of this review item.
   onDraft: (item: number) => void;
 };
@@ -262,7 +262,7 @@ export const FixCard = memo(function FixCard(props: {
   const short = ctx.meta.runner.short;
   // The reason field of "Don't fix", and the next step after Copy prompt.
   const [asking, setAsking] = useState(false);
-  const [next, setNext] = useState<string | null>(null);
+  const [next, setNext] = useState<PromptCopy | null>(null);
   const opener = useRef<HTMLButtonElement>(null);
   // The running card answers Propose, often from a key, so it does not move. A card that a run result brings plays rl-enter.
   if (s.kind === "running") {
@@ -354,7 +354,7 @@ export const FixCard = memo(function FixCard(props: {
       </Button>
     ),
     why === "dropped" && target.kind === "thread" && (
-      <Button key="prompt" size="sm" variant="outline" onClick={() => void ctx.onPrompt(target.id).then((text) => text && setNext(text))}>
+      <Button key="prompt" size="sm" variant="outline" onClick={() => void ctx.onPrompt(target.id).then((r) => r && setNext(r))}>
         <ClipboardCopy aria-hidden data-icon="inline-start" />
         Copy prompt
       </Button>
@@ -422,12 +422,7 @@ export const FixCard = memo(function FixCard(props: {
       {!declined && edits.map((e) => <Edit key={e.id} e={e} free={!held.has(e.id)} ticked={props.ticks.get(e.id) ?? newest} ctx={ctx} />)}
       {commit && <Commit c={commit} target={target} busy={props.busy} ctx={ctx} />}
       {actions.length > 0 && <div className="rl-indent mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">{actions}</div>}
-      {next && (
-        <p className="rl-fade rl-indent m-0 mt-1.5 text-xs text-ink-2 [overflow-wrap:anywhere]">
-          <Check aria-hidden className="mr-1 inline size-[13px] align-[-2px]" />
-          {next}
-        </p>
-      )}
+      {next && <PromptNote id={`fxp-${key}`} r={next} className="rl-indent" />}
       {asking && (choose || proposal) && (
         <div id={`fxd-${key}`}>
           <DeclineField

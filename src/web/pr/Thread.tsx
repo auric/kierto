@@ -25,10 +25,11 @@ import {
   SquareDot,
   Wrench,
 } from "lucide-react";
-import { lazy, memo, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, memo, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
@@ -69,6 +70,43 @@ export function Text({ text }: { text: string }) {
   );
 }
 
+// The result of a runner prompt copy. next: the next step. text: the prompt, when the clipboard is blocked.
+export type PromptCopy = { next: string; text?: string };
+
+// The next step after a prompt copy. A blocked clipboard also shows the prompt in a field. The field takes the focus with the prompt
+// selected, so Ctrl+C copies it.
+export function PromptNote({ id, r, className }: { id: string; r: PromptCopy; className?: string }) {
+  const selectAll = useCallback((el: HTMLTextAreaElement | null) => {
+    el?.focus();
+    el?.select();
+  }, []);
+  return (
+    <>
+      {r.text !== undefined && (
+        <div className={cn("rl-fade mt-1.5 max-w-[72ch]", className)}>
+          <label htmlFor={id} className="text-xs text-ink-2">
+            The clipboard is blocked here. The prompt is selected: press Ctrl+C to copy it.
+          </label>
+          <Textarea
+            ref={selectAll}
+            id={id}
+            readOnly
+            spellCheck={false}
+            rows={6}
+            value={r.text}
+            onFocus={(e) => e.currentTarget.select()}
+            className="mt-1 field-sizing-fixed resize-y bg-pane font-mono text-xs"
+          />
+        </div>
+      )}
+      <p className={cn("rl-fade m-0 mt-1.5 max-w-[72ch] text-xs text-ink-2 [overflow-wrap:anywhere]", className)}>
+        {r.text === undefined && <Check aria-hidden className="mr-1 inline size-[13px] align-[-2px]" />}
+        {r.next}
+      </p>
+    </>
+  );
+}
+
 export type ThreadCtx = {
   pr: number;
   hints: Hints;
@@ -96,7 +134,7 @@ export type ThreadCtx = {
   // Opens the Fix list with only this thread ticked.
   onFix: (thread: number) => void;
   // Copies the runner prompt of the thread. Call it in the click handler. Resolves to the next step, or null.
-  copyPrompt: (thread: number) => Promise<string | null>;
+  copyPrompt: (thread: number) => Promise<PromptCopy | null>;
   posts: PostCtx;
   // Resolves or reopens a thread on the forge now. seen: the newest live message on screen. null: done.
   setResolved: (thread: number, resolved: boolean, seen: number) => Promise<ResolveOutcome>;
@@ -308,7 +346,7 @@ export const Thread = memo(function Thread({
 // Plan pr-view-v4 2.8: the reply box, Draft reply on a your-turn thread without a draft, Fix on an open thread of the own PR,
 // Resolve or Reopen, and More. The note after a prompt copy stays, so the user can read the next step.
 function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean; target?: ReplyTarget; ctx: ThreadCtx }) {
-  const [next, setNext] = useState<string | null>(null);
+  const [next, setNext] = useState<PromptCopy | null>(null);
   const open = t.turn !== "resolved" && t.last !== null;
   const link = ctx.web && commentUrl(ctx.web, t.id);
   const prompt = ctx.author && t.last !== null;
@@ -378,7 +416,7 @@ function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean;
                       </DropdownMenuItem>
                     )}
                     {prompt && (
-                      <DropdownMenuItem onClick={() => void ctx.copyPrompt(t.id).then((text) => text && setNext(text))}>
+                      <DropdownMenuItem onClick={() => void ctx.copyPrompt(t.id).then((r) => r && setNext(r))}>
                         <ClipboardCopy aria-hidden />
                         Copy prompt for {ctx.runner}
                       </DropdownMenuItem>
@@ -402,12 +440,7 @@ function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean;
           </span>
         }
       />
-      {next && (
-        <p className="rl-fade m-0 mt-1.5 max-w-[72ch] text-xs text-ink-2 [overflow-wrap:anywhere]">
-          <Check aria-hidden className="mr-1 inline size-[13px] align-[-2px]" />
-          {next}
-        </p>
-      )}
+      {next && <PromptNote id={`pm-${t.id}`} r={next} />}
       {resolve.panel}
     </>
   );

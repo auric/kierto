@@ -9,6 +9,7 @@ import {
   ARCHIVED_TEXT,
   ago,
   archiveWhy,
+  failText,
   filterRows,
   followCandidate,
   freezeOrder,
@@ -362,5 +363,13 @@ describe("check status text", () => {
     expect(statusInfo(s({ state: "error", error: "Cannot read the CA file (ENOENT)." }), at, "Forge").text).toBe(
       "Cannot read the CA file (ENOENT).",
     );
+  });
+});
+
+describe("failure toast text", () => {
+  test("the error ends with a full stop, then the next step follows", () => {
+    expect(failText(new Error("Server answered 500"))).toBe("Server answered 500. Try again, or reload the pull request.");
+    expect(failText(new Error("The item changed."))).toBe("The item changed. Try again, or reload the pull request.");
+    expect(failText(new Error(""))).toBe("Try again, or reload the pull request.");
   });
 });

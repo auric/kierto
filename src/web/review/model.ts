@@ -586,12 +586,27 @@ export function replyMap(items: ReviewItemDto[] | undefined): Map<number, Review
 // none: action none, or no body yet. Accept needs a body (WP17), so it offers only a reply of your own.
 // A draft without a body that proposes or ticks a resolve is a draft: Accept with the tick resolves the thread without a reply.
 // stale: the draft answers a message that is no longer the newest live message of the thread.
-// pending revise: the run revises your out-of-date draft (jobs.ts draftReplies), so it keeps your text.
+// pending revise: the run revises your out-of-date draft (jobs.ts draftReplies), so it keeps your text. pending id: the draft that the
+// run replaces or revises, so the line keeps the card ID. null: the thread has no draft.
 export type ReplyCard =
-  | { kind: "pending"; revise: boolean }
+  | { kind: "pending"; revise: boolean; id: number | null }
   | { kind: "none"; it: ReviewItemDto; stale: boolean }
   | { kind: "draft"; it: ReviewItemDto; stale: boolean }
   | { kind: "discarded"; it: ReviewItemDto };
+
+// The state of a reply draft card that decides its focus after a render (ReplyDraft.tsx useCardFocus).
+export type CardState = { kind: ReplyCard["kind"]; stale: boolean };
+
+export const turnedStale = (before: CardState | null, now: CardState) => !!before && now.stale && !before.stale;
+
+// lost: no element has the focus. gone: the element of the card that had the focus is gone. Returns where the focus goes: "again" is
+// Draft again or Revise my reply, else the card itself. A pending line also takes the place of the button that started its run, such
+// as Draft reply in the thread footer.
+export function cardFocus(o: { before: CardState | null; now: CardState; lost: boolean; gone: boolean }): "again" | "card" | null {
+  if (!o.lost) return null;
+  if (o.gone) return turnedStale(o.before, o.now) ? "again" : "card";
+  return o.now.kind === "pending" && o.before?.kind !== "pending" ? "card" : null;
+}
 
 // An open draft that you edited or accepted. A reply run revises it and never replaces it (docs/plans/thread-outcome.md).
 export const touchedDraft = (it: ReviewItemDto) => it.status === "accepted" || (it.status === "new" && it.edited);
@@ -599,7 +614,7 @@ export const touchedDraft = (it: ReviewItemDto) => it.status === "accepted" || (
 // newest: the newest live message of the thread. pending: a reply run that this page started for the thread runs now.
 export function replyCard(it: ReviewItemDto | undefined, newest: number | null, pending: boolean): ReplyCard | null {
   const stale = !!it && newest !== null && replyOf(it).replyTo !== newest;
-  if (pending) return { kind: "pending", revise: !!it && stale && touchedDraft(it) };
+  if (pending) return { kind: "pending", revise: !!it && stale && touchedDraft(it), id: it?.id ?? null };
   if (!it) return null;
   const p = replyOf(it);
   if (!it.body.trim() && !p.resolve && !p.resolveTick) return { kind: "none", it, stale };

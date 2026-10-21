@@ -15,6 +15,7 @@ import {
   anchorNote,
   briefProfile,
   briefState,
+  cardFocus,
   carriedNote,
   closedLabel,
   countText,
@@ -43,6 +44,7 @@ import {
   subagentText,
   tokenTotal,
   triageText,
+  turnedStale,
 } from "../../src/web/review/model";
 
 const ev = (id: string, seq: number, o: Partial<RunEvent> = {}): RunEvent => ({
@@ -596,19 +598,40 @@ describe("reply drafts", () => {
   test("card kinds: pending wins, none has no body, discarded folds, no item gives no card", () => {
     const none = reply(2, 101, 105, { body: "", status: "discarded" }, { action: "none", body: "" });
     const gone = reply(3, 101, 105, { status: "discarded" });
-    expect(replyCard(reply(1, 101, 105), 105, true)).toEqual({ kind: "pending", revise: false });
-    expect(replyCard(undefined, 105, true)).toEqual({ kind: "pending", revise: false });
+    expect(replyCard(reply(1, 101, 105), 105, true)).toEqual({ kind: "pending", revise: false, id: 1 });
+    expect(replyCard(undefined, 105, true)).toEqual({ kind: "pending", revise: false, id: null });
     // docs/plans/thread-outcome.md: a run for an out-of-date draft that you accepted or edited revises it.
-    expect(replyCard(reply(1, 101, 105, { status: "accepted" }), 106, true)).toEqual({ kind: "pending", revise: true });
-    expect(replyCard(reply(1, 101, 105, { edited: true }), 106, true)).toEqual({ kind: "pending", revise: true });
-    expect(replyCard(reply(1, 101, 105, { status: "accepted" }), 105, true)).toEqual({ kind: "pending", revise: false });
-    expect(replyCard(reply(1, 101, 105), 106, true)).toEqual({ kind: "pending", revise: false });
+    expect(replyCard(reply(1, 101, 105, { status: "accepted" }), 106, true)).toEqual({ kind: "pending", revise: true, id: 1 });
+    expect(replyCard(reply(1, 101, 105, { edited: true }), 106, true)).toEqual({ kind: "pending", revise: true, id: 1 });
+    expect(replyCard(reply(1, 101, 105, { status: "accepted" }), 105, true)).toEqual({ kind: "pending", revise: false, id: 1 });
+    expect(replyCard(reply(1, 101, 105), 106, true)).toEqual({ kind: "pending", revise: false, id: 1 });
     expect(replyCard(none, 106, false)).toEqual({ kind: "none", it: none, stale: true });
     expect(replyCard(gone, 106, false)).toEqual({ kind: "discarded", it: gone });
     // An edited none draft has a body, so it can be accepted.
     const written = reply(4, 101, 105, { body: "My answer.", status: "accepted" }, { action: "none", body: "" });
     expect(replyCard(written, 105, false)).toMatchObject({ kind: "draft", stale: false });
     expect(replyCard(undefined, 105, false)).toBeNull();
+  });
+
+  test("card focus: a lost focus goes to Draft again when the card went out of date, else to the card; a new pending line takes it", () => {
+    const draft = { kind: "draft", stale: false } as const;
+    const stale = { kind: "draft", stale: true } as const;
+    const pending = { kind: "pending", stale: false } as const;
+    // Accept or Edit of a draft that goes out of date in a sync.
+    expect(cardFocus({ before: draft, now: stale, lost: true, gone: true })).toBe("again");
+    // Draft again, Use revision, or Discard: the focused control leaves, and the card stays or becomes the pending line.
+    expect(cardFocus({ before: stale, now: pending, lost: true, gone: true })).toBe("card");
+    expect(cardFocus({ before: stale, now: stale, lost: true, gone: true })).toBe("card");
+    // Draft reply in the thread footer leaves as the pending line mounts. A pending line that stays takes nothing.
+    expect(cardFocus({ before: null, now: pending, lost: true, gone: false })).toBe("card");
+    expect(cardFocus({ before: pending, now: pending, lost: true, gone: false })).toBeNull();
+    // The focus is elsewhere, or no control of the card left: the focus stays.
+    expect(cardFocus({ before: draft, now: stale, lost: false, gone: true })).toBeNull();
+    expect(cardFocus({ before: draft, now: stale, lost: true, gone: false })).toBeNull();
+    // Only a change says "out of date": a card that mounts out of date says nothing.
+    expect(turnedStale(draft, stale)).toBe(true);
+    expect(turnedStale(null, stale)).toBe(false);
+    expect(turnedStale(stale, stale)).toBe(false);
   });
 
   test("resolve: a proposal or a tick without text is a draft card; the counts name the threads to resolve; the tick has its own live text", () => {

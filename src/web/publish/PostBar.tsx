@@ -247,6 +247,7 @@ export function usePostBar(
         posting={c.posting}
         error={c.error}
         canPost={!!c.plan && c.plan.posts.length > 0}
+        off="Post is off: no accepted draft can post now."
         onPost={() => void post()}
         onCancel={close}
         className="max-h-[62vh] pt-3.5 pb-2.5"

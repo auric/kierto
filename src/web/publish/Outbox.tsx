@@ -16,6 +16,7 @@ import { restoreDraft } from "../pr/ReplyComposer";
 import { ForgeLink, Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
 import type { Hints } from "../shell/Hint";
+import { failText } from "../shell/model";
 import { dropPost, planKey, postsKey, retryPost, retryResolve, usePosts } from "./data";
 import { destLabel, mergePosts, type PostView, postView, shownPosts, splitPosts } from "./model";
 
@@ -54,7 +55,7 @@ export function useOutbox(pr: number, comments: CommentDto[], forge: string) {
           qc.setQueryData<PostDto[]>(postsKey(pr), (old) => mergePosts(old, [row]));
           if (row.state === "confirmed") toast.add({ title: `The comment is on ${forge} already. Nothing was posted again.` });
         } catch (e) {
-          toast.add({ title: "The post did not start", description: (e as Error).message });
+          toast.add({ title: "The post did not start", description: failText(e) });
         } finally {
           done();
         }
@@ -64,7 +65,7 @@ export function useOutbox(pr: number, comments: CommentDto[], forge: string) {
           const row = await retryResolve(p.id);
           qc.setQueryData<PostDto[]>(postsKey(pr), (old) => mergePosts(old, [row]));
         } catch (e) {
-          toast.add({ title: "The resolve did not start", description: (e as Error).message });
+          toast.add({ title: "The resolve did not start", description: failText(e) });
         } finally {
           done();
         }
@@ -78,7 +79,7 @@ export function useOutbox(pr: number, comments: CommentDto[], forge: string) {
             if (parent && restoreDraft(pr, parent.rootId, p.body)) toast.add({ title: "Dropped. The text is back in the reply box." });
           } else if (general) toast.add({ title: "The finding goes into the general comment. Post again to send it." });
         } catch (e) {
-          toast.add({ title: "The post was not dropped", description: (e as Error).message });
+          toast.add({ title: "The post was not dropped", description: failText(e) });
         } finally {
           done();
         }

@@ -76,6 +76,7 @@
 - A comment can no longer pose as another message in the pull request text that Claude reads.
 - An invalid profile or rule in config.json no longer gets lost silently on the next save. Kierto keeps a copy in config.json.bak and logs what it ignored.
 - A key that you press right after a dialog opens no longer acts on the page behind the dialog.
+- Keyboard and screen reader fixes. When a sync puts a reply draft out of date, the focus moves from Accept or Edit to "Draft again", and the change is read out once. The "drafting a reply" line takes the focus from the button that started it. Small text buttons have a 24 px target. A discarded reply draft shows its full line on hover. A blocked clipboard shows the runner prompt in a field, selected for Ctrl+C. Failure messages name the next step. The post confirm says why Post is off.
 
 ### Runs
 

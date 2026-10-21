@@ -8,6 +8,7 @@ import { toast } from "@/components/ui/toast";
 import type { ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunDetail } from "../../shared/dto";
 import type { ThreadModel } from "../pr/threads";
 import { planKey } from "../publish/data";
+import { failText } from "../shell/model";
 import { draftDomId, type TriageState } from "./Drafts";
 import { replyKey, sendItem } from "./data";
 import { drafts, questions, replyCard, replyOf, triageText } from "./model";
@@ -128,7 +129,7 @@ export function useTriage(
       else advance(r.item);
       return true;
     } catch (e) {
-      toast.add({ title: "The change was not saved", description: (e as Error).message });
+      toast.add({ title: "The change was not saved", description: failText(e) });
       return false;
     } finally {
       setBusy(it.id, false);
