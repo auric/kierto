@@ -243,6 +243,7 @@ export function PrDetail({
     open: () => {},
     copy: async () => null,
   });
+  const logRef = useRef((_: number) => {});
   // Opens threads without a focus change. A thread that the "Need me" filter hides turns the filter off.
   const show = useCallback((ids: number[]) => {
     const hidden = latest.current.some((t) => ids.includes(t.id) && !passes(t, true));
@@ -292,6 +293,7 @@ export function PrDetail({
         if (out) void qc.invalidateQueries({ queryKey: ["pr", row.id] });
         return out;
       },
+      onLog: (run) => logRef.current(run),
     }),
     [row.id, hints, now, forge, web, runner, mine, ackRef, focusAfter, jump, announce, onReply, outbox.ctx, role, qc],
   );
@@ -312,6 +314,7 @@ export function PrDetail({
   });
   draftReply.current = review.api.draftReply;
   fixRef.current = { open: review.api.fix, copy: review.fix.copyPrompt };
+  logRef.current = review.api.openRunLog;
   // One slot: a brief that opens closes Ask.
   const briefOpen = review.api.layer(null) === "brief";
   if (briefOpen && askOpen) setAskOpen(false);

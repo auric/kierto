@@ -145,6 +145,21 @@ async function shots(browser: Browser) {
   await toTop(page.locator("#t-2000"), 64);
   await save(page, "fix-thread");
 
+  // Thread history: the resolved thread 3000 of my other PR, with its draft, my edit, the fix commit, the revision, the post, and
+  // the resolve (scripts/demo.ts). Show changes opens the word diff of my edit.
+  await openPr(page, "Replace the polling timer");
+  await page.getByRole("button", { name: /^Show \d+ resolved$/ }).click();
+  const resolved = page.locator("#th-3000");
+  if ((await resolved.getAttribute("aria-expanded")) !== "true") await resolved.click();
+  await page.locator("#t-3000").getByRole("button", { name: "More for this thread" }).click();
+  await page.getByRole("menuitem", { name: "Show history" }).click();
+  const history = page.locator("#hist-3000");
+  await history.locator("[data-history-line]").first().waitFor();
+  await history.getByRole("button", { name: "Show changes" }).click();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await toTop(history, 120);
+  await save(page, "thread-history");
+
   await page.goto(`${BASE}/settings/profiles`);
   await page.locator("#h-profiles").waitFor();
   await toTop(page.locator("#h-profiles"));

@@ -9,6 +9,7 @@ import {
   CircleAlert,
   CircleCheck,
   ClipboardCopy,
+  Clock,
   Copy,
   CornerDownRight,
   Ellipsis,
@@ -41,6 +42,7 @@ import { lineText } from "../review/model";
 import { Hint, type Hints, HintTrigger } from "../shell/Hint";
 import { ago, initials } from "../shell/model";
 import { ReplyComposer, type ReplyTarget } from "./ReplyComposer";
+import { ThreadHistory } from "./ThreadHistory";
 import {
   type Anchor,
   agoLong,
@@ -138,6 +140,8 @@ export type ThreadCtx = {
   posts: PostCtx;
   // Resolves or reopens a thread on the forge now. seen: the newest live message on screen. null: done.
   setResolved: (thread: number, resolved: boolean, seen: number) => Promise<ResolveOutcome>;
+  // Opens the log sheet of one run, for the AI lines of the thread history.
+  onLog: (run: number) => void;
 };
 
 // False until one frame after `key` changes. Put data-mounting on a container while it is false: the motion classes of
@@ -345,12 +349,26 @@ export const Thread = memo(function Thread({
 
 // Plan pr-view-v4 2.8: the reply box, Draft reply on a your-turn thread without a draft, Fix on an open thread of the own PR,
 // Resolve or Reopen, and More. The note after a prompt copy stays, so the user can read the next step.
+// docs/plans/thread-outcome.md section 10: More opens the thread history under the footer. Its close gives the focus back to More.
 function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean; target?: ReplyTarget; ctx: ThreadCtx }) {
   const [next, setNext] = useState<PromptCopy | null>(null);
+  const [history, setHistory] = useState(false);
   const open = t.turn !== "resolved" && t.last !== null;
   const link = ctx.web && commentUrl(ctx.web, t.id);
   const prompt = ctx.author && t.last !== null;
   const resolve = useResolve(t, ctx);
+  const moreEl = () => document.querySelector<HTMLElement>(`#t-${t.id} [data-thread-more]`);
+  const hideHistory = () => {
+    setHistory(false);
+    moreEl()?.focus({ preventScroll: true });
+  };
+  // After a pointer press on the menu item Hide history, Base UI 1.8 focused no element (tests/e2e/history.e2e.ts). So More takes it.
+  const refocus = useRef(false);
+  const menuDone = (on: boolean) => {
+    if (on || !refocus.current) return;
+    refocus.current = false;
+    moreEl()?.focus({ preventScroll: true });
+  };
   const copyLink = (url: string) =>
     copyText(url).then((ok) =>
       ok
@@ -398,50 +416,60 @@ function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean;
                 </Button>
               </Hint>
             )}
-            {(t.anchor || prompt || link) && (
-              <DropdownMenu modal={false}>
-                <Hint label="More for this thread">
-                  <DropdownMenuTrigger
-                    render={<Button variant="ghost" size="icon-sm" aria-label="More for this thread" className="text-ink-2" />}
+            <DropdownMenu modal={false} onOpenChangeComplete={menuDone}>
+              <Hint label="More for this thread">
+                <DropdownMenuTrigger
+                  render={
+                    <Button variant="ghost" size="icon-sm" aria-label="More for this thread" data-thread-more className="text-ink-2" />
+                  }
+                >
+                  <Ellipsis aria-hidden />
+                </DropdownMenuTrigger>
+              </Hint>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuGroup>
+                  {t.anchor && (
+                    <DropdownMenuItem onClick={() => ctx.onShowInDiff(t.id)}>
+                      <FileCode aria-hidden />
+                      Show in diff
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    onClick={() => {
+                      refocus.current = history;
+                      setHistory(!history);
+                    }}
                   >
-                    <Ellipsis aria-hidden />
-                  </DropdownMenuTrigger>
-                </Hint>
-                <DropdownMenuContent align="end" className="w-64">
-                  <DropdownMenuGroup>
-                    {t.anchor && (
-                      <DropdownMenuItem onClick={() => ctx.onShowInDiff(t.id)}>
-                        <FileCode aria-hidden />
-                        Show in diff
+                    <Clock aria-hidden />
+                    {history ? "Hide history" : "Show history"}
+                  </DropdownMenuItem>
+                  {prompt && (
+                    <DropdownMenuItem onClick={() => void ctx.copyPrompt(t.id).then((r) => r && setNext(r))}>
+                      <ClipboardCopy aria-hidden />
+                      Copy prompt for {ctx.runner}
+                    </DropdownMenuItem>
+                  )}
+                  {link && (
+                    <>
+                      <DropdownMenuItem onClick={() => void copyLink(link)}>
+                        <Link aria-hidden />
+                        Copy the comment link
                       </DropdownMenuItem>
-                    )}
-                    {prompt && (
-                      <DropdownMenuItem onClick={() => void ctx.copyPrompt(t.id).then((r) => r && setNext(r))}>
-                        <ClipboardCopy aria-hidden />
-                        Copy prompt for {ctx.runner}
+                      <DropdownMenuItem render={<a href={link} target="_blank" rel="noopener noreferrer" />}>
+                        <ExternalLink aria-hidden />
+                        Open on {ctx.forge}
                       </DropdownMenuItem>
-                    )}
-                    {link && (
-                      <>
-                        <DropdownMenuItem onClick={() => void copyLink(link)}>
-                          <Link aria-hidden />
-                          Copy the comment link
-                        </DropdownMenuItem>
-                        <DropdownMenuItem render={<a href={link} target="_blank" rel="noopener noreferrer" />}>
-                          <ExternalLink aria-hidden />
-                          Open on {ctx.forge}
-                        </DropdownMenuItem>
-                      </>
-                    )}
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+                    </>
+                  )}
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </span>
         }
       />
       {next && <PromptNote id={`pm-${t.id}`} r={next} />}
       {resolve.panel}
+      {history && <ThreadHistory t={t} ctx={ctx} onClose={hideHistory} />}
     </>
   );
 }

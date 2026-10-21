@@ -1,6 +1,6 @@
 # Thread outcome plan: one outcome per thread
 
-Status: code complete, 2026-10-20. Every WP is done. Section 7 lists the later items. Section 8 adds the revisions and Reply to the newest as is (user decision C+D, 2026-10-20). Section 9 adds the answers to your posted questions in a review run (user decision, 2026-10-20). Line references point to the code at HEAD 0db727e.
+Status: code complete, 2026-10-20. Every WP is done. Section 7 lists the later items. Section 8 adds the revisions and Reply to the newest as is (user decision C+D, 2026-10-20). Section 9 adds the answers to your posted questions in a review run (user decision, 2026-10-20). Sections 10 (thread history) and 11 (out-of-date draft alerts) are done, 2026-10-21. Line references point to the code at HEAD 0db727e.
 
 ## 1. Goal
 
@@ -27,9 +27,9 @@ Already landed: 0fe5659 keeps drafts that the user edited or accepted on AI runs
 | P11 | A rebased or squashed fix commit never reaches the PR, so the "Fixed in" draft waits forever (outbox.ts:460-468). An edit keeps the commit link (items.ts:81-85). | Partly: WP-S2 adds the item action plain. WP-S3 marks commit-gone when the clone branch no longer holds the commit. The confirm and the draft card offer "Post as plain reply" (WP-U2, WP-U1a). Only an accepted draft gets the commit-gone check. An edit still keeps the link. |
 | P12 | The Fix list ignores fix notes (fix/model.ts:28-37, 150). | Landed: WP-U1b shows the fix outcome of each row, and a no-fix note or a decline starts unticked (fix/model.ts fixOutcome). |
 | P13 | A reply run does not see the fix state of a thread (catalog.ts:312-341). | Landed: WP-S4 adds context/fix-state.md (jobs.ts fixStateFile). |
-| P14 | A thread has no history of its drafts and fixes. | In progress: section 10. GET /api/prs/:id/threads/:thread/history and the "Thread history" section. |
+| P14 | A thread has no history of its drafts and fixes. | Done: section 10. GET /api/prs/:id/threads/:thread/history (review/history.ts) and the "Thread history" section (web/pr/history.ts, ThreadHistory.tsx). |
 | P15 | A BLOCKER task has no actions (Thread.tsx:150). | Later |
-| P16 | No signal tells the user that a draft is out of date (notify.ts:15-19). | In progress: section 11. Shared staleReasons, the Code changed marker, the inbox badge, and the draft_stale notification. |
+| P16 | No signal tells the user that a draft is out of date (notify.ts:15-19). | Done: section 11. Shared staleReasons, the Code changed marker, the inbox badge, and the draft_stale notification. |
 
 ## 3. Outcomes
 
@@ -102,7 +102,7 @@ Markers on the outcome line:
 - Conflict "yes": an untouched open reply asks for a fix, and the newest fix note says already, invalid, or scope. Keep the reply accepts the reply, or runs Fix anyway when it has no text. Keep the fix discards the reply and restores the nofix draft of that fix run.
 - A finding that your session rejected, with ticked edits, gets the note with Keep the reject (untick) and Keep the fix (restore the finding).
 - The Draft replies count: your-turn threads with no current draft, or with an out-of-date draft that a reply run for all threads replaces. The run still takes every your-turn thread.
-- Per-thread history (P14) and out-of-date draft alerts (P16) are in progress (sections 10 and 11).
+- Per-thread history (P14) and out-of-date draft alerts (P16) are done (sections 10 and 11).
 - Later: BLOCKER task done (P15), the commit-gone check for an unaccepted "Fixed in" draft (P11), and an untick that survives a reload (P3).
 
 ## 8. Revisions and Reply to the newest as is (decisions C and D)
@@ -164,6 +164,7 @@ User decision, 2026-10-21: v1 derives the history from the existing tables. No n
 - UI: the thread More menu item "Show history" opens "Thread history" under the thread footer. "Hide history" closes it. One time-ordered list in the prototype timeline style. Lines: messages (started, replied, edited, deleted; a Kierto post names its run or "from a Kierto draft"), drafts by writer, answer judgements, draft fate (edited with Show changes, accepted, moved to newest, discarded, no reply needed, replaced by a newer draft or a named writer), revisions (waiting, not used, used), fix results, fix commits ("N of M edits of this thread", waiting for push, undone at), posts that are not confirmed (posting, failed with the error, unknown), and "Resolved by X". AI lines link to the run log.
 - Footnote: "Bitbucket keeps no record of reopens or earlier text. Kierto keeps only the time of your last change to a draft."
 - Edges: a deleted comment keeps its line without text. A rebased commit that pr_commit does not list reads "not on the PR". Failures of a manual Resolve are not stored. Merged and archived PRs work. Data from before the new fields gets neutral words. Clock skew can change the order.
+- As built (WP4): historyLines (web/pr/history.ts) merges the DTO with the thread messages. The section is ThreadHistory.tsx, because history.ts and History.tsx clash on a case-insensitive file system. A fact without a stored time is a tag on its line, not a line with a guessed time: a deleted message, a draft fate (Replaced by X, Discarded by you, Decline undone, Posted), and a revision state (Revision waiting, Not used, You kept your draft). Your decline, the "Won't fix" draft, and your changes to a draft stored before touchedAt show "time not kept". A committed fix that the PR commits do not list reads "Not on the pull request", because no git call can tell an unpushed commit from a rebased one. A message line counts as edited when updatedAt is later than createdAt: a task resolve keeps updatedDate (fixtures/bitbucket comment-blocker-*.json). The menu item says "Hide history" while the section is open. Esc in the section closes it, and the focus goes back to More. The demo seeds thread 3000 of "Replace the polling timer" with a draft, your edit, a fix commit, a used revision, the post, and the resolve.
 
 ## 11. Out-of-date draft alerts (P16)
 

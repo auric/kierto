@@ -16,6 +16,7 @@ import { setFollowed } from "../src/server/inbox/queries";
 import { createLive } from "../src/server/live";
 import { startServer } from "../src/server/main";
 import { SHIPPED_PROFILES } from "../src/server/review/catalog";
+import { editRows, type Located, locate } from "../src/server/review/edits";
 import { git, gitEnv } from "../src/server/review/git";
 import { createReviewJobs } from "../src/server/review/jobs";
 import { createSecrets } from "../src/server/secrets";
@@ -400,6 +401,14 @@ function thread(list: S.Activity[], id: number, user: User, minutes: number, tex
 
 const none = (): S.Activity[] => [];
 
+// Thread history (docs/plans/thread-outcome.md section 10) of my PR "Replace the polling timer": a reply run drafts, I edit the
+// draft, a fix commit revises it, I use the revision, post it, and resolve the thread. The fix commit is the PR head, so it is pushed.
+const HISTORY = 3000;
+const HISTORY_SHORT = HEAD_A.slice(0, 7);
+const HISTORY_AI = "Right. I will stop the timer in dispose().";
+const HISTORY_MINE = "Right. dispose() now stops the timer before the scheduler starts.";
+const HISTORY_POSTED = `${HISTORY_MINE}\n\nFixed in ${HISTORY_SHORT}: dispose() clears the timer first.`;
+
 const activities = new Map<Pr, () => S.Activity[]>([
   [
     prs.yourTurn,
@@ -522,9 +531,12 @@ const activities = new Map<Pr, () => S.Activity[]>([
   [
     own,
     () => {
-      if (phase === 1) return base();
+      // Thread history (seeded below): Alex asks for a change, my reply from a Kierto draft answers, and I resolve the thread.
+      let t = thread(base(), HISTORY, alex, 150, "Stop the old timer in dispose(). It still fires after the scheduler takes over.");
+      t = S.resolveThread(reply(t, HISTORY, HISTORY + 1, me, 110, HISTORY_POSTED), HISTORY, me, min(109));
+      if (phase === 1) return t;
       return reply(
-        reply(base(), ROOT, 1000040, alex, 6, "The scheduler drops a tick on wake."),
+        reply(t, ROOT, 1000040, alex, 6, "The scheduler drops a tick on wake."),
         ROOT,
         1000041,
         kenji,
@@ -757,6 +769,145 @@ if (db && evictPr) {
       threadOpen: true,
       touchedAt: min(214),
     }),
+  });
+}
+
+// The Kierto side of thread HISTORY: the runs, the drafts, the fix edits and commit, and the confirmed post with its resolve.
+const ownPr = db?.query("SELECT id FROM pull_request WHERE title = $title").get({ title: own.title }) as { id: number } | null;
+if (db && ownPr) {
+  const run = (kind: string, key: string, start: number, end: number, text: string, fix: unknown = null) =>
+    (
+      db
+        .query(
+          `INSERT INTO review_run (pr, profile, note, idem_key, source_head, target_head, status, kind, summary_json, started_at, finished_at, fix_json)
+          VALUES ($pr, 'general', '', $key, $head, $target, 'completed', $kind, $summary, $start, $end, $fix) RETURNING id`,
+        )
+        .get({
+          pr: ownPr.id,
+          key,
+          head: HEAD_A,
+          target: remote.target,
+          kind,
+          summary: JSON.stringify({
+            summary: text,
+            risks: [],
+            coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+            dropped: [],
+          }),
+          start: min(start),
+          end: min(end),
+          fix: fix === null ? null : JSON.stringify(fix),
+        }) as { id: number }
+    ).id;
+  const item = (r: number, status: string, body: string, edited: number, payload: Record<string, unknown>) =>
+    (
+      db
+        .query(
+          `INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited)
+          VALUES ($run, 'reply', $payload, $body, $status, $thread, $edited) RETURNING id`,
+        )
+        .get({
+          run: r,
+          payload: JSON.stringify({ thread: HISTORY, action: "reply", replyTo: HISTORY, ...payload }),
+          body,
+          status,
+          thread: HISTORY,
+          edited,
+        }) as {
+        id: number;
+      }
+    ).id;
+  const replyRun = run("reply", "demo-history-reply", 140, 139, "One reply about the timer.");
+  const mine = item(replyRun, "discarded", HISTORY_MINE, 1, {
+    body: HISTORY_AI,
+    reason: "The comment is right: dispose() leaves the timer running.",
+    evidenceStatus: "code",
+    judgement: "valid",
+    resolve: false,
+    resolveEvidence: "",
+    threadOpen: true,
+    origin: "reply",
+    touchedAt: min(135),
+    discardedBy: "user",
+  });
+  const fixRun = run("fix", "demo-history-fix", 130, 127, "One fix for the timer.", [
+    {
+      thread: HISTORY,
+      fixed: true,
+      reason: "Clear the timer in dispose(), before the scheduler starts.",
+      why: null,
+      reply: "dispose() clears the timer first.",
+    },
+  ]);
+  const file =
+    "export class Poller {\n  private timer = setInterval(() => this.tick(), 1000);\n\n  dispose() {\n    this.scheduler.start();\n  }\n}\n";
+  const edits = [
+    ["  dispose() {\n    this.scheduler.start();", "  dispose() {\n    clearInterval(this.timer);\n    this.scheduler.start();"],
+    ["  private timer = setInterval", "  private readonly timer = setInterval"],
+  ].map(([old, next], ord) => {
+    const at = locate(file, old as string, next as string) as Located;
+    return (
+      db
+        .query(
+          `INSERT INTO fix_edit (run, ord, thread, path, old, new, start, rows_json)
+          VALUES ($run, $ord, $thread, 'src/poller.ts', $old, $new, $start, $rows) RETURNING id`,
+        )
+        .get({
+          run: fixRun,
+          ord,
+          thread: HISTORY,
+          old: at.old,
+          new: at.new,
+          start: at.start,
+          rows: JSON.stringify(editRows(file, at)),
+        }) as {
+        id: number;
+      }
+    ).id;
+  });
+  const { id: commit } = db
+    .query(
+      `INSERT INTO fix_commit (pr, run, idem_key, edits_json, mode, before_head, commit_hash, short_hash, state, message, created_at, updated_at)
+      VALUES ($pr, $run, $key, $edits, 'clone', $before, $hash, $short, 'committed', 'Clear the timer in dispose()', $at, $at) RETURNING id`,
+    )
+    .get({
+      pr: ownPr.id,
+      run: fixRun,
+      key: `${fixRun}:clone:${edits.join(",")}`,
+      edits: JSON.stringify(edits),
+      before: remote.target,
+      hash: HEAD_A,
+      short: HISTORY_SHORT,
+      at: min(120),
+    }) as { id: number };
+  const used = item(fixRun, "posted", HISTORY_POSTED, 0, {
+    body: HISTORY_POSTED,
+    reason: "The app committed the fix.",
+    evidenceStatus: "code",
+    judgement: null,
+    fix: { id: commit, commit: HEAD_A, replaced: [mine] },
+    resolve: true,
+    resolveEvidence: `Commit ${HISTORY_SHORT} changes src/poller.ts.`,
+    resolveTick: true,
+    threadOpen: true,
+    origin: "fix",
+    revisionOf: mine,
+    touchedAt: min(112),
+  });
+  db.query(
+    `INSERT INTO post (pr, run, kind, idem_key, body, destination_json, items_json, state, remote_id, remote_version, created_at, updated_at,
+      resolve_root, resolve_state)
+    VALUES ($pr, $run, 'reply', 'demo-history-post', $body, $dest, $items, 'confirmed', $remote, 0, $at, $done, $root, 'done')`,
+  ).run({
+    pr: ownPr.id,
+    run: fixRun,
+    body: HISTORY_POSTED,
+    dest: JSON.stringify({ kind: "reply", parentId: HISTORY }),
+    items: JSON.stringify([{ id: used, revision: 0 }]),
+    remote: HISTORY + 1,
+    at: min(110),
+    done: min(109),
+    root: HISTORY,
   });
 }
 

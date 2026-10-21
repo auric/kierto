@@ -61,6 +61,7 @@
 - A reply draft that you accepted or edited gives one notification, "1 reply draft out of date", when another person's message or resolve does that. It joins the new comments of the same check.
 - A reply draft says "The code at this comment changed after this draft." when a push outdated the comment later. The outcome line says "Code changed". An untouched draft offers "Draft again". A draft that you accepted or edited offers "Show in diff". It never blocks the post.
 - A reply draft in a thread whose messages are all deleted now says "Out of date".
+- "Show history" in the More menu of a thread lists the thread in time order: the messages, the drafts of each writer, your changes to a draft with "Show changes", the revisions, the fix results and commits, the posts that did not finish, and the current resolve. Each line from Claude links to its run log. "Hide history" or Esc closes it.
 
 ### Fix
 
