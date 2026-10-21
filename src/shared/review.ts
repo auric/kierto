@@ -259,7 +259,9 @@ export const parseFixNotes = (json: string | null): FixNote[] => (json ? fixNote
 // edits.ts deniedPath enforces the path rules. workspace.ts sanitize gives the *.untrusted.md names.
 export const FIX_EDIT_RULES = [
   "Copy old verbatim from the file in ./repo. old must match exactly one place in the file. Add nearby lines to old when the text occurs more than once.",
+  "Keep old as short as a unique match allows.",
   "Leave old empty only for a new file.",
+  "Change only the lines that the fix needs. Do not reformat, rename, reorder, or refactor other code.",
   "Never edit .claude folders, .mcp.json, CLAUDE.md, CLAUDE.local.md, AGENTS.md, .gitmodules, or the sources of git hooks: .githooks, .husky, and the pre-commit, lefthook, lint-staged, and commitlint configs.",
   "./repo shows CLAUDE.md, CLAUDE.local.md, and AGENTS.md as *.untrusted.md files. Never edit them under either name.",
 ];

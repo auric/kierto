@@ -3,7 +3,7 @@
 
 // The context files that a run reads from ./context (jobs.ts): findings.md, history.md, fix-state.md, and questions.md.
 import type { Database } from "bun:sqlite";
-import { indentBlock } from "../../shared/consult";
+import { indentBlock, oneLine } from "../../shared/consult";
 import type { RunSummary } from "../../shared/dto";
 import { isMe } from "../../shared/me";
 import {
@@ -18,7 +18,7 @@ import {
 import { byThread, newestLive, type TurnMsg } from "../../shared/turn";
 import { currentDrafts, touched } from "./drafts";
 import { type ItemRow, type RunRow, SQL } from "./run-rows";
-import { type AskedThread, type EarlierItem, oneLine } from "./validate";
+import type { AskedThread, EarlierItem } from "./validate";
 import type { ContextFile } from "./workspace";
 
 // An earlier finding at the current place of its item. A user move changes the line.
@@ -30,12 +30,6 @@ export function earlierItem(r: ItemRow): EarlierItem {
     finding: at ? { ...f, path: r.path as string, side: r.side as Finding["side"], line: r.line as number, lineEnd: r.line_end } : f,
   };
 }
-
-const indent = (s: string) =>
-  s
-    .split("\n")
-    .map((l) => `    ${l}`)
-    .join("\n");
 
 // context/findings.md of a re-review or a fix run. Indented blocks, so no stored text can start a heading.
 // at: the commit that the lines of the finding count on.
@@ -53,11 +47,11 @@ export function findingsFile<R extends ItemRow>(rows: R[], at: (r: R, side: Find
       "",
       "Code at the finding:",
       "",
-      indent(f.anchorText),
+      indentBlock(f.anchorText),
       "",
       "Text:",
       "",
-      indent(r.body),
+      indentBlock(r.body),
       "",
     ];
   });
@@ -107,7 +101,7 @@ export function historyFile(db: Database, pr: number, head: string, review = fal
         "",
         "Text:",
         "",
-        indent(r.body),
+        indentBlock(r.body),
         "",
       ];
     });
@@ -121,7 +115,7 @@ export function historyFile(db: Database, pr: number, head: string, review = fal
       "",
       "Summary:",
       "",
-      indent(summary || "(none)"),
+      indentBlock(summary || "(none)"),
       "",
       ...(findings.length ? capped(findings, HISTORY_FINDING_BYTES, (n) => `${n} more findings left out.`) : ["No findings.", ""]),
     );
@@ -134,11 +128,11 @@ export function historyFile(db: Database, pr: number, head: string, review = fal
       "",
       "Question:",
       "",
-      indent(r.question ?? ""),
+      indentBlock(r.question ?? ""),
       "",
       "Answer:",
       "",
-      indent(r.answer ?? ""),
+      indentBlock(r.answer ?? ""),
       "",
     ]);
     out.push(...capped(blocks, HISTORY_ASK_BYTES, (n) => `${n} earlier ask runs left out.`));

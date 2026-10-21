@@ -461,6 +461,9 @@ export function createFixRoutes(opts: {
     return locked(input.mode === "clone" ? `clone:${clone}` : cacheOf(run), async (): Promise<Out> => {
       const done = db.query(SQL.byKey).get({ key }) as { id: number } | null;
       if (done) return { status: 200, dto: dtoOf(db, done.id) };
+      const held = new Set((db.query(SQL.held).all({ run: runId }) as { id: number }[]).map((r) => r.id));
+      const taken = ids.filter((e) => held.has(e));
+      if (taken.length) return conflict(`Another fix commit holds edit ${taken.join(", ")}. Undo that commit first.`);
       return clone !== null && input.mode === "clone"
         ? intoClone(db, run, clone, edits, key, ids, input)
         : intoCache(db, run, clone, edits, key, ids, input);

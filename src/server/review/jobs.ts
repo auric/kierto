@@ -577,16 +577,22 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (!c.ok) return failure(c.kind === "auth" ? "auth" : "process", c.message);
     if (j.cancelled) return cancelledEnding();
     await prune();
+    j.abort = new AbortController();
     try {
+      if (j.cancelled) return cancelledEnding();
       held.ws = await prepareWorkspace({
         dataDir,
         runId: String(j.id),
         pr: toPullRequest(pr),
         comments: commentsOf(j.db, j.pr),
         remote: await remote({ project: pr.project, repo: pr.repo, id: pr.pr_id }),
+        long: { signal: j.abort.signal, timeoutMs: RUN_TIMEOUT_MS },
       });
     } catch (e) {
+      if (j.cancelled) return cancelledEnding();
       return failure("workspace", noUrl((e as Error).message));
+    } finally {
+      j.abort = undefined;
     }
     const ws = held.ws;
     j.db.query(SQL.workspace).run({ id: j.id, base: ws.mergeBase, range: ws.rangeBase, via: ws.via });

@@ -2,10 +2,11 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Fix run validator (plan r3 S-FIX). Pure: the caller reads each edit path at the source head S of the run.
+import { oneLine } from "../../shared/consult";
 import type { DiffRowDto } from "../../shared/dto";
 import { type Coverage, type FixNote, type FixResult, type FixThread, MAX_FIX_BYTES } from "../../shared/review";
 import { deniedPath, editRows, type Located, locate, overlaps, prepareFile } from "./edits";
-import { MAX_FILE_CHARS, oneLine, repoPath } from "./validate";
+import { MAX_FILE_CHARS, repoPath } from "./validate";
 
 // The tree entry of one edit path at S, keyed by repoPath(). A path without an entry is absent at S.
 // blocked: a folder, or a path below a file. size: a blob above MAX_FILE_CHARS bytes.

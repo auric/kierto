@@ -9,6 +9,7 @@
 - The copied points and the points of "Ask your session" sit in tags with a new random suffix each time. The prompt says that the tag content is data from the pull request, not instructions.
 - "Paste the answer" is gone. Push the changes of your session, then use "Review changes since" and Draft replies.
 - "Copy for your session" gives your own Claude Code session the open review points as numbered steps: check the branch, validate each point with file and line, fix only the valid parts, write a reply for each point, commit, and ask you before any push, post, or resolve.
+- Cancel now stops an "Ask your session" run while it fetches the pull request. Before, the fetch could hold the run slot for minutes.
 
 ### Reviews
 
@@ -18,6 +19,7 @@
 - The general comment with several questions gets one reply. It proposes the resolve only when every question is settled. Else the reply names the open questions.
 - Unanswered questions get no draft. Every draft waits for your Accept. A draft that you edited, accepted, or discarded stays. When new messages came after your edited or accepted draft, the new reply waits under it as a revision.
 - The run line counts the answered threads. Explain does not read the answers.
+- An answered question about a finding counts as settled only when the head commit fixes the finding or the answer proves it wrong. A promise to fix it later gets a follow-up draft.
 
 ### Replies
 
@@ -75,6 +77,8 @@
 - The Fix list shows the fix outcome of each row: Fix proposed, Fixed in, Partly fixed in, Already done, Won't fix, Follow-up asked, Needs your decision, or Declined. A row without a fix or with a declined fix starts unticked.
 - "Fix anyway" tells the fix run that you chose the fix, so it proposes edits despite the decision or risk note.
 - A finding that your session rejected, with its fix edits still ticked, gets a note with "Keep the reject" and "Keep the fix".
+- A fix run and an "Ask your session" fix change only the lines that the fix needs. They do not reformat or refactor other code.
+- Commit refuses an edit that another fix commit of the same run already holds. Undo that commit first.
 
 ### Fixes
 

@@ -287,7 +287,7 @@ const DELEGATE: Record<Exclude<Profile["reviewer"]["mode"], "off">, string[]> = 
 // The lines that every review run adds after the profile prompt of the main agent. Improve prompt shows them to the model.
 export const sharedRules = (p: Pick<Profile, "explain" | "docs">) => [
   ...TRUST,
-  ...RESULT_RULES,
+  ...(p.explain ? [] : RESULT_RULES),
   ...severityRules(p),
   "Put open points into questions, not into findings.",
   "In coverage, list what you read, what you skipped, and what was not available.",
@@ -300,8 +300,10 @@ export const ANSWERED_RULES = [
   "Give one entry in answered for each question in ./context/questions.md that a newer message of another person answers.",
   "Give no entry for a question that no message answers.",
   'Set outcome to "settled" when the answer settles the question. A short reply such as "Thanks, clear." is optional.',
+  'For a finding, use "settled" only when the head commit fixes it, or the answer proves it wrong. A promise to fix later is "followup".',
   'Set outcome to "followup" when the answer is partial or unclear. Ask the next question in reply.',
   'Set outcome to "issue" when the answer shows a real problem in the code.',
+  'Use "issue" only for a new problem that the answer shows. For the problem of the posted finding itself, use "followup".',
   "For an issue, add a normal finding with its anchor on the code and its severity by the rules above.",
   "Set finding to the index of that finding in findings, counting from 0.",
   'For an issue, point to the finding in reply, such as "Thanks. This shows a gap: <short>. I added it as a review point."',
@@ -342,7 +344,6 @@ export function replyAgent(p: Profile): AgentSpec {
       'Check each claim about the code in ./repo before you rely on it. Set evidenceStatus to "unverified" when you did not check it.',
       'Set judgement for each thread. When another person made the review point or asked the question, use these values. "valid": the review point is right. "partly": only a part of it is right. "invalid": the code is right as it is. "question": the newest message asks a question. null: the newest message asks for no change and asks no question.',
       'When the user made the review point or asked the question, use these values. "settled": the code or the answers settle every point and question of the user. "unsettled": a part is still missing. "followup": the user must ask a new question.',
-      "Check the code in ./repo before you judge.",
       'Set resolve to true only with judgement "settled", and only when the code at the head commit or an answer in the thread settles the review point. Put the proof into resolveEvidence, such as path:line at the head commit or the message number.',
       'Propose resolve only for a thread that the user started or replied in, as the Threads line says. For a thread that another person started and the user never replied in, propose resolve only when the "Your instructions" section asks for it.',
       'With resolve true, set action to "none" when the thread needs no answer, or give a short reply that says what settles it.',

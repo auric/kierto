@@ -216,7 +216,7 @@ export function buildFixPrompt(i: PromptInput & { threads: ReplyThread[]; findin
     ...(i.anyway
       ? [
           "The user wants this point fixed anyway. An earlier fix run gave no fix for it, such as a decision or a risk note, and the user chose the fix.",
-          "Propose edits for it. Set fixed to false only when no edit can make the change, and say why in reason.",
+          "Propose edits for it. This rule replaces the other fixed false rules for this point. Set fixed to false only when no edit can make the change. Say why in reason.",
           "",
         ]
       : []),

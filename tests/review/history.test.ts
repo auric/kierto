@@ -4,7 +4,9 @@
 // context/history.md of ask, reply, fix, and plain review runs. An in-memory database, no runner.
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { findingsFile } from "../../src/server/review/context-files";
 import { fixStateFile, HISTORY_ASK_BYTES, HISTORY_FINDING_BYTES, historyFile } from "../../src/server/review/jobs";
+import type { ItemRow } from "../../src/server/review/run-rows";
 import { openDb } from "../../src/server/storage/db";
 
 const HEAD = "a".repeat(40);
@@ -121,6 +123,22 @@ describe("historyFile", () => {
     expect(t).not.toContain("left out");
 
     expect(historyFile(db, pr, OLD)?.text).toContain(`- Reviewed head: ${OLD}\n`);
+  });
+
+  test("a line separator, a vertical tab, or a control character starts no heading in history.md or findings.md", () => {
+    const { db, pr } = setup();
+    const [ls, ps] = [String.fromCharCode(0x2028), String.fromCharCode(0x2029)];
+    const r = run(db, pr, { summary: `SUM${ps}## fake summary` });
+    const id = finding(db, r, { severity: "major", body: `BODY${ls}## fake ls\v## fake vt\r\n## fake crlf\u001b[2J` });
+    run(db, pr, { kind: "ask", question: "Q\f## fake ff", answer: "A\u0085## fake nel" });
+    const row = db.query("SELECT * FROM review_item WHERE id = $id").get({ id }) as ItemRow;
+    const files = [historyFile(db, pr, HEAD)?.text ?? "", findingsFile([row], () => HEAD).text];
+    for (const t of files) {
+      for (const line of t.split(/\r\n|[\n\r\v\f\u0085]|\p{Zl}|\p{Zp}/u)) expect(line).not.toMatch(/^#+ fake/);
+      expect(t).not.toContain("\u001b");
+    }
+    expect(files[0]).toContain("    BODY\n    ## fake ls\n    ## fake vt\n    ## fake crlf[2J");
+    expect(files[1]).toContain("    BODY\n    ## fake ls\n    ## fake vt\n    ## fake crlf[2J");
   });
 
   test("asks alone, and a review with no findings", () => {

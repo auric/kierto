@@ -346,9 +346,12 @@ async function waitFor(pred: () => boolean, ms = 30_000) {
   return pred();
 }
 
-async function setup(o: { sessions?: boolean; role?: string } = {}) {
+// remoteUrl: a git remote URL in place of the temp repository.
+async function setup(o: { sessions?: boolean; role?: string; remoteUrl?: string } = {}) {
   const root = fresh("run");
   const remote = await reviewRemote(root, { 2: "source" });
+  const url = o.remoteUrl;
+  const gitRemote = url ? async () => ({ ...(await remote.gitRemote()), url, sourceUrl: url }) : remote.gitRemote;
   const runner = fakeRunner(root);
   const scenario = (s: Omit<FakeScenario, "record" | "auth" | "fixture"> = {}) => runner.write({ fixture: FIXTURE, ...s });
   scenario();
@@ -371,7 +374,7 @@ async function setup(o: { sessions?: boolean; role?: string } = {}) {
     live,
     dataDir: dir,
     runnerCommand: runner.command,
-    gitRemote: remote.gitRemote,
+    gitRemote,
     listTools: stubListTools,
     claudeConfigDir: config,
   });
@@ -720,6 +723,38 @@ describe("session routes and runs", () => {
       const d = await h.finish(first.body.id);
       expect(d.run).toMatchObject({ kind: "session", status: "cancelled" });
       expect((await h.call<ApiError>(`/api/prs/${h.pr}/consult/session/${first.body.id}`)).status).toBe(404);
+    },
+    SLOW,
+  );
+
+  test(
+    "cancel stops a session run whose fetch never answers within seconds",
+    async () => {
+      // A loopback git remote that takes each request and never answers.
+      let asked = 0;
+      const hang = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        // 0: no idle timeout, so the request stays open.
+        idleTimeout: 0,
+        fetch: () => {
+          asked++;
+          return new Promise<Response>(() => {});
+        },
+      });
+      cleanup.push(() => hang.stop(true));
+      const h = await setup({ remoteUrl: `http://127.0.0.1:${hang.port}/repo.git` });
+      const body = { session: "11111111-2222-4333-8444-555555555555", groups: ["reviewers"] };
+      const first = await h.call<Start>(`/api/prs/${h.pr}/consult/session`, { body });
+      expect(first.status).toBe(202);
+      expect(await waitFor(() => asked > 0)).toBe(true);
+      const at = Date.now();
+      expect((await h.call(`/api/runs/${first.body.id}/cancel`, { method: "POST" })).status).toBe(202);
+      const d = await h.finish(first.body.id);
+      expect(d.run).toMatchObject({ kind: "session", status: "cancelled", errorKind: null });
+      // git() waits up to 5 s for the pipes of a killed git.
+      expect(Date.now() - at).toBeLessThan(15_000);
+      expect(h.runCalls()).toEqual([]);
     },
     SLOW,
   );

@@ -5,8 +5,8 @@
 // Plan r3 S-ATT: task.md lists every attachment. The included ones go to context/attachments/.
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { oneLine } from "../../shared/consult";
 import { type AttachmentMeta, type IssueContext, RUN_IMAGE_BYTES, RUN_IMAGES, RUN_TEXT_BYTES, RUN_TEXT_TOTAL } from "../../shared/dto";
-import { oneLine } from "../review/validate";
 import type { AttachmentFile, ContextFile } from "../review/workspace";
 import { type Raster, rasterOfFile, resolveFile } from "./attachments";
 import { ATTACHMENT_IMAGE } from "./markdown";

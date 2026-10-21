@@ -772,6 +772,15 @@ describe("edits through a full run", () => {
       const long = join(realpathSync.native(h.dir), "git", "PROJ", "repo.git");
       expect(commit?.fetch).toEqual({ cache: long.replaceAll("\\", "/"), ref: `refs/rl/2/fix-commit/${commit?.id}` });
       expect((await h.json(`/api/prs/999/fixes`)).status).toBe(404);
+
+      // A second commit that overlaps the first on one edit gets 409 and makes no commit row.
+      const other = f?.edits[1]?.id as number;
+      const overlap = await h.json<ApiError>(`/api/fix-runs/${d.run.id}/commit`, {
+        body: { edits: [other, editId], message: "Fix again.", mode: "cache" },
+      });
+      expect(overlap.status).toBe(409);
+      expect(overlap.body.error).toBe(`Another fix commit holds edit ${editId}. Undo that commit first.`);
+      expect((await h.fixes())[0]?.commits).toHaveLength(1);
     },
     SLOW,
   );

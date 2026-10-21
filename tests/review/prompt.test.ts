@@ -191,7 +191,7 @@ ${rule}
   test("Fix anyway: the prompt says that the user chose the fix and asks for edits unless no edit can make the change", () => {
     const anyway = buildFixPrompt({ ...input, threads, anyway: true });
     expect(anyway).toContain(
-      "\nThe user wants this point fixed anyway. An earlier fix run gave no fix for it, such as a decision or a risk note, and the user chose the fix.\nPropose edits for it. Set fixed to false only when no edit can make the change, and say why in reason.\n",
+      "\nThe user wants this point fixed anyway. An earlier fix run gave no fix for it, such as a decision or a risk note, and the user chose the fix.\nPropose edits for it. This rule replaces the other fixed false rules for this point. Set fixed to false only when no edit can make the change. Say why in reason.\n",
     );
     expect(anyway.indexOf("Fix threads: 1")).toBeLessThan(anyway.indexOf("fixed anyway"));
     expect(buildFixPrompt({ ...input, threads: [], findings: [11], anyway: true })).toContain("fixed anyway");
