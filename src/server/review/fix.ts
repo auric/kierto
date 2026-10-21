@@ -5,7 +5,7 @@
 import type { DiffRowDto } from "../../shared/dto";
 import { type Coverage, type FixNote, type FixResult, type FixThread, MAX_FIX_BYTES } from "../../shared/review";
 import { deniedPath, editRows, type Located, locate, overlaps, prepareFile } from "./edits";
-import { MAX_FILE_CHARS, repoPath } from "./validate";
+import { MAX_FILE_CHARS, oneLine, repoPath } from "./validate";
 
 // The tree entry of one edit path at S, keyed by repoPath(). A path without an entry is absent at S.
 // blocked: a folder, or a path below a file. size: a blob above MAX_FILE_CHARS bytes.
@@ -28,7 +28,6 @@ const PROBLEMS: Record<string, string> = {
   matches: "old matches more than one place",
 };
 
-const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ");
 const utf8 = (s: string) => Buffer.byteLength(s, "utf8");
 
 type Target = { key: string; kind: "thread" | "finding" };

@@ -68,7 +68,7 @@ const SQL = {
       AND i.kind = 'finding' AND i.status IN ('new', 'accepted') ORDER BY i.id`,
   run: `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, raw_output, started_at, finished_at)
     VALUES ($pr, 'consult', '', '', $key, $source, $target, 'completed', $raw, $now, $now) RETURNING id`,
-  // jobs.ts supersede: a new reply draft replaces the open drafts of its thread. Posted drafts stay.
+  // drafts.ts SUPERSEDE: a new reply draft replaces the open drafts of its thread. Posted drafts stay.
   open: `SELECT id, status FROM review_item
     WHERE kind = 'reply' AND thread = $thread AND status IN ('new', 'accepted') AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
   supersede: "UPDATE review_item SET status = 'discarded', revision = revision + 1 WHERE id = $id",
@@ -93,7 +93,7 @@ const SQL = {
     WHERE kind = 'finding' AND status <> 'posted' AND json_extract(payload_json, '$.session.run') = $run
       AND run IN (SELECT id FROM review_run WHERE pr = $pr)`,
   markedRuns: `SELECT DISTINCT run FROM review_item WHERE kind = 'finding' AND json_extract(payload_json, '$.session.run') = $run`,
-  // Part D: the proposal of a session run (jobs.ts judgeSession) and the fix run that an import makes from it.
+  // Part D: the proposal of a session run (judge.ts judgeSession) and the fix run that an import makes from it.
   proposal: "SELECT fix_json, consult_json FROM review_run WHERE id = $run AND pr = $pr AND kind = 'session'",
   proposed: "SELECT id, thread, item FROM fix_edit WHERE run = $run ORDER BY ord",
   fixRun: `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, merge_base, fetch_via, status, session_id,

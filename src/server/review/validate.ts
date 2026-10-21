@@ -43,6 +43,7 @@ export type ValidateInput = {
 };
 
 export const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
+export const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ");
 
 // A repository path with "/" separators, or null for a path that can leave the snapshot.
 // git refuses to track a ".git" part (verify_path), so such a path is never in the snapshot.

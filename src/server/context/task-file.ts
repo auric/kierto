@@ -6,6 +6,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { type AttachmentMeta, type IssueContext, RUN_IMAGE_BYTES, RUN_IMAGES, RUN_TEXT_BYTES, RUN_TEXT_TOTAL } from "../../shared/dto";
+import { oneLine } from "../review/validate";
 import type { AttachmentFile, ContextFile } from "../review/workspace";
 import { type Raster, rasterOfFile, resolveFile } from "./attachments";
 import { ATTACHMENT_IMAGE } from "./markdown";
@@ -14,8 +15,6 @@ export const TASK_FILE = "task.md";
 
 const SOURCES: Record<string, string> = { jira: "Jira" };
 const MB = 1024 * 1024;
-
-const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ");
 
 type TaskRow = { key: string; source: string; json: string; fetched_at: number };
 type FileRow = {

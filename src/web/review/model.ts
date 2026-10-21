@@ -227,7 +227,7 @@ export function newCommits(r: RunDto, commits: CommitDto[] | undefined): number 
 // The outcome of an ended run. items, edits: undefined while they load.
 function doneText(r: RunDto, items: ReviewItemDto[] | undefined, edits: number | undefined, profiles: ProfileDto[]): string {
   if (r.kind === "ask") return "Answered";
-  // jobs.ts judgeSession: "N answers".
+  // judge.ts judgeSession: "N answers".
   if (r.kind === "session") return r.summary?.summary ?? "";
   if (r.kind === "fix") return edits === undefined ? "" : edits ? plural(edits, "edit") : "No edits";
   // The flag stored at the start wins over the current profile. null falls back to the current profile.
@@ -259,7 +259,7 @@ export function runLine(r: RunDto, d: RunDetail | undefined, profiles: ProfileDt
   }
 }
 
-// Plan pr-view-v4 2.6. jobs.ts ended(): a skipped or an unavailable item makes the run incomplete, so n counts both.
+// Plan pr-view-v4 2.6. judge.ts ended(): a skipped or an unavailable item makes the run incomplete, so n counts both.
 // lines: one plain line per gap. design: coverage.notChecked, what the run leaves out by design.
 export type NotChecked = { n: number; label: string; lines: string[]; design: string | null };
 
@@ -316,7 +316,7 @@ export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancel
 };
 
 // R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, the brief,
-// and the re-review offer. A cancelled or failed run has no result and keeps the run before it, as jobs.ts baseRun does.
+// and the re-review offer. A cancelled or failed run has no result and keeps the run before it, as run-rows.ts SQL.baseRun does.
 export const latestReview = (runs: RunDto[] | undefined) =>
   runs?.find((r) => r.kind === "review" && r.status !== "cancelled" && r.status !== "failed") ??
   runs?.find((r) => r.kind === "review") ??

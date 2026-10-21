@@ -174,7 +174,7 @@ export function threadOutcome(i: OutcomeInput): { outcome: Outcome; conflict: Co
   if (live && p?.fix && fixWaiting(p, i.commits, i.fixes)) markers.push("push");
   if (live?.revised) markers.push("revision");
 
-  // jobs.ts writer priority: Draft replies replaces only an open, untouched draft of a reply, review, session, or resolve writer, and
+  // drafts.ts writer priority: Draft replies replaces only an open, untouched draft of a reply, review, session, or resolve writer, and
   // a draft that a reply run discarded as "No reply needed". It revises an open draft that you edited or accepted, unless a waiting
   // revision answers the newest message already.
   const replaceable =

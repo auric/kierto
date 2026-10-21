@@ -148,12 +148,12 @@ export type ReplyOrigin = (typeof replyOrigins)[number];
 // resolveTick: the user's choice to resolve the thread after the post. Only a ticked draft resolves.
 // threadOpen: the thread was open when the app stored the draft. Absent in drafts stored before it existed.
 // origin: the writer of the draft (docs/plans/thread-outcome.md). Absent in drafts stored before it existed.
-// declined: the fix run whose proposal the user declined with this draft, else null. No writer replaces such a draft (jobs.ts userDraft).
+// declined: the fix run whose proposal the user declined with this draft, else null. No writer replaces such a draft (drafts.ts userDraft).
 // revises: the ID of the user's draft that this draft revises. A revision waits as a discarded item until the user picks Use revision
-// or Keep mine (items.ts). It is never the current draft of its thread (jobs.ts CURRENT_DRAFTS). Use revision removes the key.
+// or Keep mine (items.ts). It is never the current draft of its thread (drafts.ts CURRENT_DRAFTS). Use revision removes the key.
 // dropped: Keep mine or a newer revision dropped this revision. The row stays, because SQLite gives the ID of a deleted last row again.
 // discardedBy: who discarded the draft. ai: a reply run found that no reply is needed. Absent: the user, or a draft stored before it
-// existed. A draft that the AI discarded is no user decline (jobs.ts userDraft).
+// existed. A draft that the AI discarded is no user decline (drafts.ts userDraft).
 export type ReplyPayload = Omit<ReplyDraft, "judgement" | "resolve" | "resolveEvidence"> & {
   judgement?: Judgement | null;
   replyTo: number;

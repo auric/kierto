@@ -12,6 +12,7 @@ import { improveResult } from "../../shared/review";
 import { log } from "../log";
 import { sharedRules } from "./catalog";
 import { type AgentSpec, createClaudeRunner, type RunOutcome } from "./claude";
+import { issuesText } from "./judge";
 import { CHECKLISTS, LANGUAGES } from "./languages";
 
 // BRIEF section 7: with --json-schema, the cap must be at least 2. The third turn lets the model fix one schema error.
@@ -116,11 +117,7 @@ export function judgeImprove(id: number, o: RunOutcome): ImproveDto {
   if (o.status === "failed") return { id, status: "failed", kind: o.kind ?? "process", text: o.text ?? "No reason was recorded." };
   const r = RESULT.safeParse(o.result?.structured_output);
   if (!r.success) {
-    const issues = r.error.issues
-      .slice(0, 5)
-      .map((x) => `${x.path.join(".") || "(root)"}: ${x.message}`)
-      .join("; ");
-    return { id, status: "failed", kind: "schema", text: `The result does not match the proposal schema. ${issues}` };
+    return { id, status: "failed", kind: "schema", text: `The result does not match the proposal schema. ${issuesText(r.error.issues)}` };
   }
   return { id, status: "done", prompt: r.data.prompt, reasons: r.data.reasons };
 }

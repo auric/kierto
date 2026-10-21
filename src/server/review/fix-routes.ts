@@ -98,7 +98,7 @@ const SQL = {
   committed: "UPDATE fix_commit SET state = 'committed', commit_hash = $hash, short_hash = $short, updated_at = $now WHERE id = $id",
   undone: "UPDATE fix_commit SET state = 'undone', updated_at = $now WHERE id = $id",
   remove: "DELETE FROM fix_commit WHERE id = $id",
-  // jobs.ts supersede: a new reply draft replaces the open drafts of its thread that the user did not touch. Posted drafts stay.
+  // drafts.ts SUPERSEDE: a new reply draft replaces the open drafts of its thread that the user did not touch. Posted drafts stay.
   replaceable: `SELECT i.id FROM review_item i JOIN review_run r ON r.id = i.run
     WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread = $thread AND i.status = 'new' AND i.edited = 0 ORDER BY i.id`,
   supersede: "UPDATE review_item SET status = 'discarded', revision = revision + 1 WHERE id = $id AND status = 'new'",
@@ -106,7 +106,7 @@ const SQL = {
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr AND root_id = $root`,
   item: `INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited)
     VALUES ($run, 'reply', $payload, $body, 'new', $thread, 0) RETURNING id`,
-  // jobs.ts: a revision of the user's draft waits as a discarded item. A newer one drops the older ones of the thread.
+  // drafts.ts: a revision of the user's draft waits as a discarded item. A newer one drops the older ones of the thread.
   revision: `INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited)
     VALUES ($run, 'reply', $payload, $body, 'discarded', $thread, 0)`,
   dropRevisions: DROP_REVISIONS,
