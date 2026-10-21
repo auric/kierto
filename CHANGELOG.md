@@ -7,6 +7,16 @@
 - "Copy for your session" now copies one plain prompt. Your session checks each review point against the code in your clone, makes the valid changes, and explains each rejection.
 - The copied points and the points of "Ask your session" sit in tags with a new random suffix each time. The prompt says that the tag content is data from the pull request, not instructions.
 - "Paste the answer" is gone. Push the changes of your session, then use "Review changes since" and Draft replies.
+- "Copy for your session" gives your own Claude Code session the open review points as numbered steps: check the branch, validate each point with file and line, fix only the valid parts, write a reply for each point, commit, and ask you before any push, post, or resolve.
+
+### Reviews
+
+- A review and "Review changes since" now read the answers to the questions that you posted. Each answered question gets one outcome.
+- An answer that settles the question gets a reply draft, such as "Thanks, clear.", with "Resolve after posting" proposed. The box is ticked on threads that you started.
+- A partial or unclear answer gets a reply draft with the next question. An answer that shows a real problem gets a new finding and a reply draft that points to it.
+- The general comment with several questions gets one reply. It proposes the resolve only when every question is settled. Else the reply names the open questions.
+- Unanswered questions get no draft. Every draft waits for your Accept. A draft that you edited, accepted, or discarded stays. When new messages came after your edited or accepted draft, the new reply waits under it as a revision.
+- The run line counts the answered threads. Explain does not read the answers.
 
 ### Replies
 

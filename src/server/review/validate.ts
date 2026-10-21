@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Anchor validator (plan v3 WP9), earlier-finding validator (r2 S-RR), and reply validator (replies.md WP17).
+// Anchor validator (plan v3 WP9), earlier-finding validator (r2 S-RR), reply validator (replies.md WP17), and answer validator
+// (thread-outcome.md section 9).
 // Pure: the caller passes the file contents, the diff, and the run's agent names.
 import { MAX_NOTE } from "../../shared/dto";
 import type {
   Anchor,
+  AnsweredQuestion,
   Coverage,
   DropReason,
   EarlierVerdict,
@@ -191,17 +193,20 @@ function anchorer(input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles">):
   };
 }
 
-export function validate(input: ValidateInput): ValidatedResult {
+// kept: for each finding of the result, its index in findings, or null when the validator dropped it.
+export function validate(input: ValidateInput): ValidatedResult & { kept: (number | null)[] } {
   const { findings, ...rest } = input.result;
-  if (input.explain) return { ...rest, findings: [], dropped: [] };
+  if (input.explain) return { ...rest, findings: [], dropped: [], kept: findings.map(() => null) };
   const anchor = anchorer(input);
   const agents = new Set(input.agents);
-  const out: ValidatedResult = { ...rest, findings: [], dropped: [] };
+  const out: ValidatedResult & { kept: (number | null)[] } = { ...rest, findings: [], dropped: [], kept: [] };
   for (const raw of findings) {
     const f: Finding = { ...raw, agent: raw.agent !== null && agents.has(raw.agent) ? raw.agent : null };
     const a = anchor(f);
-    if (typeof a === "string") out.dropped.push({ ...f, reason: a });
-    else out.findings.push({ ...f, anchor: a });
+    if (typeof a === "string") {
+      out.dropped.push({ ...f, reason: a });
+      out.kept.push(null);
+    } else out.kept.push(out.findings.push({ ...f, anchor: a }) - 1);
   }
   return out;
 }
@@ -308,4 +313,86 @@ export function validateReplies(result: ReplyResult, requested: readonly ReplyTh
   }
   for (const r of requested) if (!answered.has(r.thread)) skipped.push(`Thread ${r.thread} has no reply.`);
   return { summary: result.summary, coverage: { ...result.coverage, skipped }, replies };
+}
+
+// ---------- Answered questions of a review run (docs/plans/thread-outcome.md section 9) ----------
+
+// A thread with the questions that the user posted from earlier runs. questions: their count. The question numbers count from 1.
+export type AskedThread = ReplyThread & { questions: number };
+
+// One unaccepted reply draft per thread. Only a thread whose questions are all settled proposes resolve. A question without an entry
+// stays open. Every drop goes to skipped. kept: validate().kept, for the finding of an issue.
+export function validateAnswered(
+  answered: readonly AnsweredQuestion[],
+  asked: readonly AskedThread[],
+  kept: readonly (number | null)[],
+): { replies: ValidatedReply[]; skipped: string[] } {
+  const threads = new Map(asked.map((t) => [t.thread, t]));
+  const got = new Map<number, Map<number, AnsweredQuestion>>();
+  const skipped: string[] = [];
+  for (const a of answered) {
+    const t = threads.get(a.thread);
+    const q = a.question ?? (t?.questions === 1 ? 1 : null);
+    const list = got.get(a.thread) ?? new Map<number, AnsweredQuestion>();
+    const why = !t
+      ? "the thread holds no question of the user"
+      : q === null
+        ? "the thread holds several questions, and the entry names none"
+        : q > t.questions
+          ? `the thread has no question ${q}`
+          : list.has(q)
+            ? `a second entry for question ${q}`
+            : a.outcome !== "issue"
+              ? null
+              : a.finding === null
+                ? "an issue needs its finding"
+                : a.finding >= kept.length
+                  ? `the result has no finding ${a.finding}`
+                  : kept[a.finding] === null
+                    ? `the validator dropped finding ${a.finding}`
+                    : null;
+    if (why !== null || q === null) {
+      skipped.push(`Answer for thread ${a.thread}${a.question === null ? "" : `, question ${a.question}`} dropped: ${why}.`);
+      continue;
+    }
+    got.set(a.thread, list.set(q, a));
+  }
+  const replies: ValidatedReply[] = [];
+  for (const t of asked) {
+    const list = [...(got.get(t.thread) ?? new Map<number, AnsweredQuestion>()).entries()].sort(([a], [b]) => a - b).map(([, a]) => a);
+    if (!list.length) continue;
+    const settled = list.length === t.questions && list.every((a) => a.outcome === "settled");
+    const body = [...new Set(list.map((a) => a.reply.trim()).filter(Boolean))].join("\n\n");
+    const why =
+      body.length > MAX_NOTE
+        ? `the body is longer than ${MAX_NOTE} characters`
+        : !body && !settled
+          ? "the body is empty, and a question stays open"
+          : null;
+    if (why) {
+      skipped.push(`Reply for thread ${t.thread} dropped: ${why}.`);
+      continue;
+    }
+    const evidence = list
+      .map((a) => collapse(a.evidence))
+      .filter(Boolean)
+      .join(" ");
+    replies.push({
+      payload: {
+        thread: t.thread,
+        action: body ? "reply" : "none",
+        body,
+        reason: evidence,
+        evidenceStatus: "unverified",
+        judgement: settled ? "settled" : list.some((a) => a.outcome === "followup") ? "followup" : "unsettled",
+        replyTo: t.replyTo,
+        resolve: settled,
+        resolveEvidence: settled ? evidence : "",
+        resolveTick: settled && !!t.mine,
+        origin: "review",
+      },
+      status: "new",
+    });
+  }
+  return { replies, skipped };
 }

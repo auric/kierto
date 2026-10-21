@@ -136,6 +136,7 @@ function setClaude(c: ClaudeScenario) {
     hang: c.hang,
     replies: c.replies,
     rereview: c.rereview,
+    answered: c.answered,
     answer: c.answer,
     fix: c.fix,
     improve: c.improve,
@@ -651,6 +652,15 @@ r[key("POST", "/__control/posts")] = async (req) => {
   if (change.resolve !== undefined) {
     const root = S.findComment(postsA.activities(), change.resolve);
     postsA.threads.set(change.resolve, { version: root.version, resolved: true, at: Date.now() });
+  }
+  // Alex answers a comment of PR A, for example the general comment with the questions of a review.
+  if (change.answer !== undefined) {
+    const at = Date.now();
+    const comment = { id: 4_900_000 + postsA.posted.length, version: 0, text: change.answer.text, author: S.clone(alex) };
+    postsA.posted.push({
+      parentId: change.answer.parent,
+      comment: { ...comment, createdDate: at, updatedDate: at, comments: [], threadResolved: false },
+    });
   }
   return ok({ bodies: postsA.bodies });
 };

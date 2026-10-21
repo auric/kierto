@@ -26,6 +26,9 @@ export type FakeScenario = {
   // with properties.fix when the run also asks for fixes (session-consult.md part D).
   replies?: unknown;
   rereview?: unknown;
+  // The answered list of a review or re-review result (docs/plans/thread-outcome.md section 9). It replaces the answered key when the
+  // schema has one. Absent: the result keeps its own answered key, or none.
+  answered?: unknown;
   answer?: unknown;
   fix?: unknown;
   improve?: unknown;
@@ -191,7 +194,11 @@ async function main() {
       return JSON.stringify({ ...e, tools: e.tools.filter((t: unknown) => t === "StructuredOutput"), mcp_servers: [] });
     if (e.type === "system" && e.subtype === "init" && Array.isArray(e.tools) && !agentTool)
       return JSON.stringify({ ...e, tools: e.tools.filter((t: unknown) => t !== "Task") });
-    const r = e.type === "result" ? result(e.structured_output) : undefined;
+    const found = e.type === "result" ? result(e.structured_output) : undefined;
+    const r =
+      e.type === "result" && s.answered !== undefined && props.answered !== undefined
+        ? { ...(found ?? e.structured_output), answered: s.answered }
+        : found;
     return r === undefined ? l : JSON.stringify({ ...e, structured_output: r });
   };
 

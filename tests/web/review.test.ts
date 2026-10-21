@@ -624,6 +624,15 @@ describe("reply drafts", () => {
     // A re-review counts its resolve proposals apart from the findings and the questions.
     expect(rereviewCount([only, question(5)])).toBe("0 new, 0 carried, 0 fixed or outdated, 1 posted thread to resolve, 1 question");
     expect(countText([finding(6), only], false)).toBe("1 finding");
+    // docs/plans/thread-outcome.md section 9: the answer drafts of a review run count apart.
+    const answer = reply(7, 107, 705, {}, { origin: "review", judgement: "followup" });
+    const settled = reply(8, 108, 805, { body: "" }, { origin: "review", action: "none", body: "", resolve: true, resolveTick: true });
+    expect(countText([finding(6), answer, settled, only], false)).toBe("1 finding, 2 answered threads");
+    expect(countText([answer], false)).toBe("1 answered thread");
+    expect(countText([answer], true)).toBe("No findings in what it read, 1 answered thread");
+    expect(rereviewCount([only, answer, question(5)])).toBe(
+      "0 new, 0 carried, 0 fixed or outdated, 1 posted thread to resolve, 1 question, 1 answered thread",
+    );
     expect(triageText(both, only, "resolve")).toBe("The thread resolves after the post.");
     expect(triageText(only, unticked, "resolve")).toBe("The thread stays open after the post.");
   });

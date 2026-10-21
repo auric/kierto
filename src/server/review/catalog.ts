@@ -294,7 +294,28 @@ export const sharedRules = (p: Pick<Profile, "explain" | "docs">) => [
   ...docsRule(p),
 ];
 
-export function mainAgent(p: Profile): AgentSpec {
+// docs/plans/thread-outcome.md section 9: the answers to the questions that the user posted. The app makes one reply draft per thread
+// and proposes resolve only when every question of the thread is settled.
+export const ANSWERED_RULES = [
+  "Give one entry in answered for each question in ./context/questions.md that a newer message of another person answers.",
+  "Give no entry for a question that no message answers.",
+  'Set outcome to "settled" when the answer settles the question. A short reply such as "Thanks, clear." is optional.',
+  'Set outcome to "followup" when the answer is partial or unclear. Ask the next question in reply.',
+  'Set outcome to "issue" when the answer shows a real problem in the code.',
+  "For an issue, add a normal finding with its anchor on the code and its severity by the rules above.",
+  "Set finding to the index of that finding in findings, counting from 0.",
+  'For an issue, point to the finding in reply, such as "Thanks. This shows a gap: <short>. I added it as a review point."',
+  "In evidence, give the message number of the answer and a short quote of it.",
+  "Set question to the question number from ./context/questions.md. Use null only for a thread with one question.",
+  "A thread gets one reply. Put it into the first entry of the thread, and leave reply empty in its other entries.",
+  "When a question of the thread stays open, name each open question in the reply.",
+  "When questions.md shows a draft of the user for a thread, base the reply on it. Keep the user's points and tone.",
+  "Write each reply as short Markdown in the user's voice. Never write in the reply that the user resolves the thread.",
+  "Never put secrets, tokens, passwords, or credentials into a reply.",
+];
+
+// questions: the run has ./context/questions.md. An Explain run judges no answer.
+export function mainAgent(p: Profile, questions = false): AgentSpec {
   // The usesReviewer rule, written out so that the mode narrows.
   const delegate = !p.explain && p.reviewer.mode !== "off" ? DELEGATE[p.reviewer.mode] : [];
   return {
@@ -304,6 +325,7 @@ export function mainAgent(p: Profile): AgentSpec {
       p.prompt,
       ...sharedRules(p),
       ...delegate,
+      ...(questions && !p.explain ? ANSWERED_RULES : []),
     ].join("\n"),
   };
 }

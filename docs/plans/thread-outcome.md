@@ -1,6 +1,6 @@
 # Thread outcome plan: one outcome per thread
 
-Status: code complete, 2026-10-20. Every WP is done. Section 7 lists the later items. Section 8 adds the revisions and Reply to the newest as is (user decision C+D, 2026-10-20). Line references point to the code at HEAD 0db727e.
+Status: code complete, 2026-10-20. Every WP is done. Section 7 lists the later items. Section 8 adds the revisions and Reply to the newest as is (user decision C+D, 2026-10-20). Section 9 adds the answers to your posted questions in a review run (user decision, 2026-10-20). Line references point to the code at HEAD 0db727e.
 
 ## 1. Goal
 
@@ -60,7 +60,7 @@ Markers on the outcome line:
 1. The user: edit, accept, or decline ("Don't fix…").
 2. "Fixed in" from a fix commit.
 3. The no-fix draft of a fix run (origin nofix).
-4. A reply run (origin reply).
+4. A reply run (origin reply), or the answer draft of a review run (origin review, section 9).
 5. A resolve-only proposal (origin resolve).
 
 - A writer never replaces a draft of a higher writer. It records "kept your draft" in the coverage. A reply run or a fix commit stores a revision of a draft that the user edited or accepted instead (section 8).
@@ -127,5 +127,23 @@ Writers:
 | Fix run, no-fix draft | Kept, as before. The note reply does not revise the user's text. |
 | Session Apply | Unchanged: the user's own click replaces open drafts and its Undo brings them back (consult.ts). |
 | Don't fix | Unchanged: the user's own click with Undo. |
-| Re-review resolve proposal | Unchanged: it skips every thread with an unposted draft. |
+| Re-review resolve proposal | Unchanged: it skips every thread with an unposted draft. An answer draft of the same run goes in first (section 9). |
+| Review run answer draft | As Draft replies: revision of an out-of-date touched draft. A current touched draft and a declined draft stay kept (section 9). |
+
+## 9. Answered questions in a review run
+
+User decision, 2026-10-20. A review run and a "Review changes since" run judge the answers to the questions that the user posted from earlier runs. Explain does not.
+
+- Questions: each confirmed general or inline post of review items (post.run set) whose root comment is live and unresolved. A general comment holds the questions and the outside findings of its run. An inline comment holds one finding. Each posted item is one question, numbered from 1 in post order. A thread joins only when another person wrote its newest live message. Without a configured user, no thread joins.
+- Context: context/questions.md (jobs.ts questionsFile). Per thread: the place, the start and newest message, each question marked "Asked by the user", every later message with "by the user" or "by another person", and the user's draft when the run revises it. Free text is in indented blocks. The file stops at 60 KB or at MAX_ANSWERED questions. A notChecked line counts the threads left out.
+- Prompt: a Tools line and the heading rule in the task. The main agent gets ANSWERED_RULES (catalog.ts) only when the run has questions.md. The reviewer agent gets none.
+- Result: answered [{thread, question, outcome, evidence, reply, finding}]. outcome is settled, followup, or issue. question is null only for a thread with one question. finding is the index of the new finding in findings, for issue only. Results without answered parse with an empty list. An Explain run gets a JSON schema without the key.
+- validateAnswered (validate.ts) drops an entry for a thread that is not in questions.md, a missing or unknown question number, a second entry of one question, and an issue whose finding is absent or did not anchor (validate().kept). Every drop goes to coverage.skipped.
+- One unaccepted draft per thread, origin review, evidenceStatus unverified, replyTo the newest message at the run start. The replies of the thread join in question order. settled for every question of the thread: judgement settled and resolve, ticked only on a thread that the user started. Else judgement followup when an entry asks a follow-up, or unsettled, and no resolve. A draft with no text and no resolve is dropped to skipped.
+- issue: the finding is a normal finding of the run. The draft text points to it. The app stores no link between them.
+- Unanswered questions get no entry and no draft.
+- Writers: the run end applies the writer priority (section 4) and the revisions (section 8). An out-of-date draft that the user edited or accepted gets a revision (ReplyThread.revise). Other touched, declined, or higher drafts stay, with "kept your draft" in the coverage.
+- Run line: "N answered threads" counts the answer drafts of a review or re-review run.
+- Outcome line: settled reads Settled, followup and issue read Follow-up asked.
+- Not verified: that the real CLI fills answered as the rules ask. The tests use the fake CLI.
 

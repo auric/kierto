@@ -142,6 +142,10 @@ export function tokenTotal(u: RunUsage | null): number | null {
 }
 export const tokenText = (n: number) => (n < 1000 ? `${n} tokens` : `${Math.round(n / 1000)}k tokens`);
 
+// docs/plans/thread-outcome.md section 9: the reply drafts of a review run for the answers to the user's posted questions.
+const answers = (items: ReviewItemDto[]) =>
+  items.filter((i) => i.kind === "reply" && (i.payload as ReplyPayload).origin === "review").length;
+
 // Plan v3 section 7: an incomplete run says "No findings in what it read", never "No issues".
 // A reply run counts its drafts and the threads where it found no reply needed.
 export function countText(items: ReviewItemDto[], incomplete: boolean, kind: RunKind = "review") {
@@ -163,8 +167,11 @@ export function countText(items: ReviewItemDto[], incomplete: boolean, kind: Run
   // A re-review can add reply drafts that resolve the threads of posted findings. They show under their threads.
   const f = items.filter((i) => i.kind === "finding").length;
   const q = items.filter((i) => i.kind === "question").length;
-  const none = incomplete ? "No findings in what it read" : q ? "" : "No findings";
-  return [f ? plural(f, "finding") : none, q ? plural(q, "question") : ""].filter(Boolean).join(", ");
+  const a = answers(items);
+  const none = incomplete ? "No findings in what it read" : q || a ? "" : "No findings";
+  return [f ? plural(f, "finding") : none, q ? plural(q, "question") : "", a ? plural(a, "answered thread") : ""]
+    .filter(Boolean)
+    .join(", ");
 }
 
 // Plan r2 UI-RR: "N new, M carried, K fixed or outdated". The server copies each carried finding with the verdict of the run.
@@ -173,8 +180,9 @@ export function rereviewCount(items: ReviewItemDto[]): string {
   let open = 0;
   let closed = 0;
   let q = 0;
-  // Reply items: the resolve proposals for the threads of posted findings that the new commits fix.
+  // Reply items: the resolve proposals for the threads of posted findings that the new commits fix, and the answer drafts.
   let resolve = 0;
+  const a = answers(items);
   for (const i of items) {
     if (i.kind === "question") q++;
     else if (i.kind === "reply") resolve++;
@@ -182,10 +190,12 @@ export function rereviewCount(items: ReviewItemDto[]): string {
     else if (i.payload.carried.verdict === "open") open++;
     else closed++;
   }
+  resolve -= a;
   return [
     `${fresh} new, ${open} carried, ${closed} fixed or outdated`,
     resolve ? `${plural(resolve, "posted thread")} to resolve` : "",
     q ? plural(q, "question") : "",
+    a ? plural(a, "answered thread") : "",
   ]
     .filter(Boolean)
     .join(", ");

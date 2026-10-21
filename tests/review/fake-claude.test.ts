@@ -107,6 +107,14 @@ describe("fake CLI", () => {
     expect((await run(rereviewJsonSchema(), "Read", { rereview: fixed })).output).toEqual(fixed);
   });
 
+  test("a scenario answered list replaces the answered key of a review or re-review result; an Explain schema gets none", async () => {
+    const answered = [{ thread: 9, question: null, outcome: "settled", evidence: "Message 10.", reply: "", finding: null }];
+    expect((await run(reviewJsonSchema(), "Read", { answered })).output).toEqual({ ...REVIEW_RESULT, answered });
+    const rereview = (await run(rereviewJsonSchema(), "Read", { answered })).output;
+    expect([rereview.answered, (rereview.earlier as unknown[]).length]).toEqual([answered, 4]);
+    expect((await run(reviewJsonSchema(true), "Read", { answered })).output).toEqual(REVIEW_RESULT);
+  });
+
   test("an ask schema echoes the question line", async () => {
     const r = await run(askJsonSchema(), "Read,Grep,Glob");
     expect(askResult.safeParse(r.output).success).toBe(true);

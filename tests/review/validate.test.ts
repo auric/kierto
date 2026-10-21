@@ -6,8 +6,26 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type DiffFile, parseDiff } from "../../src/server/review/diffmap";
-import { MAX_FILE_CHARS, repoPath, type ValidateInput, validate } from "../../src/server/review/validate";
-import { type Finding, MAX_FINDINGS, moveChoices, type ReviewResult, reviewJsonSchema, reviewResult } from "../../src/shared/review";
+import {
+  type AskedThread,
+  MAX_FILE_CHARS,
+  repoPath,
+  type ValidateInput,
+  validate,
+  validateAnswered,
+} from "../../src/server/review/validate";
+import {
+  type AnsweredQuestion,
+  type Finding,
+  MAX_ANSWERED,
+  MAX_FINDINGS,
+  moveChoices,
+  type ReviewResult,
+  rereviewJsonSchema,
+  rereviewResult,
+  reviewJsonSchema,
+  reviewResult,
+} from "../../src/shared/review";
 
 const range = <T>(n: number, f: (i: number) => T) => Array.from({ length: n }, (_, i) => f(i + 1));
 const text = (lines: string[], eol = "\n") => lines.map((l) => l + eol).join("");
@@ -172,6 +190,7 @@ const result = (findings: Finding[]): ReviewResult => ({
   questions: [{ text: "Why?", why: "Because." }],
   coverage: { read: ["src/a.ts"], skipped: [], unavailable: [], notChecked: [] },
   findings,
+  answered: [],
 });
 
 const run = (findings: Finding[], extra: Partial<ValidateInput> = {}) =>
@@ -393,7 +412,18 @@ describe("anchor", () => {
 
   test("an Explain run keeps only its questions", () => {
     const r = run([F({ line: 10, anchorText: "const a10 = 100;" }), F({ path: "../x" })], { explain: true });
-    expect(r).toEqual({ ...result([]), findings: [], dropped: [] });
+    expect(r).toEqual({ ...result([]), findings: [], dropped: [], kept: [null, null] });
+  });
+
+  test("kept maps each finding of the result to its index in findings, or null when dropped", () => {
+    const r = run([
+      F({ path: "../x" }),
+      F({ line: 10, anchorText: "const a10 = 100;" }),
+      F({ path: "src/none.ts" }),
+      F({ line: 12, anchorText: "const a11 = 11;" }),
+    ]);
+    expect(r.kept).toEqual([null, 0, null, 1]);
+    expect(r.findings).toHaveLength(2);
   });
 });
 
@@ -415,8 +445,177 @@ describe("result schema", () => {
     };
     expect(s.$schema).toBe("http://json-schema.org/draft-07/schema#");
     expect(s.type).toBe("object");
-    expect(s.required.sort()).toEqual(["coverage", "findings", "questions", "risks", "summary"]);
+    expect(s.required.sort()).toEqual(["answered", "coverage", "findings", "questions", "risks", "summary"]);
     expect(s.properties.findings.items.required.sort()).toEqual(Object.keys(F({})).sort());
     expect(s.properties.findings.items.additionalProperties).toBe(false);
+  });
+
+  test("thread outcome section 9: answered lists every key as required; an Explain schema has no answered key", () => {
+    type Items = { required: string[]; additionalProperties: boolean; properties: Record<string, { type?: unknown; anyOf?: unknown }> };
+    const s = reviewJsonSchema() as { properties: { answered: { type: string; items: Items } } };
+    expect(s.properties.answered.type).toBe("array");
+    expect(s.properties.answered.items.required.sort()).toEqual(["evidence", "finding", "outcome", "question", "reply", "thread"]);
+    expect(s.properties.answered.items.additionalProperties).toBe(false);
+    const explain = reviewJsonSchema(true) as { $schema: string; required: string[]; properties: Record<string, unknown> };
+    expect(explain.$schema).toBe("http://json-schema.org/draft-07/schema#");
+    expect(explain.required.sort()).toEqual(["coverage", "findings", "questions", "risks", "summary"]);
+    expect(explain.properties.answered).toBeUndefined();
+    const rereview = rereviewJsonSchema() as { required: string[] };
+    expect(rereview.required).toEqual(expect.arrayContaining(["answered", "earlier"]));
+  });
+
+  test("thread outcome section 9: an old result without answered parses with an empty list; entries default question and finding", () => {
+    const { answered: _answered, ...old } = result([]);
+    expect(reviewResult.parse(old).answered).toEqual([]);
+    expect(rereviewResult.parse({ ...old, earlier: [] }).answered).toEqual([]);
+    const parsed = reviewResult.parse({ ...old, answered: [{ thread: 7, outcome: "settled", evidence: "Message 9.", reply: "" }] });
+    expect(parsed.answered).toEqual([{ thread: 7, question: null, outcome: "settled", evidence: "Message 9.", reply: "", finding: null }]);
+    for (const bad of [{ outcome: "done" }, { thread: 0 }, { question: 0 }, { finding: -1 }])
+      expect(
+        reviewResult.safeParse({ ...old, answered: [{ thread: 7, outcome: "settled", evidence: "", reply: "", ...bad }] }).success,
+      ).toBe(false);
+    const many = range(MAX_ANSWERED + 1, (i) => ({ thread: i, outcome: "settled", evidence: "", reply: "" }));
+    expect(reviewResult.safeParse({ ...old, answered: many }).success).toBe(false);
+  });
+});
+
+describe("answered questions (thread outcome section 9)", () => {
+  const A = (o: Partial<AnsweredQuestion>): AnsweredQuestion => ({
+    thread: 1,
+    question: null,
+    outcome: "settled",
+    evidence: "Message 5: it is intended.",
+    reply: "",
+    finding: null,
+    ...o,
+  });
+  const T = (thread: number, questions: number, o: Partial<AskedThread> = {}): AskedThread => ({
+    thread,
+    replyTo: thread + 100,
+    mine: true,
+    questions,
+    ...o,
+  });
+
+  test("settled: an unaccepted draft with the resolve proposal, ticked only in a thread that the user started", () => {
+    const r = validateAnswered([A({ reply: "Thanks, clear." }), A({ thread: 2 })], [T(1, 1), T(2, 1, { mine: false })], []);
+    expect(r.skipped).toEqual([]);
+    expect(r.replies).toEqual([
+      {
+        status: "new",
+        payload: {
+          thread: 1,
+          action: "reply",
+          body: "Thanks, clear.",
+          reason: "Message 5: it is intended.",
+          evidenceStatus: "unverified",
+          judgement: "settled",
+          replyTo: 101,
+          resolve: true,
+          resolveEvidence: "Message 5: it is intended.",
+          resolveTick: true,
+          origin: "review",
+        },
+      },
+      {
+        status: "new",
+        payload: expect.objectContaining({ thread: 2, action: "none", body: "", resolve: true, resolveTick: false, replyTo: 102 }),
+      },
+    ]);
+  });
+
+  test("followup and issue: a draft with the reply and no resolve; an issue needs a finding that the validator kept", () => {
+    const r = validateAnswered(
+      [
+        A({ thread: 1, outcome: "followup", reply: "Which caller holds the lock?" }),
+        A({ thread: 2, outcome: "issue", reply: "Thanks. This shows a gap: no lock. I added it as a review point.", finding: 1 }),
+        A({ thread: 3, outcome: "issue", reply: "Gap.", finding: 0 }),
+        A({ thread: 4, outcome: "issue", reply: "Gap.", finding: 5 }),
+        A({ thread: 5, outcome: "issue", reply: "Gap." }),
+        A({ thread: 6, outcome: "followup", reply: "  " }),
+      ],
+      [T(1, 1), T(2, 1), T(3, 1), T(4, 1), T(5, 1), T(6, 1)],
+      [null, 0],
+    );
+    expect(r.replies.map((x) => [x.payload.thread, x.payload.judgement, x.payload.resolve, x.payload.resolveTick, x.payload.body])).toEqual(
+      [
+        [1, "followup", false, false, "Which caller holds the lock?"],
+        [2, "unsettled", false, false, "Thanks. This shows a gap: no lock. I added it as a review point."],
+      ],
+    );
+    expect(r.replies[1]?.payload.resolveEvidence).toBe("");
+    expect(r.skipped).toEqual([
+      "Answer for thread 3 dropped: the validator dropped finding 0.",
+      "Answer for thread 4 dropped: the result has no finding 5.",
+      "Answer for thread 5 dropped: an issue needs its finding.",
+      "Reply for thread 6 dropped: the body is empty, and a question stays open.",
+    ]);
+  });
+
+  test("unanswered questions give no draft; an unknown thread, a missing or wrong question number, and a second entry are dropped", () => {
+    const r = validateAnswered(
+      [
+        A({ thread: 9 }),
+        A({ thread: 2 }),
+        A({ thread: 2, question: 4 }),
+        A({ thread: 1, question: 1, reply: "First." }),
+        A({ thread: 1, question: 1, reply: "Again." }),
+      ],
+      [T(1, 1), T(2, 3), T(3, 2)],
+      [],
+    );
+    expect(r.replies.map((x) => [x.payload.thread, x.payload.body])).toEqual([[1, "First."]]);
+    expect(r.skipped).toEqual([
+      "Answer for thread 9 dropped: the thread holds no question of the user.",
+      "Answer for thread 2 dropped: the thread holds several questions, and the entry names none.",
+      "Answer for thread 2, question 4 dropped: the thread has no question 4.",
+      "Answer for thread 1, question 1 dropped: a second entry for question 1.",
+    ]);
+    expect(validateAnswered([], [T(1, 1)], [])).toEqual({ replies: [], skipped: [] });
+  });
+
+  test("several questions: one draft per thread; resolve only when each question is settled; the reply names the open ones", () => {
+    const all = validateAnswered(
+      [
+        A({ question: 2, evidence: "Message 8: yes.", reply: "" }),
+        A({ question: 1, evidence: "Message 7: no.", reply: "Thanks, both clear." }),
+      ],
+      [T(1, 2)],
+      [],
+    );
+    expect(all.replies).toHaveLength(1);
+    expect(all.replies[0]?.payload).toMatchObject({
+      body: "Thanks, both clear.",
+      judgement: "settled",
+      resolve: true,
+      resolveTick: true,
+      resolveEvidence: "Message 7: no. Message 8: yes.",
+    });
+    // Question 3 has no answer: no resolve, and the reply names it.
+    const open = validateAnswered(
+      [A({ question: 1, reply: "Thanks for 1. Question 3 is still open." }), A({ question: 2, reply: "" })],
+      [T(1, 3)],
+      [],
+    );
+    expect(open.replies[0]?.payload).toMatchObject({
+      body: "Thanks for 1. Question 3 is still open.",
+      judgement: "unsettled",
+      resolve: false,
+      resolveTick: false,
+    });
+    // A follow-up wins over unsettled. Two replies of one thread join in question order.
+    const mixed = validateAnswered(
+      [
+        A({ question: 2, outcome: "followup", reply: "Which version?" }),
+        A({ question: 1, outcome: "issue", reply: "Gap added.", finding: 0 }),
+      ],
+      [T(1, 2)],
+      [0],
+    );
+    expect(mixed.replies[0]?.payload).toMatchObject({ body: "Gap added.\n\nWhich version?", judgement: "followup", resolve: false });
+    // All settled but no text and a question open: nothing to post.
+    expect(validateAnswered([A({ question: 1 })], [T(1, 2)], []).skipped).toEqual([
+      "Reply for thread 1 dropped: the body is empty, and a question stays open.",
+    ]);
   });
 });

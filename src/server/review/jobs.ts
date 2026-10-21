@@ -49,6 +49,7 @@ import {
   type FixWhy,
   fixJsonSchema,
   fixResult,
+  MAX_ANSWERED,
   MAX_EARLIER,
   MAX_REPLY_THREADS,
   parseFixNotes,
@@ -107,6 +108,7 @@ import { buildAskPrompt, buildFixPrompt, buildPrompt, buildReplyPrompt, buildRer
 import { alwaysProblems, claudeConfigDir, copySkills } from "./skills";
 import { claudeJsonPath, userServers } from "./user-mcp";
 import {
+  type AskedThread,
   type CheckedEarlier,
   type EarlierItem,
   earlierCases,
@@ -114,6 +116,7 @@ import {
   repoPath,
   type ValidatedReply,
   validate,
+  validateAnswered,
   validateEarlier,
   validateReplies,
 } from "./validate";
@@ -365,6 +368,8 @@ type Job = {
   // A fix run for one target that the user wants fixed despite a decision or risk note ("Fix anyway").
   anyway?: boolean;
   carry: Carry | null;
+  // A review run only: the threads of context/questions.md, set when the workspace starts (docs/plans/thread-outcome.md section 9).
+  asked: AskedThread[];
   question: string | null;
   // A session run only.
   session: SessionStart | null;
@@ -666,7 +671,7 @@ function ended(raw: string, o: RunOutcome, result: NonNullable<Ending["result"]>
 }
 
 // Turns a runner outcome into the run end. servers: the MCP servers of the spec. gaps: the servers and skills left out of the spec.
-// rereview: the earlier findings of a re-review at their current lines.
+// rereview: the earlier findings of a re-review at their current lines. asked: the threads of context/questions.md.
 async function judge(
   o: RunOutcome,
   ws: Workspace,
@@ -674,6 +679,7 @@ async function judge(
   servers: string[],
   gaps: string[],
   rereview: { carry: Carry; items: EarlierItem[] } | null,
+  asked: AskedThread[],
 ): Promise<Ending> {
   const raw = rawOutput(o);
   if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
@@ -686,17 +692,18 @@ async function judge(
   const blobs = await readBlobs(ws, [...parsed.data.findings, ...earlierCases(earlier, items).cases.map((c) => c.finding)]);
   const v = validate({ result: parsed.data, diff: ws.diff, ...blobs, agents, explain: profile.explain });
   const e = rereview ? validateEarlier({ earlier, items, diff: ws.diff, ...blobs }) : null;
+  const a = profile.explain ? null : validateAnswered(parsed.data.answered, asked, v.kept);
   const dropped = v.dropped.map((d) => (d.reason === "file" && blobs.oversized(d) ? { ...d, reason: "size" as const } : d));
   const base = rereview?.carry.incomplete ? [`Run ${rereview.carry.base}, the base of this re-review, was incomplete.`] : [];
   const coverage = {
     ...v.coverage,
-    skipped: [...v.coverage.skipped, ...(e?.skipped ?? [])],
+    skipped: [...v.coverage.skipped, ...(e?.skipped ?? []), ...(a?.skipped ?? [])],
     unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)],
     notChecked: [...v.coverage.notChecked, ...base],
   };
   return ended(raw, o, {
     summary: { summary: v.summary, risks: v.risks, coverage, dropped },
-    items: [...v.findings.map(findingItem), ...v.questions.map(questionItem)],
+    items: [...v.findings.map(findingItem), ...v.questions.map(questionItem), ...(a?.replies ?? []).map(replyItem)],
     ...(e && { checked: e.checked }),
   });
 }
@@ -896,6 +903,97 @@ export function fixStateFile(db: Database, pr: number, threads: number[]): Conte
     }
   }
   return out.length ? { name: "fix-state.md", text: out.join("\n") } : null;
+}
+
+// docs/plans/thread-outcome.md section 9. posts: the confirmed general and inline posts of review items in open threads.
+const ASKED = {
+  posts: `SELECT p.remote_id AS root, p.kind, p.items_json FROM post p
+    JOIN comment c ON c.pr = p.pr AND c.comment_id = p.remote_id AND c.parent_id IS NULL AND c.tombstoned_at IS NULL AND c.thread_resolved = 0
+    WHERE p.pr = $pr AND p.run IS NOT NULL AND p.kind IN ('general', 'inline') AND p.state = 'confirmed' ORDER BY p.remote_id`,
+  messages: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt, text,
+      thread_resolved AS threadResolved FROM comment WHERE pr = $pr AND tombstoned_at IS NULL ORDER BY created_at, comment_id`,
+};
+// The byte cap of context/questions.md. The cut drops the threads after the first thread that does not fit.
+export const QUESTIONS_BYTES = 60 * 1024;
+
+// context/questions.md of a review or re-review run: each open thread that holds items that the user posted from earlier runs, when
+// another person wrote its newest live message. A general comment holds its questions and outside findings, an inline comment one finding.
+// Each item is one question, numbered in post order. A touched out-of-date draft of the thread is revised (ReplyThread.revise).
+// me: null gives no file, because no message can count as the user's. left: the threads that the byte cap or MAX_ANSWERED left out.
+export function questionsFile(
+  db: Database,
+  pr: number,
+  me: string | null,
+): { threads: AskedThread[]; file: ContextFile | null; left: number } {
+  const none = { threads: [], file: null, left: 0 };
+  if (me === null) return none;
+  type Msg = TurnMsg & { text: string };
+  const rows = db.query(ASKED.messages).all({ pr }) as (Omit<Msg, "deleted" | "threadResolved"> & { threadResolved: number })[];
+  const threads = byThread(rows.map((m): Msg => ({ ...m, deleted: false, threadResolved: m.threadResolved === 1 })));
+  const drafts = currentDrafts(db, pr);
+  const mineMsg = (m: TurnMsg) => isMe({ slug: m.authorSlug, login: m.authorLogin }, me);
+  const blocks: { thread: AskedThread; lines: string[] }[] = [];
+  for (const p of db.query(ASKED.posts).all({ pr }) as { root: number; kind: "general" | "inline"; items_json: string }[]) {
+    const items = (JSON.parse(p.items_json) as { id: number }[]).flatMap((x) => {
+      const r = db.query(SQL.itemById).get({ id: x.id }) as ItemRow | null;
+      return r && r.status === "posted" && (r.kind === "question" || r.kind === "finding") ? [r] : [];
+    });
+    const msgs = threads.get(p.root) ?? [];
+    const root = msgs.find((m) => m.id === p.root);
+    const last = newestLive(msgs);
+    if (!items.length || !root || !last || last.id === p.root || mineMsg(last)) continue;
+    const cur = drafts.get(p.root);
+    const stale = !!cur && touched(cur) && (JSON.parse(cur.payload_json) as ReplyPayload).replyTo !== last.id;
+    const at = (r: ItemRow) => (r.path === null ? "" : ` on ${oneLine(r.path)}${r.line === null ? "" : ` line ${r.line}`}`);
+    const first = items[0] as ItemRow;
+    const lines = [
+      `## Thread ${p.root}`,
+      "",
+      `- Place: ${p.kind === "general" ? "the general comment of a review" : `an inline comment${at(first)}`}`,
+      `- The user started the thread in message ${p.root}. The newest message is ${last.id}.`,
+      "",
+      ...items.flatMap((r, i) => [
+        `### Question ${i + 1}`,
+        "",
+        `- Asked by the user: ${r.kind === "question" ? "a question" : `a finding${at(r)}`}`,
+        "",
+        indentBlock(r.body),
+        "",
+      ]),
+      ...msgs
+        .filter((m) => m.id !== p.root)
+        .flatMap((m) => [`### Message ${m.id} by ${mineMsg(m) ? "the user" : "another person"}`, "", indentBlock(m.text), ""]),
+      ...(stale && cur
+        ? [`### Draft of the user, ${cur.status === "accepted" ? "accepted" : "edited"}`, "", indentBlock(cur.body || "(empty)"), ""]
+        : []),
+    ];
+    blocks.push({
+      thread: {
+        thread: p.root,
+        replyTo: last.id,
+        mine: mineMsg(root),
+        questions: items.length,
+        ...(stale && cur && { revise: cur.id }),
+      },
+      lines,
+    });
+  }
+  const kept: AskedThread[] = [];
+  const out: string[] = [];
+  let used = 0;
+  let count = 0;
+  for (const [i, b] of blocks.entries()) {
+    const size = Buffer.byteLength(b.lines.join("\n"));
+    if (used + size > QUESTIONS_BYTES || count + b.thread.questions > MAX_ANSWERED) {
+      out.push(`${blocks.length - i} more threads left out.`, "");
+      return { threads: kept, file: kept.length ? { name: "questions.md", text: out.join("\n") } : null, left: blocks.length - i };
+    }
+    used += size;
+    count += b.thread.questions;
+    out.push(...b.lines);
+    kept.push(b.thread);
+  }
+  return kept.length ? { threads: kept, file: { name: "questions.md", text: out.join("\n") }, left: 0 } : none;
 }
 
 // Plan r2 S-RR: the copies of the carried items, inside the run-end transaction. Each source becomes discarded.
@@ -1368,7 +1466,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       for (const it of e.result?.items ?? []) {
         if (it.kind !== "reply" || it.thread === null) continue;
         const cur = drafts.get(it.thread);
-        const revise = j.threads?.find((t) => t.thread === it.thread)?.revise;
+        const revise = (j.threads ?? j.asked).find((t) => t.thread === it.thread)?.revise;
         if (cur && touched(cur) && cur.id === revise) {
           if (it.body.trim() === cur.body.trim()) {
             kept.add(it.thread);
@@ -1484,6 +1582,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
             j.threads.map((t) => t.thread),
           )
         : null;
+    // docs/plans/thread-outcome.md section 9: review and re-review runs judge the answers to the user's posted questions. Explain does not.
+    const questions = j.kind === "review" && !j.profile.explain ? questionsFile(j.db, j.pr, settings.config()?.userSlug ?? null) : null;
+    j.asked = questions?.threads ?? [];
     // The findings of a fix run as they are now. A user edit or move after the start counts.
     const fixRows = j.findings.flatMap((id) => (j.db.query(SQL.fixFinding).get({ id }) as FindingRow | null) ?? []);
     const extra = [
@@ -1505,6 +1606,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         : []),
       ...(history ? [history] : []),
       ...(fixState ? [fixState] : []),
+      ...(questions?.file ? [questions.file] : []),
     ];
     // Cancel stops the fetch and `worktree add`. A large repository can take as long as the run may take.
     j.abort = new AbortController();
@@ -1631,6 +1733,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       attachments: attachments.length > 0,
       history: history !== null,
       fixState: fixState !== null,
+      questions: j.asked.length > 0,
       skills: folders,
       alwaysSkills: always,
       mcp: used,
@@ -1659,9 +1762,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
                   posted: carry.posted.map((r) => r.id),
                 }),
                 schema: rereviewJsonSchema(),
-                main: mainAgent(profile),
+                main: mainAgent(profile, input.questions),
               }
-            : { prompt: buildPrompt(input), schema: reviewJsonSchema(), main: mainAgent(profile) };
+            : { prompt: buildPrompt(input), schema: reviewJsonSchema(profile.explain), main: mainAgent(profile, input.questions) };
     const o = await runner.run(
       {
         cwd: ws.work,
@@ -1695,8 +1798,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       o,
       skills.copied.filter((s) => isAlways(s.id)),
     );
+    const left = questions?.left
+      ? [`${questions.left} threads with your posted questions were left out of ./context/questions.md: it reached its size limit.`]
+      : [];
     const noted = (e: Ending): Ending => {
-      e.result?.summary.coverage.notChecked.push(...unread);
+      e.result?.summary.coverage.notChecked.push(...unread, ...left);
       if (!unmarked) return e;
       e.result?.summary.coverage.notChecked.push(unmarked);
       return { ...e, raw: `${unmarked}\n\n${e.raw}` };
@@ -1705,7 +1811,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (fix) return noted(await judgeFix(o, ws, fix, j.findings, servers, gaps));
     if (question !== null) return noted(judgeAsk(o, servers, gaps));
     const rereview = carry && { carry, items: [...current(j.db, earlier), ...carry.posted].map(earlierItem) };
-    return noted(await judge(o, ws, profile, servers, gaps, rereview));
+    return noted(await judge(o, ws, profile, servers, gaps, rereview, j.asked));
   }
 
   // docs/plans/session-consult.md part C: a fork of the user's session in a fresh sanitized snapshot of the PR head, never in the
@@ -1868,6 +1974,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         findings,
         anyway,
         carry,
+        asked: [],
         question,
         session: null,
         cancelled: false,
@@ -2156,6 +2263,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         picked: false,
         findings: [],
         carry: null,
+        asked: [],
         question: null,
         session: s,
         cancelled: false,

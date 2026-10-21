@@ -35,22 +35,63 @@ export const coverage = z.object({
   notChecked: z.array(z.string()),
 });
 
+// docs/plans/thread-outcome.md section 9: the outcome of a question that the user posted and another person answered.
+export const answerOutcomes = ["settled", "followup", "issue"] as const;
+export type AnswerOutcome = (typeof answerOutcomes)[number];
+export const MAX_ANSWERED = 100;
+
+export const answeredQuestion = z.object({
+  thread: lineNo.describe("A thread number from ./context/questions.md."),
+  // The defaults keep entries without these keys valid. --json-schema still lists them as required.
+  question: lineNo
+    .nullable()
+    .default(null)
+    .describe("The question number in that thread from ./context/questions.md. null for a thread with one question."),
+  outcome: z
+    .enum(answerOutcomes)
+    .describe(
+      "settled: the answer settles the question. followup: the answer is partial or unclear. issue: the answer shows a real problem.",
+    ),
+  evidence: z.string().describe("The message number of the answer and a short quote of it."),
+  reply: z
+    .string()
+    .describe(
+      "The reply as short Markdown in the user's voice. A thread gets one reply, so the other entries of the thread leave it empty.",
+    ),
+  finding: z
+    .number()
+    .int()
+    .min(0)
+    .nullable()
+    .default(null)
+    .describe("For issue: the index of the new finding in findings, counting from 0. Else null."),
+});
+
 export const reviewResult = z.object({
   summary: z.string().describe("One line."),
   risks: z.array(z.string()),
   questions: z.array(question),
   coverage,
   findings: z.array(finding).max(MAX_FINDINGS),
+  // Results stored before this key get the default.
+  answered: z
+    .array(answeredQuestion)
+    .max(MAX_ANSWERED)
+    .default([])
+    .describe("One entry for each question in ./context/questions.md that a newer message answers. Empty when that file does not exist."),
 });
 
 export type Side = Finding["side"];
 export type Finding = z.infer<typeof finding>;
 export type Question = z.infer<typeof question>;
 export type Coverage = z.infer<typeof coverage>;
+export type AnsweredQuestion = z.infer<typeof answeredQuestion>;
 export type ReviewResult = z.infer<typeof reviewResult>;
 
 // The CLI checks the schema with a default Ajv instance, which knows draft-07 only. A 2020-12 $schema fails every run.
-export const reviewJsonSchema = (): Record<string, unknown> => z.toJSONSchema(reviewResult, { target: "draft-07" });
+// An Explain run gets no answered key: it judges no answer (docs/plans/thread-outcome.md section 9).
+export const reviewJsonSchema = (explain = false): Record<string, unknown> =>
+  z.toJSONSchema(explain ? reviewResult.omit({ answered: true }) : reviewResult, { target: "draft-07" });
 
 // ---------- Reply drafts (plan replies.md WP17) ----------
 
@@ -94,7 +135,7 @@ export const replyResult = z.object({
 
 export type ReplyDraft = z.infer<typeof replyDraft>;
 export type ReplyResult = z.infer<typeof replyResult>;
-// review: a review run. reply: a reply run. fix: a "Fixed in" draft. nofix: the reply of a fix note without a fix. session: an import of
+// review: a review run, such as the reply to an answered question. reply: a reply run. fix: a "Fixed in" draft. nofix: the reply of a fix note without a fix. session: an import of
 // your session. resolve: a resolve proposal without a reply. user: a draft that the user wrote. A "Won't fix" draft of a user decline
 // has origin nofix and declined set.
 export const replyOrigins = ["review", "reply", "fix", "nofix", "session", "resolve", "user"] as const;

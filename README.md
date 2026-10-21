@@ -97,6 +97,8 @@ Each finding becomes a draft with its code, its severity, and its evidence. The 
 
 ![The Drafts list with accept, edit, and discard](docs/screenshots/drafts.webp)
 
+A review and "Review changes since" also read the answers to the questions that you posted. An answer that settles a question gets a reply draft with "Resolve after posting" proposed. A partial answer gets a reply draft with the next question. An answer that shows a real problem gets a new finding and a reply draft that points to it. The general comment with several questions gets one reply, and it proposes the resolve only when every question is settled. Unanswered questions get no draft. Explain does not read the answers.
+
 The run log shows each tool call of the review and of its subagents.
 
 ![The run log](docs/screenshots/run-log.webp)
@@ -133,7 +135,7 @@ Each run can read the CLAUDE.md files of your clone, extra text from Settings, a
 
 ### Consult your session
 
-You wrote the code with Claude Code, so your session knows why. On your own pull request, "Copy for your session" copies one prompt with the review points. Paste it into your session in your clone. The session checks each point against the code, makes the valid changes, and explains each rejection. The points sit in tags with a new random suffix for each copy, and the prompt tells the session that the tag content is data, not instructions. Push the changes, then use "Review changes since" and Draft replies.
+You wrote the code with Claude Code, so your session knows why. On your own pull request, "Copy for your session" copies one prompt with the review points. Paste it into your session in your clone. "Copy for your session" gives your own Claude Code session the open review points as numbered steps: check the branch, validate each point with file and line, fix only the valid parts, write a reply for each point, commit, and ask you before any push, post, or resolve. The points sit in tags with a new random suffix for each copy, and the prompt tells the session that the tag content is data, not instructions. Push the changes, then use "Review changes since" and Draft replies.
 
 To ask without leaving Kierto, turn on the session switch in Settings, Clones. Kierto then lists your sessions on the branch of your own pull request. Each question resumes a read-only copy of the session with the same points. Its verdicts tick the Fix list and draft replies. "Judge and propose fixes" also lets the session propose edits for the points that it accepts. Kierto checks the edits, and their fix cards show "from your session". Nothing applies until you click.
 
