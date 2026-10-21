@@ -81,6 +81,10 @@
 - The run row and the run log name the subagents of a run, with counts and models, for example "Subagents: rl-reviewer ×3 (claude-sonnet-5-5)".
 - In the run log, each subagent row shows its model, tokens, and duration, with its tool calls nested under it. An agent that Kierto did not define shows "built-in".
 
+### Safety
+
+- A user-added MCP server that redirects to another host or port no longer connects. Give its final URL in Settings.
+
 ## 0.2.0
 
 The first public version. Kierto is a local-first inbox for Bitbucket Server and Data Center pull requests, with AI reviews by your own Claude Code CLI.

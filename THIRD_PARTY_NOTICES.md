@@ -15,7 +15,7 @@ The web bundle and the compiled binary include these packages.
 | @floating-ui/react-dom | 2.1.9 | MIT |
 | @floating-ui/utils | 0.2.12 | MIT |
 | @mixmark-io/domino | 2.2.0 | BSD-2-Clause |
-| @modelcontextprotocol/sdk | 1.30.1 | MIT |
+| @modelcontextprotocol/sdk | 1.32.1 | MIT |
 | @tanstack/query-core | 5.103.2 | MIT |
 | @tanstack/react-query | 5.103.2 | MIT |
 | @ungap/structured-clone | 1.4.0 | ISC |
@@ -330,7 +330,7 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### @modelcontextprotocol/sdk 1.30.1
+### @modelcontextprotocol/sdk 1.32.1
 
 License: MIT. Ships in the compiled binary.
 
