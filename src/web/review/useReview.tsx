@@ -3,66 +3,30 @@
 
 // The review half of the detail (plan v3 WP11, replies.md WP18, pr-view-v4 2.6): buttons, brief, run record, drafts, questions,
 // reply drafts, and run log for one PR.
-import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { type ReactNode, useMemo, useRef } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
-import type { CommitDto, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunConflict, RunDetail, RunDto, RunKind } from "../../shared/dto";
-import { busyText } from "../ask/model";
+import type { CommitDto, MetaDto, PrRow, ReviewItemDto, RunDetail, RunDto } from "../../shared/dto";
 import { type ConsultUi, useConsult } from "../consult/Consult";
 import { useFix } from "../fix/FixBar";
-import { fixWaiting } from "../fix/model";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
 import { ordered, type ThreadModel } from "../pr/threads";
-import { planKey, usePostPlan } from "../publish/data";
-import { Hint, type Hints } from "../shell/Hint";
+import type { Hints } from "../shell/Hint";
 import { prKey } from "../shell/model";
-import { BriefComposer, type BriefMode, ReviewButton } from "./Brief";
-import { type DraftCtx, Drafts, draftDomId, modeOf, type TriageState } from "./Drafts";
-import {
-  getRun,
-  replyKey,
-  saveLastProfile,
-  sendItem,
-  useBrief,
-  useCancelRun,
-  usePrRuns,
-  useReplyDrafts,
-  useRun,
-  useRuns,
-  useStartReplies,
-  useStartRereview,
-  useStartReview,
-} from "./data";
-import {
-  briefState,
-  drafts,
-  kindRuns,
-  latestReview,
-  newCommits,
-  plural,
-  questionJump,
-  questions,
-  replyCard,
-  replyMap,
-  replyOf,
-  rereviewState,
-  runLine,
-  severityJumps,
-  shortHash,
-  staleText,
-  triageText,
-} from "./model";
-import { type Conflict, conflictText, findingConflict, findingConflictText, threadOutcome } from "./outcome";
-import { ConflictNote, DraftRepliesButton, OutcomeLine, type ReplyCtx, ReplyDraftCard } from "./ReplyDraft";
-import { Ledger, RunRecord } from "./RunLine";
-import { type LogTarget, RunLog } from "./RunLog";
-import { TaskChips, useTaskContext } from "./TaskChips";
-import { storedEdit, type TriageAction, type TriageCtx, writeEdit } from "./Triage";
-import { contextLines, trackerOf } from "./tasks";
-
+import { BriefComposer, ReviewButton } from "./Brief";
+import { type DraftCtx, Drafts } from "./Drafts";
+import { useCancelRun, usePrRuns, useReplyDrafts, useRun } from "./data";
+import { kindRuns, latestReview, replyMap } from "./model";
+import { DraftRepliesButton, type ReplyCtx } from "./ReplyDraft";
+import { RunRecord } from "./RunLine";
+import { RunLog } from "./RunLog";
+import { TaskChips } from "./TaskChips";
+import { useRunLog } from "./useRunLog";
+import { useRunRecord } from "./useRunRecord";
+import { RereviewButton, useStart } from "./useStart";
+import { useThreadCards } from "./useThreadCards";
+import { NO_ITEMS, useTriage } from "./useTriage";
 // flash: mark the target as a jump target. It gets a static highlight while it holds the focus, with no animation.
 export type Focus = { id: string; block: ScrollLogicalPosition; flash: boolean };
 
@@ -115,29 +79,10 @@ export type ReviewUi = {
   consult: ConsultUi;
 };
 
-const NO_ITEMS: ReviewItemDto[] = [];
-
 // A new run shows its line at once. Its log and items come with the next fetch.
 // A synced push changes only `stale`, with no run event. Then only the runs list refetches (live.ts), so `stale` comes from it.
 const detailOf = (r: RunDto | null, d: RunDetail | undefined): RunDetail | null =>
   r ? (d?.run.id === r.id ? { ...d, run: { ...d.run, stale: r.stale } } : { run: r, events: [], items: [] }) : null;
-
-// The open brief and the review that its Start begins.
-type Composer = { kind: "review" } | { kind: "rereview" } | null;
-
-// Plan r2 UI-RR. It shows only when the server takes a re-review (rereviewState).
-function RereviewButton({ since, busy, onClick }: { since: string; busy: boolean; onClick: () => void }) {
-  return (
-    <Hint label={`Open the review brief for the commits after ${since}. The open drafts carry over and get a new check. Key: c`}>
-      <Button id="rereview-btn" size="sm" variant="outline" disabled={busy} aria-keyshortcuts="c" onClick={onClick}>
-        Review changes since{" "}
-        <code translate="no" className="font-mono">
-          {since}
-        </code>
-      </Button>
-    </Hint>
-  );
-}
 
 export function useReview(
   pr: PrRow,
@@ -162,306 +107,48 @@ export function useReview(
   },
 ): ReviewUi {
   const meta = useMeta().data as MetaDto;
-  const qc = useQueryClient();
-  const brief = useBrief(pr.id);
   const prRuns = usePrRuns(pr.id).data;
   // R14: the run list shows the newest run of each kind. The newest review run drives the drafts, the summary, and the brief.
   const newest = prRuns?.[0] ?? null;
   const latest = latestReview(prRuns);
   const kinds = kindRuns(prRuns);
-  const newestOf = (k: RunKind) => kinds.find((r) => r.kind === k)?.id ?? null;
   const run = useRun(latest?.id ?? null);
-  // Each row reads the log and the items of its run.
-  const replyRun = useRun(newestOf("reply"));
-  const fixRun = useRun(newestOf("fix"));
-  const askRun = useRun(newestOf("ask"));
-  const sessionRun = useRun(newestOf("session"));
-  // The review row can show a cancelled or failed run that is newer than latest.
-  const reviewRun = useRun(newestOf("review"));
   const replies = useReplyDrafts(pr.id);
-  const active = useRuns().data?.find((r) => r.status === "running") ?? null;
-  const start = useStartReview(pr.id);
-  const startReplies = useStartReplies(pr.id);
-  const startRereview = useStartRereview(pr.id);
   const cancel = useCancelRun();
-  const [composer, setComposer] = useState<Composer>(null);
-  // of: "line" follows the run of the run line. "review" stays on the newest review run, for its drafts. A number is a run ID.
-  const [log, setLog] = useState<(LogTarget & { of: "line" | "review" | number }) | null>(null);
-  const pinned = useRun(typeof log?.of === "number" ? log.of : null);
-  const fetched = useTaskContext(pr.id).data;
-  const [openDrafts, setOpenDrafts] = useState<ReadonlyMap<number, boolean>>(new Map());
-  // An unsent edit from an earlier visit opens its editor again (plan pr-view-v4 section 5).
-  const [triage, setTriage] = useState<TriageState>(() => {
-    const id = storedEdit(pr.id);
-    return { open: id === null ? null : { id, mode: "edit", quiet: true }, busy: new Set() };
-  });
-  // The threads of the reply run that this page started. They show a pending card while it runs.
-  const [asked, setAsked] = useState<{ run: number; threads: number[] } | null>(null);
-  const opener = useRef<HTMLElement | null>(null);
+  const { focusAfter } = o;
+  const st = useStart(pr, { meta, latest, newest, commits: o.commits, threads: o.threads, announce: o.announce, focusAfter });
+  const runLog = useRunLog(latest, newest);
+  const { log, openLog, closeLog } = runLog;
 
   const detail = detailOf(latest, run.data);
   const items = detail?.items ?? NO_ITEMS;
   const replyItems = replies.data ?? NO_ITEMS;
-  const state = briefState(brief.data, active, pr.id, meta.profiles);
-  const { focusAfter } = o;
+  const tr = useTriage(pr, { meta, items, replyItems, threads: o.threads, announce: o.announce, focusAfter });
+  const { triage, ds, list, openDraft, triageCtx, onTriage } = tr;
 
-  const where = (id: number) => {
-    if (id === pr.id) return "this pull request";
-    const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === id);
-    return other ? prKey(other) : "another pull request";
-  };
-  // The run that holds the only slot, as words. The brief cannot start until it ends.
-  const busy = active ? busyText(meta.runner.short, active.kind, where(active.pr)) : null;
-
-  const slotTaken = (c: RunConflict) => {
-    const kind = active?.id === c.running.run ? active.kind : "review";
-    toast.add({ title: busyText(meta.runner.short, kind, where(c.running.pr)) });
-  };
-
-  // A review runs the stored brief. Its profile becomes the last used one (decision D2).
-  const runNow = () =>
-    start.mutate(undefined, {
-      onSuccess: (r) => {
-        if ("conflict" in r) return slotTaken(r.conflict);
-        saveLastProfile(r.run.profile);
-        setComposer(null);
-        focusAfter({ id: "runline-log", block: "nearest", flash: false });
-      },
-      onError: (e) => toast.add({ title: "The review did not start", description: e.message }),
-    });
-
-  const rr = rereviewState(latest, brief.data, meta.profiles);
-  const rereviewNow = () => {
-    if (startRereview.isPending) return;
-    startRereview.mutate(undefined, {
-      onSuccess: (r) => {
-        if ("conflict" in r) return slotTaken(r.conflict);
-        saveLastProfile(r.run.profile);
-        setComposer(null);
-        focusAfter({ id: "runline-log", block: "nearest", flash: false });
-      },
-      onError: (e) => toast.add({ title: "The review of the new commits did not start", description: e.message }),
-    });
-  };
-
-  // threads absent: every thread where it is my turn, as the server selects them (WP17). The run uses the brief profile.
-  const draftReplies = (threads?: number[]) => {
-    const ids = threads ?? o.threads.filter((t) => t.turn === "your").map((t) => t.id);
-    startReplies.mutate(
-      { threads },
-      {
-        onSuccess: (r) => {
-          if ("conflict" in r) return slotTaken(r.conflict);
-          setAsked({ run: r.run.id, threads: ids });
-          o.announce(threads ? "Drafting a reply." : `Drafting replies for ${plural(ids.length, "thread")}.`);
-        },
-        onError: (e) => toast.add({ title: "The reply drafts did not start", description: e.message }),
-      },
-    );
-  };
-
-  // An open brief keeps its note and only changes the review that Start begins.
-  const openBrief = (next: NonNullable<Composer> = { kind: "review" }) => {
-    if (composer) document.getElementById("brief-note")?.focus();
-    setComposer(next);
-  };
-  const closeBrief = () => {
-    setComposer(null);
-    focusAfter({ id: "review-btn", block: "nearest", flash: false });
-  };
-  const rereview = () => {
-    if ("why" in rr) toast.add({ title: rr.why });
-    else openBrief({ kind: "rereview" });
-  };
-  // A re-review keeps the head of its base also when the brief profile makes it impossible, so the brief can say why.
-  const mode: BriefMode =
-    composer?.kind === "rereview" && latest
-      ? { kind: "rereview", since: shortHash(latest.sourceHead), commits: newCommits(latest, o.commits) }
-      : { kind: "review" };
-  const blocked = busy ?? (mode.kind === "rereview" && "why" in rr ? rr.why : null);
-
-  const openLog = (agent: string | null, raw = false, of: "line" | "review" | number = "line") => {
-    if (typeof of !== "number" && !(of === "review" ? latest : newest)) {
-      toast.add({ title: "No review has run on this pull request yet. Press r to start one." });
-      return;
-    }
-    const at = document.activeElement;
-    if (at instanceof HTMLElement && !at.closest("#run-log")) opener.current = at;
-    setLog((l) => ({ agent, raw, n: (l?.n ?? 0) + 1, of }));
-  };
-  const closeLog = () => {
-    setLog(null);
-    const back = opener.current?.isConnected ? opener.current : document.getElementById("runline-log");
-    back?.focus({ preventScroll: true });
-  };
-
-  // Stable while the items stay, so the diff renders again only when they change.
-  const ds = useMemo(() => (items.length ? drafts(items) : NO_ITEMS), [items]);
-  // Plan pr-view-v4 2.7: one list of the findings, then the questions. The first untriaged one starts open.
-  const list = useMemo(() => (items.length ? [...ds, ...questions(items)] : NO_ITEMS), [items, ds]);
-  const firstNew = list.find((x) => x.status === "new")?.id ?? null;
-  const all = [...items, ...replyItems];
-  const latestItems = useRef(all);
-  latestItems.current = all;
-  const latestList = useRef({ list, firstNew });
-  latestList.current = { list, firstNew };
-  const isDraftOpen = (it: ReviewItemDto) => openDrafts.get(it.id) ?? it.id === firstNew;
   const onLog = useRef(openLog);
   onLog.current = openLog;
-  const onDraft = useRef(draftReplies);
-  onDraft.current = draftReplies;
+  const onDraft = useRef(st.draftReplies);
+  onDraft.current = st.draftReplies;
   const onShow = useRef(o.showInDiff);
   onShow.current = o.showInDiff;
   const author = pr.role === "AUTHOR";
   // useFix comes after the drafts context, so the Fix action of a draft reads it through this ref.
   const onFix = useRef((_: number) => {});
-  // Opens finding drafts without a focus change, so their fix cards mount.
-  const showFindings = useCallback(
-    (ids: number[]) =>
-      setOpenDrafts((m) => {
-        const out = new Map(m);
-        for (const id of ids) out.set(id, true);
-        return out;
-      }),
-    [],
-  );
-  // Opens a draft or a question and focuses it: "Go to draft" in the diff, the ledger, and key 2.
-  const openDraft = useCallback(
-    (id: number) => {
-      const it = latestList.current.list.find((x) => x.id === id);
-      setOpenDrafts((m) => new Map(m).set(id, true));
-      focusAfter({ id: it ? draftDomId(it) : `d-${id}`, block: "start", flash: true });
-    },
-    [focusAfter],
-  );
-
-  // ---------- Triage (plan v3 WP14a) ----------
-  const domId = (it: ReviewItemDto) => (it.kind === "reply" ? `rd-${it.id}` : draftDomId(it));
-  const setBusy = (id: number, on: boolean) =>
-    setTriage((s) => {
-      const busy = new Set(s.busy);
-      if (on) busy.add(id);
-      else busy.delete(id);
-      return { ...s, busy };
-    });
-  const putItem = (it: ReviewItemDto) => {
-    qc.setQueryData<RunDetail>(["run", it.run], (old) => old && { ...old, items: old.items.map((x) => (x.id === it.id ? it : x)) });
-    // Use revision returns the used revision: it takes the place of the draft that held it. A waiting revision is no draft of its own.
-    const used = !replyOf(it).revises;
-    if (it.kind === "reply")
-      qc.setQueryData<ReviewItemDto[]>(replyKey(pr.id), (old) =>
-        old?.map((x) => (x.id === it.id || (used && x.revised?.id === it.id) ? it : x)),
-      );
-  };
-
-  // prototype/v3 setItem: accept and discard close the row and open the next untriaged row of the Drafts list.
-  // A reply draft stays under its thread, so the focus stays on it.
-  const advance = (it: ReviewItemDto) => {
-    if (it.kind === "reply") {
-      focusAfter({ id: domId(it), block: "nearest", flash: false });
-    } else if (it.status === "accepted" || it.status === "discarded") {
-      const same = latestList.current.list;
-      const fresh = (x: ReviewItemDto) => x.id !== it.id && x.status === "new";
-      const next = same.slice(same.findIndex((x) => x.id === it.id) + 1).find(fresh) ?? same.find(fresh) ?? it;
-      setOpenDrafts((m) => new Map(m).set(it.id, false).set(next.id, next !== it));
-      focusAfter({ id: domId(next), block: "nearest", flash: false });
-    } else {
-      setOpenDrafts((m) => new Map(m).set(it.id, true));
-      focusAfter({ id: domId(it), block: "nearest", flash: false });
-    }
-  };
-
-  // Resolves to true when the server took the change.
-  async function send(it: ReviewItemDto, input: ItemActionInput, close = false): Promise<boolean> {
-    setBusy(it.id, true);
-    try {
-      const r = await sendItem(it.id, input);
-      if ("conflict" in r) {
-        putItem(r.conflict.item);
-        // A conflict of a revision changes the draft that holds it, so the list loads again.
-        if (it.kind === "reply") void qc.invalidateQueries({ queryKey: replyKey(pr.id) });
-        toast.add({ title: r.conflict.error });
-        return false;
-      }
-      putItem(r.item);
-      if (input.action !== "move") writeEdit(pr.id, it.id, null);
-      void qc.invalidateQueries({ queryKey: planKey(pr.id) });
-      // The focus goes on to the next item, so the live region says what happened to this one.
-      o.announce(triageText(it, r.item, input.action));
-      if (close) setTriage((s) => ({ ...s, open: s.open?.id === it.id ? null : s.open }));
-      if (input.action === "move") focusAfter({ id: domId(r.item), block: "nearest", flash: false });
-      else advance(r.item);
-      return true;
-    } catch (e) {
-      toast.add({ title: "The change was not saved", description: (e as Error).message });
-      return false;
-    } finally {
-      setBusy(it.id, false);
-    }
-  }
-
-  const openMode = (it: ReviewItemDto | null, mode: "edit" | "move") => {
-    const was = triage.open;
-    setTriage((s) => ({ ...s, open: it && { id: it.id, mode } }));
-    if (it) {
-      setOpenDrafts((m) => new Map(m).set(it.id, true));
-      return;
-    }
-    const back = was && latestItems.current.find((x) => x.id === was.id);
-    if (back) focusAfter({ id: domId(back), block: "nearest", flash: false });
-  };
-
-  const triageFns = {
-    act: (it: ReviewItemDto, action: TriageAction) => void send(it, { action, revision: it.revision }),
-    edit: (it: ReviewItemDto | null) => openMode(it, "edit"),
-    // An unchanged text only accepts, so the item does not get the "edited by you" mark.
-    save: (it: ReviewItemDto, text: string) =>
-      void send(
-        it,
-        text === it.body ? { action: "accept", revision: it.revision } : { action: "edit", revision: it.revision, body: text },
-        true,
-      ),
-    move: (it: ReviewItemDto | null) => openMode(it, "move"),
-    moveTo: (it: ReviewItemDto, line: number) => void send(it, { action: "move", revision: it.revision, line }, true),
-    tick: (it: ReviewItemDto, on: boolean) => void send(it, { action: "resolve", revision: it.revision, resolve: on }),
-    plain: (it: ReviewItemDto) => void send(it, { action: "plain", revision: it.revision }),
-    takeRevision: (rev: ReviewItemDto, mine: ReviewItemDto) =>
-      void send(rev, { action: "use-revision", revision: rev.revision, draft: mine.revision }),
-    keepMine: (rev: ReviewItemDto) => void send(rev, { action: "keep-mine", revision: rev.revision }),
-    newest: (it: ReviewItemDto) => void send(it, { action: "reply-to-newest", revision: it.revision }),
-  };
-  const onTriage = useRef(triageFns);
-  onTriage.current = triageFns;
-  const quiet = useRef<number | null>(null);
-  quiet.current = triage.open?.quiet ? triage.open.id : null;
-  // Stable, so the memo drafts render again only when their own data changes.
-  const prId = pr.id;
-  const triageCtx = useMemo<TriageCtx>(
-    () => ({
-      pr: prId,
-      act: (it, a) => onTriage.current.act(it, a),
-      edit: (it) => onTriage.current.edit(it),
-      save: (it, t) => onTriage.current.save(it, t),
-      move: (it) => onTriage.current.move(it),
-      moveTo: (it, l) => onTriage.current.moveTo(it, l),
-      tick: (it, on) => onTriage.current.tick(it, on),
-      quiet: (id) => quiet.current === id,
-    }),
-    [prId],
-  );
   // The questions ask the author. On your own PR, the runner asks you as the author.
   const asker = pr.role === "AUTHOR" ? "the author" : ((pr.authorName ?? pr.authorSlug ?? "the author").split(/\s+/)[0] ?? "the author");
+  const { toggleDraft } = tr;
   const draftCtx = useMemo<DraftCtx>(
     () => ({
       meta,
       asker,
-      onToggle: (id) => setOpenDrafts((m) => new Map(m).set(id, !(m.get(id) ?? id === latestList.current.firstNew))),
+      onToggle: toggleDraft,
       onFrom: (agent) => onLog.current(agent, false, "review"),
       onShowInDiff: (id) => onShow.current(id),
       onFix: author ? (id) => onFix.current(id) : null,
       triage: triageCtx,
     }),
-    [meta, asker, triageCtx, author],
+    [meta, asker, toggleDraft, triageCtx, author],
   );
 
   // ---------- Fix it (plan r3 UI-FIX) ----------
@@ -473,15 +160,15 @@ export function useReview(
     threads: o.threads,
     replies: replies.data,
     findings: ds,
-    profile: { name: state.name, explain: meta.profiles.find((p) => p.id === state.profile)?.explain ?? false },
-    busy,
+    profile: { name: st.state.name, explain: meta.profiles.find((p) => p.id === st.state.profile)?.explain ?? false },
+    busy: st.busy,
     synced: pr.synced,
     announce: o.announce,
     focusAfter,
     onLog: (id) => openLog(null, false, id),
-    slotTaken,
+    slotTaken: st.slotTaken,
     show: o.show,
-    showFindings,
+    showFindings: tr.showFindings,
     onConsult: () => onConsult.current(),
   });
   onFix.current = fix.openFinding;
@@ -501,139 +188,29 @@ export function useReview(
       newest: (it) => onTriage.current.newest(it),
       author,
     }),
-    [meta, o.hints, o.announce, triageCtx, author],
+    [meta, o.hints, o.announce, triageCtx, onTriage, author],
   );
   const byThread = useMemo(() => replyMap(replies.data), [replies.data]);
-  const pending = asked && newest?.id === asked.run && newest.status === "running" ? asked : null;
-  const { cards: fixCards, findingCards: fixFindingCards, fixes, ticks, tick: setTicks } = fix;
-  const { commits } = o;
-  // docs/plans/thread-outcome.md: the outcome of each thread, and the conflict note when its reply and its fix disagree.
-  const outcomes = useMemo(
-    () =>
-      new Map(
-        o.threads.map((t) => [
-          t.id,
-          threadOutcome({
-            thread: { id: t.id, turn: t.turn, newest: t.last?.id ?? null },
-            draft: byThread.get(t.id),
-            fixes,
-            commits,
-            ticks,
-            author,
-          }),
-        ]),
-      ),
-    [o.threads, byThread, fixes, commits, ticks, author],
-  );
-  const need = o.threads.filter((t) => outcomes.get(t.id)?.outcome.needsReply).length;
-  // WP-S3: the post plan names the accepted "Fixed in" drafts whose commit the clone branch no longer holds.
-  const cannotPost = usePostPlan(pr.id).data?.blocked;
-  const gone = useMemo(() => new Set(cannotPost?.flatMap((b) => (b.reason === "commit-gone" ? [b.item] : []))), [cannotPost]);
-
-  // "Keep the reply" and "Keep the reject": the fix card keeps the focus, as the note leaves.
-  const untick = (edits: number[], card: string) => {
-    setTicks(edits, false);
-    o.announce(`Unticked ${plural(edits.length, "edit")}. Apply leaves ${edits.length === 1 ? "it" : "them"} out.`);
-    focusAfter({ id: card, block: "nearest", flash: false });
-  };
-  // "Keep the fix" of a "yes" conflict: discard the reply, then restore the nofix draft of the note when the run holds one.
-  const keepFix = async (c: Extract<Conflict, { kind: "yes" }>, thread: number) => {
-    const d = await qc.fetchQuery({ queryKey: ["run", c.run], queryFn: () => getRun(c.run) }).catch(() => null);
-    const back = d?.items.find((x) => {
-      const p = replyOf(x);
-      return x.kind === "reply" && x.status === "discarded" && p.thread === thread && p.origin === "nofix" && !p.declined;
-    });
-    if (!(await send(c.reply, { action: "discard", revision: c.reply.revision })) || !back) return;
-    if (await send(back, { action: "restore", revision: back.revision })) void qc.invalidateQueries({ queryKey: replyKey(pr.id) });
-  };
-  const resolveConflict = (c: Conflict, thread: number, keep: boolean) => {
-    if (c.kind === "no") {
-      if (!keep) return void send(c.reply, { action: "discard", revision: c.reply.revision });
-      untick(c.edits, `fx-${thread}`);
-      return;
-    }
-    if (!keep) return void keepFix(c, thread);
-    if (c.text) void send(c.reply, { action: "accept", revision: c.reply.revision });
-    else fix.again({ kind: "thread", id: thread }, true);
-  };
-  const onConflict = useRef({ resolveConflict, untick });
-  onConflict.current = { resolveConflict, untick };
-
-  // Per thread, so a memo thread renders again only when its own card changes. The outcome line comes first, then the conflict note,
-  // the reply draft card, and the fix card.
-  const { cards, drafted } = useMemo(() => {
-    const out = new Map<number, ReactNode>();
-    const drafted = new Set<number>();
-    for (const t of o.threads) {
-      const card = replyCard(byThread.get(t.id), t.last?.id ?? null, !!pending?.threads.includes(t.id));
-      if (card?.kind === "draft" || card?.kind === "pending") drafted.add(t.id);
-      const fixCard = fixCards.get(t.id);
-      if (!card && !fixCard) continue;
-      const it = !card || card.kind === "pending" ? null : card.it;
-      const p = it && replyOf(it);
-      const to = p && t.msgs.find((m) => m.id === p.replyTo);
-      const state = outcomes.get(t.id);
-      const c = state?.conflict;
-      out.set(
-        t.id,
-        <>
-          {state && <OutcomeLine o={state.outcome} />}
-          {c && (
-            <ConflictNote
-              c={conflictText(c)}
-              busy={triage.busy.has(c.reply.id)}
-              onKeep={() => onConflict.current.resolveConflict(c, t.id, true)}
-              onFix={() => onConflict.current.resolveConflict(c, t.id, false)}
-            />
-          )}
-          {card && (
-            <ReplyDraftCard
-              card={card}
-              thread={t.id}
-              mine={t.root.who.me}
-              to={to ? (to.who.me ? "your message" : to.who.name) : null}
-              mode={it ? modeOf(triage, it.id) : null}
-              busy={!!it && (triage.busy.has(it.id) || (!!it.revised && triage.busy.has(it.revised.id)))}
-              waiting={p ? fixWaiting(p, commits, fixes) : null}
-              gone={!!it && gone.has(it.id)}
-              resolved={t.turn !== "resolved" ? null : p?.threadOpen ? "since" : "now"}
-              ctx={replyCtx}
-            />
-          )}
-          {fixCard}
-        </>,
-      );
-    }
-    return { cards: out, drafted };
-  }, [o.threads, byThread, pending, triage, replyCtx, fixCards, fixes, commits, outcomes, gone]);
-
-  // session-consult.md part C: a finding that your session rejected, with edits still ticked, gets the conflict note on its fix card.
-  const findingCards = useMemo(() => {
-    const out = new Map(fixFindingCards);
-    for (const it of ds) {
-      const edits = findingConflict(it, fixes, ticks);
-      const card = out.get(it.id);
-      if (!edits || !card) continue;
-      out.set(
-        it.id,
-        <>
-          <ConflictNote
-            c={findingConflictText(edits)}
-            busy={triage.busy.has(it.id)}
-            onKeep={() => onConflict.current.untick(edits, `fx-f${it.id}`)}
-            onFix={() => onTriage.current.act(it, "restore")}
-          />
-          {card}
-        </>,
-      );
-    }
-    return out;
-  }, [fixFindingCards, ds, fixes, ticks, triage.busy]);
+  const { cards, drafted, findingCards, need } = useThreadCards(pr, {
+    threads: o.threads,
+    commits: o.commits,
+    byThread,
+    pending: st.pending,
+    findings: ds,
+    triage,
+    replyCtx,
+    fix,
+    author,
+    send: tr.send,
+    onTriage,
+    announce: o.announce,
+    focusAfter,
+  });
 
   const api: ReviewApi = {
-    rerun: () => openBrief(),
-    rereview,
-    brief: () => openBrief(),
+    rerun: () => st.openBrief(),
+    rereview: st.rereview,
+    brief: () => st.openBrief(),
     drafts() {
       // prototype/v3 goDrafts: the first row of the Drafts section that is not discarded.
       // The reply drafts come next, in screen order. A press in the Drafts section goes on to them.
@@ -652,95 +229,62 @@ export function useReview(
     },
     log: () => openLog(null),
     openRunLog: (id, raw = false) => openLog(null, raw, id),
-    triage(key) {
-      const at = Number(document.activeElement?.closest("[data-item]")?.getAttribute("data-item"));
-      const it = all.find((x) => x.id === at && x.status !== "posted");
-      if (!it) {
-        toast.add({ title: `Move to a draft or a question first. Key 2 goes to the drafts from ${meta.runner.short}.` });
-        return;
-      }
-      if (triage.busy.has(it.id)) return;
-      // items.ts refuses every action but discard on a finding without an anchor. Such a finding is always discarded.
-      if (it.kind === "finding" && !it.anchor) {
-        toast.add({ title: "The code of this finding is gone. It cannot come back." });
-        return;
-      }
-      // The card of an out-of-date reply draft has no Accept and no Edit (Acts stale). items.ts refuses them too.
-      const t = it.kind === "reply" ? o.threads.find((x) => x.id === replyOf(it).thread) : undefined;
-      const c = t && replyCard(it, t.last?.id ?? null, false);
-      if (c?.kind === "draft" && c.stale && (key === "edit" || (key === "accept" && it.status !== "accepted"))) {
-        toast.add({ title: "New messages arrived after this draft. Draft it again, or reply to the newest as is." });
-        return;
-      }
-      if (key === "accept") triageFns.act(it, it.status === "accepted" ? "restore" : "accept");
-      else if (key === "discard") triageFns.act(it, it.status === "discarded" ? "restore" : "discard");
-      else if (it.status !== "discarded") triageFns.edit(it);
-    },
-    draftReply: (thread) => draftReplies([thread]),
+    triage: tr.triageKey,
+    draftReply: (thread) => st.draftReplies([thread]),
     fix: (thread, key) => fix.open(thread, key),
     fixFinding: (id, key) => fix.openFinding(id, key),
     openDraft,
     layer(target) {
       const inSheet = target instanceof Node && !!document.getElementById("run-log")?.contains(target);
-      if (composer && !inSheet) return "brief";
+      if (st.composer && !inSheet) return "brief";
       return log ? "log" : null;
     },
-    close: (layer) => (layer === "brief" ? closeBrief() : closeLog()),
+    close: (layer) => (layer === "brief" ? st.closeBrief() : closeLog()),
   };
 
   const head = latest?.sourceHead ?? null;
   const forDiff = useMemo(() => ({ drafts: ds, head, replies: byThread }), [ds, head, byThread]);
-  const details = [run.data, reviewRun.data, replyRun.data, fixRun.data, askRun.data, sessionRun.data, pinned.data];
-  const tracker = trackerOf(meta);
-  // The task text that a run read, as the run setup names it.
-  const taskText = (r: RunDto) => {
-    const lines = tracker ? contextLines(fetched ?? [], r, tracker.name, o.now) : [];
-    if (lines.length) return `Task text: ${lines.join("; ")}`;
-    return tracker?.configured ? "No task text fetched." : "No context source is set up.";
-  };
-  const qJump = questionJump(items);
-  const rows = kinds.map((r) => {
-    const d = details.find((x) => x?.run.id === r.id);
-    const shown = d ? { ...d.run, stale: r.stale } : r;
-    return {
-      run: shown,
-      state: runLine(shown, d, meta.profiles, fix.fixes?.find((f) => f.run.id === r.id)?.edits.length),
-      stale: staleText(shown, o.commits),
-      // The ledger follows the drafts of latestReview. The record shows it only for a done run.
-      ledger:
-        r.kind === "review" ? <Ledger jumps={severityJumps(ds)} questions={qJump} onDraft={openDraft} onQuestion={openDraft} /> : null,
-      context: taskText(shown),
-    };
+  const { rows, details, qJump } = useRunRecord(pr.id, {
+    meta,
+    kinds,
+    review: run.data,
+    pinned: runLog.pinned.data,
+    findings: ds,
+    items,
+    fixes: fix.fixes,
+    commits: o.commits,
+    now: o.now,
+    openDraft,
   });
-  const logRun = typeof log?.of === "number" ? log.of : (log?.of === "review" ? latest : newest)?.id;
+  const { rr } = st;
   return {
     action: (
       <ReviewButton
-        state={state}
+        state={st.state}
         meta={meta}
         extra={
           <>
-            {"since" in rr && <RereviewButton since={rr.since} busy={startRereview.isPending} onClick={rereview} />}
-            <DraftRepliesButton turns={o.threads.map((t) => t.turn)} need={need} onRun={() => draftReplies()} />
+            {"since" in rr && <RereviewButton since={rr.since} busy={st.rereviewPending} onClick={st.rereview} />}
+            <DraftRepliesButton turns={o.threads.map((t) => t.turn)} need={need} onRun={() => st.draftReplies()} />
             {fix.button}
           </>
         }
-        onOpen={() => openBrief()}
+        onOpen={() => st.openBrief()}
       />
     ),
     // Plan r3 Feature C: every run kind reads the fetched task text. While the brief is closed, its task row shows here.
-    brief: composer ? (
-      brief.data ? (
+    brief: st.composer ? (
+      st.brief.data ? (
         <BriefComposer
           pr={pr.id}
-          brief={brief.data}
+          brief={st.brief.data}
           tasks={pr.tasks}
           meta={meta}
-          mode={mode}
-          blocked={blocked}
-          starting={start.isPending || startRereview.isPending}
-          onStart={() => (mode.kind === "rereview" ? rereviewNow() : runNow())}
-          onClose={closeBrief}
+          mode={st.mode}
+          blocked={st.blocked}
+          starting={st.starting}
+          onStart={st.startNow}
+          onClose={st.closeBrief}
           onSettings={o.onSettings}
           onTaskIds={o.onTaskIds}
           onEditProfile={o.onProfile}
@@ -774,17 +318,17 @@ export function useReview(
     ),
     reviewed: latest !== null,
     draftCount: ds.filter((d) => d.status !== "discarded").length + (qJump?.n ?? 0),
-    drafts: <Drafts items={list} isOpen={isDraftOpen} triage={triage} cards={findingCards} ctx={draftCtx} />,
+    drafts: <Drafts items={list} isOpen={tr.isDraftOpen} triage={triage} cards={findingCards} ctx={draftCtx} />,
     cards,
     drafted,
     sheet: log && (
       <RunLog
-        detail={details.find((d) => d && d.run.id === logRun)}
+        detail={details.find((d) => d && d.run.id === runLog.logRun)}
         meta={meta}
         prKey={prKey(pr)}
         now={o.now}
         target={log}
-        onRaw={(show) => setLog((l) => l && { ...l, agent: null, raw: show, n: show ? l.n + 1 : l.n })}
+        onRaw={(show) => runLog.setLog((l) => l && { ...l, agent: null, raw: show, n: show ? l.n + 1 : l.n })}
         onClose={closeLog}
       />
     ),

@@ -122,9 +122,9 @@ ${rule}
     for (const sentence of revise.split(/(?<=[.!?])\s+/)) expect(sentence.split(/\s+/).length).toBeLessThanOrEqual(20);
   });
 
-  test("the project instructions come after Tools and Skills and right before the note, in every prompt; no text gives no section", () => {
+  test("the project instructions come after Tools and right before the note, in every prompt; no text gives no section", () => {
     const text = `# Project instructions\n\n${INSTRUCTIONS_TRUST}\n\n## From your clone: CLAUDE.md\n\nPROJECT-CANARY\n\n## From Kierto settings\n\nEXTRA-CANARY\n`;
-    const withText = { ...input, instructions: text, skills: ["s"] };
+    const withText = { ...input, instructions: text };
     for (const prompt of [
       buildPrompt(withText),
       buildAskPrompt({ ...withText, question: "Why?" }),
@@ -133,7 +133,7 @@ ${rule}
       buildRereviewPrompt({ ...withText, since: "c".repeat(40), rangeBase: "d".repeat(40), earlier: [] }),
     ]) {
       const heads = [...prompt.matchAll(/^# (.+)$/gm)].map((m) => m[1]);
-      expect(heads.slice(-4)).toEqual(["Skills", "Project instructions", "Your instructions", "Metadata"]);
+      expect(heads.slice(-4)).toEqual(["Tools", "Project instructions", "Your instructions", "Metadata"]);
       expect(prompt).toContain(`\n${text.trimEnd()}\n\n# Your instructions\n`);
       expect(prompt.indexOf("## From your clone: CLAUDE.md")).toBeLessThan(prompt.indexOf("## From Kierto settings"));
     }

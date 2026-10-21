@@ -3,7 +3,7 @@
 
 // The stdin prompt of a run (plan v3 WP10, replies.md WP17, r2 S-ASK, r3 S-FIX). Only the project instructions and the note or the ask question are instructions. It never quotes PR, comment, or tracker text.
 import type { PrTask } from "../../shared/dto";
-import { LARGE_FILE_RULE, type Profile, skillLines } from "./catalog";
+import { LARGE_FILE_RULE, type Profile } from "./catalog";
 
 export type PromptInput = {
   mergeBase: string;
@@ -22,10 +22,6 @@ export type PromptInput = {
   fixState?: boolean;
   // ./context/questions.md exists. Review and re-review runs only, never Explain (docs/plans/thread-outcome.md section 9).
   questions?: boolean;
-  // The skill folders in ./skills.
-  skills?: string[];
-  // The folders of the always-use skills. Each one is also in skills.
-  alwaysSkills?: string[];
   // The combined project instructions (src/server/review/instructions.ts), with the "# Project instructions" heading. Empty: none.
   instructions?: string;
 };
@@ -41,8 +37,8 @@ const starter = (t: ReplyThread) =>
 // posted: the IDs in earlier of findings that the user posted. Each has an open thread.
 export type RereviewInput = PromptInput & { since: string; rangeBase: string; earlier: number[]; posted?: number[] };
 
-// The Tools, Skills, Project instructions, Your instructions, and Metadata sections.
-// The agent prompt owns the trust, docs, and MCP rules (catalog.ts). Do not repeat them here.
+// The Tools, Project instructions, Your instructions, and Metadata sections.
+// The agent prompt owns the trust, docs, MCP, and skill rules (catalog.ts). Do not repeat them here.
 // The project instructions come right before the note: they are standing rules, and the note of this run comes last, so it is the newest word.
 // rereview: BASE is the range base, and findings.md exists when earlier has IDs.
 // question: the only content of Your instructions. It must stay the last text of that section (plan r2 section 7).
@@ -74,7 +70,6 @@ function common(i: PromptInput, rereview?: { earlier: number[] }, question?: str
     "- Call git_diff with stat_only to list the changed files of BASE..HEAD. Call git_diff with a path to see the changes of one file.",
     ...(rereview ? [`- The merge base is ${i.mergeBase}. Call git_diff from it for the line numbers of removed lines.`] : []),
     "",
-    ...(i.skills?.length ? ["# Skills", "", ...skillLines(i.skills, i.alwaysSkills), ""] : []),
     ...(i.instructions ? [i.instructions.trimEnd(), ""] : []),
     "# Your instructions",
     "",

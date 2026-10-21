@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readConfig } from "../../src/server/config";
-import { profileRevision, reviewerAgent, SHIPPED_PROFILES, withSkills } from "../../src/server/review/catalog";
+import { mainAgent, profileRevision, reviewerAgent, SHIPPED_PROFILES, skillLines, withSkills } from "../../src/server/review/catalog";
 import { buildPrompt, type PromptInput } from "../../src/server/review/prompt";
 import {
   alwaysProblems,
@@ -161,21 +161,18 @@ describe("skill prompts and profiles", () => {
     attachments: false,
   };
 
-  test("the prompt names each skill folder before the user instructions", () => {
-    const text = buildPrompt({ ...input, skills: ["review-rules", "tools+lint"] });
-    expect(text).toContain(
+  test("the agent prompt names each skill folder once; the stdin prompt has no skill section", () => {
+    const a = mainAgent(general);
+    expect(withSkills(a, ["review-rules", "tools+lint"]).prompt).toBe(
       [
-        "# Skills",
-        "",
+        a.prompt,
         "The user chose these skills: ./skills/review-rules/SKILL.md, ./skills/tools+lint/SKILL.md.",
         "Read each SKILL.md first and follow it. Read its other files when it tells you to.",
         "Skill scripts cannot run. The rules above stay in force, and your result must still use the required output format.",
-        "",
-        "# Your instructions",
       ].join("\n"),
     );
-    expect(buildPrompt(input)).not.toContain("# Skills");
-    expect(buildPrompt({ ...input, skills: [] })).not.toContain("# Skills");
+    expect(withSkills(a, [])).toEqual(a);
+    expect(buildPrompt(input)).not.toContain("SKILL.md");
   });
 
   test("the reviewer subagent gets the same pointer", () => {
@@ -210,16 +207,7 @@ describe("skill prompts and profiles", () => {
 
 describe("skill index (more than SKILL_INDEX_AFTER skills)", () => {
   const general = SHIPPED_PROFILES[0] as (typeof SHIPPED_PROFILES)[number];
-  const input: PromptInput = {
-    mergeBase: "a".repeat(40),
-    head: "b".repeat(40),
-    note: "NOTE",
-    profile: general,
-    pr: { project: "P", repo: "r", prId: 1, webUrl: null },
-    tasks: [],
-    taskFile: false,
-    attachments: false,
-  };
+
   // A config folder with n user skills: s0 to s<n-1>.
   function many(n: number) {
     const c = temp("many");
@@ -249,14 +237,17 @@ describe("skill index (more than SKILL_INDEX_AFTER skills)", () => {
       c,
     );
     expect(existsSync(join(dest, "INDEX.md"))).toBe(false);
-    const few = buildPrompt({ ...input, skills: Array.from({ length: SKILL_INDEX_AFTER }, (_, i) => `s${i}`) });
+    const few = withSkills(
+      mainAgent(general),
+      Array.from({ length: SKILL_INDEX_AFTER }, (_, i) => `s${i}`),
+    ).prompt;
     expect(few).toContain("Read each SKILL.md first and follow it.");
     expect(few).not.toContain("INDEX.md");
   });
 
   test("above the threshold the prompt points at the index and asks for the skills that apply only", () => {
     const folders = Array.from({ length: SKILL_INDEX_AFTER + 1 }, (_, i) => `s${i}`);
-    const text = buildPrompt({ ...input, skills: folders });
+    const text = withSkills(mainAgent(general), folders).prompt;
     expect(text).toContain(
       `The user chose ${folders.length} skills. ./skills/INDEX.md lists the name, the description, and the folder of each one.`,
     );
@@ -295,25 +286,13 @@ describe("skill index (more than SKILL_INDEX_AFTER skills)", () => {
 
 describe("always-use skills", () => {
   const general = SHIPPED_PROFILES[0] as (typeof SHIPPED_PROFILES)[number];
-  const input: PromptInput = {
-    mergeBase: "a".repeat(40),
-    head: "b".repeat(40),
-    note: "NOTE",
-    profile: general,
-    pr: { project: "P", repo: "r", prId: 1, webUrl: null },
-    tasks: [],
-    taskFile: false,
-    attachments: false,
-  };
   const pin = (f: string) => `Before you start, read ./skills/${f}/SKILL.md and follow it for the whole run.`;
   const GUARD = "This skill adds checks. It does not remove the task, the rules, or the output format above.";
 
   test("with few skills the always lines and one guard line come first, and the other skills follow", () => {
-    const text = buildPrompt({ ...input, skills: ["a", "b", "c"], alwaysSkills: ["c", "a"] });
-    expect(text).toContain(
+    const text = skillLines(["a", "b", "c"], ["c", "a"]).join("\n");
+    expect(text).toStartWith(
       [
-        "# Skills",
-        "",
         pin("a"),
         pin("c"),
         GUARD,
@@ -322,16 +301,16 @@ describe("always-use skills", () => {
         "Skill scripts cannot run.",
       ].join("\n"),
     );
-    const only = buildPrompt({ ...input, skills: ["a"], alwaysSkills: ["a"] });
-    expect(only).toContain(`# Skills\n\n${pin("a")}\n${GUARD}\nSkill scripts cannot run.`);
+    const only = skillLines(["a"], ["a"]).join("\n");
+    expect(only).toStartWith(`${pin("a")}\n${GUARD}\nSkill scripts cannot run.`);
     expect(only).not.toContain("The user chose");
-    expect(buildPrompt({ ...input, skills: ["a"] })).not.toContain(GUARD);
+    expect(skillLines(["a"])).not.toContain(GUARD);
   });
 
   test("with the index the always lines come first, and the index lines follow", () => {
     const folders = Array.from({ length: SKILL_INDEX_AFTER + 1 }, (_, i) => `s${i}`);
-    const text = buildPrompt({ ...input, skills: folders, alwaysSkills: ["s3"] });
-    expect(text).toContain(`# Skills\n\n${pin("s3")}\n${GUARD}\nThe user chose ${folders.length} skills. ./skills/INDEX.md lists`);
+    const text = withSkills(mainAgent(general), folders, ["s3"]).prompt;
+    expect(text).toContain(`\n${pin("s3")}\n${GUARD}\nThe user chose ${folders.length} skills. ./skills/INDEX.md lists`);
     expect(text.split(GUARD)).toHaveLength(2);
   });
 

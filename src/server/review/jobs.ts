@@ -493,8 +493,6 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       history: history !== null,
       fixState: fixState !== null,
       questions: j.asked.length > 0,
-      skills: folders,
-      alwaysSkills: always,
       instructions: instructions.text,
     };
     const reply = j.kind === "reply" ? j.threads : null;

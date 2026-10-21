@@ -916,10 +916,9 @@ describe("editable profiles (M4)", () => {
       const c = h.runCall() as Call;
       expect(readFileSync(join(c.cwd, "skills", "my-skill", "SKILL.md"), "utf8")).toContain("SKILL-CANARY");
       expect(readFileSync(join(c.cwd, "skills", "my-skill", "ref", "a.md"), "utf8")).toBe("A\n");
-      expect(c.stdin).toContain("# Skills\n\nThe user chose these skills: ./skills/my-skill/SKILL.md.");
-      expect(c.stdin.indexOf("# Skills")).toBeLessThan(c.stdin.indexOf("# Your instructions"));
+      expect(c.stdin).not.toContain("SKILL.md");
       const agents = JSON.parse(readFileSync(flag(c.argv, "--agents") as string, "utf8"));
-      for (const name of ["rl-main", "rl-reviewer"]) expect(agents[name].prompt).toContain("./skills/my-skill/SKILL.md");
+      for (const name of ["rl-main", "rl-reviewer"]) expect(agents[name].prompt.split("./skills/my-skill/SKILL.md")).toHaveLength(2);
       await h.call(`/api/runs/${a.body.id}/cancel`, { method: "POST" });
       await h.finish(a.body.id);
 
@@ -971,9 +970,9 @@ describe("editable profiles (M4)", () => {
         "Before you start, read ./skills/skip-me/SKILL.md and follow it for the whole run.",
         "This skill adds checks. It does not remove the task, the rules, or the output format above.",
       ].join("\n");
-      expect(c.stdin).toContain(`# Skills\n\n${pinned}\n`);
+      expect(c.stdin).not.toContain("SKILL.md");
       const agents = JSON.parse(readFileSync(flag(c.argv, "--agents") as string, "utf8"));
-      for (const name of ["rl-main", "rl-reviewer"]) expect(agents[name].prompt).toContain(pinned);
+      for (const name of ["rl-main", "rl-reviewer"]) expect(agents[name].prompt.split(pinned)).toHaveLength(2);
       await h.call(`/api/runs/${a.body.id}/cancel`, { method: "POST" });
       await h.finish(a.body.id);
 
