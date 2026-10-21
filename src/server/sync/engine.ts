@@ -7,6 +7,7 @@ import { isMe } from "../../shared/me";
 import type { Change, Commit, ForgeErrorInfo, IncompleteReason, PrRef, PullRequest } from "../../shared/types";
 import { ForgeError } from "../bitbucket/client";
 import type { ForgeProvider } from "../bitbucket/provider";
+import { staleKeys } from "../inbox/stale";
 import type { Live } from "../live";
 import { log } from "../log";
 import type { Settings, TaskPlan } from "../settings";
@@ -47,7 +48,7 @@ const SQL = {
     ON CONFLICT (pr) DO UPDATE SET source_url = excluded.source_url, target_url = excluded.target_url, author_url = excluded.author_url`,
   offDashboard:
     "UPDATE pull_request SET on_dashboard = 0 WHERE on_dashboard = 1 AND id NOT IN (SELECT value FROM json_each($ids)) RETURNING id",
-  prState: "SELECT my_role, initialized_at, source_head, target_head, meta_head FROM pull_request WHERE id = $id",
+  prState: "SELECT my_role, initialized_at, source_head, target_head, meta_head, state FROM pull_request WHERE id = $id",
   watched: "SELECT id FROM pull_request WHERE id = $id AND followed = 1 AND archived_at IS NULL",
   stored:
     "SELECT comment_id AS id, root_id AS rootId, author_slug AS author, author_login AS login, tombstoned_at IS NULL AS live FROM comment WHERE pr = $pr",
@@ -63,8 +64,12 @@ const SQL = {
     WHERE excluded.version > comment.version`,
   // Bitbucket can change orphaned and threadResolved without a new version. The resolver follows threadResolved. The stored row with the highest version wins; at an equal version, the latest complete fetch wins.
   // A task resolve raises the version and adds no activity (Gate v3 U14). The equal-version write also fills rows stored before 006_forge.sql.
+  // orphaned_at (thread-outcome.md section 11): the sync time when a stored anchor that was not orphaned turns orphaned. An anchor that is
+  // orphaned at first sight keeps NULL. SET expressions read the stored row.
   commentMeta: `UPDATE comment SET anchor_json = $anchor_json, thread_resolved = $thread_resolved, severity = $severity, task_state = $task_state,
-      excerpt_json = $excerpt_json, thread_resolver_json = $thread_resolver_json, thread_resolved_at = $thread_resolved_at
+      excerpt_json = $excerpt_json, thread_resolver_json = $thread_resolver_json, thread_resolved_at = $thread_resolved_at,
+      orphaned_at = CASE WHEN json_extract($anchor_json, '$.orphaned') IS NOT 1 OR anchor_json IS NULL THEN NULL
+        WHEN json_extract(anchor_json, '$.orphaned') IS 1 THEN orphaned_at ELSE $now END
     WHERE pr = $pr AND comment_id = $comment_id AND version <= $version AND (anchor_json IS NOT $anchor_json OR thread_resolved IS NOT $thread_resolved
       OR severity IS NOT $severity OR task_state IS NOT $task_state OR excerpt_json IS NOT $excerpt_json
       OR thread_resolver_json IS NOT $thread_resolver_json OR thread_resolved_at IS NOT $thread_resolved_at)`,
@@ -289,6 +294,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
         source_head: string | null;
         target_head: string | null;
         meta_head: string | null;
+        state: string | null;
       };
       const { pr, stored } = tx(() => ({
         pr: db.query(SQL.prState).get({ id: row.id }) as State,
@@ -329,6 +335,8 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
       const events = tx(() => {
         if (!db.query(SQL.watched).get({ id: row.id })) return null;
         const t = now();
+        // thread-outcome.md section 11: no draft_stale event on the first sync or for a merged or declined PR.
+        const before = pr.initialized_at !== null && pr.state !== "MERGED" && pr.state !== "DECLINED" ? staleKeys(db, row.id, me) : null;
         for (const c of plan.rows) {
           const anchor = c.anchor === undefined ? null : JSON.stringify(c.anchor);
           const resolved = c.threadResolved ? 1 : 0;
@@ -363,6 +371,7 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
             anchor_json: anchor,
             thread_resolved: resolved,
             ...fields,
+            now: t,
           });
         }
         if (meta) {
@@ -382,10 +391,16 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
           run(SQL.metaHead, { pr: row.id, heads: meta.heads });
         }
         for (const id of deleted) run(SQL.tombstone, { pr: row.id, id, now: t });
-        const added = addEvents(
-          row.id,
-          plan.newCommentIds.map((id) => ({ kind: "comment_new", ref: String(id) })),
-        );
+        // Only a draft that turns stale in this sync notifies.
+        const stale = before
+          ? [...staleKeys(db, row.id, me)].flatMap(([k, ref]): NewEvent[] =>
+              ref !== null && !before.has(k) ? [{ kind: "draft_stale", ref }] : [],
+            )
+          : [];
+        const added = addEvents(row.id, [
+          ...plan.newCommentIds.map((id): NewEvent => ({ kind: "comment_new", ref: String(id) })),
+          ...stale,
+        ]);
         run(SQL.initialized, { id: row.id, now: t });
         checkpoint(scope, true, reason, error);
         return added;

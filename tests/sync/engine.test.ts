@@ -114,6 +114,7 @@ type CommentRow = {
   thread_resolved: number;
   thread_resolver_json: string | null;
   thread_resolved_at: number | null;
+  orphaned_at: number | null;
 };
 type Checkpoint = { last_complete_at: number | null; incomplete_reason: string | null; last_error: string | null };
 
@@ -354,6 +355,40 @@ describe("metadata outside the version guard", () => {
     expect(dto(1000003)).toMatchObject({ threadResolved: false });
     expect(dto(1000003)?.resolver).toBeUndefined();
     expect(dto(1000003)?.resolvedAt).toBeUndefined();
+  });
+
+  test("orphaned_at: a flip to orphaned sets the sync time, a later sync keeps it, and a flip back clears it", async () => {
+    const base = byUser(inline(), 1000002, OTHER);
+    world.own = base;
+    const h = await setup();
+    const dto = () => prDetail(h.db(), FAKE_USER, h.pr(2).id as number)?.comments.find((c) => c.id === 1000002);
+    await h.cycle();
+    expect(h.comment(1000002).orphaned_at).toBeNull();
+    const next = clone(base);
+    (findComment(next, 1000002).anchor as { orphaned: boolean }).orphaned = true;
+    world.own = next;
+    await h.cycle();
+    const at = h.clock.t;
+    expect(h.comment(1000002).orphaned_at).toBe(at);
+    await h.cycle();
+    expect(h.comment(1000002).orphaned_at).toBe(at);
+    expect(dto()?.orphanedAt).toBe(at);
+    world.own = base;
+    await h.cycle();
+    expect(h.comment(1000002).orphaned_at).toBeNull();
+    expect(dto()?.orphanedAt).toBeUndefined();
+    expect(h.events()).toEqual([]);
+  });
+
+  test("orphaned_at: an anchor that is orphaned at first sight keeps NULL", async () => {
+    const base = byUser(inline(), 1000002, OTHER);
+    (findComment(base, 1000002).anchor as { orphaned: boolean }).orphaned = true;
+    world.own = base;
+    const h = await setup();
+    await h.cycle();
+    await h.cycle();
+    expect(anchor(h.comment(1000002))).toMatchObject({ orphaned: true });
+    expect(h.comment(1000002).orphaned_at).toBeNull();
   });
 
   test("an older version never rolls metadata back", async () => {
@@ -664,6 +699,143 @@ describe("events", () => {
     await h.cycle();
     expect(h.events()).toEqual([{ kind: "comment_new", ref: "1000020", digest: 0 }]);
     expect(h.unread()).toBe(2);
+  });
+});
+
+describe("draft_stale events (thread-outcome.md section 11)", () => {
+  type H = Awaited<ReturnType<typeof setup>>;
+  type Event = { kind: string; ref: string; digest: number };
+  // Thread 1000003: my root, then the reply 1000001 by the other user.
+  const base = () => byUser(inline(), 1000001, OTHER);
+  let runs = 0;
+  // A reply draft in thread 1000003 of PR 2. Accepted, so the user touched it.
+  const draft = (h: H, o: { replyTo: number; status?: string; edited?: number }) => {
+    const db = h.db();
+    const { id: run } = db
+      .query(`INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, started_at)
+        VALUES ($pr, 'reply', 'general', '', $key, 'a', 'b', 'completed', 1) RETURNING id`)
+      .get({ pr: h.pr(2).id as number, key: `stale-${runs++}` }) as { id: number };
+    const payload = JSON.stringify({ thread: 1000003, replyTo: o.replyTo, threadOpen: true });
+    return (
+      db
+        .query(`INSERT INTO review_item (run, kind, payload_json, body, status, edited, thread)
+          VALUES ($run, 'reply', $payload, 'Thanks.', $status, $edited, 1000003) RETURNING id`)
+        .get({ run, payload, status: o.status ?? "accepted", edited: o.edited ?? 0 }) as { id: number }
+    ).id;
+  };
+  const stale = (h: H) => (h.events() as Event[]).filter((e) => e.kind === "draft_stale").map((e) => e.ref);
+  const badge = (h: H) => listPrs(h.db(), FAKE_USER).find((r) => r.prId === 2)?.staleDrafts;
+  async function start() {
+    world.own = base();
+    const h = await setup();
+    await h.cycle();
+    return h;
+  }
+
+  test("an accepted draft notifies once when a new message makes it out of date", async () => {
+    const h = await start();
+    const item = draft(h, { replyTo: 1000001 });
+    await h.cycle();
+    expect(h.events()).toEqual([]);
+    expect(badge(h)).toBe(0);
+    world.own = addReply(base(), 1000001, 1000010, OTHER);
+    await h.cycle();
+    await h.cycle();
+    expect(h.events()).toEqual([
+      { kind: "comment_new", ref: "1000010", digest: 0 },
+      { kind: "draft_stale", ref: `${item}:out-of-date:1000010`, digest: 0 },
+    ]);
+    expect(badge(h)).toBe(1);
+  });
+
+  test("an edited draft notifies; a draft that the user did not touch counts in the badge only", async () => {
+    const edited = await start();
+    const item = draft(edited, { replyTo: 1000001, status: "new", edited: 1 });
+    world.own = addReply(base(), 1000001, 1000010, OTHER);
+    await edited.cycle();
+    expect(stale(edited)).toEqual([`${item}:out-of-date:1000010`]);
+
+    const untouched = await start();
+    draft(untouched, { replyTo: 1000001, status: "new" });
+    world.own = addReply(base(), 1000001, 1000010, OTHER);
+    await untouched.cycle();
+    expect(stale(untouched)).toEqual([]);
+    expect(badge(untouched)).toBe(1);
+  });
+
+  test("my own newest message and my own resolve give no event; a resolve by the other user notifies with its time", async () => {
+    const reply = await start();
+    draft(reply, { replyTo: 1000001 });
+    world.own = addReply(base(), 1000001, 1000010, ME);
+    await reply.cycle();
+    expect(stale(reply)).toEqual([]);
+    expect(badge(reply)).toBe(1);
+
+    const mine = await start();
+    draft(mine, { replyTo: 1000001 });
+    world.own = resolveThread(base(), 1000003, ME, 1_500_000);
+    await mine.cycle();
+    expect(stale(mine)).toEqual([]);
+
+    const other = await start();
+    const item = draft(other, { replyTo: 1000001 });
+    world.own = resolveThread(base(), 1000003, OTHER, 1_500_000);
+    await other.cycle();
+    expect(stale(other)).toEqual([`${item}:resolved-since:1500000`]);
+  });
+
+  test("a merged PR keeps the badge and gets no event; the first sync after a follow gives no event", async () => {
+    const merged = await start();
+    draft(merged, { replyTo: 1000001 });
+    world.author = [];
+    const pr = ownPr();
+    pr.state = "MERGED";
+    fake.routes[key("GET", PR_PATH)] = { status: 200, body: pr };
+    world.own = addReply(base(), 1000001, 1000010, OTHER);
+    await merged.cycle();
+    expect(merged.pr(2)).toMatchObject({ state: "MERGED" });
+    expect(stale(merged)).toEqual([]);
+    expect(badge(merged)).toBe(1);
+
+    world.author = [ownPr()];
+    const first = await start();
+    draft(first, { replyTo: 1000001 });
+    // SQL.forget clears initialized_at of an unfollowed PR, so its next sync is a first sync.
+    first.db().run("UPDATE pull_request SET initialized_at = NULL");
+    world.own = addReply(base(), 1000001, 1000010, OTHER);
+    await first.cycle();
+    expect(first.events()).toEqual([]);
+    expect(badge(first)).toBe(1);
+  });
+
+  test("a draft that is already stale gives no event; a draft moved to the newest message notifies again with a new ref", async () => {
+    const h = await start();
+    const item = draft(h, { replyTo: 1000001 });
+    const one = addReply(base(), 1000001, 1000010, OTHER);
+    world.own = one;
+    await h.cycle();
+    const two = addReply(one, 1000010, 1000011, OTHER);
+    world.own = two;
+    await h.cycle();
+    expect(stale(h)).toEqual([`${item}:out-of-date:1000010`]);
+    h.db().run(`UPDATE review_item SET payload_json = json_set(payload_json, '$.replyTo', 1000011) WHERE id = ${item}`);
+    await h.cycle();
+    expect(badge(h)).toBe(0);
+    world.own = addReply(two, 1000011, 1000012, OTHER);
+    await h.cycle();
+    expect(stale(h)).toEqual([`${item}:out-of-date:1000010`, `${item}:out-of-date:1000012`]);
+  });
+
+  test("a draft created or accepted while it is stale never notifies", async () => {
+    const h = await start();
+    const one = addReply(base(), 1000001, 1000010, OTHER);
+    world.own = one;
+    await h.cycle();
+    draft(h, { replyTo: 1000001 });
+    world.own = addReply(one, 1000010, 1000011, OTHER);
+    await h.cycle();
+    expect(stale(h)).toEqual([]);
+    expect(badge(h)).toBe(1);
   });
 });
 

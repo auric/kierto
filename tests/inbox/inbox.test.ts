@@ -664,3 +664,50 @@ describe("GET /api/meta", () => {
     expect(text).not.toContain(SESSION);
   });
 });
+
+describe("PrRow.staleDrafts (thread-outcome.md section 11)", () => {
+  test("the count holds the current open draft per thread that would post and is out of date or resolved since", async () => {
+    const h = await setup();
+    const p = h.pr();
+    const { id: run } = h.db
+      .query(`INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, started_at)
+        VALUES ($p, 'reply', 'general', '', 'k', 'a', 'b', 'completed', 1) RETURNING id`)
+      .get({ p }) as { id: number };
+    h.db
+      .query(`INSERT INTO fix_commit (id, pr, run, idem_key, edits_json, mode, before_head, state, message, created_at, updated_at)
+        VALUES (5, $p, $run, 'f', '[]', 'clone', 'a', 'undone', 'm', 1, 1)`)
+      .run({ p, run });
+    const draft = (thread: number, replyTo: number, o: { body?: string; status?: string; payload?: object } = {}) =>
+      h.db
+        .query(
+          "INSERT INTO review_item (run, kind, payload_json, body, status, thread) VALUES ($run, 'reply', $payload, $body, $status, $thread)",
+        )
+        .run({
+          run,
+          thread,
+          body: o.body ?? "Thanks.",
+          status: o.status ?? "accepted",
+          payload: JSON.stringify({ thread, replyTo, threadOpen: true, ...o.payload }),
+        });
+    // Thread N: the root N, then the reply N + 1, the newest message.
+    for (const t of [10, 20, 30, 40, 50, 60, 70, 80, 90]) {
+      h.comment(p, t);
+      h.comment(p, t + 1, { root_id: t, created_at: 2001 });
+    }
+    h.db.query("UPDATE comment SET thread_resolved = 1 WHERE pr = $p AND comment_id = 80").run({ p });
+    expect((await h.row(p))?.staleDrafts).toBe(0);
+    draft(10, 10);
+    draft(20, 21);
+    draft(30, 30, { status: "discarded" });
+    draft(40, 40, { status: "posted" });
+    draft(50, 50, { payload: { fix: { id: 5, commit: "abc" } } });
+    draft(60, 60, { body: " " });
+    draft(70, 70, { body: "", payload: { resolveTick: true } });
+    draft(80, 81);
+    draft(90, 90);
+    draft(90, 91);
+    // Counted: thread 10 (out of date), 70 (a resolve tick, out of date), and 80 (resolved since).
+    expect((await h.row(p))?.staleDrafts).toBe(3);
+    expect((await h.json<PrDetail>(`/api/prs/${p}`)).body.pr.staleDrafts).toBe(3);
+  });
+});

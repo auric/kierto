@@ -21,6 +21,7 @@ import type {
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
 import type { Reviewer, Role, User } from "../../shared/types";
 import { byArchive, byInbox } from "../../shared/views";
+import { openDrafts, staleCount } from "./stale";
 
 const CLAIMED_TTL_MS = 30 * 86_400_000;
 const UNREAD = "c.pr = p.id AND p.followed = 1 AND c.tombstoned_at IS NULL AND (c.ack_version IS NULL OR c.ack_version < c.version)";
@@ -56,7 +57,7 @@ const SCOPE = { listed: scoped(LISTED), archived: scoped(ARCHIVED), any: scoped(
 
 const SQL = {
   comments: `SELECT comment_id, version, parent_id, root_id, author_slug, author_name, author_login, text, anchor_json, thread_resolved, created_at, updated_at,
-      ack_version, tombstoned_at, severity, task_state, excerpt_json, thread_resolver_json, thread_resolved_at
+      ack_version, tombstoned_at, severity, task_state, excerpt_json, thread_resolver_json, thread_resolved_at, orphaned_at
     FROM comment WHERE pr = $pr ORDER BY created_at, comment_id`,
   commits: "SELECT hash, message, author_name AS author, ts AS at FROM pr_commit WHERE pr = $pr ORDER BY ord",
   files: "SELECT path, src_path AS srcPath, type FROM pr_change WHERE pr = $pr ORDER BY path",
@@ -183,7 +184,7 @@ const toCheckpoint = (k: RawCheckpoint): CheckpointDto => ({
   error: k.last_error,
 });
 
-const toRow = (r: RawRow, t: Turns, tasks: PrTask[]): PrRow => ({
+const toRow = (r: RawRow, t: Turns, tasks: PrTask[], staleDrafts: number): PrRow => ({
   id: r.id,
   project: r.project,
   repo: r.repo,
@@ -211,7 +212,7 @@ const toRow = (r: RawRow, t: Turns, tasks: PrTask[]): PrRow => ({
   unread: r.unread,
   group: groupOf(r, t),
   yourTurn: t.yourTurn,
-  staleDrafts: 0,
+  staleDrafts,
   cause: t.cause,
   waitSince: t.waitSince,
   seenAt: r.seen_at,
@@ -240,11 +241,13 @@ function selectRows(db: Database, me: string, sql: Scope, id: number | null): Pr
     else msgs.set(c.pr, [m]);
   }
   const tasks = Map.groupBy(db.query(sql.tasks).all({ id }) as (PrTask & { pr: number })[], (t) => t.pr);
+  const drafts = openDrafts(db, id);
   return (db.query(sql.rows).all({ id }) as RawRow[]).map((r) =>
     toRow(
       r,
       turnsOf(msgs.get(r.id) ?? [], me, r.my_role === "AUTHOR"),
       (tasks.get(r.id) ?? []).map(({ key, source, url }) => ({ key, source, url })),
+      staleCount(drafts.get(r.id) ?? [], msgs.get(r.id) ?? []),
     ),
   );
 }
@@ -281,6 +284,7 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
     excerpt_json: string | null;
     thread_resolver_json: string | null;
     thread_resolved_at: number | null;
+    orphaned_at: number | null;
   };
   const posted = new Map(
     (db.query(SQL.posted).all({ pr: id }) as { remote_id: number; run: number }[]).map(
@@ -308,6 +312,7 @@ export function prDetail(db: Database, me: string, id: number): PrDetail | null 
       unread: pr.followed && !deleted && (c.ack_version === null || c.ack_version < c.version),
       deleted,
       ...(c.excerpt_json !== null && { excerpt: JSON.parse(c.excerpt_json) as ExcerptLine[] }),
+      ...(c.orphaned_at !== null && { orphanedAt: c.orphaned_at }),
       // Gate v3 U14: a task is a BLOCKER comment. RESOLVED marks it done.
       ...(c.severity === "BLOCKER" && { task: c.task_state === "RESOLVED" ? "done" : "open" }),
       ...(by && { posted: by }),
