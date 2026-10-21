@@ -6,7 +6,7 @@
 // Improve prompt: a new start replaces the running proposal. Nothing saves until the user applies the proposal.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
-import type { z } from "zod";
+import { z } from "zod";
 import {
   type ApiError,
   askInput,
@@ -18,6 +18,7 @@ import {
   reviewRunInput,
 } from "../../shared/dto";
 import type { Live } from "../live";
+import { threadHistory } from "./history";
 import { triage } from "./items";
 import type { ReviewJobs } from "./jobs";
 
@@ -30,6 +31,11 @@ const prParam = positiveId("pull request");
 const runParam = positiveId("run");
 const itemParam = positiveId("item");
 const proposalParam = positiveId("proposal");
+const historyParams = z.object({ id: z.coerce.number().int().positive(), thread: z.coerce.number().int().positive() });
+const historyParam = validator("param", (v: Record<string, string>, c) => {
+  const r = historyParams.safeParse(v);
+  return r.success ? r.data : c.json<ApiError>({ error: "Invalid pull request or thread ID." }, 400);
+});
 
 const unconfigured = { error: "Configure the Bitbucket URL and token first." } satisfies ApiError;
 const UNKNOWN_PROFILE = "Unknown review profile.";
@@ -165,6 +171,12 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       if (!db) return c.json([], 200);
       const fixes = review.fixes(db, c.req.valid("param").id);
       return fixes ? c.json(fixes, 200) : c.json(notFound("Pull request"), 404);
+    })
+    .get("/prs/:id/threads/:thread/history", historyParam, (c) => {
+      const db = review.open();
+      const { id, thread } = c.req.valid("param");
+      const history = db && threadHistory(db, id, thread);
+      return history ? c.json(history, 200) : c.json(notFound("Thread"), 404);
     })
     .get("/prs/:id/runs", prParam, (c) => {
       const db = review.open();

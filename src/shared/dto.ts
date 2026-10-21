@@ -790,7 +790,7 @@ export type ThreadHistoryDto = {
     error: string | null;
     remoteId: number | null;
     updatedAt: number;
-    resolve: PostDto["resolve"] | null;
+    resolve: NonNullable<PostDto["resolve"]> | null;
   }[];
 };
 
