@@ -21,6 +21,7 @@
 
 ### Replies
 
+- A reply that you posted from a reply draft now shows "Posted from a reply draft". "Posted from a Claude Code review" stays on posted review findings and questions.
 - Draft replies checks each thread against the new code and the answer in the thread. When the point is settled, it proposes to resolve the thread and shows its proof.
 - "Resolve after posting" on each reply draft. The reply posts first, then the thread resolves. A draft without text only resolves the thread. Claude ticks the box only on threads that you started.
 - "Review changes since" proposes to resolve the threads of your posted findings that the new commits fix. A Fix commit proposes it on its "Fixed in" reply.

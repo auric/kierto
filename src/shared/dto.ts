@@ -314,8 +314,8 @@ export type CommentDto = {
   // Root comments of inline threads only.
   excerpt?: ExcerptLine[];
   task?: "open" | "done";
-  // The app posted this comment: "run" from review drafts, "reply" from the reply composer.
-  posted?: "run" | "reply";
+  // The app posted this comment: "run" from a review finding or question, "draft" from a reply draft, "reply" from the reply composer.
+  posted?: "run" | "draft" | "reply";
   // Root comments of inline threads only: ms of the sync that saw the anchor turn orphaned. Absent: not orphaned, or orphaned at first sight.
   orphanedAt?: number;
 };

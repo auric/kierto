@@ -727,6 +727,7 @@ const Message = memo(function Message({ m, quote, tid, ctx }: { m: Node; quote: 
         {m.task && <TaskMark task={m.task} />}
         {m.isNew && <NewMark text="new" />}
         {m.posted === "run" && <span>Posted from a {ctx.runner} review</span>}
+        {m.posted === "draft" && <span>Posted from a reply draft</span>}
         {!m.deleted && m.text !== null && (
           <span className="ml-auto flex items-center gap-0.5">
             <HintTrigger hints={ctx.hints} label={`Reply to ${m.who.me ? "your message" : m.who.name}`}>

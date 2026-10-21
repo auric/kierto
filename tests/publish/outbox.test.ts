@@ -568,6 +568,10 @@ describe("confirm", () => {
     await s.settle();
     expect(s.sent()).toBe(1);
     expect(s.posts.bodies[0]).toMatchObject({ text: "Reply text.", parent: { id: THEIRS } });
+
+    await s.sync.syncNow();
+    const detail = (await s.call<PrDetail>(`/api/prs/${s.pr}`)).body;
+    expect(detail.comments.find((c) => c.text === "Reply text.")?.posted).toBe("draft");
   });
 
   test("D14: a reply item to an older message or a deleted parent is out of date: the plan leaves it out, and a confirm of it gives 409", async () => {

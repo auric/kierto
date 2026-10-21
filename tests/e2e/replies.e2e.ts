@@ -127,6 +127,12 @@ test("Draft replies: three your-turn threads get inline drafts, one needs no rep
   await expect(thread(page, 1000101).locator("[data-post]")).toContainText("Posted.");
   await expect(card(page, 1000101)).toHaveCount(0);
   expect(await posts()).toMatchObject([{ text: MARK + echoRaw(1000201), parent: { id: 1000201 } }]);
+
+  // The next check brings the reply back as a message with the label of its source.
+  await control("state", {});
+  await expect(thread(page, 1000101).locator("[data-post]")).toHaveCount(0);
+  await expect(thread(page, 1000101)).toContainText("Posted from a reply draft");
+  await expect(thread(page, 1000101)).not.toContainText("Posted from a Claude Code review");
 });
 
 test("review drafts stay after a reply run (R14), and a per-thread draft replaces only that thread's draft", async ({ page }) => {
