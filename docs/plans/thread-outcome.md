@@ -27,9 +27,9 @@ Already landed: 0fe5659 keeps drafts that the user edited or accepted on AI runs
 | P11 | A rebased or squashed fix commit never reaches the PR, so the "Fixed in" draft waits forever (outbox.ts:460-468). An edit keeps the commit link (items.ts:81-85). | Partly: WP-S2 adds the item action plain. WP-S3 marks commit-gone when the clone branch no longer holds the commit. The confirm and the draft card offer "Post as plain reply" (WP-U2, WP-U1a). Only an accepted draft gets the commit-gone check. An edit still keeps the link. |
 | P12 | The Fix list ignores fix notes (fix/model.ts:28-37, 150). | Landed: WP-U1b shows the fix outcome of each row, and a no-fix note or a decline starts unticked (fix/model.ts fixOutcome). |
 | P13 | A reply run does not see the fix state of a thread (catalog.ts:312-341). | Landed: WP-S4 adds context/fix-state.md (jobs.ts fixStateFile). |
-| P14 | A thread has no history of its drafts and fixes. | Later |
+| P14 | A thread has no history of its drafts and fixes. | In progress: section 10. GET /api/prs/:id/threads/:thread/history and the "Thread history" section. |
 | P15 | A BLOCKER task has no actions (Thread.tsx:150). | Later |
-| P16 | No signal tells the user that a draft is out of date (notify.ts:15-19). | Later |
+| P16 | No signal tells the user that a draft is out of date (notify.ts:15-19). | In progress: section 11. Shared staleReasons, the Code changed marker, the inbox badge, and the draft_stale notification. |
 
 ## 3. Outcomes
 
@@ -102,7 +102,8 @@ Markers on the outcome line:
 - Conflict "yes": an untouched open reply asks for a fix, and the newest fix note says already, invalid, or scope. Keep the reply accepts the reply, or runs Fix anyway when it has no text. Keep the fix discards the reply and restores the nofix draft of that fix run.
 - A finding that your session rejected, with ticked edits, gets the note with Keep the reject (untick) and Keep the fix (restore the finding).
 - The Draft replies count: your-turn threads with no current draft, or with an out-of-date draft that a reply run for all threads replaces. The run still takes every your-turn thread.
-- Later: per-thread history (P14), the stale-draft notice (P16), BLOCKER task done (P15), the commit-gone check for an unaccepted "Fixed in" draft (P11), and an untick that survives a reload (P3).
+- Per-thread history (P14) and out-of-date draft alerts (P16) are in progress (sections 10 and 11).
+- Later: BLOCKER task done (P15), the commit-gone check for an unaccepted "Fixed in" draft (P11), and an untick that survives a reload (P3).
 
 ## 8. Revisions and Reply to the newest as is (decisions C and D)
 
@@ -147,3 +148,37 @@ User decision, 2026-10-20. A review run and a "Review changes since" run judge t
 - Outcome line: settled reads Settled, followup and issue read Follow-up asked.
 - Not verified: that the real CLI fills answered as the rules ask. The tests use the fake CLI.
 
+## 10. Thread history (P14)
+
+User decision, 2026-10-21: v1 derives the history from the existing tables. No new table (Q1). No key (Q2).
+
+- Sources: comment, review_item with review_run, fix_json, fix_edit, fix_commit, and post. Bitbucket activity adds nothing: resolve and reopen add no activity, edits change the comment in place, and replies have no activity. Run logs are not a source.
+- Lost facts: earlier resolve and reopen cycles (a reopen clears the resolver and the date) and the times of triage actions (review_item has no time column). v1 shows the current resolve only. The reply payload gets touchedAt, the time of the last user action, with no migration.
+- Payload: touchedAt is set by accept, edit, plain, reply-to-newest, and use-revision. revisionOf names the draft that a used revision revised (takeRevision). Old payloads parse without them.
+- ReviewItemDto.drafted {kind, startedAt, finishedAt, head} on reply items gives the run of the draft. "Moved to newest" means that replyTo is newer than the run start. Every SQL that builds a reply DTO selects the run columns, because putItem replaces the client cache with the response DTO.
+- Route: GET /api/prs/:id/threads/:thread/history with zod params. 404 when the PR has no comment row with that thread. A deleted root still returns.
+- ThreadHistoryDto {thread, drafts[{at, exact, item, replacedBy}], fixes[{at, run, note}], commits[{at, id, run, short, state, edits, of, pushed, undoneAt}], posts[{at, id, run, kind, state, error, remoteId, updatedAt, resolve}]}.
+- at: a "Fixed in" draft takes the fix commit time. A "Won't fix" draft from a decline takes the fix run time with exact false. Other drafts take the run finish, else the run start.
+- replacedBy: the explicit lists first (fix.replaced, declined.replaced, session.replaced). Else a draft discarded without discardedBy takes the next newer draft of the thread that is not a revision.
+- Thread posts: replies with a parent in the thread, rows with resolve_root equal to the thread, and rows with remote_id equal to the root.
+- UI: the thread More menu item "Show history" opens "Thread history" under the thread footer. "Hide history" closes it. One time-ordered list in the prototype timeline style. Lines: messages (started, replied, edited, deleted; a Kierto post names its run or "from a Kierto draft"), drafts by writer, answer judgements, draft fate (edited with Show changes, accepted, moved to newest, discarded, no reply needed, replaced by a newer draft or a named writer), revisions (waiting, not used, used), fix results, fix commits ("N of M edits of this thread", waiting for push, undone at), posts that are not confirmed (posting, failed with the error, unknown), and "Resolved by X". AI lines link to the run log.
+- Footnote: "Bitbucket keeps no record of reopens or earlier text. Kierto keeps only the time of your last change to a draft."
+- Edges: a deleted comment keeps its line without text. A rebased commit that pr_commit does not list reads "not on the PR". Failures of a manual Resolve are not stored. Merged and archived PRs work. Data from before the new fields gets neutral words. Clock skew can change the order.
+
+## 11. Out-of-date draft alerts (P16)
+
+User decision, 2026-10-21: badge only, no Needs you (Q3). Only touched drafts notify, with no own setting (Q4). Revise my reply does not handle code changes (Q5). Enter on a row does not open a stale draft (Q6).
+
+- staleReasons (src/shared/stale.ts) holds the rules for the post plan, the outcome markers, the badge, and the notification.
+- out-of-date: the newest live message of the thread is not the draft replyTo. A thread where every message is deleted counts.
+- resolved-since: the draft has text, threadOpen is true, and the thread is resolved now.
+- code-changed: the draft is not from a fix run, the root anchor has orphaned_at, orphaned_at is later than both the run start and touchedAt, and the PR head is not the run head.
+- The post plan keeps its four block reasons. Code changed never blocks.
+- comment.orphaned_at: sync sets it to the sync time when a stored anchor that was not orphaned becomes orphaned. Sync clears it when the anchor is not orphaned. An anchor that is orphaned at first sight keeps NULL.
+- PR view: the marker "Code changed" and the card line "The code at this comment changed after this draft." An untouched draft offers Draft again. A touched draft offers Show in diff only. The other markers stay.
+- Inbox: PrRow.staleDrafts. The meta line shows a muted History icon and the count, for example "2 reply drafts out of date". The tooltip says to open the PR. Groups, views, and sort do not change.
+- Badge count: only the current open draft per thread that would post (text or a resolve tick). Never revisions, discarded drafts, posted drafts, or drafts of an undone fix.
+- Event: kind draft_stale (ClaimedEvent.kind). The migration rebuilds event for the new CHECK. A sync adds an event only when a draft becomes stale in that sync: it reads the stale set before and after the comment writes in one transaction. The ref is `<item>:out-of-date:<newest id>` or `<item>:resolved-since:<resolved at>`.
+- Notification rules: only accepted or edited drafts, and only out-of-date and resolved-since. No event when I wrote the newest message or resolved the thread, on the first sync, or for a merged, declined, archived, or unfollowed PR. A draft created or accepted while it is stale never notifies. The note per PR says "1 reply draft out of date" and joins the comment events of the same sync. One tab claims it. The notifications setting applies.
+- Edges: a deleted parent gives out-of-date. A thread with every message deleted hides "Reply to the newest as is" (409). A force push can orphan anchors and mark drafts, but not fix-run drafts. A forbidden reopen shows the error, and Discard clears the badge. A merged PR keeps the badge and gets no notification.
+- Not verified: that orphaned flips back, replies on merged or declined PRs, and the resolver on Bitbucket 9.4. The poll window of about 60 s can show Code changed after an accept.

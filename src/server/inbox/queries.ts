@@ -211,6 +211,7 @@ const toRow = (r: RawRow, t: Turns, tasks: PrTask[]): PrRow => ({
   unread: r.unread,
   group: groupOf(r, t),
   yourTurn: t.yourTurn,
+  staleDrafts: 0,
   cause: t.cause,
   waitSince: t.waitSince,
   seenAt: r.seen_at,

@@ -5,16 +5,16 @@
 import type { Database } from "bun:sqlite";
 import type { ReviewItemDto } from "../../shared/dto";
 import type { ReplyPayload } from "../../shared/review";
-import { type ItemRow, type NewItem, toItemDto } from "./run-rows";
+import { type ItemRow, type NewItem, RUN_COLS, toItemDto } from "./run-rows";
 
 // The current reply draft of each thread: the newest open draft, else the newest draft. A draft of an undone fix commit never
 // counts: it cannot post (outbox.ts fixCheck). A revision that waits for the user (payload revises) never counts.
 // An open draft sorts last, so it wins.
-const UNDONE = "EXISTS (SELECT 1 FROM fix_commit f WHERE f.id = json_extract(i.payload_json, '$.fix.id') AND f.state = 'undone')";
-const CURRENT_DRAFTS = `SELECT i.* FROM review_item i JOIN review_run r ON r.id = i.run
+export const UNDONE = "EXISTS (SELECT 1 FROM fix_commit f WHERE f.id = json_extract(i.payload_json, '$.fix.id') AND f.state = 'undone')";
+const CURRENT_DRAFTS = `SELECT i.*, ${RUN_COLS} FROM review_item i JOIN review_run r ON r.id = i.run
   WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread IS NOT NULL AND NOT ${UNDONE} AND json_extract(i.payload_json, '$.revises') IS NULL
   ORDER BY i.status IN ('new', 'accepted'), i.id`;
-const REVISIONS = `SELECT i.* FROM review_item i JOIN review_run r ON r.id = i.run
+const REVISIONS = `SELECT i.*, ${RUN_COLS} FROM review_item i JOIN review_run r ON r.id = i.run
   WHERE r.pr = $pr AND i.kind = 'reply' AND i.status = 'discarded' AND json_extract(i.payload_json, '$.revises') IS NOT NULL
     AND json_extract(i.payload_json, '$.dropped') IS NULL AND NOT ${UNDONE} ORDER BY i.id`;
 // A newer draft or revision of a thread drops its waiting revisions. shared/review.ts says why the rows stay.

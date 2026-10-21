@@ -19,6 +19,7 @@ import type {
 } from "../../shared/dto";
 import { isMe } from "../../shared/me";
 import type { ReplyPayload } from "../../shared/review";
+import { staleReasons } from "../../shared/stale";
 import { newestLive, type TurnMsg } from "../../shared/turn";
 import type { Comment, PrRef } from "../../shared/types";
 import { ForgeError } from "../bitbucket/client";
@@ -151,11 +152,16 @@ export function selectPosts(plan: PlannedPost[], want: Map<number, number>): Pla
 // A git read in the user's clone during a plan read stops after this time.
 const CLONE_READ_MS = 10_000;
 
+// The newest live message of the thread of comment id. null: the comment is not stored, or every message is deleted.
+function newestOf(db: Database, pr: number, id: number): number | null {
+  const parent = db.query(SQL.parent).get({ pr, id }) as { root_id: number } | null;
+  return parent ? (newestLive(db.query(SQL.thread).all({ pr, root: parent.root_id }) as TurnMsg[])?.id ?? null) : null;
+}
+
 // D14: the reply parent is a live comment and the newest live message of its thread.
 export function replyCurrent(db: Database, pr: number, id: number): boolean {
-  const parent = db.query(SQL.parent).get({ pr, id }) as { root_id: number; tombstoned_at: number | null } | null;
-  if (!parent || parent.tombstoned_at !== null) return false;
-  return newestLive(db.query(SQL.thread).all({ pr, root: parent.root_id }) as TurnMsg[])?.id === id;
+  const thread = { newest: newestOf(db, pr, id), resolved: false, orphanedAt: null };
+  return !staleReasons({ body: "", payload: { replyTo: id } }, thread, null).includes("out-of-date");
 }
 
 // git merge-base prints the commit itself when the commit is an ancestor of the branch (git-merge-base(1)).
@@ -199,8 +205,10 @@ export async function blockedDrafts(db: Database, pr: number, items: ReviewItemD
     const text = it.body.trim() !== "";
     if (!text && !p.resolveTick) continue;
     const draft = { item: it.id, revision: it.revision, thread: p.thread };
-    if (!replyCurrent(db, pr, p.replyTo)) out.push({ ...draft, reason: "out-of-date" });
-    else if (text && p.threadOpen === true && shut.has(p.thread)) out.push({ ...draft, reason: "resolved-since" });
+    const thread = { newest: newestOf(db, pr, p.replyTo), resolved: shut.has(p.thread), orphanedAt: null };
+    // Code changed never blocks a post.
+    const reason = staleReasons({ body: it.body, payload: p }, thread, null).find((r) => r !== "code-changed");
+    if (reason) out.push({ ...draft, reason });
     else {
       const fix = p.fix && (await fixCheck(db, pr, p.fix));
       if (fix) out.push({ ...draft, ...fix });

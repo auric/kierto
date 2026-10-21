@@ -18,6 +18,7 @@ import {
 import { newestLive, type TurnMsg } from "../../shared/turn";
 import { replyCurrent } from "../publish/outbox";
 import { type ItemRow, revisions, toItemDto, withRevision } from "./jobs";
+import { RUN_COLS } from "./run-rows";
 
 // runs: other runs whose items changed, so their run details reload.
 export type TriageResult =
@@ -27,7 +28,7 @@ export type TriageResult =
   | { status: 409; conflict: ItemConflict };
 
 const SQL = {
-  item: "SELECT i.*, r.pr FROM review_item i JOIN review_run r ON r.id = i.run WHERE i.id = $id",
+  item: `SELECT i.*, r.pr, ${RUN_COLS} FROM review_item i JOIN review_run r ON r.id = i.run WHERE i.id = $id`,
   // The revision check and the write are one statement, so two pages cannot both win.
   update: `UPDATE review_item SET status = $status, body = $body, edited = $edited, line = $line, line_end = $line_end,
       anchor_state = $anchor_state, payload_json = $payload_json, revision = revision + 1
@@ -53,7 +54,8 @@ const CHANGED = "The item changed on another page. Check it again.";
 // Thrown inside a transaction, it undoes the writes before it.
 const ROLLBACK = new Error("rollback");
 
-export function triage(db: Database, id: number, input: ItemActionInput): TriageResult {
+// at: the time (ms) that touchedAt records.
+export function triage(db: Database, id: number, input: ItemActionInput, at = Date.now()): TriageResult {
   const row = db.query(SQL.item).get({ id }) as Row | null;
   if (!row) return { status: 404 };
   const dto = (r: Row) => (r.kind === "reply" ? withRevision(r, revisions(db, r.pr)) : toItemDto(r));
@@ -90,6 +92,7 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
       if (row.kind === "reply" && !row.body.trim() && !ticked)
         return { status: 400, error: "Write the reply first, or tick Resolve after posting." };
       next.status = "accepted";
+      if (reply) next.payload_json = JSON.stringify({ ...reply, touchedAt: at } satisfies ReplyPayload);
       break;
     case "discard":
       next.status = "discarded";
@@ -113,6 +116,7 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
       next.status = "accepted";
       next.body = input.body;
       next.edited = 1;
+      if (reply) next.payload_json = JSON.stringify({ ...reply, touchedAt: at } satisfies ReplyPayload);
       break;
     case "move": {
       if (row.kind !== "finding" || row.side === null || row.excerpt_json === null)
@@ -145,12 +149,12 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
       if (db.query(SQL.pushed).get({ pr: row.pr, hash: reply.fix.commit }))
         return { status: 400, error: "The commit is on the pull request. The draft posts as it is." };
       const { fix: _, ...rest } = reply;
-      next.payload_json = JSON.stringify({ ...rest, origin: "user" } satisfies ReplyPayload);
+      next.payload_json = JSON.stringify({ ...rest, origin: "user", touchedAt: at } satisfies ReplyPayload);
       next.status = "accepted";
       break;
     }
     case "use-revision":
-      return takeRevision(db, row, reply, input.draft);
+      return takeRevision(db, row, reply, input.draft, at);
     case "keep-mine": {
       if (reply?.revises === undefined) return { status: 400, error: "Only a revision of your draft can go." };
       if (!db.query(SQL.dropRevision).run({ id, revision: input.revision }).changes) return conflict(CHANGED);
@@ -169,7 +173,7 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
       // keeps the draft out of the post until the user reopens it (outbox.ts blockedDrafts).
       if (reply.threadOpen === true && msgs.some((m) => m.threadResolved))
         return conflict("The thread was resolved after the draft. Reopen the thread first.");
-      next.payload_json = JSON.stringify({ ...reply, replyTo: last.id } satisfies ReplyPayload);
+      next.payload_json = JSON.stringify({ ...reply, replyTo: last.id, touchedAt: at } satisfies ReplyPayload);
       break;
     }
   }
@@ -192,7 +196,7 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
 // docs/plans/thread-outcome.md: the revision becomes the draft, not accepted. The user's draft is discarded in the same transaction.
 // The user's resolve tick stays. A revision of a "Fixed in" draft names the user's draft in fix.replaced, so Undo of the commit brings
 // it back. A revision without text and without a resolve means no reply, so it stays discarded as the user's choice.
-function takeRevision(db: Database, row: Row, reply: ReplyPayload | null, draft: number): TriageResult {
+function takeRevision(db: Database, row: Row, reply: ReplyPayload | null, draft: number, at: number): TriageResult {
   const conflict = (error: string): TriageResult => ({ status: 409, conflict: { error, item: toItemDto(row) } });
   if (reply?.revises === undefined) return { status: 400, error: "Only a revision of your draft can replace it." };
   const mine = db.query(SQL.item).get({ id: reply.revises }) as Row | null;
@@ -206,6 +210,8 @@ function takeRevision(db: Database, row: Row, reply: ReplyPayload | null, draft:
   const open = row.body.trim() !== "" || !!reply.resolve;
   const payload: ReplyPayload = {
     ...rest,
+    revisionOf: mine.id,
+    touchedAt: at,
     ...(was.resolveTick !== undefined && { resolveTick: was.resolveTick }),
     ...(rest.fix && { fix: { ...rest.fix, replaced: [...(rest.fix.replaced ?? []), mine.id] } }),
     ...(!open && { discardedBy: "user" as const }),

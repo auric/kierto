@@ -52,6 +52,7 @@ const row = (o: Partial<PrRow>): PrRow => ({
   unread: 0,
   group: "quiet",
   yourTurn: 0,
+  staleDrafts: 0,
   cause: null,
   waitSince: null,
   seenAt: null,

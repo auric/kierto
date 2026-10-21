@@ -271,6 +271,8 @@ export type PrRow = {
   group: Group;
   // The count of threads where it is my turn (src/shared/turn.ts).
   yourTurn: number;
+  // The count of threads whose current open reply draft would post and is out of date or resolved since (src/shared/stale.ts).
+  staleDrafts: number;
   cause: Cause | null;
   // ms: the newest live message of the longest-waiting "wait" thread. null without a "wait" thread.
   waitSince: number | null;
@@ -314,6 +316,8 @@ export type CommentDto = {
   task?: "open" | "done";
   // The app posted this comment: "run" from review drafts, "reply" from the reply composer.
   posted?: "run" | "reply";
+  // Root comments of inline threads only: ms of the sync that saw the anchor turn orphaned. Absent: not orphaned, or orphaned at first sight.
+  orphanedAt?: number;
 };
 
 // sourceHead: the source head of the last sync. null before the first sync.
@@ -331,7 +335,7 @@ export type FollowState = { id: number; followed: boolean; archivedAt: number | 
 export type ClaimedEvent = {
   id: number;
   pr: number;
-  kind: "comment_new" | "commits_pushed" | "reviewer_added";
+  kind: "comment_new" | "commits_pushed" | "reviewer_added" | "draft_stale";
   ref: string;
   createdAt: number;
   // true: the event came after a sync gap of more than 2 check intervals. Show one summary per PR.
@@ -475,6 +479,8 @@ export type ReviewItemDto = {
   // An open reply draft of GET reply-drafts and POST /api/items/:id: the newest revision of it (payload revises) that waits for
   // Use revision or Keep mine. Absent: none.
   revised?: ReviewItemDto;
+  // Reply items only: the run that wrote the draft. head: the source head at the run start. finishedAt: null while it runs.
+  drafted?: { kind: RunKind; startedAt: number; finishedAt: number | null; head: string };
 };
 
 // POST /api/items/:id. revision: the item revision on screen. A mismatch gives 409 with ItemConflict.
@@ -753,6 +759,39 @@ export type FixDto = {
   threads: FixNote[];
   edits: FixEditDto[];
   commits: FixCommitDto[];
+};
+
+// GET /api/prs/:id/threads/:thread/history (docs/plans/thread-outcome.md section 10). The client merges it with the thread messages.
+// at: ms. exact false: the time of the run, not of the draft itself ("Won't fix" from a decline).
+// replacedBy: the item that replaced a discarded draft, else null. edits: the edits of this thread in the commit. of: the edits of this
+// thread in the fix run. pushed: the PR commits list the commit. undoneAt: ms of the undo, else null.
+// posts: replies in the thread, resolves of the thread, and the post that started the thread. error: last_error of the post.
+export type ThreadHistoryDto = {
+  thread: number;
+  drafts: { at: number; exact: boolean; item: ReviewItemDto; replacedBy: number | null }[];
+  fixes: { at: number; run: number; note: FixNote }[];
+  commits: {
+    at: number;
+    id: number;
+    run: number;
+    short: string | null;
+    state: FixCommitState;
+    edits: number;
+    of: number;
+    pushed: boolean;
+    undoneAt: number | null;
+  }[];
+  posts: {
+    at: number;
+    id: number;
+    run: number | null;
+    kind: PostDestination["kind"];
+    state: PostState;
+    error: string | null;
+    remoteId: number | null;
+    updatedAt: number;
+    resolve: PostDto["resolve"] | null;
+  }[];
 };
 
 // POST /api/fix-runs/:run/commit. The server checks only the message length.

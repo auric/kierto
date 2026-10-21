@@ -154,6 +154,8 @@ export type ReplyOrigin = (typeof replyOrigins)[number];
 // dropped: Keep mine or a newer revision dropped this revision. The row stays, because SQLite gives the ID of a deleted last row again.
 // discardedBy: who discarded the draft. ai: a reply run found that no reply is needed. Absent: the user, or a draft stored before it
 // existed. A draft that the AI discarded is no user decline (drafts.ts userDraft).
+// touchedAt: the time (ms) of the last accept, edit, plain, reply-to-newest, or use-revision. Absent: no such action since it existed.
+// revisionOf: on a used revision, the ID of the user's draft that it revised (items.ts takeRevision).
 export type ReplyPayload = Omit<ReplyDraft, "judgement" | "resolve" | "resolveEvidence"> & {
   judgement?: Judgement | null;
   replyTo: number;
@@ -167,6 +169,8 @@ export type ReplyPayload = Omit<ReplyDraft, "judgement" | "resolve" | "resolveEv
   revises?: number;
   dropped?: true;
   discardedBy?: "ai" | "user";
+  touchedAt?: number;
+  revisionOf?: number;
 };
 
 export const replyJsonSchema = (): Record<string, unknown> => z.toJSONSchema(replyResult, { target: "draft-07" });

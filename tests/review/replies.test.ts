@@ -896,6 +896,60 @@ describe("revisions and reply to the newest", () => {
     },
     SLOW,
   );
+
+  // docs/plans/thread-outcome.md sections 10 and 11: touchedAt, revisionOf, and drafted.
+  test(
+    "accept, edit, reply-to-newest, and use-revision record touchedAt; a used revision names the draft it revised; every reply DTO carries its run",
+    async () => {
+      const h = await setup();
+      const d = await h.run();
+      const [a, b] = d.items as [ReviewItemDto, ReviewItemDto];
+      const drafted = { kind: "reply" as const, startedAt: d.run.startedAt, finishedAt: d.run.finishedAt, head: d.run.sourceHead };
+      // The run detail and the draft list carry the run of each draft.
+      expect(a.drafted).toEqual(drafted);
+      expect((await draftsOf(h)).get(101)?.drafted).toEqual(drafted);
+      expect(payload(a).touchedAt).toBeUndefined();
+
+      const t0 = Date.now();
+      const accepted = await h.act(a.id, { action: "accept", revision: 0 });
+      expect(accepted.body.drafted).toEqual(drafted);
+      const at1 = stored(h, a.id)?.payload.touchedAt ?? 0;
+      expect(at1).toBeGreaterThanOrEqual(t0);
+      expect(payload(accepted.body).touchedAt).toBe(at1);
+
+      const edited = await h.act(b.id, { action: "edit", revision: 0, body: "My own words." });
+      expect(edited.body.drafted).toEqual(drafted);
+      expect(stored(h, b.id)?.payload.touchedAt).toBeGreaterThanOrEqual(t0);
+      // A discard is no touch.
+      const discarded = await h.act(b.id, { action: "discard", revision: 1 });
+      expect(payload(discarded.body).touchedAt).toBe(stored(h, b.id)?.payload.touchedAt as number);
+
+      h.comment(104, ALEX, 20, { parent: 103, root: 101 });
+      await Bun.sleep(2);
+      const moved = await h.act(a.id, { action: "reply-to-newest", revision: 1 });
+      expect(moved.status).toBe(200);
+      expect(payload(moved.body).touchedAt).toBeGreaterThan(at1);
+      // The post plan reads the same rows.
+      expect((await h.json<PostPlanDto>(`/api/prs/${h.pr}/post-plan`)).body.blocked).toBeUndefined();
+
+      h.comment(105, ALEX, 22, { parent: 104, root: 101 });
+      h.scenario(replies(draft(101, { body: "Revised text." })));
+      const r2 = await h.run([101]);
+      const rev = r2.items[0] as ReviewItemDto;
+      expect(payload(rev).revises).toBe(a.id);
+      expect(rev.drafted).toEqual({ kind: "reply", startedAt: r2.run.startedAt, finishedAt: r2.run.finishedAt, head: r2.run.sourceHead });
+      expect((await draftsOf(h)).get(101)?.revised?.drafted?.startedAt).toBe(r2.run.startedAt);
+      const before = stored(h, a.id)?.payload.touchedAt ?? 0;
+      await Bun.sleep(2);
+      const used = await h.act(rev.id, { action: "use-revision", revision: 0, draft: 2 });
+      expect(used.status).toBe(200);
+      expect(payload(used.body)).toMatchObject({ revisionOf: a.id, replyTo: 105 });
+      expect(payload(used.body).revises).toBeUndefined();
+      expect(payload(used.body).touchedAt).toBeGreaterThan(before);
+      expect(used.body.drafted?.startedAt).toBe(r2.run.startedAt);
+    },
+    SLOW,
+  );
 });
 
 describe("validateReplies", () => {

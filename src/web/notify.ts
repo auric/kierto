@@ -16,6 +16,7 @@ const KIND_TEXT: Record<ClaimedEvent["kind"], (n: number) => string> = {
   comment_new: (n) => plural(n, "new comment"),
   commits_pushed: () => "new commits",
   reviewer_added: () => "review requested",
+  draft_stale: (n) => `${plural(n, "reply draft")} out of date`,
 };
 
 // The first claim of a tab, or a batch with a digest event, gives one digest. Otherwise one note per PR.

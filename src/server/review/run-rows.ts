@@ -4,7 +4,7 @@
 // The stored form of review runs and items (jobs.ts): the rows, the SQL, and the DTOs that the routes send.
 import type { Database } from "bun:sqlite";
 import type { ConsultGroup, SessionMode } from "../../shared/consult";
-import type { DiffRowDto, FixEditDto, ReviewItemDto, RunDto, RunSummary, RunUsage } from "../../shared/dto";
+import type { DiffRowDto, FixEditDto, ReviewItemDto, RunDto, RunKind, RunSummary, RunUsage } from "../../shared/dto";
 import type { AnchoredFinding, Question, ReplyPayload } from "../../shared/review";
 import type { RunErrorKind, RunStatus } from "../../shared/run-log";
 import type { Comment, ExcerptLine, PullRequest } from "../../shared/types";
@@ -122,8 +122,16 @@ export type ItemRow = {
   edited: number;
   // Reply items only: the root comment ID.
   thread: number | null;
+  // RUN_COLS. A reply DTO gets drafted only from a row that selects them.
+  run_kind?: RunKind;
+  run_started?: number;
+  run_finished?: number | null;
+  run_head?: string;
 };
-export type NewItem = Omit<ItemRow, "id" | "run" | "revision">;
+export type NewItem = Omit<ItemRow, "id" | "run" | "revision" | "run_kind" | "run_started" | "run_finished" | "run_head">;
+// The run of an item row, joined as r. Every SQL that builds a reply DTO selects them, because the client replaces its cached
+// item with the DTO of an item action.
+export const RUN_COLS = "r.kind AS run_kind, r.started_at AS run_started, r.finished_at AS run_finished, r.source_head AS run_head";
 
 // A finding of a fix run (SQL.fixFinding).
 export type FindingRow = ItemRow & { run_pr: number; run_head: string; run_base: string | null; copy: number | null };
@@ -180,7 +188,7 @@ export const SQL = {
     FROM run_event WHERE run = $run ORDER BY seq`,
   item: `INSERT INTO review_item (run, kind, payload_json, body, path, side, line, line_end, anchor_state, excerpt_json, status, thread, edited)
     VALUES ($run, $kind, $payload_json, $body, $path, $side, $line, $line_end, $anchor_state, $excerpt_json, $status, $thread, $edited)`,
-  items: "SELECT * FROM review_item WHERE run = $run ORDER BY id",
+  items: `SELECT i.*, ${RUN_COLS} FROM review_item i JOIN review_run r ON r.id = i.run WHERE i.run = $run ORDER BY i.id`,
   itemById: "SELECT * FROM review_item WHERE id = $id",
   // Plan r2 S-RR. An Explain run has no findings. A run from before M4 has no explain value.
   baseRun: `WHERE r.pr = $pr AND r.kind = 'review' AND r.status IN ('completed', 'incomplete') AND COALESCE(r.explain, r.profile = 'explain') = 0
@@ -379,5 +387,9 @@ export function toItemDto(r: ItemRow): ReviewItemDto {
     status: r.status,
     revision: r.revision,
     edited: r.edited === 1,
+    ...(r.kind === "reply" &&
+      r.run_kind !== undefined && {
+        drafted: { kind: r.run_kind, startedAt: r.run_started as number, finishedAt: r.run_finished ?? null, head: r.run_head as string },
+      }),
   };
 }
