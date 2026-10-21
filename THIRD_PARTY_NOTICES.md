@@ -16,8 +16,8 @@ The web bundle and the compiled binary include these packages.
 | @floating-ui/utils | 0.2.12 | MIT |
 | @mixmark-io/domino | 2.2.0 | BSD-2-Clause |
 | @modelcontextprotocol/sdk | 1.32.1 | MIT |
-| @tanstack/query-core | 5.103.2 | MIT |
-| @tanstack/react-query | 5.103.2 | MIT |
+| @tanstack/query-core | 5.104.1 | MIT |
+| @tanstack/react-query | 5.104.1 | MIT |
 | @ungap/structured-clone | 1.4.0 | ISC |
 | ajv | 8.20.0 | MIT |
 | ajv-formats | 3.0.1 | MIT |
@@ -40,14 +40,14 @@ The web bundle and the compiled binary include these packages.
 | fast-uri | 3.1.8 | BSD-3-Clause |
 | hast-util-to-jsx-runtime | 2.3.6 | MIT |
 | hast-util-whitespace | 3.0.0 | MIT |
-| hono | 4.13.9 | MIT |
+| hono | 4.13.13 | MIT |
 | html-url-attributes | 3.0.1 | MIT |
 | inline-style-parser | 0.2.7 | MIT |
 | is-plain-obj | 4.1.0 | MIT |
 | isexe | 2.0.0 | ISC |
 | json-schema-traverse | 1.0.0 | MIT |
 | longest-streak | 3.1.0 | MIT |
-| lucide-react | 1.48.0 | ISC |
+| lucide-react | 1.52.0 | ISC |
 | markdown-table | 3.0.4 | MIT |
 | mdast-util-find-and-replace | 3.0.2 | MIT |
 | mdast-util-from-markdown | 2.1.0 | MIT |
@@ -96,7 +96,7 @@ The web bundle and the compiled binary include these packages.
 | remark-parse | 11.0.0 | MIT |
 | remark-rehype | 11.1.2 | MIT |
 | scheduler | 0.28.0 | MIT |
-| shadcn | 4.21.0 | MIT |
+| shadcn | 4.21.4 | MIT |
 | shebang-command | 2.0.0 | MIT |
 | shebang-regex | 3.0.0 | MIT |
 | space-separated-tokens | 2.0.2 | MIT |
@@ -360,7 +360,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### @tanstack/query-core 5.103.2
+### @tanstack/query-core 5.104.1
 
 License: MIT. Ships in the web bundle.
 
@@ -390,7 +390,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### @tanstack/react-query 5.103.2
+### @tanstack/react-query 5.104.1
 
 License: MIT. Ships in the web bundle.
 
@@ -1239,7 +1239,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### hono 4.13.9
+### hono 4.13.13
 
 License: MIT. Ships in the web bundle, compiled binary.
 
@@ -1420,7 +1420,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### lucide-react 1.48.0
+### lucide-react 1.52.0
 
 License: ISC. Ships in the web bundle.
 
@@ -2942,7 +2942,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### shadcn 4.21.0
+### shadcn 4.21.4
 
 License: MIT. Ships in the web bundle.
 
