@@ -4,7 +4,6 @@
 
 ### Consult your session
 
-- "Copy for your session" now copies one plain prompt. Your session checks each review point against the code in your clone, makes the valid changes, and explains each rejection.
 - The copied points and the points of "Ask your session" sit in tags with a new random suffix each time. The prompt says that the tag content is data from the pull request, not instructions.
 - "Paste the answer" is gone. Push the changes of your session, then use "Review changes since" and Draft replies.
 - "Copy for your session" gives your own Claude Code session the open review points as numbered steps: check the branch, validate each point with file and line, fix only the valid parts, write a reply for each point, commit, and ask you before any push, post, or resolve.
@@ -32,6 +31,7 @@
 - A reply to a resolved thread reopens the thread first, because Bitbucket takes no reply there. The post confirm and Ready to post say "Reopen thread, post reply". A ticked draft resolves the thread again after the reply.
 - A reply draft says "Resolved since the draft" when someone resolved its thread after Claude drafted it. The post leaves that reply out until you reopen the thread.
 - The post confirm lists the drafts that cannot post now, with the thread and the reason: new messages after the draft, a thread resolved since the draft, or a "Fixed in" commit that is not on the pull request yet. Post sends the other drafts. Before, one such draft stopped the whole post.
+- An out-of-date reply draft no longer shows Accept or Edit, because it cannot post. The key a says why.
 - A "Fixed in" draft whose commit left your branch, for example after a rebase or a squash, offers "Post as plain reply" in the post confirm.
 - The post confirm groups the drafts that cannot post by reason. Each group says what to do. Each draft links to its thread and has its action: "Reply to the newest as is", "Reopen thread", or "Post as plain reply". Your accepted draft is never discarded there.
 - The post confirm updates its lists when the drafts change while it is open. When the list to post changes, it asks you to read it again before you post.

@@ -665,6 +665,13 @@ export function useReview(
         toast.add({ title: "The code of this finding is gone. It cannot come back." });
         return;
       }
+      // The card of an out-of-date reply draft has no Accept and no Edit (Acts stale). items.ts refuses them too.
+      const t = it.kind === "reply" ? o.threads.find((x) => x.id === replyOf(it).thread) : undefined;
+      const c = t && replyCard(it, t.last?.id ?? null, false);
+      if (c?.kind === "draft" && c.stale && (key === "edit" || (key === "accept" && it.status !== "accepted"))) {
+        toast.add({ title: "New messages arrived after this draft. Draft it again, or reply to the newest as is." });
+        return;
+      }
       if (key === "accept") triageFns.act(it, it.status === "accepted" ? "restore" : "accept");
       else if (key === "discard") triageFns.act(it, it.status === "discarded" ? "restore" : "discard");
       else if (it.status !== "discarded") triageFns.edit(it);

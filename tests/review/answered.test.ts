@@ -432,6 +432,15 @@ describe("answered questions in a review run", () => {
         resolveEvidence: "Message 9101: yes. Message 9102: only the worker.",
       });
       expect(replies[1]?.payload).toMatchObject({ resolve: true, resolveTick: true, replyTo: 9201 });
+
+      // P9: a newer message makes the answer draft out of date. Accept is refused.
+      h.comment(9202, 9200, "asmith", 22, "ANSWER-9202 One more thing.");
+      const stale = replies[1] as ReviewItemDto;
+      const refused = await h.json<{ error: string }>(`/api/items/${stale.id}`, { action: "accept", revision: stale.revision });
+      expect([refused.status, refused.body.error]).toEqual([
+        409,
+        "New messages arrived after this draft. Draft it again, or reply to the newest as is.",
+      ]);
     },
     SLOW,
   );

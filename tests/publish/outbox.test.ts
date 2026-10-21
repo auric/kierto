@@ -19,7 +19,16 @@ import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { createSyncEngine } from "../../src/server/sync/engine";
-import type { ConfirmDto, PostDto, PostPlanDto, PrDetail, ReplyConflict, ReviewItemDto, ThreadResolveError } from "../../src/shared/dto";
+import type {
+  ConfirmDto,
+  ItemConflict,
+  PostDto,
+  PostPlanDto,
+  PrDetail,
+  ReplyConflict,
+  ReviewItemDto,
+  ThreadResolveError,
+} from "../../src/shared/dto";
 import type { ExcerptLine } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER, key, type Reply, type Route, startFakeBitbucket } from "../support/fake-bitbucket";
 import {
@@ -253,6 +262,11 @@ async function tick(s: S, id: number) {
 async function accept(s: S, ...ids: number[]) {
   for (const id of ids) expect((await s.call<ReviewItemDto>(`/api/items/${id}`, { action: "accept", revision: 0 })).status).toBe(200);
 }
+// An accept from before a newer message arrived. items.ts refuses an accept of an out-of-date draft.
+const acceptedBefore = (s: S, ...ids: number[]) => {
+  for (const id of ids) s.db.query("UPDATE review_item SET status = 'accepted', revision = revision + 1 WHERE id = $id").run({ id });
+};
+const OUT_OF_DATE = "New messages arrived after this draft. Draft it again, or reply to the newest as is.";
 const itemsOf = (posts: PostPlanDto["posts"]) => posts.flatMap((p) => p.items);
 const itemRow = (s: S, id: number) =>
   s.db.query("SELECT status, revision, anchor_state FROM review_item WHERE id = $id").get({ id }) as {
@@ -560,7 +574,7 @@ describe("confirm", () => {
     const s = await setup();
     const older = seedReply(s, ROOT);
     const gone = seedReply(s, 999);
-    await accept(s, older, gone);
+    acceptedBefore(s, older, gone);
     const plan = (await s.call<PostPlanDto>(`/api/prs/${s.pr}/post-plan`)).body;
     expect(plan.posts).toEqual([]);
     expect(plan.blocked).toEqual([
@@ -576,13 +590,53 @@ describe("confirm", () => {
     expect([itemRow(s, older).status, itemRow(s, gone).status]).toEqual(["accepted", "accepted"]);
   });
 
+  test("P9: accept, edit, and plain refuse an out-of-date draft; the tick, discard, restore, and Undo accept work", async () => {
+    const s = await setup();
+    const act = (id: number, body: Record<string, unknown>) => s.call<ItemConflict>(`/api/items/${id}`, body);
+    const older = seedReply(s, ROOT);
+    const gone = seedReply(s, 999);
+    const fixed = seedReply(s, ROOT, "Fixed in aaaaaaa.", { fix: { id: 1, commit: "a".repeat(40) } });
+    for (const [id, body] of [
+      [older, { action: "accept", revision: 0 }],
+      [older, { action: "edit", revision: 0, body: "New text." }],
+      [gone, { action: "accept", revision: 0 }],
+      [fixed, { action: "plain", revision: 0 }],
+    ] as const) {
+      const r = await act(id, body);
+      expect([r.status, r.body.error, r.body.item.status, r.body.item.revision]).toEqual([409, OUT_OF_DATE, "new", 0]);
+    }
+    expect(itemRow(s, older)).toMatchObject({ status: "new", revision: 0 });
+    expect(s.db.query("SELECT body, edited FROM review_item WHERE id = $id").get({ id: older })).toEqual({
+      body: "Reply text.",
+      edited: 0,
+    });
+
+    // The actions that approve nothing stay open. A draft accepted before the newer message keeps Undo accept.
+    expect((await act(older, { action: "resolve", revision: 0, resolve: true })).status).toBe(200);
+    acceptedBefore(s, gone);
+    expect((await act(gone, { action: "restore", revision: 1 })).status).toBe(200);
+    expect(itemRow(s, gone).status).toBe("new");
+    // One open draft per thread: Restore of older needs the other two discarded.
+    for (const [id, revision] of [
+      [gone, 2],
+      [fixed, 0],
+      [older, 1],
+    ] as const)
+      expect((await act(id, { action: "discard", revision })).status).toBe(200);
+    expect((await act(older, { action: "restore", revision: 2 })).status).toBe(200);
+    expect(itemRow(s, older)).toMatchObject({ status: "new", revision: 3 });
+    // A draft to the newest message accepts.
+    await accept(s, seedReply(s, THEIRS));
+  });
+
   test("thread outcome: confirm posts the shown drafts and leaves a blocked one out; the same set again posts nothing twice", async () => {
     const s = await setup();
     const { item } = seedRun(s);
     const inline = item("Inline text.", 3);
     const fresh = seedReply(s, THEIRS);
     const stale = seedReply(s, ROOT, "Old reply.");
-    await accept(s, inline, fresh, stale);
+    await accept(s, inline, fresh);
+    acceptedBefore(s, stale);
     const plan = (await s.call<PostPlanDto>(`/api/prs/${s.pr}/post-plan`)).body;
     expect(plan.posts.map((p) => [p.destination.kind, p.body])).toEqual([
       ["inline", "Inline text."],

@@ -105,7 +105,7 @@ The run log shows each tool call of the review and of its subagents.
 
 ### Replies
 
-Draft replies judges each thread where it is your turn: valid, partly valid, not valid, or a question. It drafts a reply for each one, and the draft says where it came from. You edit the reply and post it. A new run never replaces a draft that you edited, accepted, or discarded. The button counts the threads that still need a reply.
+Draft replies judges each thread where it is your turn: valid, partly valid, not valid, or a question. It drafts a reply for each one, and the draft says where it came from. You edit the reply and post it. A new run never replaces a draft that you edited, accepted, or discarded. The button counts the threads that still need a reply. When new messages arrive after a draft, the draft cannot post, so it shows no Accept and no Edit. The key a says why.
 
 When new messages arrive after a draft, the draft says so. "Reply to the newest as is" answers the newest message with the same text, without a run. On a draft that you edited or accepted, "Draft again" becomes "Revise my reply": the run gets your text, keeps your points and tone, and changes only what the new messages need. The revision shows under your draft as a word diff against your text. "Use revision" makes it the draft, not accepted. "Keep mine" drops it, and your exact text stays. Draft replies revises your out-of-date drafts the same way. A fix commit puts its "Fixed in" text under your draft as a revision too.
 

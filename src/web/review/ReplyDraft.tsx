@@ -439,7 +439,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
           )}
           <ResolveTick it={it} p={p} mine={props.mine} who={who} busy={props.busy} ctx={ctx} />
           {stale}
-          <Acts it={it} busy={props.busy} ctx={ctx.triage} />
+          <Acts it={it} busy={props.busy} stale={card.stale} ctx={ctx.triage} />
           {it.revised && <Revision it={it} rev={it.revised} who={who} busy={props.busy} ctx={ctx} />}
         </>
       )}

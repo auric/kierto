@@ -152,7 +152,7 @@ export function selectPosts(plan: PlannedPost[], want: Map<number, number>): Pla
 const CLONE_READ_MS = 10_000;
 
 // D14: the reply parent is a live comment and the newest live message of its thread.
-function replyCurrent(db: Database, pr: number, id: number): boolean {
+export function replyCurrent(db: Database, pr: number, id: number): boolean {
   const parent = db.query(SQL.parent).get({ pr, id }) as { root_id: number; tombstoned_at: number | null } | null;
   if (!parent || parent.tombstoned_at !== null) return false;
   return newestLive(db.query(SQL.thread).all({ pr, root: parent.root_id }) as TurnMsg[])?.id === id;

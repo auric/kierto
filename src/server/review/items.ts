@@ -16,6 +16,7 @@ import {
   type SessionMark,
 } from "../../shared/review";
 import { newestLive, type TurnMsg } from "../../shared/turn";
+import { replyCurrent } from "../publish/outbox";
 import { type ItemRow, revisions, toItemDto, withRevision } from "./jobs";
 
 // runs: other runs whose items changed, so their run details reload.
@@ -73,6 +74,10 @@ export function triage(db: Database, id: number, input: ItemActionInput): Triage
   if (reply?.revises !== undefined && input.action !== "use-revision" && input.action !== "keep-mine")
     return { status: 400, error: "Use the revision or keep your draft first." };
   if (reply?.dropped) return conflict("A newer revision or Keep mine dropped this revision.");
+  // docs/plans/thread-outcome.md P9: an out-of-date draft cannot post (outbox.ts blockedDrafts), so no action approves its text.
+  const approves = input.action === "accept" || input.action === "edit" || input.action === "plain";
+  if (reply && approves && !replyCurrent(db, row.pr, reply.replyTo))
+    return conflict("New messages arrived after this draft. Draft it again, or reply to the newest as is.");
   // One open draft per thread.
   const opens =
     row.status === "discarded" &&

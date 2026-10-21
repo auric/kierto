@@ -741,6 +741,10 @@ describe("undo", () => {
       s.db.query("UPDATE review_run SET summary_json = $j WHERE id = $id").run({ id: s.run, j: JSON.stringify(summary) });
       // Cache mode takes the commit identity from the clone.
       expect((await s.setClone(await makeClone())).status).toBe(200);
+      // items.ts accepts only a draft to the newest message.
+      s.db
+        .query("UPDATE review_item SET payload_json = json_set(payload_json, '$.replyTo', $to) WHERE id = $id")
+        .run({ id: s.draft, to: s.newest() });
       expect((await s.call("POST", `/api/items/${s.draft}`, { action: "accept", revision: 0 })).status).toBe(200);
       const r = await s.apply(s.ids, "cache");
       expect(r.status).toBe(201);

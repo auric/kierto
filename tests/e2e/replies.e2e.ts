@@ -181,6 +181,14 @@ test("a stale draft says new messages arrived; Draft again answers the newest me
   const outcome = thread(page, ROOT).locator("[data-outcome]");
   await expect(outcome.locator("[data-marker='stale']")).toHaveText("Out of date");
   await expect(repliesButton(page)).toHaveAccessibleName("Draft replies, 1 thread");
+  // P9: the out-of-date card has no Accept and no Edit. The key a refuses with a hint, so the draft stays unaccepted.
+  await expect(card(page, ROOT).getByRole("button", { name: "Accept" })).toHaveCount(0);
+  await expect(card(page, ROOT).getByRole("button", { name: "Edit" })).toHaveCount(0);
+  await expect(card(page, ROOT).getByRole("button", { name: "Discard" })).toBeVisible();
+  await card(page, ROOT).focus();
+  await page.keyboard.press("a");
+  await expect(page.getByText("New messages arrived after this draft. Draft it again, or reply to the newest as is.")).toBeVisible();
+  await expect(card(page, ROOT)).not.toContainText("Accepted");
   await card(page, ROOT).getByRole("button", { name: "Draft again" }).click();
   await expect(card(page, ROOT)).toContainText(echo(1000011), { timeout: RUN_MS });
   await expect(card(page, ROOT)).not.toContainText("New messages since this draft.");
