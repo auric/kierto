@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommitDto, MetaDto, PrRow, ReviewItemDto, RunDetail, RunDto } from "../../shared/dto";
 import { type ConsultUi, useConsult } from "../consult/Consult";
+import type { Card } from "../diff/model";
 import { type FixUi, useFix } from "../fix/FixBar";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
@@ -102,8 +103,8 @@ export function useReview(
     onTaskIds: () => void;
     // Opens the settings at one profile: "Edit <profile>" in the brief.
     onProfile: (id: string) => void;
-    // Focuses the line of a draft in the diff.
-    showInDiff: (draft: number) => void;
+    // Focuses the line of a draft or a thread in the diff.
+    showInDiff: (card: Card) => void;
   },
 ): ReviewUi {
   const meta = useMeta().data as MetaDto;
@@ -144,7 +145,7 @@ export function useReview(
       asker,
       onToggle: toggleDraft,
       onFrom: (agent) => onLog.current(agent, false, "review"),
-      onShowInDiff: (id) => onShow.current(id),
+      onShowInDiff: (id) => onShow.current({ kind: "draft", id }),
       onFix: author ? (id) => onFix.current(id) : null,
       triage: triageCtx,
     }),
@@ -186,6 +187,7 @@ export function useReview(
       plain: (it) => onTriage.current.plain(it),
       revision: { take: (rev, it) => onTriage.current.takeRevision(rev, it), keep: (rev) => onTriage.current.keepMine(rev) },
       newest: (it) => onTriage.current.newest(it),
+      diff: (thread) => onShow.current({ kind: "thread", id: thread }),
       author,
     }),
     [meta, o.hints, o.announce, triageCtx, onTriage, author],

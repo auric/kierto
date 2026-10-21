@@ -33,6 +33,17 @@ describe("planNotes", () => {
     ]);
   });
 
+  // docs/plans/thread-outcome.md section 11: the note of a sync joins the out-of-date drafts with the new comments.
+  test("out-of-date drafts join the comment events of their PR in one notification", () => {
+    const stale = { kind: "draft_stale" } as const;
+    expect(planNotes([ev(1), ev(1, stale)], false)).toEqual([
+      { title: "Change 1", body: "PROJ1/repo-1 #10: 1 new comment, 1 reply draft out of date", tag: "PROJ1/repo-1 #10", pr: 1 },
+    ]);
+    expect(planNotes([ev(2, stale), ev(2, stale), ev(2), ev(2)], false).map((x) => x.body)).toEqual([
+      "PROJ1/repo-2 #20: 2 reply drafts out of date, 2 new comments",
+    ]);
+  });
+
   test("the first claim of a tab gives one digest", () => {
     expect(planNotes([ev(1), ev(2), ev(2)], true)).toEqual([
       { title: "Kierto", body: "3 updates in 2 pull requests", tag: "digest", pr: null },

@@ -57,6 +57,10 @@
 - Each reply draft names where it came from: the review, the reply run, your fix commit, the fix run, the re-review, or you.
 - The Draft replies button counts only the threads that still need a reply: no draft yet, or a draft that is out of date and has no revision for the newest message.
 - A "Fixed in" draft whose commit left your branch offers "Post as plain reply" on its card too.
+- The inbox row says "N reply drafts out of date" when new messages or a resolve after the draft keep your reply drafts from posting. Groups and sort stay the same.
+- A reply draft that you accepted or edited gives one notification, "1 reply draft out of date", when another person's message or resolve does that. It joins the new comments of the same check.
+- A reply draft says "The code at this comment changed after this draft." when a push outdated the comment later. The outcome line says "Code changed". An untouched draft offers "Draft again". A draft that you accepted or edited offers "Show in diff". It never blocks the post.
+- A reply draft in a thread whose messages are all deleted now says "Out of date".
 
 ### Fix
 

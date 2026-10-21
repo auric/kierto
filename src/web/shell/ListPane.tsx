@@ -8,6 +8,7 @@ import {
   BellOff,
   ChevronRight,
   CircleAlert,
+  History,
   Hourglass,
   LoaderCircle,
   Menu,
@@ -302,7 +303,7 @@ const Row = memo(function Row({
         data-row
         aria-current={selected ? "true" : undefined}
         className={cn(
-          "grid w-full cursor-pointer gap-[3px] border-0 border-b bg-transparent px-4 py-(--row-y) text-left hover:bg-hover focus-visible:outline-offset-[-2px]",
+          "@container/row grid w-full cursor-pointer gap-[3px] border-0 border-b bg-transparent px-4 py-(--row-y) text-left hover:bg-hover focus-visible:outline-offset-[-2px]",
           selected && "bg-sel hover:bg-sel",
         )}
         onClick={() => onSelect(p.id)}
@@ -326,6 +327,19 @@ const Row = memo(function Row({
               <span className="inline-flex min-w-0 items-center gap-[5px] text-destructive">
                 <CircleAlert aria-hidden className="size-[15px] shrink-0" />
                 <span className="truncate">Last check incomplete</span>
+              </span>
+            </HintTrigger>
+          )}
+          {/* docs/plans/thread-outcome.md section 11: a count only. Groups, views, and sort ignore it. The count never truncates, so a
+              row of 416 px or less drops "reply" from the visible words. */}
+          {p.staleDrafts > 0 && (
+            <HintTrigger hints={hints} label="Open the pull request to update them.">
+              <span data-stale-drafts className="inline-flex shrink-0 items-center gap-[5px] whitespace-nowrap">
+                <History aria-hidden className="size-[15px] shrink-0" />
+                <span>
+                  {p.staleDrafts}
+                  <span className="@max-[26rem]/row:sr-only"> reply</span> {p.staleDrafts === 1 ? "draft" : "drafts"} out of date
+                </span>
               </span>
             </HintTrigger>
           )}

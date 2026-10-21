@@ -16,6 +16,7 @@ import {
   CircleHelp,
   CircleSlash,
   Contrast,
+  FileCode,
   FileDiff,
   GitCommitHorizontal,
   History,
@@ -101,6 +102,8 @@ export type ReplyCtx = {
   // docs/plans/thread-outcome.md. take: the revision rev replaces your draft it. keep: rev goes. newest: it answers the newest message.
   revision: { take: (rev: ReviewItemDto, it: ReviewItemDto) => void; keep: (rev: ReviewItemDto) => void };
   newest: (it: ReviewItemDto) => void;
+  // Focuses the line of this thread in the diff.
+  diff: (thread: number) => void;
   // The user's own pull request: the judgement sets the default tick of the Fix list.
   author: boolean;
 };
@@ -108,6 +111,7 @@ export type ReplyCtx = {
 // Dashed: a draft that nobody accepted yet. Solid: accepted, so the post bar holds it.
 const box = "rl-enter mt-3.5 max-w-[72ch] scroll-mt-3 rounded-lg border border-dashed border-rule-strong px-2.5 pt-2 pb-2.5";
 const icon = "size-[15px] shrink-0";
+const CODE_CHANGED = "The code at this comment changed after this draft.";
 // A text button in a line of small text. The target is 24 px high (WCAG 2.5.8). The negative margins keep the line as it was.
 const linkButton =
   "-mx-1 -my-1 inline-flex min-h-6 cursor-pointer items-center rounded px-1 font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-50";
@@ -278,6 +282,7 @@ export function ConflictNote({ c, busy, onKeep, onFix }: { c: ConflictText; busy
 // waiting: the short hash of a "Fixed in" commit that the PR commits do not list yet. gone: the post plan says that the clone branch
 // no longer holds that commit (commit-gone), so the card offers "Post as plain reply".
 // resolved: the thread is resolved now. since: it was open when the app stored the draft. null: the thread is open.
+// code: the code at the comment changed after the draft (outcome marker "Code changed").
 export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   card: ReplyCard;
   thread: number;
@@ -288,6 +293,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   waiting: string | null;
   gone: boolean;
   resolved: "since" | "now" | null;
+  code: boolean;
   ctx: ReplyCtx;
 }) {
   const { card, thread, ctx } = props;
@@ -357,6 +363,25 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
       )}
     </p>
   );
+  // docs/plans/thread-outcome.md section 11: a touched draft keeps your text, so the line only points to the code. The out-of-date
+  // line offers Draft again already.
+  const code = props.code && (
+    <p data-code-changed className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-2">
+      <FileCode aria-hidden className="size-[13px] shrink-0" />
+      {CODE_CHANGED}
+      {mineText ? (
+        <button type="button" title="Key: g d" aria-keyshortcuts="g d" className={linkButton} onClick={() => ctx.diff(thread)}>
+          Show in diff
+        </button>
+      ) : (
+        !card.stale && (
+          <button type="button" disabled={props.busy} className={linkButton} onClick={() => ctx.again(thread)}>
+            Draft again
+          </button>
+        )
+      )}
+    </p>
+  );
   const j = p.judgement ?? null;
   const chip =
     j &&
@@ -380,7 +405,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
         id={id}
         data-reply-draft={thread}
         tabIndex={-1}
-        aria-label={`${who}: ${lead.toLowerCase()}${judged && `.${judged}`}`}
+        aria-label={`${who}: ${lead.toLowerCase()}${judged && `.${judged}`}${props.code ? ` ${CODE_CHANGED}` : ""}`}
         onFocus={focus.onFocus}
         className={box}
       >
@@ -392,6 +417,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
           {lead}: <Inline text={p.reason} />
         </p>
         {stale}
+        {code}
       </article>
     );
   }
@@ -414,7 +440,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
       data-reply-draft={thread}
       tabIndex={-1}
       onFocus={focus.onFocus}
-      aria-label={`${text ? "Reply draft" : "Resolve proposal"} from ${session ? "your session" : short}${text && props.to ? ` to ${props.to}` : ""}.${judged}${reopen ? ` ${reopen}` : ""}${resolves ? " Resolves the thread after the post." : ""}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}${it.revised ? " A revision waits." : ""}`}
+      aria-label={`${text ? "Reply draft" : "Resolve proposal"} from ${session ? "your session" : short}${text && props.to ? ` to ${props.to}` : ""}.${judged}${reopen ? ` ${reopen}` : ""}${resolves ? " Resolves the thread after the post." : ""}${accepted ? " Accepted." : ""}${card.stale ? " New messages since this draft." : ""}${props.code ? ` ${CODE_CHANGED}` : ""}${it.revised ? " A revision waits." : ""}`}
       className={cn(box, accepted && "border-solid")}
     >
       <Head meta={ctx.meta} who={who}>
@@ -484,6 +510,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
           )}
           <ResolveTick it={it} p={p} mine={props.mine} who={who} busy={props.busy} ctx={ctx} />
           {stale}
+          {code}
           <Acts it={it} busy={props.busy} stale={card.stale} ctx={ctx.triage} />
           {it.revised && <Revision it={it} rev={it.revised} who={who} busy={props.busy} ctx={ctx} />}
         </>

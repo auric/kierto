@@ -10,6 +10,7 @@ import type { FixUi } from "../fix/FixBar";
 import { fixWaiting } from "../fix/model";
 import type { ThreadModel } from "../pr/threads";
 import { usePostPlan } from "../publish/data";
+import { usePr } from "../shell/data";
 import { modeOf, type TriageState } from "./Drafts";
 import { getRun, replyKey } from "./data";
 import { plural, replyCard, replyOf } from "./model";
@@ -39,6 +40,8 @@ export function useThreadCards(
   const qc = useQueryClient();
   const { threads, commits, byThread, pending, findings: ds, triage, replyCtx, fix, author, send, onTriage, focusAfter } = o;
   const { cards: fixCards, findingCards: fixFindingCards, fixes, ticks, tick: setTicks } = fix;
+  // PrDetail reads the same query, so this adds no request.
+  const prHead = usePr(pr.id).data?.sourceHead ?? null;
   // The outcome of each thread, and the conflict note when its reply and its fix disagree.
   const outcomes = useMemo(
     () =>
@@ -46,16 +49,17 @@ export function useThreadCards(
         threads.map((t) => [
           t.id,
           threadOutcome({
-            thread: { id: t.id, turn: t.turn, newest: t.last?.id ?? null },
+            thread: { id: t.id, turn: t.turn, newest: t.last?.id ?? null, orphanedAt: t.root.orphanedAt ?? null },
             draft: byThread.get(t.id),
             fixes,
             commits,
             ticks,
             author,
+            prHead,
           }),
         ]),
       ),
-    [threads, byThread, fixes, commits, ticks, author],
+    [threads, byThread, fixes, commits, ticks, author, prHead],
   );
   const need = threads.filter((t) => outcomes.get(t.id)?.outcome.needsReply).length;
   // WP-S3: the post plan names the accepted "Fixed in" drafts whose commit the clone branch no longer holds.
@@ -129,6 +133,7 @@ export function useThreadCards(
               waiting={p ? fixWaiting(p, commits, fixes) : null}
               gone={!!it && gone.has(it.id)}
               resolved={t.turn !== "resolved" ? null : p?.threadOpen ? "since" : "now"}
+              code={!!state?.outcome.markers.includes("code")}
               ctx={replyCtx}
             />
           )}

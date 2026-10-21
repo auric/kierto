@@ -308,7 +308,7 @@ export function PrDetail({
     onSettings,
     onTaskIds,
     onProfile,
-    showInDiff: (id) => showDiff.current({ kind: "draft", id }),
+    showInDiff: (card) => showDiff.current(card),
   });
   draftReply.current = review.api.draftReply;
   fixRef.current = { open: review.api.fix, copy: review.fix.copyPrompt };

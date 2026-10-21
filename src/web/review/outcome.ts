@@ -5,6 +5,7 @@
 // draft and the fix result disagree. The UI derives them from data that it has. No DOM access, so bun test runs them directly.
 import type { CommitDto, FixDto, FixEditDto, ReviewItemDto } from "../../shared/dto";
 import type { FixWhy, ReplyPayload } from "../../shared/review";
+import { staleReasons } from "../../shared/stale";
 import type { Turn } from "../../shared/turn";
 import { type FixState, type FixTarget, fixState, fixWaiting, WHY } from "../fix/model";
 import { snippet } from "../pr/threads";
@@ -25,13 +26,14 @@ export type OutcomeKind =
   | "waiting"
   | "resolved";
 
-// stale: new messages since the open draft, or its parent is deleted. resolved-since: the thread was open at the draft and is
-// resolved now. push: the "Fixed in" commit is not on the PR yet. revision: a revision of your draft waits for Use revision or Keep mine.
-export type Marker = "stale" | "resolved-since" | "push" | "revision";
+// stale, resolved-since, code: the out-of-date, resolved-since, and code-changed rules of shared/stale.ts. push: the "Fixed in" commit
+// is not on the PR yet. revision: a revision of your draft waits for Use revision or Keep mine.
+export type Marker = "stale" | "resolved-since" | "code" | "push" | "revision";
 
 export const MARKER: Record<Marker, string> = {
   stale: "Out of date",
   "resolved-since": "Resolved since the draft",
+  code: "Code changed",
   push: "Waiting for push",
   revision: "Revision waiting",
 };
@@ -56,16 +58,17 @@ export type Conflict =
   | { kind: "no"; reply: ReviewItemDto; edits: number[]; session: boolean }
   | { kind: "yes"; reply: ReviewItemDto; why: "already" | "invalid" | "scope"; run: number; text: boolean; session: boolean };
 
-// thread: newest is the ID of the newest live message, null when every message is deleted. draft: the current reply draft of the
-// thread (replyMap). fixes: GET /api/prs/:id/fixes. commits: the PR commits. ticks: the choice of the user per free edit (FixUi.ticks).
-// author: the user's own pull request.
+// thread: newest is the ID of the newest live message, null when every message is deleted. orphanedAt: CommentDto.orphanedAt of the
+// root. draft: the current reply draft of the thread (replyMap). fixes: GET /api/prs/:id/fixes. commits: the PR commits.
+// ticks: the choice of the user per free edit (FixUi.ticks). author: the user's own pull request. prHead: PrDetail.sourceHead.
 export type OutcomeInput = {
-  thread: { id: number; turn: Turn; newest: number | null };
+  thread: { id: number; turn: Turn; newest: number | null; orphanedAt?: number | null };
   draft: ReviewItemDto | undefined;
   fixes: FixDto[] | undefined;
   commits: CommitDto[] | undefined;
   ticks: ReadonlyMap<number, boolean>;
   author: boolean;
+  prHead?: string | null;
 };
 
 const replyOf = (it: ReviewItemDto) => it.payload as ReplyPayload;
@@ -137,7 +140,15 @@ export function threadOutcome(i: OutcomeInput): { outcome: Outcome; conflict: Co
   const note = done?.note ?? null;
   const { free, ticked } = freeOf(done, i.ticks);
   const committed = done?.commit?.state === "committed" ? done.commit : null;
-  const stale = !!p && t.newest !== null && p.replyTo !== t.newest;
+  const reasons =
+    cur && p
+      ? staleReasons(
+          { body: cur.body, payload: p, drafted: cur.drafted },
+          { newest: t.newest, resolved: t.turn === "resolved", orphanedAt: t.orphanedAt ?? null },
+          i.prHead ?? null,
+        )
+      : [];
+  const stale = reasons.includes("out-of-date");
   // The why of the note that made the current nofix draft.
   const nofix = done && cur && cur.run === done.fix.run.id ? (note?.why ?? null) : null;
 
@@ -170,7 +181,8 @@ export function threadOutcome(i: OutcomeInput): { outcome: Outcome; conflict: Co
 
   const markers: Marker[] = [];
   if (shown && stale) markers.push("stale");
-  if (live && p?.threadOpen && t.turn === "resolved" && live.body.trim()) markers.push("resolved-since");
+  if (live && reasons.includes("resolved-since")) markers.push("resolved-since");
+  if (shown && reasons.includes("code-changed")) markers.push("code");
   if (live && p?.fix && fixWaiting(p, i.commits, i.fixes)) markers.push("push");
   if (live?.revised) markers.push("revision");
 

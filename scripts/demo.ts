@@ -716,6 +716,48 @@ if (db && evictPr) {
       VALUES ($pr, $run, $kind, $key, $text, '{}', $items, 'confirmed', $root, 0, $at, $at)`,
     ).run({ pr: evictPr.id, run, kind, key: `demo-post-${root}`, text, items: JSON.stringify([{ id, revision: 0 }]), root, at: min(320) });
   }
+
+  // A reply run drafted an answer to message 1124 of thread 1120, and I accepted it. Alex wrote 1125 later, so the draft is out of
+  // date and the row shows the badge (docs/plans/thread-outcome.md section 11).
+  const { id: replyRun } = db
+    .query(
+      `INSERT INTO review_run (pr, profile, note, idem_key, source_head, target_head, status, kind, summary_json, started_at, finished_at)
+      VALUES ($pr, 'general', '', 'demo-reply-1120', $head, $target, 'completed', 'reply', $summary, $start, $end) RETURNING id`,
+    )
+    .get({
+      pr: evictPr.id,
+      head: HEAD_A,
+      target: remote.target,
+      summary: JSON.stringify({
+        summary: "One reply about the budget getter.",
+        risks: [],
+        coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+        dropped: [],
+      }),
+      start: min(218),
+      end: min(217),
+    }) as { id: number };
+  const body = "Agreed. Return a const reference, so a call copies nothing.";
+  db.query(
+    "INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited) VALUES ($run, 'reply', $payload, $body, 'accepted', 1120, 0)",
+  ).run({
+    run: replyRun,
+    body,
+    payload: JSON.stringify({
+      thread: 1120,
+      action: "reply",
+      body,
+      reason: "Message 1124 is right: the getter returns the struct by value.",
+      evidenceStatus: "code",
+      judgement: "valid",
+      resolve: false,
+      resolveEvidence: "",
+      replyTo: 1124,
+      origin: "reply",
+      threadOpen: true,
+      touchedAt: min(214),
+    }),
+  });
 }
 
 const server = startServer({

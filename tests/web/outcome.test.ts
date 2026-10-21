@@ -189,6 +189,58 @@ describe("outcome", () => {
     // A discarded draft is not open, so the thread state shows with no marker.
     expect(of({ draft: reply({}, { status: "discarded" }), newest: NEWEST + 1 })).toMatchObject({ kind: "open", markers: [] });
   });
+
+  // thread-outcome.md section 11: the root anchor turned orphaned after the run start and the last touch, and the PR head moved.
+  const RUN_HEAD = "a".repeat(40);
+  const drafted = (kind: RunDto["kind"] = "reply") => ({ kind, startedAt: 1_000, finishedAt: 2_000, head: RUN_HEAD });
+  const moved = (o: Parameters<typeof input>[0] & { orphanedAt?: number | null; prHead?: string | null }) => {
+    const i = input(o);
+    return threadOutcome({
+      ...i,
+      thread: { ...i.thread, orphanedAt: o.orphanedAt ?? null },
+      prHead: o.prHead === undefined ? "f".repeat(40) : o.prHead,
+    }).outcome;
+  };
+
+  test("Code changed: a marker that keeps the other markers and the outcome", () => {
+    expect(moved({ draft: reply({}, { drafted: drafted() }), orphanedAt: 5_000 })).toMatchObject({ kind: "answered", markers: ["code"] });
+    expect(moved({ draft: reply({}, { drafted: drafted() }), orphanedAt: 5_000, newest: NEWEST + 1 }).markers).toEqual(["stale", "code"]);
+    expect(moved({ draft: reply({ threadOpen: true }, { drafted: drafted() }), orphanedAt: 5_000, turn: "resolved" }).markers).toEqual([
+      "resolved-since",
+      "code",
+    ]);
+    // A "No reply needed" draft gets it too, so Draft again shows there.
+    expect(moved({ draft: reply({}, { body: "", drafted: drafted() }), orphanedAt: 5_000 }).markers).toEqual(["code"]);
+    // Code changed never asks Draft replies for a new draft.
+    expect(moved({ draft: reply({}, { drafted: drafted() }), orphanedAt: 5_000 }).needsReply).toBe(false);
+  });
+
+  test("Code changed: none for a fix run, after the last touch, without a flip, at the run head, or for a discarded draft", () => {
+    const fixed = reply({ origin: "fix", fix: { id: 9, commit: HASH } }, { drafted: drafted("fix") });
+    expect(moved({ draft: fixed, orphanedAt: 5_000 }).markers).not.toContain("code");
+    expect(moved({ draft: reply({ origin: "nofix" }, { drafted: drafted("fix") }), orphanedAt: 5_000 }).markers).toEqual([]);
+    // You accepted or edited the draft after the code changed, so you saw the change.
+    expect(moved({ draft: reply({ touchedAt: 6_000 }, { status: "accepted", drafted: drafted() }), orphanedAt: 5_000 }).markers).toEqual(
+      [],
+    );
+    expect(moved({ draft: reply({ touchedAt: 4_000 }, { status: "accepted", drafted: drafted() }), orphanedAt: 5_000 }).markers).toEqual([
+      "code",
+    ]);
+    // The anchor turned orphaned before the run started.
+    expect(moved({ draft: reply({}, { drafted: drafted() }), orphanedAt: 900 }).markers).toEqual([]);
+    expect(moved({ draft: reply({}, { drafted: drafted() }), orphanedAt: null }).markers).toEqual([]);
+    expect(moved({ draft: reply({}, { drafted: drafted() }), orphanedAt: 5_000, prHead: RUN_HEAD }).markers).toEqual([]);
+    expect(moved({ draft: reply({}, { drafted: drafted() }), orphanedAt: 5_000, prHead: null }).markers).toEqual([]);
+    // A draft without its run, such as a stale cache entry, gets no marker.
+    expect(moved({ draft: reply(), orphanedAt: 5_000 }).markers).toEqual([]);
+    expect(moved({ draft: reply({}, { status: "discarded", drafted: drafted() }), orphanedAt: 5_000 }).markers).toEqual([]);
+  });
+
+  test("every message deleted: the open draft is out of date, and Draft replies has nothing to answer", () => {
+    expect(of({ draft: reply(), newest: null, turn: "other" })).toMatchObject({ kind: "answered", markers: ["stale"], needsReply: false });
+    expect(of({ draft: reply({}, { status: "accepted" }), newest: null, turn: "other" }).markers).toEqual(["stale"]);
+    expect(of({ newest: null, turn: "other" }).markers).toEqual([]);
+  });
 });
 
 describe("writer priority", () => {
