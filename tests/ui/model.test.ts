@@ -372,4 +372,18 @@ describe("failure toast text", () => {
     expect(failText(new Error("The item changed."))).toBe("The item changed. Try again, or reload the pull request.");
     expect(failText(new Error(""))).toBe("Try again, or reload the pull request.");
   });
+
+  test("outside a pull request the step names the page", () => {
+    expect(failText(new Error("Server answered 500"), "page")).toBe("Server answered 500. Try again, or reload the page.");
+    expect(failText("Network down", "page")).toBe("Network down. Try again, or reload the page.");
+  });
+
+  test("a stale session keeps its own step: a new try fails again", () => {
+    // The shape of data.ts ApiError for a 403 session_stale answer.
+    const stale = Object.assign(new Error("The service restarted. Reload the page."), { status: 403, stale: true });
+    expect(failText(stale)).toBe("The service restarted. Reload the page.");
+    expect(failText(Object.assign(new Error("Forbidden"), { status: 403, stale: false }))).toBe(
+      "Forbidden. Try again, or reload the pull request.",
+    );
+  });
 });

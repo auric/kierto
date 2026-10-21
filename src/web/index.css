@@ -648,6 +648,16 @@ details[open] > summary .rl-chev {
 .rl-indent {
   margin-left: calc(var(--av) + 8px);
 }
+/* A text button in a line of text. Its target is 24 px high or more (WCAG 2.5.8). The negative margin keeps the layout.
+   A padding, margin, or height utility on the same element breaks the balance. Do not use them together.
+   The 0.5 px covers the rounding of the layout to 1/64 px. */
+@layer components {
+  .rl-hit {
+    --rl-hit: max(0px, calc((24px - 1lh) / 2 + 0.5px));
+    padding-block: var(--rl-hit);
+    margin-block: calc(-1 * var(--rl-hit));
+  }
+}
 .rl-opened > .rl-fold-b {
   margin-bottom: 10px;
 }

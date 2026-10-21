@@ -16,6 +16,7 @@ import { CloneDialog, CloneFolder } from "../fix/CloneDialog";
 import { clonesChanged, dropClone, useClones } from "../fix/data";
 import { useMeta } from "../meta";
 import { useSaveSettings } from "../shell/data";
+import { failText } from "../shell/model";
 
 const name = (c: Pick<CloneRowDto, "project" | "repo">) => `${c.project}/${c.repo}`;
 
@@ -67,7 +68,7 @@ export function Clones({ settings }: { settings: SettingsDto }) {
       say(`Removed the clone folder of ${name(c)}. The folder stays on disk.`);
       toHeading();
     } catch (e) {
-      toast.add({ title: "The clone folder was not removed", description: (e as Error).message });
+      toast.add({ title: "The clone folder was not removed", description: failText(e, "page") });
     } finally {
       setBusy(null);
     }

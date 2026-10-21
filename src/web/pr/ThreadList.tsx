@@ -88,7 +88,7 @@ export function Threads(props: {
               <div key="g-resolved-more" className="mt-5">
                 <button
                   type="button"
-                  className="mx-1.5 cursor-pointer rounded text-sm font-medium text-pen hover:underline"
+                  className="rl-hit mx-1.5 cursor-pointer rounded text-sm font-medium text-pen hover:underline"
                   onClick={props.onShowResolved}
                 >
                   Show {ts.length} resolved

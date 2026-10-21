@@ -46,7 +46,7 @@ import { replyKey, useCancelRun, usePrRuns, useRun } from "../review/data";
 import { plural } from "../review/model";
 import { sizeText } from "../review/tasks";
 import { useSettings } from "../shell/data";
-import { prKey } from "../shell/model";
+import { failText, prKey } from "../shell/model";
 import { useNow } from "../shell/Sidebar";
 import {
   consultKey,
@@ -357,7 +357,7 @@ function AnswerBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given
       onChanged();
       announce(`Applied. ${resultText(d)}`);
     } catch (e) {
-      toast.add({ title: "The answer was not applied", description: (e as Error).message });
+      toast.add({ title: "The answer was not applied", description: failText(e) });
     } finally {
       setBusy(false);
     }
@@ -375,7 +375,7 @@ function AnswerBody({ pr, announce, onClose, onChanged, onFix, finalFocus, given
       );
       onClose();
     } catch (e) {
-      toast.add({ title: "The undo did not run", description: (e as Error).message });
+      toast.add({ title: "The undo did not run", description: failText(e) });
       setBusy(false);
     }
   };
@@ -578,7 +578,7 @@ function RunningFooter({ id, onClose }: { id: number; onClose: () => void }) {
         variant="ghost"
         className="sm:mr-auto"
         disabled={cancel.isPending}
-        onClick={() => cancel.mutate(id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
+        onClick={() => cancel.mutate(id, { onError: (e) => toast.add({ title: "Cancel failed", description: failText(e) }) })}
       >
         <CircleStop aria-hidden data-icon="inline-start" />
         {cancel.isPending ? "Cancelling…" : "Cancel the run"}
@@ -638,7 +638,7 @@ function SessionPicker({
           announce(`Asked ${titleOf(pick.title)}. Your session is answering${mode === "fix" ? " and proposing fixes" : ""}.`);
           onStarted(r.run.id);
         },
-        onError: (e) => toast.add({ title: "The session was not asked", description: e.message }),
+        onError: (e) => toast.add({ title: "The session was not asked", description: failText(e) }),
       },
     );
   };

@@ -132,7 +132,11 @@ export function TaskChips(props: {
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
         <span className="mr-1.5 font-semibold">Task</span>
         <span className="text-ink-2">No task ID found.</span>
-        <button type="button" className="cursor-pointer rounded text-sm font-medium text-pen hover:underline" onClick={props.onTaskIds}>
+        <button
+          type="button"
+          className="rl-hit cursor-pointer rounded text-sm font-medium text-pen hover:underline"
+          onClick={props.onTaskIds}
+        >
           Set up task IDs
         </button>
       </div>

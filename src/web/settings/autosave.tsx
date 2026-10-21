@@ -105,7 +105,7 @@ export function SaveStatus(props: { id: string; state: SaverState; problem: stri
       <>
         <CircleAlert aria-hidden className={cn(icon, "text-destructive")} />
         <span className="text-destructive">Not saved. {state.message}</span>
-        <button type="button" className="cursor-pointer rounded font-medium text-pen hover:underline" onClick={props.onRetry}>
+        <button type="button" className="rl-hit cursor-pointer rounded font-medium text-pen hover:underline" onClick={props.onRetry}>
           Try again
         </button>
       </>

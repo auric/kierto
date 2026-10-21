@@ -53,7 +53,7 @@ export type FixCtx = {
 
 const icon = "size-[15px] shrink-0";
 const box = "rl-enter mt-3.5 max-w-[72ch] scroll-mt-3 rounded-lg border border-dashed border-rule-strong px-2.5 pt-2 pb-2.5";
-const linkish = "inline-flex shrink-0 cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
+const linkish = "rl-hit inline-flex shrink-0 cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
 
 function Err({ children }: { children: ReactNode }) {
   return (

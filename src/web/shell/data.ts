@@ -8,7 +8,7 @@ import { toast } from "@/components/ui/toast";
 import type { CheckpointDto, ClaimedEvent, FollowState, PrDetail, PrRow, SettingsDto, SettingsInput, SyncStatus } from "../../shared/dto";
 import { api } from "../api";
 import type { AckItem } from "../pr/ack";
-import { ARCHIVED_TEXT, prKey, restoreWords, unfollowText } from "./model";
+import { ARCHIVED_TEXT, failText, prKey, restoreWords, unfollowText } from "./model";
 
 export class ApiError extends Error {
   constructor(
@@ -75,7 +75,7 @@ const postFollow = async (id: number, followed: boolean) =>
 const postArchive = async (id: number, archived: boolean) =>
   read<FollowState>(await api.api.prs[":id"].archive.$post({ param: { id: String(id) }, json: { archived } }));
 
-const undoFailed = (e: Error) => toast.add({ title: "Undo failed", description: e.message });
+const undoFailed = (e: Error) => toast.add({ title: "Undo failed", description: failText(e, "page") });
 
 // An unfollow can take the PR out of every view but Archive, so its toast offers Undo.
 export function useFollow() {
@@ -94,7 +94,7 @@ export function useFollow() {
         actionProps: { children: "Undo", onClick: () => postFollow(pr.id, true).then(() => refresh(pr.id), undoFailed) },
       });
     },
-    onError: (e, { followed }) => toast.add({ title: followed ? "Follow failed" : "Unfollow failed", description: e.message }),
+    onError: (e, { followed }) => toast.add({ title: followed ? "Follow failed" : "Unfollow failed", description: failText(e, "page") }),
     onSettled: (_, __, { pr }) => refresh(pr.id),
   });
 }
@@ -109,7 +109,7 @@ export function useRestore() {
       qc.setQueryData<PrRow[]>(["prs", "archive"], (old) => old?.filter((p) => p.id !== pr.id));
     },
     onSuccess: (_, pr) => toast.add({ title: `${restoreWords(pr).done} ${prKey(pr)}`, description: "It is back in Following." }),
-    onError: (e, pr) => toast.add({ title: `${restoreWords(pr).verb} failed`, description: e.message }),
+    onError: (e, pr) => toast.add({ title: `${restoreWords(pr).verb} failed`, description: failText(e, "page") }),
     onSettled: (_, __, pr) => {
       qc.invalidateQueries({ queryKey: ["prs"] });
       qc.invalidateQueries({ queryKey: ["pr", pr.id] });
@@ -134,7 +134,7 @@ export function useArchive() {
         description: ARCHIVED_TEXT,
         actionProps: { children: "Undo", onClick: () => postArchive(id, false).then(refresh, undoFailed) },
       }),
-    onError: (e) => toast.add({ title: "Archive failed", description: e.message }),
+    onError: (e) => toast.add({ title: "Archive failed", description: failText(e, "page") }),
     onSettled: refresh,
   });
 }

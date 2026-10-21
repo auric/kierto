@@ -31,7 +31,7 @@ import type { ThreadModel } from "./threads";
 export const STATUS_TEXT: Record<string, string> = { APPROVED: "Approved", NEEDS_WORK: "Needs work", UNAPPROVED: "Not reviewed" };
 
 const h2 = "m-0 flex items-baseline gap-2 text-[15px] font-bold tracking-[-0.005em]";
-const linkish = "inline-flex w-fit items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
+const linkish = "rl-hit inline-flex w-fit items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
 
 // Plan pr-view-v4 2.5: the author's text, the reviewers, and the notices. The runner's summary is in the run record.
 export function Description({ detail, me }: { detail: PrDetail; me: string | null }) {

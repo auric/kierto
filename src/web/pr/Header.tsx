@@ -85,7 +85,7 @@ function BranchRef(props: { name: string; url: string | null; forge: string; cop
             {...external}
             className={cn(
               text,
-              "rounded underline decoration-rule-strong decoration-dotted underline-offset-3 hover:text-pen hover:decoration-current hover:decoration-solid",
+              "rl-hit rounded underline decoration-rule-strong decoration-dotted underline-offset-3 hover:text-pen hover:decoration-current hover:decoration-solid",
             )}
           >
             {name}
@@ -129,7 +129,7 @@ function Author({ pr, forge }: { pr: PrRow; forge: string }) {
           <a
             href={href}
             {...external}
-            className={cn(word, "rounded [overflow-wrap:anywhere] hover:text-pen hover:underline underline-offset-3")}
+            className={cn(word, "rl-hit rounded [overflow-wrap:anywhere] hover:text-pen hover:underline underline-offset-3")}
           >
             {name}
           </a>
@@ -307,7 +307,7 @@ function ActionBar({
   );
 }
 
-const jump = "inline-flex cursor-pointer items-center gap-1.5 rounded underline-offset-3 hover:text-foreground hover:underline";
+const jump = "rl-hit inline-flex cursor-pointer items-center gap-1.5 rounded underline-offset-3 hover:text-foreground hover:underline";
 
 // Status strip (plan pr-view-v4 2.3): one line of jumps. Each part is a button. Only "No comments yet" is text.
 // since: the last visit before this one. fresh: the new messages. open: the threads that are not resolved.
@@ -446,7 +446,7 @@ export function Header(props: {
                 href={web}
                 {...external}
                 translate="no"
-                className="group/key inline-flex min-w-0 items-center gap-1.5 rounded font-mono text-xs text-ink-2 underline-offset-3 hover:text-pen hover:underline"
+                className="group/key rl-hit inline-flex min-w-0 items-center gap-1.5 rounded font-mono text-xs text-ink-2 underline-offset-3 hover:text-pen hover:underline"
               >
                 <span className="min-w-0">{keyText}</span>
                 <ExternalLink aria-hidden className="size-[13px] shrink-0" />

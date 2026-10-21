@@ -33,7 +33,7 @@ import { sizeText } from "./tasks";
 
 const icon = "size-[15px] shrink-0";
 const linkish =
-  "inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-60";
+  "rl-hit inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-60";
 
 function Elapsed({ from }: { from: number }) {
   const now = useNow(true);
@@ -98,7 +98,7 @@ export function Ledger({
   onQuestion: (question: number) => void;
 }) {
   if (!jumps.length && !questions) return null;
-  const btn = "group inline-flex cursor-pointer items-baseline gap-1.5 rounded";
+  const btn = "rl-hit group inline-flex cursor-pointer items-baseline gap-1.5 rounded";
   const big = "text-[18px] leading-none font-bold tracking-[-0.01em] text-foreground";
   const word = "text-ink-2 underline-offset-3 group-hover:underline";
   return (
@@ -213,7 +213,7 @@ function Disc({
       aria-controls={controls}
       onClick={onClick}
       className={cn(
-        "inline-flex cursor-pointer items-center gap-1 rounded text-sm underline-offset-3 hover:underline",
+        "rl-hit inline-flex cursor-pointer items-center gap-1 rounded text-sm underline-offset-3 hover:underline",
         warn ? "font-semibold text-warn" : "font-medium text-foreground",
       )}
     >

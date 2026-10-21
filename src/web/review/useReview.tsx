@@ -14,7 +14,7 @@ import type { Layer } from "../keys";
 import { useMeta } from "../meta";
 import { ordered, type ThreadModel } from "../pr/threads";
 import type { Hints } from "../shell/Hint";
-import { prKey } from "../shell/model";
+import { failText, prKey } from "../shell/model";
 import { BriefComposer, ReviewButton } from "./Brief";
 import { type DraftCtx, Drafts } from "./Drafts";
 import { useCancelRun, usePrRuns, useReplyDrafts, useRun } from "./data";
@@ -314,7 +314,7 @@ export function useReview(
         now={o.now}
         cancelling={cancel.isPending}
         onLog={(id, raw) => openLog(null, raw, id)}
-        onCancel={(id) => cancel.mutate(id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
+        onCancel={(id) => cancel.mutate(id, { onError: (e) => toast.add({ title: "Cancel failed", description: failText(e) }) })}
         onAnswer={(id) => consult.session("session-answer-btn", id)}
       />
     ),

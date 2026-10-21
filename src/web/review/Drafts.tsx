@@ -223,7 +223,7 @@ function FindingBody({ it, mode, busy, fix, ctx }: { it: ReviewItemDto; mode: Tr
       type="button"
       title="Key: g d"
       aria-keyshortcuts="g d"
-      className="ml-1 inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline"
+      className="rl-hit ml-1 inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline"
       onClick={() => ctx.onShowInDiff(it.id)}
     >
       <FileCode aria-hidden className={icon} />
@@ -258,7 +258,7 @@ function FindingBody({ it, mode, busy, fix, ctx }: { it: ReviewItemDto; mode: Tr
               <button
                 type="button"
                 title="Open the run log at this agent"
-                className="inline-flex cursor-pointer items-center rounded hover:text-foreground hover:underline"
+                className="rl-hit inline-flex cursor-pointer items-center rounded hover:text-foreground hover:underline"
                 onClick={() => ctx.onFrom(f.agent as string)}
               >
                 from {f.agent}
@@ -373,7 +373,7 @@ export function Dropped({ run, meta }: { run: RunDto; meta: MetaDto }) {
       {d.length === 1 ? "1 finding dropped: its code reference" : `${d.length} findings dropped: their code references`} did not match the
       snapshot.
       <details className="mt-0.5">
-        <summary className="inline-flex rounded font-medium text-pen hover:underline">Show {d.length === 1 ? "it" : "them"}</summary>
+        <summary className="rl-hit inline-flex rounded font-medium text-pen hover:underline">Show {d.length === 1 ? "it" : "them"}</summary>
         {d.map((x, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: dropped findings have no ID.
           <div key={i} className="mt-1.5 mb-0.5 border-l border-rule-strong pl-2.5">

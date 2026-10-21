@@ -405,7 +405,7 @@ export function useFix(
             <LoaderCircle aria-hidden className={`${icon} animate-spin`} />
             Fix: checking {points ? plural(points, "point") : "the points"} and proposing edits
           </span>
-          <Button variant="link" size="sm" className="h-auto px-0" onClick={() => o.onLog(runningRun)}>
+          <Button variant="link" size="sm" className="rl-hit h-auto px-0" onClick={() => o.onLog(runningRun)}>
             Log
           </Button>
         </span>
@@ -417,7 +417,7 @@ export function useFix(
             {f.run.consult ? "Fix from your session" : "Fix"}: {plural(f.edits.length, "edit")} proposed
           </span>
           {s.first && (
-            <Button variant="link" size="sm" className="h-auto px-0" onClick={() => reviewEdits(s)}>
+            <Button variant="link" size="sm" className="rl-hit h-auto px-0" onClick={() => reviewEdits(s)}>
               Review edits
             </Button>
           )}

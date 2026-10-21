@@ -60,6 +60,7 @@ import { formatRoute } from "../lib/route";
 import { useSkills } from "../meta";
 import { read } from "../shell/data";
 import { Hint } from "../shell/Hint";
+import { failText } from "../shell/model";
 import { loadLastProfile, putBrief } from "./data";
 import { type BriefState, briefProfile, plural, profileOf, profileSetupText } from "./model";
 import { keyParam, TaskChips, taskKey, useTaskChips } from "./TaskChips";
@@ -578,7 +579,7 @@ export function BriefComposer(props: {
       await putBrief(qc, pr, latest.current);
       return true;
     } catch (e) {
-      toast.add({ title: "The brief was not saved", description: (e as Error).message });
+      toast.add({ title: "The brief was not saved", description: failText(e) });
       return false;
     }
   }, [qc, pr]);
@@ -712,7 +713,7 @@ export function BriefComposer(props: {
             {chosen && (
               <a
                 href={formatRoute({ kind: "settings", section: "profiles", profile: chosen.id })}
-                className="ml-auto min-w-0 truncate rounded text-xs font-medium text-pen hover:underline"
+                className="rl-hit ml-auto min-w-0 truncate rounded text-xs font-medium text-pen hover:underline"
                 onClick={(e) => {
                   // A modified click opens the profile URL in a new tab or window.
                   if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;

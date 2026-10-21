@@ -13,6 +13,7 @@ import { toast } from "@/components/ui/toast";
 import { copyText } from "@/lib/clipboard";
 import type { CloneDto } from "../../shared/dto";
 import { Hint } from "../shell/Hint";
+import { failText } from "../shell/model";
 import { cloneKey, clonesChanged, dropClone, openCloneFolder, putClone } from "./data";
 
 // Open folder and Copy path for the clone of the repository of PR pr. The server opens only the stored path, never this one.
@@ -37,7 +38,7 @@ export function CloneFolder({ pr, path, icons, of }: { pr: number; path: string;
       say(r.error);
       copyRef.current?.focus();
     } catch (e) {
-      toast.add({ title: "The folder did not open", description: (e as Error).message });
+      toast.add({ title: "The folder did not open", description: failText(e, "page") });
     }
   };
   const copy = () =>

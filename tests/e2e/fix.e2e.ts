@@ -847,7 +847,11 @@ test("no-fix notes: Already done points to its reply draft; a decision offers Fi
   await expect(lock).toContainText("Reply drafted");
   await expect(lock).not.toContainText("src/cache/flush.ts:5");
   await expect(lock.getByRole("button", { name: "Don't fix…" })).toHaveCount(0);
-  await lock.getByRole("button", { name: "Go to the draft" }).click();
+  // WCAG 2.5.8: the text button has a target of 24 px or more. The row keeps its height.
+  const go = lock.getByRole("button", { name: "Go to the draft" });
+  expect((await go.boundingBox())?.height).toBeGreaterThanOrEqual(24);
+  expect((await go.locator("..").boundingBox())?.height).toBeLessThan(24);
+  await go.click();
   await expect(draft(page, LOCK)).toBeFocused();
   await expect(draft(page, LOCK)).toContainText("The flush already does this at src/cache/flush.ts:5.");
   // docs/plans/thread-outcome.md: the outcome line on top of each thread.

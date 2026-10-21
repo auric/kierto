@@ -492,7 +492,7 @@ function useResolve(t: ThreadModel, ctx: ThreadCtx) {
         <CircleAlert aria-hidden className="mt-0.5 size-[15px] shrink-0" />
         <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{state.out.error}</span>
         {(state.out.reason === "forbidden" || state.out.reason === "ignored") && link && (
-          <a href={link} target="_blank" rel="noopener noreferrer" className="font-medium text-pen hover:underline">
+          <a href={link} target="_blank" rel="noopener noreferrer" className="rl-hit font-medium text-pen hover:underline">
             Open on {ctx.forge}
           </a>
         )}
@@ -716,11 +716,13 @@ const Message = memo(function Message({ m, quote, tid, ctx }: { m: Node; quote: 
           </span>
         )}
       </div>
+      {/* The target reaches into the row above. 66 px is the 8 px of the indent plus the Reply and Copy buttons there (2 x 28 px, 2 px
+          gap), so the target stays clear of them. */}
       {quote && p && (
         <button
           type="button"
           onClick={() => ctx.onQuote(tid, p.id)}
-          className="rl-indent mt-px flex max-w-[calc(100%-var(--av)-8px)] cursor-pointer items-center gap-1 rounded text-xs text-muted-foreground hover:text-ink-2 hover:[&>span]:underline"
+          className="rl-hit rl-indent mt-[calc(1px-var(--rl-hit))] flex w-fit max-w-[calc(100%-var(--av)-66px)] cursor-pointer items-center gap-1 rounded text-xs text-muted-foreground hover:text-ink-2 hover:[&>span]:underline"
         >
           <CornerDownRight aria-hidden className="size-[13px] shrink-0" />
           <span className="min-w-0 truncate">

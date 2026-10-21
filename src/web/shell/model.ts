@@ -248,8 +248,10 @@ export function statusInfo(s: SyncStatus, now: number, forge: string): StatusInf
   }
 }
 
-// The description of a failure toast: the error, then the next step.
-export function failText(e: unknown): string {
+// The description of a failure toast: the error, then the next step. where: the view to reload. The error of a stale session
+// (data.ts ApiError) already says "Reload the page", and a new try fails again, so it gets no step.
+export function failText(e: unknown, where: "pull request" | "page" = "pull request"): string {
   const m = (e instanceof Error ? e.message : String(e)).trim();
-  return `${m}${m && !/[.!?]$/.test(m) ? "." : ""} Try again, or reload the pull request.`.trim();
+  if ((e as { stale?: unknown } | null)?.stale === true) return m;
+  return `${m}${m && !/[.!?]$/.test(m) ? "." : ""} Try again, or reload the ${where}.`.trim();
 }

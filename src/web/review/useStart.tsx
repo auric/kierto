@@ -10,7 +10,7 @@ import type { CommitDto, MetaDto, PrRow, RunConflict, RunDto } from "../../share
 import { busyText } from "../ask/model";
 import type { ThreadModel } from "../pr/threads";
 import { Hint } from "../shell/Hint";
-import { prKey } from "../shell/model";
+import { failText, prKey } from "../shell/model";
 import type { BriefMode } from "./Brief";
 import { saveLastProfile, useBrief, useRuns, useStartReplies, useStartRereview, useStartReview } from "./data";
 import { briefState, newCommits, plural, rereviewState, shortHash } from "./model";
@@ -80,7 +80,7 @@ export function useStart(
         setComposer(null);
         focusAfter({ id: "runline-log", block: "nearest", flash: false });
       },
-      onError: (e) => toast.add({ title: "The review did not start", description: e.message }),
+      onError: (e) => toast.add({ title: "The review did not start", description: failText(e) }),
     });
 
   const rr = rereviewState(latest, brief.data, meta.profiles);
@@ -93,7 +93,7 @@ export function useStart(
         setComposer(null);
         focusAfter({ id: "runline-log", block: "nearest", flash: false });
       },
-      onError: (e) => toast.add({ title: "The review of the new commits did not start", description: e.message }),
+      onError: (e) => toast.add({ title: "The review of the new commits did not start", description: failText(e) }),
     });
   };
 
@@ -108,7 +108,7 @@ export function useStart(
           setAsked({ run: r.run.id, threads: ids });
           o.announce(threads ? "Drafting a reply." : `Drafting replies for ${plural(ids.length, "thread")}.`);
         },
-        onError: (e) => toast.add({ title: "The reply drafts did not start", description: e.message }),
+        onError: (e) => toast.add({ title: "The reply drafts did not start", description: failText(e) }),
       },
     );
   };

@@ -12,7 +12,7 @@ import { useMeta } from "../meta";
 type Doc = "license" | "notices";
 
 const TITLE: Record<Doc, string> = { license: "License", notices: "Third-party notices" };
-const linkish = "cursor-pointer rounded text-xs font-medium text-pen hover:underline";
+const linkish = "rl-hit cursor-pointer rounded text-xs font-medium text-pen hover:underline";
 
 // The texts load only when a dialog opens, so they stay out of the start-up chunks.
 async function load(doc: Doc): Promise<string> {

@@ -219,7 +219,7 @@ export function ReplyComposer({
         {picked && picked.id !== last.id && (
           <button
             type="button"
-            className="cursor-pointer rounded text-xs font-medium text-pen hover:underline"
+            className="rl-hit cursor-pointer rounded text-xs font-medium text-pen hover:underline"
             onClick={() => ctx.onReply(t.id, null)}
           >
             Reply to the newest message

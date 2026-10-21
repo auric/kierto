@@ -13,7 +13,7 @@ import type { BlockedDraft, CommentDto, PostDto, PostPlanDto, PrRow } from "../.
 import { itemsSettled, sendItem, usePrRuns } from "../review/data";
 import { shortHash } from "../review/model";
 import { ApiError } from "../shell/data";
-import { prKey } from "../shell/model";
+import { failText, prKey } from "../shell/model";
 import { type BlockedGroup, Confirm, type ConfirmEntry } from "./Confirm";
 import { confirmPosts, fetchPlan, planKey, postsKey, type ResolveOutcome, usePostPlan } from "./data";
 import {
@@ -116,7 +116,7 @@ export function usePostBar(
       setC({ plan: fresh, posting: false, error });
     } catch (e) {
       setC(null);
-      toast.add({ title: "Cannot load the comments to post", description: (e as Error).message });
+      toast.add({ title: "Cannot load the comments to post", description: failText(e) });
     }
   };
 

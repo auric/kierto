@@ -52,6 +52,7 @@ import { AiAvatar, Severity } from "../review/Drafts";
 import { plural } from "../review/model";
 import type { Focus } from "../review/useReview";
 import type { Hints } from "../shell/Hint";
+import { failText } from "../shell/model";
 import { cachedIndex, type DiffIndex, fileCount, loadUntil, useDiffIndex, useDiffPages, useGetCode } from "./data";
 import {
   type Card,
@@ -71,7 +72,7 @@ import {
 } from "./model";
 
 const icon = "size-[15px] shrink-0";
-const linkish = "inline-flex shrink-0 cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
+const linkish = "rl-hit inline-flex shrink-0 cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
 
 export type DiffCtx = {
   pr: number;
@@ -169,7 +170,7 @@ export function useDiffView(
     try {
       index = await cachedIndex(qc, pr);
     } catch (e) {
-      toast.add({ title: "Cannot show the diff", description: (e as Error).message });
+      toast.add({ title: "Cannot show the diff", description: failText(e) });
       return;
     }
     if ("fetch" in index) {
@@ -191,7 +192,7 @@ export function useDiffView(
     try {
       got = await loadUntil(qc, pr, name, f.rows, (rows) => !!item.stale || line === null || lineIndex(rows)[side].has(line));
     } catch (e) {
-      toast.add({ title: "Cannot show the diff", description: (e as Error).message });
+      toast.add({ title: "Cannot show the diff", description: failText(e) });
       return;
     }
     const id = targetOf(i, got.rows, place(got.rows, got.complete, [item]), card);

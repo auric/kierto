@@ -110,7 +110,7 @@ export function Acts(props: {
       disabled={busy}
       aria-label={`Move to another line. Now line ${it.anchor.line}.`}
       title="Move to another line"
-      className="ml-1 inline-flex cursor-pointer items-center gap-1 rounded text-xs text-muted-foreground hover:text-foreground hover:underline disabled:cursor-default"
+      className="rl-hit ml-1 inline-flex cursor-pointer items-center gap-1 rounded text-xs text-muted-foreground hover:text-foreground hover:underline disabled:cursor-default"
       onClick={() => ctx.move(it)}
     >
       <MoveVertical aria-hidden className="size-[13px]" />
@@ -157,7 +157,7 @@ export function RestoreButton({ it, busy, ctx }: { it: ReviewItemDto; busy: bool
       disabled={busy}
       title="Key: d"
       aria-keyshortcuts="d"
-      className="mr-1 inline-flex flex-none cursor-pointer items-center gap-1 rounded px-1 text-sm font-medium text-pen hover:underline disabled:cursor-default"
+      className="rl-hit mr-1 inline-flex flex-none cursor-pointer items-center gap-1 rounded px-1 text-sm font-medium text-pen hover:underline disabled:cursor-default"
       onClick={() => ctx.act(it, "restore")}
     >
       <Undo2 aria-hidden className="size-[15px]" />

@@ -319,7 +319,7 @@ const Row = memo(function Row(props: RowProps) {
   );
 });
 
-const linkish = "inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
+const linkish = "rl-hit inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline";
 
 function Err({ children }: { children: ReactNode }) {
   return (

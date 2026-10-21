@@ -22,14 +22,14 @@ import { clockDur, profileOf, shortHash, tokenText } from "../review/model";
 import { RunStatus } from "../review/RunLine";
 import { TaskChips } from "../review/TaskChips";
 import { Hint } from "../shell/Hint";
-import { prKey } from "../shell/model";
+import { failText, prKey } from "../shell/model";
 import { useNow } from "../shell/Sidebar";
 import { loadDraft, saveDraft, useAsks, useStartAsk } from "./data";
 import { askView, busyText } from "./model";
 
 const icon = "size-[15px] shrink-0";
 const linkish =
-  "inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-60";
+  "rl-hit inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-pen hover:underline disabled:cursor-default disabled:opacity-60";
 
 function Elapsed({ from }: { from: number }) {
   const now = useNow(true);
@@ -115,7 +115,7 @@ export function AskPanel(props: {
         setText((t) => (t.trim() === question ? "" : t));
         props.announce(`Asked. ${runner} is answering.`);
       },
-      onError: (e) => toast.add({ title: "The question was not sent", description: e.message }),
+      onError: (e) => toast.add({ title: "The question was not sent", description: failText(e) }),
     });
   };
   const onKeyDown = (e: KeyboardEvent) => {
@@ -190,7 +190,7 @@ export function AskPanel(props: {
               now={props.now}
               cancelling={cancel.isPending && cancel.variables === a.run.id}
               onLog={props.onLog}
-              onCancel={() => cancel.mutate(a.run.id, { onError: (e) => toast.add({ title: "Cancel failed", description: e.message }) })}
+              onCancel={() => cancel.mutate(a.run.id, { onError: (e) => toast.add({ title: "Cancel failed", description: failText(e) }) })}
             />
           ))}
         </ol>
