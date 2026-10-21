@@ -43,7 +43,7 @@ The project started as "Review Loop". The new name keeps the same idea in one sh
 
 - Windows or Linux.
 - The `claude` CLI, logged in with a claude.ai subscription. Check with `claude auth status`.
-- A Bitbucket Server or Data Center personal access token.
+- A Bitbucket Server or Data Center personal access token with Project read and Repository write. Kierto needs write only to post comments and to resolve or reopen threads.
 - `git` on the PATH.
 - Bun 1.x, only to build from source.
 
@@ -65,6 +65,8 @@ Release binaries: when a release is published on the GitHub Releases page, downl
 ./kierto-0.2.0-linux-x64          # Linux: chmod +x it first
 kierto-0.2.0-windows-x64.exe      # Windows
 ```
+
+To try Kierto without a Bitbucket server, run `bun run demo` from source and open http://127.0.0.1:7399. The demo uses synthetic data, a temp data folder, and memory secrets.
 
 ## First run
 
