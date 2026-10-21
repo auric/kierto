@@ -1,6 +1,6 @@
 # Release 3 manual smoke test: Fix it, Jira Markdown, and Jira attachments
 
-This test checks the Release 3 features against a real Bitbucket Server, a real Jira server, your own git clone, and the real `claude` CLI. The user runs it. The automated suites use fixtures, the fake CLI, the fake Bitbucket, the fake Jira, and temp clones only. The results fill the "Release 3 (not run)" rows in integration-check.md: U21 to U29, B11, B12, B15, and B16. Part I checks the prompt features that came after Release 3. Part L checks thread resolve and fills U62 to U67.
+This test checks the Release 3 features against a real Bitbucket Server, a real Jira server, your own git clone, and the real `claude` CLI. The user runs it. The automated suites use fixtures, the fake CLI, the fake Bitbucket, the fake Jira, and temp clones only. The results fill the "Release 3 (not run)" rows in integration-check.md: U21 to U29, B11, B12, B15, and B16. Part I checks the prompt features that came after Release 3. Part L checks thread resolve and fills U62 to U67. Part M checks answered questions, out-of-date reply drafts, revisions, the session steps, and MCP redirects.
 
 ## Rules
 
@@ -11,7 +11,7 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 - Use a new, empty data folder. Never use the data folder of your daily instance.
 - The app never pushes. Each push in this test is your own `git push`.
 - Do not copy tokens, host names, code, comment text, issue text, or file names into files, issues, or chat. Record payload shapes (key names and types), counts, and tag names only.
-- Expect about nineteen runs on your Claude subscription quota: eight in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, one in part I, two in part J, in part K one interactive session and two session runs, and two in part L. A session run loads the full history of the session, so it can cost more than a review.
+- Expect about twenty-nine runs on your Claude subscription quota: eight in the gate, two in part A, one in part B, one interactive session in part D, one in part E, one in part F, one in part I, two in part J, in part K one interactive session and two session runs, two in part L, and ten in part M. A session run loads the full history of the session, so it can cost more than a review.
 - Part I sends your project instructions to Claude. Turn on the global CLAUDE.md only when it holds nothing that the approval does not cover.
 - In this document, `<BITBUCKET_URL>` is the base URL of the Bitbucket server, `<JIRA_URL>` is the base URL of the Jira server, `<TEST_PR_URL>` is the URL of the test pull request, `<KEY>` is a Jira issue key that the test pull request names, and `<CLONE>` is the absolute path of your test clone.
 
@@ -210,6 +210,55 @@ Gate run: steps 1 and 2 ran on 2026-10-20 against Bitbucket Data Center 9.x. int
 11. Optional, one run: post one finding of a review run as an inline comment. Push a commit that fixes it. Click "Check now", then "Review changes since". If the run finds the finding fixed, expect a "Resolve proposal" under its thread with the box ticked.
 12. Delete the "Resolve gate." comment by hand if the test branch needs it.
 
+## M. Answered questions, out-of-date drafts, revisions, session steps, and MCP redirects
+
+Part M checks commits b7013d1, 4a0c12f, 3398e26, 2b89d52, and e4f671a. "(real CLI)" marks a step that runs `claude`. The other steps need no run. Tick one box per step: `[x] pass` or `[x] fail`, with a short reason for a fail. Use only the test pull request. Part M posts review comments there, and the second user answers them.
+
+Preparation for steps 1 to 12:
+
+1. (real CLI) Press r on the test pull request and start a General review. Wait for the end. Accept two questions and three findings. If the run gave fewer, edit other drafts into questions or findings with your own text. Press p and post them. Expect one general comment with both questions and one inline comment for each finding. [ ] pass [ ] fail
+2. Ask the second user to answer as follows. General comment: answer question 1 fully, answer question 2 only in part. Finding F1: "Yes, this is on purpose." with a reason. Finding F2: an answer that shows a real defect, for example "Right, this also leaks when the call throws." Finding F3: no answer. Click "Check now". [ ] pass [ ] fail
+
+Answered questions in a review (b7013d1):
+
+3. (real CLI) Press r and start a General review. Wait for the end. Expect the run line to end with "N answered threads", with N = 3 (the general comment, F1, and F2). Expect no schema error in the run row. [ ] pass [ ] fail
+4. Press 3. Click "Show raw output". Expect the key `answered` in the structured output, with one entry per answered question. Expect each entry to have `thread`, `question`, `outcome`, `evidence`, `reply`, and `finding`. Record the count of entries and the outcome of each. Record no text. [ ] pass [ ] fail
+5. Open the F1 thread. Expect a reply draft "from the review" with the chip "Settled", a short thanks, and "Resolve after posting" ticked, because you started the thread. Expect "Claude proposes it:" with a quote of the answer as proof. [ ] pass [ ] fail
+6. Open the general comment thread. Expect one reply draft for both questions, with the chip "Follow-up question". Expect the reply to ask the open part of question 2. Expect "Resolve after posting" not ticked. [ ] pass [ ] fail
+7. Open the F2 thread. Expect a new finding in Drafts for the defect, and a reply draft in the F2 thread that points to it. Expect the box not ticked. [ ] pass [ ] fail
+8. Open the F3 thread. Expect no reply draft. [ ] pass [ ] fail
+9. (real CLI) Edit the F1 draft and change one word. Start one more General review. Expect your edited F1 draft to stay unchanged. Expect no second draft in the F1 thread. [ ] pass [ ] fail
+10. (real CLI) Open the Review menu and pick Explain. Start it and wait for the end. Expect no "answered threads" in its run line and no new reply draft. Press 3. Expect no Read of `context/questions.md` in the log. [ ] pass [ ] fail
+11. (real CLI) Push one small commit to the source branch yourself. Ask the second user to answer F3 fully. Click "Check now", then "Review changes since". Wait for the end. Expect the run line to count 1 answered thread, and a "Settled" draft with the box ticked in the F3 thread. [ ] pass [ ] fail
+12. Accept the F1 draft. Press p. Expect the line "Then resolves the thread." Click Post. Expect the reply first and the thread resolved in Bitbucket. Discard the other answer drafts and the new finding. [ ] pass [ ] fail
+
+No Accept and no Edit on an out-of-date reply draft (4a0c12f):
+
+13. (real CLI) Ask the second user for a new comment that asks for a change. Click "Check now", then "Draft replies". Wait for the end. Do not touch the draft. Ask the second user to add one more message in that thread. Click "Check now". [ ] pass [ ] fail
+14. Expect the draft card to show "New messages since this draft." with "Draft again" and "Reply to the newest as is". Expect no Accept button and no Edit button. Expect Discard. [ ] pass [ ] fail
+15. Focus the draft. Press a, then e. Expect the hint "New messages arrived after this draft. Draft it again, or reply to the newest as is." for each key. Expect no change to the draft. [ ] pass [ ] fail
+16. Open the browser developer tools on the network tab. Reload the page. Find the response of `reply-drafts` for the test pull request. Note the `id` and the `revision` of the out-of-date draft. In the console, run `fetch("/api/items/<id>", { method: "POST", headers: { "Content-Type": "application/json", "X-RL-Session": document.querySelector('meta[name="rl-session"]').content }, body: JSON.stringify({ action: "accept", revision: <revision> }) }).then(async (r) => console.log(r.status, await r.text()))`. Expect status 409 and the text "New messages arrived after this draft. Draft it again, or reply to the newest as is." Run it again with `action: "edit"` and `body: "x"`. Expect 409 again. Do not copy the session token anywhere. [ ] pass [ ] fail
+17. Accept a current draft in another thread. Ask the second user to add one more message in that thread. Click "Check now". Expect the card with "Undo accept" and no Edit. Click "Undo accept". Expect the draft back as not accepted, still with no Accept and no Edit. [ ] pass [ ] fail
+
+Reply to the newest as is, and revise instead of replace (3398e26):
+
+18. On the out-of-date draft of step 14, click "Reply to the newest as is". Expect no new run in the run line. Expect the same text, now as a reply to the newest message, and Accept and Edit back. [ ] pass [ ] fail
+19. Edit that draft. Ask the second user to add one more message. Click "Check now". Expect "New messages since this draft." and the button "Revise my reply" instead of "Draft again". [ ] pass [ ] fail
+20. (real CLI) Click "Revise my reply". Wait for the end. Expect your draft unchanged and a revision under it as a word diff: struck text leaves, underlined text comes in. Expect your points and tone to stay. Expect "Use revision" and "Keep mine". [ ] pass [ ] fail
+21. (real CLI) Click "Keep mine". Expect the revision gone and your exact text. Accept the draft. Repeat steps 19 and 20. Click "Keep mine". Expect your text still accepted. [ ] pass [ ] fail
+22. (real CLI) Repeat steps 19 and 20 once more. Click "Use revision". Expect the revised text as the draft, not accepted. [ ] pass [ ] fail
+23. (real CLI) Edit the draft again. Ask the second user to add one more message. Click "Check now", then the bulk "Draft replies". Wait for the end. Expect your edited text unchanged, with the revision under it. Expect no draft that replaces your text. Discard the drafts of steps 13 to 23. [ ] pass [ ] fail
+
+Copy for your session (2b89d52):
+
+24. Run part K steps 4 and 5 with a build that has commit 2b89d52. Record their result here. Expect the six steps under "What to do", one anchor line per inline item and no code quote, and the label "Kierto's AI view (may be wrong)". Expect the session to ask before a push, a post, or a resolve. [ ] pass [ ] fail
+
+MCP redirect of a user-added server (e4f671a):
+
+25. Use an MCP server that needs no secret header, of type `http` or `sse`. Add it to your Claude config (`.claude.json`, key `mcpServers`) as `smoke-direct` with its own URL. Open Settings > Review profiles > General > MCP servers > Choose. Open the tools of `smoke-direct`. Expect its tool list. [ ] pass [ ] fail
+26. Start a redirector on this machine: `bun -e "Bun.serve({ hostname: '127.0.0.1', port: 7601, fetch: () => Response.redirect('<URL of the server of step 25>', 307) })"`. Add a second entry `smoke-redirect` of the same type with the URL `http://127.0.0.1:7601/mcp`. Reload Settings. Open the tools of `smoke-redirect`. Expect "Could not list the tools of smoke-redirect: <reason>." and no tool list. Record the reason. [ ] pass [ ] fail
+27. Stop the redirector with Ctrl+C. Remove both entries from your Claude config. Reload Settings. Expect neither server in the list. [ ] pass [ ] fail
+
 ## H. Record
 
 - The build commit from the startup line.
@@ -220,4 +269,5 @@ Gate run: steps 1 and 2 ran on 2026-10-20 against Bitbucket Data Center 9.x. int
 - From part J: the reason that the fix run gave for T9 in step 4.
 - From part K: the item count and the size of the copy, the count of entries per verdict, and the count of skipped rows. From steps 14 to 17: the count of listed sessions, the size and the token estimate of the picked session, the token count of the session run (hint of its time), and the count of new transcripts. Record no text and no path.
 - From part L: the gate lines of steps 2 and 4. Update U62 to U67 in integration-check.md.
+- From part M: the count and the outcomes of the `answered` entries of step 4, the answered-thread counts of steps 3 and 11, and the redirect reason of step 26. Record no text.
 - B11, B12, B15, and B16, the tag names from E5, and the shapes from F1. From part I: the languages of step 4, the severity counts of step 6, and any coverage line from step 5. Update the "Release 3 (not run)" rows in integration-check.md.

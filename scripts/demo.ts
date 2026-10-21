@@ -81,7 +81,27 @@ writeFileSync(join(claudeConfig, ".claude.json"), JSON.stringify({ mcpServers: {
 writeFileSync(join(claudeConfig, "CLAUDE.md"), "Name each lock in a comment where it is taken.\n");
 process.env.CLAUDE_CONFIG_DIR = claudeConfig;
 
-runner.write({ fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT), fix: FIX });
+// The answers to the questions that an earlier run of PR 1001 posted in threads 1100 and 1150 (seeded below). A review of another
+// PR drops both entries into its coverage, because those threads hold no question of the user there.
+const ANSWERED = [
+  {
+    thread: 1100,
+    question: null,
+    outcome: "settled",
+    evidence: 'Message 1101: "It takes the cache lock itself now."',
+    reply: "Thanks, clear.",
+    finding: null,
+  },
+  {
+    thread: 1150,
+    question: null,
+    outcome: "followup",
+    evidence: 'Message 1151: "The timer can start it, though."',
+    reply: "Thanks. When the timer starts trim() during evict(), which of the two takes the lock first?",
+    finding: null,
+  },
+];
+runner.write({ fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT), fix: FIX, answered: ANSWERED });
 const SOURCE_PRS = [1001, 1002, 31, 210, 212, 77, 74, 33, 215, 9, 5, 2, 1004];
 const remote = await reviewRemote(claudeDir, { ...Object.fromEntries(SOURCE_PRS.map((id) => [id, "source" as const])), 81: "next" });
 
@@ -397,6 +417,9 @@ const activities = new Map<Pr, () => S.Activity[]>([
           "  }",
         ],
       });
+      // A posted question of an earlier review run (seeded below). The answer is partial, so a review drafts a follow-up question.
+      t = thread(t, 1150, me, 298, "Does trim() still run while evict() holds the lock?");
+      t = reply(t, 1150, 1151, kenji, 290, "Usually not. The timer can start it, though.");
       t = thread(t, 1140, maria, 275, "Add a test for an empty cache before this merges.", { task: "OPEN" });
       t = thread(t, 1110, maria, 280, "Typo in the comment above trim().", { path: "src/cache/trim.ts", line: 8, resolved: true });
       t = reply(t, 1110, 1111, alex, 270, "Fixed.");
@@ -657,6 +680,43 @@ db?.query("INSERT INTO repo_clone (project, repo, path, updated_at) VALUES ('PRO
 });
 phase = 2;
 await sync.syncNow();
+
+// An earlier review run of PR 1001 posted one question in each of threads 1100 and 1150 (docs/plans/thread-outcome.md section 9).
+// The other person answered both, so the next review drafts the replies of ANSWERED.
+const evictPr = db?.query("SELECT id FROM pull_request WHERE project = 'PROJ1' AND pr_id = 1001").get() as { id: number } | null;
+if (db && evictPr) {
+  const { id: run } = db
+    .query(
+      `INSERT INTO review_run (pr, profile, note, idem_key, source_head, target_head, status, kind, summary_json, started_at, finished_at)
+      VALUES ($pr, 'general', '', 'demo-earlier', $head, $target, 'completed', 'review', $summary, $at, $at) RETURNING id`,
+    )
+    .get({
+      pr: evictPr.id,
+      head: HEAD_A,
+      target: remote.target,
+      summary: JSON.stringify({
+        summary: "Two questions about the lock.",
+        risks: [],
+        coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+        dropped: [],
+      }),
+      at: min(320),
+    }) as { id: number };
+  for (const [root, kind, text] of [
+    [1100, "inline", "Does evict() still need the caller to hold the lock?"],
+    [1150, "general", "Does trim() still run while evict() holds the lock?"],
+  ] as const) {
+    const { id } = db
+      .query(
+        "INSERT INTO review_item (run, kind, payload_json, body, status) VALUES ($run, 'question', $payload, $text, 'posted') RETURNING id",
+      )
+      .get({ run, payload: JSON.stringify({ text, why: "The lock order decides the fix." }), text }) as { id: number };
+    db.query(
+      `INSERT INTO post (pr, run, kind, idem_key, body, destination_json, items_json, state, remote_id, remote_version, created_at, updated_at)
+      VALUES ($pr, $run, $kind, $key, $text, '{}', $items, 'confirmed', $root, 0, $at, $at)`,
+    ).run({ pr: evictPr.id, run, kind, key: `demo-post-${root}`, text, items: JSON.stringify([{ id, revision: 0 }]), root, at: min(320) });
+  }
+}
 
 const server = startServer({
   port: PORT,
