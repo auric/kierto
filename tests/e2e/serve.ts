@@ -18,6 +18,7 @@ import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { createSyncEngine } from "../../src/server/sync/engine";
 import { FAKE_USER, fixture, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
+import { readRecords } from "../support/fake-claude";
 import { startFakeJira } from "../support/fake-jira";
 import { claudeStream, fakeRunner, REVIEW_RESULT, reviewRemote, stubListTools } from "../support/review-fixture";
 import * as S from "../support/scenarios";
@@ -679,13 +680,7 @@ r[key("POST", "/__control/open-folder")] = async (req) => {
 // The record of the newest fake CLI run, or undefined before the first run.
 function lastRun() {
   const record = join(claudeDir, "calls.jsonl");
-  const runs = existsSync(record)
-    ? readFileSync(record, "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => JSON.parse(l) as { argv?: string[]; cwd?: string; stdin?: string })
-        .filter((c) => c.argv?.includes("-p"))
-    : [];
+  const runs = readRecords<{ argv?: string[]; cwd?: string; stdin?: string }>(record).filter((c) => c.argv?.includes("-p"));
   return runs.at(-1);
 }
 const runCwd = () => lastRun()?.cwd;
@@ -709,14 +704,10 @@ r[key("POST", "/__control/run-skills")] = () => {
 // The argv of the newest fake CLI run, or undefined before the first run.
 function runArgv() {
   const record = join(claudeDir, "calls.jsonl");
-  return existsSync(record)
-    ? readFileSync(record, "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => (JSON.parse(l) as { argv?: string[] }).argv ?? [])
-        .filter((a) => a.includes("-p"))
-        .at(-1)
-    : undefined;
+  return readRecords<{ argv?: string[] }>(record)
+    .map((c) => c.argv ?? [])
+    .filter((a) => a.includes("-p"))
+    .at(-1);
 }
 const argvFlag = (argv: string[], name: string) => (argv.includes(name) ? (argv[argv.indexOf(name) + 1] ?? null) : null);
 // The argv, the cwd, and the stdin of the newest fake CLI run. null: no run.

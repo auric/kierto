@@ -16,7 +16,7 @@ import { CHECKLISTS } from "../../src/server/review/languages";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { type ImproveDto, type ImproveInput, MAX_NOTE } from "../../src/shared/dto";
-import type { FakeScenario } from "../support/fake-claude";
+import { type FakeScenario, readRecords } from "../support/fake-claude";
 import { claudeStream, fakeRunner } from "../support/review-fixture";
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
@@ -216,13 +216,7 @@ function setup() {
   };
   const cancel = (id: number) => app.request(url(`/${id}/cancel`), { method: "POST", headers: HEADERS });
   const record = join(root, "calls.jsonl");
-  const calls = (): Call[] =>
-    existsSync(record)
-      ? readFileSync(record, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l))
-      : [];
+  const calls = (): Call[] => readRecords(record);
   const runs = () => calls().filter((c) => c.argv?.includes("-p"));
   return { root, scenario, start, get, end, cancel, calls, runs, projects: join(root, "projects") };
 }

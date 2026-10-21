@@ -4,7 +4,7 @@
 // Plan r3 S-ATT: safe names, sniffing, the Jira download, the store, the start-up sweep, and the run inclusion. No test calls a real server.
 import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
@@ -20,6 +20,7 @@ import { createSettings } from "../../src/server/settings";
 import { openDb } from "../../src/server/storage/db";
 import { type IssueContext, RUN_TEXT_BYTES } from "../../src/shared/dto";
 import { FAKE_TOKEN, FAKE_USER, key, startFakeBitbucket } from "../support/fake-bitbucket";
+import { readRecords } from "../support/fake-claude";
 import { attachmentPath, ISSUE_KEY, JIRA_TOKEN, logOf, pngOf, startFakeJira } from "../support/fake-jira";
 import { claudeStream, fakeRunner, REVIEW_RESULT, reviewRemote, stubListTools } from "../support/review-fixture";
 
@@ -372,14 +373,7 @@ describe("run inclusion", () => {
     const run = (await res.json()) as { id: number };
     const record = join(claudeDir, "calls.jsonl");
     type Call = { argv: string[]; cwd: string; stdin: string };
-    const call = (): Call | undefined =>
-      existsSync(record)
-        ? readFileSync(record, "utf8")
-            .split("\n")
-            .filter(Boolean)
-            .map((l) => JSON.parse(l) as Call)
-            .find((c) => c.argv.includes("-p"))
-        : undefined;
+    const call = (): Call | undefined => readRecords<Call>(record).find((c) => c.argv.includes("-p"));
     for (const until = Date.now() + 60_000; !call() && Date.now() < until; ) await Bun.sleep(50);
     const c = call() as Call;
     const context = join(c.cwd, "context");

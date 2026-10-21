@@ -21,6 +21,7 @@ import type { PostPlanDto, ReviewItemDto, RunConflict, RunDetail, RunDto } from 
 import type { Carried, EarlierVerdict, Finding, ReplyPayload } from "../../src/shared/review";
 import type { PullRequest } from "../../src/shared/types";
 import { FAKE_TOKEN, FAKE_USER } from "../support/fake-bitbucket";
+import { readRecords } from "../support/fake-claude";
 import { claudeStream, fakeRunner, stubListTools } from "../support/review-fixture";
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
@@ -400,14 +401,7 @@ async function setup() {
     db.query("UPDATE pull_request SET source_head = $head WHERE id = $pr").run({ head, pr });
   };
   const record = join(root, "calls.jsonl");
-  const runCalls = (): Call[] =>
-    existsSync(record)
-      ? readFileSync(record, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l) as Call)
-          .filter((c) => c.argv?.includes("-p"))
-      : [];
+  const runCalls = (): Call[] => readRecords<Call>(record).filter((c) => c.argv?.includes("-p"));
   const reviewed = async () => {
     const cache = cachePath(realpathSync.native(dir), { project: "PROJ", repo: "repo", id: 2 });
     return (

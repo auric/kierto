@@ -456,6 +456,8 @@ function Shell({ stale }: { stale: boolean }) {
     if (t.closest('[role="menu"], [data-slot="popover-content"]')) return;
     // A modal dialog takes Esc. Base UI moves the focus into it one frame after it opens, so the target can still be outside.
     if (e.key === "Escape" && document.querySelector('[data-slot="dialog-content"]')) return;
+    // In that frame, other keys must not act behind the dialog. A closing dialog has data-closed and lets keys through.
+    if (document.querySelector('[data-slot="dialog-content"]:not([data-closed])') && !t.closest('[data-slot="dialog-content"]')) return;
     // A checkbox takes keys like a button, so the detail keys work after the thread filter.
     const box = t instanceof HTMLInputElement && (t.type === "checkbox" || t.type === "radio");
     // The arrow keys move between the profile radios of the review brief and between the items of a toggle group.

@@ -31,6 +31,8 @@ const TITLE = "Release the write lock after each entry";
 const PR_PATH = "/rest/api/1.0/projects/PROJ1/repos/sample-repo-4/pull-requests/1004";
 // A run passes the git workspace, the fake CLI, and the validator.
 const RUN_MS = 60_000;
+// Apply and commit does real git work in a temp clone. A loaded runner can take much longer than 5 s.
+const COMMIT_MS = 30_000;
 // PR 1004: two general threads by the reviewer. Each newest message is the root. The own scenario adds my general thread OWN.
 const LOCK = 5000001;
 const LOOP = 5000002;
@@ -250,7 +252,7 @@ test("the Fix list ticks the valid threads; the edits show, one is unticked, App
   );
   await setClone(page, path);
   await box.getByRole("button", { name: "Apply and commit" }).click();
-  await expect(box).toBeHidden();
+  await expect(box).toBeHidden({ timeout: COMMIT_MS });
   await expect(page.locator("p[role='status'].sr-only")).toContainText(/^Committed [0-9a-f]{7,} on fix\/flush-lock\./);
 
   // One new commit on the branch, a clean tree, and only the ticked edit.
@@ -697,7 +699,7 @@ test("Fix on an accepted finding: its edit shows under it, Apply commits it, it 
   );
   await setClone(page, path);
   await box.getByRole("button", { name: "Apply and commit" }).click();
-  await expect(box).toBeHidden();
+  await expect(box).toBeHidden({ timeout: COMMIT_MS });
   expect(git(path, ["rev-parse", "HEAD^"])).toBe(before);
   expect(git(path, ["diff", "--name-only", "HEAD^", "HEAD"])).toBe("src/cache/flush.ts");
   const short = git(path, ["rev-parse", "--short", "HEAD"]);
@@ -726,7 +728,7 @@ test("Fix on an accepted finding: its edit shows under it, Apply commits it, it 
   const commitBtn = box.getByRole("button", { name: "Apply and commit" });
   await expect(commitBtn).not.toHaveAttribute("aria-disabled", "true");
   await commitBtn.click();
-  await expect(box).toBeHidden();
+  await expect(box).toBeHidden({ timeout: COMMIT_MS });
   const again = git(path, ["rev-parse", "--short", "HEAD"]);
   await expect(head).toContainText(`Fixed in ${again}`);
   await row.getByRole("button", { name: "Restore" }).click();

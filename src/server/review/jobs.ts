@@ -207,20 +207,20 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   const pending = { prs: new Set<number>(), runs: new Set<number>() };
   let timer: ReturnType<typeof setTimeout> | null = null;
   let sentAt = 0;
+  // Each resolves after the next broadcast.
+  const flushed: (() => void)[] = [];
+  function flush() {
+    timer = null;
+    sentAt = Date.now();
+    live.broadcast("changed", { prs: [...pending.prs], runs: [...pending.runs] });
+    pending.prs.clear();
+    pending.runs.clear();
+    for (const r of flushed.splice(0)) r();
+  }
   function notify(run: number, pr?: number) {
     pending.runs.add(run);
     if (pr !== undefined) pending.prs.add(pr);
-    if (timer) return;
-    timer = setTimeout(
-      () => {
-        timer = null;
-        sentAt = Date.now();
-        live.broadcast("changed", { prs: [...pending.prs], runs: [...pending.runs] });
-        pending.prs.clear();
-        pending.runs.clear();
-      },
-      Math.max(0, sentAt + NOTIFY_MS - Date.now()),
-    );
+    if (!timer) timer = setTimeout(flush, Math.max(0, sentAt + NOTIFY_MS - Date.now()));
   }
 
   // ---------- Pipeline ----------
@@ -678,6 +678,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     job = j;
     j.done = execute(j, pr, brief).finally(() => {
       if (job === j) job = null;
+      // wait() resolves after the final broadcast. The broadcast keeps its NOTIFY_MS spacing.
+      if (timer) return new Promise<void>((r) => flushed.push(r));
     });
     notify(j.id, pr.id);
     return { status: 202, run: toRunDto(runRow(j.db, j.id) as RunRow) };

@@ -51,12 +51,15 @@ afterEach(() => {
   fake.stop();
 });
 
-async function setup() {
+// JavaScriptCore stops runaway backtracking after about 950 ms. The ReDoS tests pass budgets well below that.
+const FAST = { budgetMs: 50, retryBudgetMs: 100 };
+
+async function setup(taskBudget?: typeof FAST) {
   const dir = join(root, `case-${n++}`);
   writeConfig(dir, { baseUrl: fake.url, userSlug: FAKE_USER, notifications: false });
   const secrets = createSecrets(null);
   await secrets.set(FAKE_TOKEN);
-  const settings: Settings = createSettings({ dir, secrets });
+  const settings: Settings = createSettings({ dir, secrets, taskBudget });
   const live = createLive();
   const sync: SyncEngine = createSyncEngine({ settings, live });
   const app = createApp({ port: PORT, token: SESSION, live, settings, sync });
@@ -181,7 +184,7 @@ describe("task-rule settings", () => {
   });
 
   test("a sync timeout marks the rule timed_out until the user edits it", async () => {
-    const s = await setup();
+    const s = await setup(FAST);
     pr.description = `${"a".repeat(19_999)}!`;
     const redos = { source: "description", pattern: "(a+)+$" };
     expect((await s.put({ taskRules: [{ source: "branch", pattern: ID }, redos] })).status).toBe(200);
@@ -244,7 +247,7 @@ describe("POST /api/settings/task-rules/preview", () => {
   });
 
   test("a draft ReDoS rule reports timedOut and the other rules still run", async () => {
-    const s = await setup();
+    const s = await setup(FAST);
     const res = await s.preview({
       rules: [
         { source: "description", pattern: "(a+)+$" },

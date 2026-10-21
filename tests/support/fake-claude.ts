@@ -35,6 +35,15 @@ export type FakeScenario = {
   consult?: unknown;
 };
 
+// Each complete record ends with "\n". The last part can be a record that the fake still writes, so it is dropped.
+export function readRecords<T = Record<string, unknown>>(path: string): T[] {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .slice(0, -1)
+    .map((l) => JSON.parse(l) as T);
+}
+
 const CHILD = "process.stdin.on('end', () => {}); process.stdin.resume(); setInterval(() => {}, 1000);";
 const NO_COVERAGE = { read: [], skipped: [], unavailable: [], notChecked: [] };
 const JUDGEMENTS = ["valid", "partly", "invalid", "question", null] as const;

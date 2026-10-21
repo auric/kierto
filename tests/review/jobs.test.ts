@@ -31,7 +31,7 @@ import type {
   RunDto,
 } from "../../src/shared/dto";
 import { FAKE_TOKEN, FAKE_USER, type FakeBitbucket, key, startFakeBitbucket } from "../support/fake-bitbucket";
-import type { FakeScenario } from "../support/fake-claude";
+import { type FakeScenario, readRecords } from "../support/fake-claude";
 
 const SLOW = 120_000;
 const FAKE = join(import.meta.dir, "../support/fake-claude.ts");
@@ -319,13 +319,7 @@ async function setup(
     await review.wait();
     return (await json<RunDetail>(`/api/runs/${id}`)).body;
   };
-  const calls = (): Call[] =>
-    existsSync(record)
-      ? readFileSync(record, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l))
-      : [];
+  const calls = (): Call[] => readRecords(record);
   const runCall = () => calls().find((c) => c.argv.includes("-p"));
   return { root, dir, repo, fake, db, pr, app, review, sent, scenario, call, json, brief, start, finish, calls, runCall };
 }

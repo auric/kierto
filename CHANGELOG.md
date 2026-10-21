@@ -75,6 +75,7 @@
 - Cancel stops a review while it fetches the repository. A fetch can now take up to the 60-minute run limit, and a stopped fetch does not start a second one.
 - A comment can no longer pose as another message in the pull request text that Claude reads.
 - An invalid profile or rule in config.json no longer gets lost silently on the next save. Kierto keeps a copy in config.json.bak and logs what it ignored.
+- A key that you press right after a dialog opens no longer acts on the page behind the dialog.
 
 ### Runs
 

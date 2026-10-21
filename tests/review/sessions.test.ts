@@ -5,7 +5,7 @@
 // session run with the fake CLI, a temp git remote, and a fake Bitbucket. No test reads a real transcript or starts the real CLI.
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
@@ -34,7 +34,7 @@ import {
 } from "../../src/shared/consult";
 import type { ApiError, FixCommitDto, FixDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
 import { FAKE_TOKEN, FAKE_USER, startFakeBitbucket } from "../support/fake-bitbucket";
-import type { FakeScenario } from "../support/fake-claude";
+import { type FakeScenario, readRecords } from "../support/fake-claude";
 import { fakeRunner, reviewRemote, stubListTools } from "../support/review-fixture";
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
@@ -423,19 +423,8 @@ async function setup(o: { sessions?: boolean; role?: string } = {}) {
     return (await call<RunDetail>(`/api/runs/${id}`)).body;
   };
   const record = join(root, "calls.jsonl");
-  const runCalls = (): Call[] =>
-    existsSync(record)
-      ? readFileSync(record, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l) as Call)
-          .filter((c) => Array.isArray(c.argv) && c.argv.includes("-p"))
-      : [];
-  const hung = () =>
-    existsSync(record) &&
-    readFileSync(record, "utf8")
-      .split("\n")
-      .some((l) => l.includes("childPid"));
+  const runCalls = (): Call[] => readRecords<Call>(record).filter((c) => Array.isArray(c.argv) && c.argv.includes("-p"));
+  const hung = () => readRecords(record).some((c) => c.childPid);
   return { root, db, pr, dir, clone, session, scenario, call, finish, runCalls, hung, found, review, remote };
 }
 

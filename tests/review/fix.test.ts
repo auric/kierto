@@ -4,7 +4,7 @@
 // Plan r3 S-FIX: fix runs with the fake CLI and a temp git remote. No test starts the real CLI or reaches a forge.
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
@@ -20,7 +20,7 @@ import { createSettings } from "../../src/server/settings";
 import type { ApiError, CloneDto, FixCommitDto, FixDto, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
 import { type FixEdit, type FixResult, fixJsonSchema, MAX_FIX_BYTES, type ReplyPayload } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER, key, startFakeBitbucket } from "../support/fake-bitbucket";
-import type { FakeScenario } from "../support/fake-claude";
+import { type FakeScenario, readRecords } from "../support/fake-claude";
 import { claudeStream, fakeRunner, stubListTools } from "../support/review-fixture";
 import { ownPr } from "../support/scenarios";
 
@@ -281,14 +281,7 @@ async function setup(o: { baseUrl?: string } = {}) {
   };
   const fixes = async () => (await json<FixDto[]>(`/api/prs/${pr}/fixes`)).body;
   const record = join(root, "calls.jsonl");
-  const runCalls = (): Call[] =>
-    existsSync(record)
-      ? readFileSync(record, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l) as Call)
-          .filter((c) => Array.isArray(c.argv) && c.argv.includes("-p"))
-      : [];
+  const runCalls = (): Call[] => readRecords<Call>(record).filter((c) => Array.isArray(c.argv) && c.argv.includes("-p"));
   const editRows = (run: number) =>
     db.query("SELECT ord, thread, path, old, new, start FROM fix_edit WHERE run = $run ORDER BY ord").all({ run });
   return {

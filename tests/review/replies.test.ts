@@ -4,7 +4,7 @@
 // Plan replies.md WP17: reply-draft runs with the fake CLI and a temp git remote. No test starts the real CLI or reaches a forge.
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
@@ -28,7 +28,7 @@ import {
 } from "../../src/shared/dto";
 import { type ReplyDraft, type ReplyPayload, type ReplyResult, replyJsonSchema } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER } from "../support/fake-bitbucket";
-import type { FakeScenario } from "../support/fake-claude";
+import { type FakeScenario, readRecords } from "../support/fake-claude";
 import { claudeStream, fakeRunner, reviewRemote, stubListTools } from "../support/review-fixture";
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
@@ -168,14 +168,7 @@ async function setup() {
     return finish(r.body.id);
   };
   const record = join(root, "calls.jsonl");
-  const runCalls = (): Call[] =>
-    existsSync(record)
-      ? readFileSync(record, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l) as Call)
-          .filter((c) => Array.isArray(c.argv) && c.argv.includes("-p"))
-      : [];
+  const runCalls = (): Call[] => readRecords<Call>(record).filter((c) => Array.isArray(c.argv) && c.argv.includes("-p"));
   const act = (id: number, body: Record<string, unknown>) => json<ReviewItemDto & ApiError>(`/api/items/${id}`, { body });
   const item = (id: number) => db.query("SELECT status, revision, body FROM review_item WHERE id = $id").get({ id });
   return { db, pr, review, scenario, json, start, finish, run, runCalls, act, item, comment };

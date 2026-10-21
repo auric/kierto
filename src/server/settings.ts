@@ -73,7 +73,9 @@ function normalize(raw: string): string | null {
 }
 
 // Construction does no disk or secret-store access. The first request loads the state.
-export function createSettings(opts: { dir?: string; secrets?: Secrets; jiraSecrets?: Secrets } = {}) {
+export function createSettings(
+  opts: { dir?: string; secrets?: Secrets; jiraSecrets?: Secrets; taskBudget?: Parameters<typeof createTaskRunner>[0] } = {},
+) {
   const dir = opts.dir ?? dataDir();
   const secrets = opts.secrets ?? createSecrets();
   const jiraSecrets = opts.jiraSecrets ?? createSecrets(undefined, "jira-token");
@@ -86,7 +88,7 @@ export function createSettings(opts: { dir?: string; secrets?: Secrets; jiraSecr
   // Each recompute pass and close() bump it. An older pass stops before its next write.
   let generation = 0;
   const tasks = () => {
-    runner ??= createTaskRunner();
+    runner ??= createTaskRunner(opts.taskBudget);
     return runner;
   };
 

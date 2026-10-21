@@ -5,7 +5,7 @@
 // remote, no forge, and no real CLI.
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
@@ -18,6 +18,7 @@ import { createSettings } from "../../src/server/settings";
 import type { PostPlanDto, ReviewItemDto, RunDetail, RunDto } from "../../src/shared/dto";
 import type { ReplyPayload } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER } from "../support/fake-bitbucket";
+import { readRecords } from "../support/fake-claude";
 import { claudeStream, fakeRunner, reviewRemote, stubListTools } from "../support/review-fixture";
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
@@ -134,14 +135,7 @@ async function setup() {
     return (await json<RunDetail>(`/api/runs/${started.body.id}`)).body;
   };
   const record = join(root, "calls.jsonl");
-  const runCalls = (): Call[] =>
-    existsSync(record)
-      ? readFileSync(record, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l) as Call)
-          .filter((c) => c.argv?.includes("-p"))
-      : [];
+  const runCalls = (): Call[] => readRecords<Call>(record).filter((c) => c.argv?.includes("-p"));
   // A posted item set: the items become posted, a confirmed post holds them, and its root comment starts the thread.
   const post = (run: number, kind: "general" | "inline", root: number, items: ReviewItemDto[]) => {
     for (const it of items) db.query("UPDATE review_item SET status = 'posted' WHERE id = $id").run({ id: it.id });

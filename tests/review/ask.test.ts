@@ -4,7 +4,7 @@
 // Plan r2 S-ASK: ask runs with the fake CLI, a temp git remote, and a fake Bitbucket. No test starts the real CLI or reaches a forge.
 import type { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app";
@@ -17,7 +17,7 @@ import { createSettings } from "../../src/server/settings";
 import type { ApiError, AskDto, RunConflict, RunDetail, RunDto } from "../../src/shared/dto";
 import { askJsonSchema, MAX_QUESTION } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER, startFakeBitbucket } from "../support/fake-bitbucket";
-import type { FakeScenario } from "../support/fake-claude";
+import { type FakeScenario, readRecords } from "../support/fake-claude";
 import { claudeStream, fakeRunner, reviewRemote, stubListTools } from "../support/review-fixture";
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
@@ -108,13 +108,7 @@ async function setup(o: { brief?: boolean } = {}) {
     return (await json<RunDetail>(`/api/runs/${id}`)).body;
   };
   const record = join(root, "calls.jsonl");
-  const calls = (): Call[] =>
-    existsSync(record)
-      ? readFileSync(record, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l) as Call)
-      : [];
+  const calls = (): Call[] => readRecords<Call>(record);
   const runCalls = () => calls().filter((c) => Array.isArray(c.argv) && c.argv.includes("-p"));
   const raw = async (id: number) => (await app.request(`${ORIGIN}/api/runs/${id}/raw`, { headers: HEADERS })).text();
   return { db, pr, review, fake, scenario, json, ask, finish, calls, runCalls, raw };

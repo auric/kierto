@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { createClaudeRunner, type RunnerOptions, type RunSpec } from "../../src/server/review/claude";
 import { classify, createStreamParser } from "../../src/server/review/stream";
 import type { RunEvent } from "../../src/shared/run-log";
-import type { FakeScenario } from "../support/fake-claude";
+import { type FakeScenario, readRecords } from "../support/fake-claude";
 
 const FAKE = join(import.meta.dir, "../support/fake-claude.ts");
 const REAL = join(import.meta.dir, "../../fixtures/claude");
@@ -88,13 +88,7 @@ function setup(scenario: Partial<FakeScenario> = {}, opts: RunnerOptions = {}) {
     agents: { "rl-reviewer": { description: "Read-only reviewer.", prompt: "You are a read-only reviewer." } },
     mcpServers: { "rl-stub": { command: "bun", args: ["stub.ts"], tools: ["get_fact"] } },
   };
-  const calls = (): Call[] =>
-    existsSync(record)
-      ? readFileSync(record, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l))
-      : [];
+  const calls = (): Call[] => readRecords(record);
   return { base, work, app, projects, runner, spec, calls };
 }
 

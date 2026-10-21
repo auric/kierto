@@ -36,6 +36,10 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: 24.21.0
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install --frozen-lockfile
       # The compiled-binary test skips, because dist/bin does not exist on a fresh checkout.
       - run: bun run check
@@ -54,9 +58,24 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: 24.21.0
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install --frozen-lockfile
+      - id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - id: playwright-cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       # The repo pins @playwright/test. Its own CLI installs the matching Chromium.
-      - run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      # The browser cache does not hold the system packages.
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: node node_modules/@playwright/test/cli.js install-deps chromium
       - run: bun run test:e2e
       - if: failure()
         uses: actions/upload-artifact@v7.0.1

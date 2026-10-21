@@ -163,9 +163,21 @@ test("keys in the license dialog do not act behind it; Esc closes only the dialo
   await expect(h1(page)).toHaveText(A);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page).toHaveURL(`${APP}/settings`);
+  // Base UI moves the focus into the dialog one frame after it opens. A key in that frame must not act behind it.
+  // The observer sends r when the dialog enters the DOM, while the focus is still on the License button.
+  await page.evaluate(() => {
+    new MutationObserver((_, o) => {
+      if (!document.querySelector('[data-slot="dialog-content"]')) return;
+      o.disconnect();
+      (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true }));
+    }).observe(document.body, { childList: true, subtree: true });
+  });
   await page.getByRole("button", { name: "License", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "License" });
   await expect(dialog).toBeVisible();
+  await page.waitForTimeout(300);
+  await expect(page.locator("#brief")).toHaveCount(0);
+  await expect(page).toHaveURL(`${APP}/settings`);
   await page.keyboard.press("r");
   await page.waitForTimeout(300);
   await expect(dialog).toBeVisible();

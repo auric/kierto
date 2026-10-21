@@ -14,7 +14,12 @@ import {
 import type { TaskRule } from "../../src/shared/dto";
 
 const runner = createTaskRunner();
-afterAll(() => runner.close());
+// JavaScriptCore stops runaway backtracking after about 950 ms. The ReDoS tests need budgets well below that.
+const fast = createTaskRunner({ budgetMs: 50, retryBudgetMs: 100 });
+afterAll(() => {
+  runner.close();
+  fast.close();
+});
 
 const ID = String.raw`[A-Z][A-Z0-9]+-\d+`;
 const input = (branch: string, title = "", description = "") => taskInput(branch, title, description);
@@ -72,11 +77,11 @@ describe("task-ID rules", () => {
       { source: "description", pattern: "(a+)+$" },
     ];
     const t0 = performance.now();
-    const r = await runner.extract(rules, { branch: "bugfix/ABC-10145-name-of-ticket", title: "", description: `${"a".repeat(30_000)}!` });
+    const r = await fast.extract(rules, { branch: "bugfix/ABC-10145-name-of-ticket", title: "", description: `${"a".repeat(30_000)}!` });
     expect(performance.now() - t0).toBeLessThan(1000);
     expect(r.timedOut).toBe(1);
     expect(r.tasks).toEqual([{ key: "ABC-10145", source: "branch" }]);
-    const next = await runner.extract(DEFAULT_TASK_RULES, input("feature/ABC-10613-monitor-api-integration"));
+    const next = await fast.extract(DEFAULT_TASK_RULES, input("feature/ABC-10613-monitor-api-integration"));
     expect(next).toEqual({ tasks: [{ key: "ABC-10613", source: "branch" }], errors: [null, null, null], timedOut: null });
   });
 
@@ -106,7 +111,7 @@ describe("task-ID rules", () => {
       { source: "title", pattern: ID },
     ];
     const dead = new Set<number>();
-    const tasks = await extractSkipping(runner, rules, input("", "[ABC-10145] Fix of foobar", `${"a".repeat(5_000)}!`), dead);
+    const tasks = await extractSkipping(fast, rules, input("", "[ABC-10145] Fix of foobar", `${"a".repeat(5_000)}!`), dead);
     expect([...dead]).toEqual([0]);
     expect(tasks).toEqual([{ key: "ABC-10145", source: "title" }]);
   });

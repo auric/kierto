@@ -2,9 +2,10 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readRecords } from "../support/fake-claude";
 
 const dirs: string[] = [];
 const pids: number[] = [];
@@ -43,13 +44,7 @@ test.skipIf(process.platform === "win32")(
     });
     pids.push(app.pid);
     const record = join(root, "calls.jsonl");
-    const calls = (): { argv: string[]; pid: number; childPid?: number }[] =>
-      existsSync(record)
-        ? readFileSync(record, "utf8")
-            .split("\n")
-            .filter(Boolean)
-            .map((l) => JSON.parse(l))
-        : [];
+    const calls = (): { argv: string[]; pid: number; childPid?: number }[] => readRecords(record);
     expect(await waitFor(() => calls().some((c) => c.childPid), 30_000)).toBe(true);
     const run = calls().find((c) => c.argv.includes("-p"));
     const child = calls().find((c) => c.childPid)?.childPid ?? 0;
