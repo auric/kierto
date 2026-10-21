@@ -294,7 +294,9 @@ const Row = memo(function Row(props: RowProps) {
         aria-expanded={open}
         aria-controls={`ag-${e.id}`}
         aria-label={label}
-        title={e.builtin ? `Kierto did not define this agent. It comes from ${meta.runner.name} or your own agent config.` : undefined}
+        title={
+          e.builtin ? `PR Review Inbox did not define this agent. It comes from ${meta.runner.name} or your own agent config.` : undefined
+        }
         onClick={() => props.onToggle(e)}
       >
         <ChevronRight aria-hidden className="rl-lchev" />

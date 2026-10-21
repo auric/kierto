@@ -160,8 +160,8 @@ export function AskPanel(props: {
             onKeyDown={onKeyDown}
           />
           <FieldDescription id="ask-help" className="text-xs">
-            {runner} answers with the {profileOf(meta.profiles, brief?.profile ?? "general")?.name ?? ""} profile. The answer stays in
-            Kierto. Nothing posts to {meta.forge.name}.
+            {runner} answers with the {profileOf(meta.profiles, brief?.profile ?? "general")?.name ?? ""} profile. The answer stays in PR
+            Review Inbox. Nothing posts to {meta.forge.name}.
           </FieldDescription>
         </Field>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">

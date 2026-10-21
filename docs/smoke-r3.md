@@ -17,14 +17,14 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 
 ## Preparation
 
-1. Run `bun install`, then `bun run compile`. Expect "Built dist/bin/kierto-<os>-<arch> (<commit>)." Record the commit.
+1. Run `bun install`, then `bun run compile`. Expect "Built dist/bin/pr-review-inbox-<os>-<arch> (<commit>)." Record the commit.
 2. Run `claude --version`. Expect 2.1.295 or later. Run `claude auth status`. Expect `"authMethod": "claude.ai"`.
 3. Run `git --version`. Record it. Expect 2.38 or later.
 4. Remove `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the terminal. PowerShell: `Remove-Item Env:ANTHROPIC_API_KEY, Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue`.
 5. Set a new data folder. PowerShell: `$env:REVIEW_LOOP_DATA_DIR = Join-Path $env:TEMP "review-loop-smoke-$(Get-Random)"`. Bash: `export REVIEW_LOOP_DATA_DIR="$(mktemp -d)"`.
 6. Ask the second user to write seven comments on the test pull request. T1 to T4 each ask for one small change in a text source file, for example a missing null check. T5 asks for a change that the code already has. T6 asks a question about the code. T7 says "Thanks, looks good." and asks for nothing.
 7. Make a new clone outside the data folder: `git clone <repository URL> <CLONE>`, then `git -C <CLONE> switch <source branch>`. Run `git -C <CLONE> config user.name` and `git -C <CLONE> config user.email`. Expect your own identity. If your commits use a signing prompt, record it. The app waits 120 s for a commit.
-8. Start the binary. Expect the startup line "Kierto (<commit>): http://127.0.0.1:7317/" with the commit of step 1.
+8. Start the binary. Expect the startup line "PR Review Inbox (<commit>): http://127.0.0.1:7317/" with the commit of step 1.
 9. Open the URL. Enter `<BITBUCKET_URL>` and your access token. Click Save. Click "Check now". If the test pull request is not in the list, paste `<TEST_PR_URL>` into the filter and click "Follow this pull request".
 10. Open Settings. Enter `<JIRA_URL>` and a Jira personal access token. Click "Save Jira settings". Expect "Saved. Jira accepted the token."
 
@@ -131,7 +131,7 @@ Use a test pull request that changes C++, C, or Python files for step 4. If it h
 
 1. Press r on the test pull request. Expect the brief, not a run. Expect the run setup of the default profile, with "Language checks" for General. Open the Review menu and pick Security. Expect the brief with Security. Press Esc. Open Settings > Review profiles. Expect General as the default, unchanged.
 2. In Settings > Review profiles > General, open the skills dialog. Tick one skill and mark it "Always use". Expect the chip "<skill> · Always". Save.
-3. In Settings > Project instructions, open the test repository. Put "In the summary, give the word KIWI-SMOKE." into "Extra text (optional)". Expect the preview line "A run gets <size> from <n> sources". Open "Show the text". Expect the trust line first and the heading "## From Kierto settings". Turn on "Use your global CLAUDE.md" only under the rule above. Expect the global file as the first source. A file that does not load shows as "Not loaded: <file>".
+3. In Settings > Project instructions, open the test repository. Put "In the summary, give the word KIWI-SMOKE." into "Extra text (optional)". Expect the preview line "A run gets <size> from <n> sources". Open "Show the text". Expect the trust line first and the heading "## From PR Review Inbox settings". Turn on "Use your global CLAUDE.md" only under the rule above. Expect the global file as the first source. A file that does not load shows as "Not loaded: <file>".
 4. Press r and click "Start review". Wait for the end of the run. Expect the server terminal to show "Review run <id> language checks:" with the languages of the change. Expect the run row and the run log to list the skill with "(always)" and the instruction sources with sizes.
 5. Press 3. Expect a Read of `skills/<folder>/SKILL.md` among the first tool calls of rl-main. If coverage says "Skill <id> (always use): the model did not read SKILL.md.", record it.
 6. Expect the word KIWI-SMOKE in the summary. Expect no finding with severity nit, because the note asks for none. Count the findings per severity and record the counts. Expect no finding for style, naming, or formatting.
@@ -163,7 +163,7 @@ Part A (package S1, changed 2026-10-20), part C (package S2), and part D (packag
 1. Use the test pull request after part J. Keep at least one open reviewer thread, one thread of your own, one resolved thread, and one review finding that is not posted. If Files offers "Get the code", click it.
 2. Open More (…) in the action bar. Click "Copy for your session…". Expect four groups, all ticked, each with its count, and the line "N items, X KB."
 3. Untick "Resolved threads". Reload the page. Open the dialog again. Expect "Resolved threads" unticked. Tick it again.
-4. Click "Copy N items". Paste the clipboard into an empty editor window. Expect the PR key, both branches, the head commit, the task keys, and no changed-file list. Expect the section "What to do" with six numbered steps, and step 6 "Ask me before you push, post a comment, or resolve a thread." Expect the items between `<suggestions-XXXX>` and `</suggestions-XXXX>`, each in `<item-XXXX id="T<id>" status="open">` or `status="resolved"`, with the same suffix XXXX in every tag. Expect for each inline item an "Outdated" line and one "Anchor line N …" line, and no code block around it. Expect each full conversation and the label "Kierto's AI view (may be wrong)". Expect no JSON answer format. Do not save the text.
+4. Click "Copy N items". Paste the clipboard into an empty editor window. Expect the PR key, both branches, the head commit, the task keys, and no changed-file list. Expect the section "What to do" with six numbered steps, and step 6 "Ask me before you push, post a comment, or resolve a thread." Expect the items between `<suggestions-XXXX>` and `</suggestions-XXXX>`, each in `<item-XXXX id="T<id>" status="open">` or `status="resolved"`, with the same suffix XXXX in every tag. Expect for each inline item an "Outdated" line and one "Anchor line N …" line, and no code block around it. Expect each full conversation and the label "PR Review Inbox's AI view (may be wrong)". Expect no JSON answer format. Do not save the text.
 5. Open a terminal in `<CLONE>`. Run `claude` and resume the session that wrote the code, or start a new one. Paste the text. Expect the session to check the branch and the head commit first. Expect a result per open item (valid, partly valid, not valid, question, or already done) with file and line, before any edit. Expect edits only for the valid parts, a test run, a reply per open item, and one commit that lists the item IDs. Expect the session to show the replies and the commit, and to ask before a push, a post, or a resolve. Answer no. Expect no edit for a resolved item.
 6. Run `git -C <CLONE> status` and `git -C <CLONE> log -1`. Expect a clean tree and the commit of the session. Expect no push and nothing new on the pull request in Bitbucket.
 7. In the text of step 4, find a comment with several lines. Expect each line of the comment text indented by 4 spaces, so no comment line starts a tag.
@@ -171,7 +171,7 @@ Part A (package S1, changed 2026-10-20), part C (package S2), and part D (packag
 9. Open More. Expect no "Paste the answer…". Press F. Expect the Fix list footer with "Copy for your session" and no paste link. Close the list.
 10. Optional: push the commit of the session yourself. Click "Check now". Click "Review changes since", then Draft replies. Expect the results to come back as resolve proposals and reply drafts.
 11. If you do not keep the commit, reset `<CLONE>` to the earlier head yourself.
-12. Open Settings, Clones. Expect the switch "Let Kierto find and consult your Claude Code sessions" off, and its text about the folder, branch, time, and title lines and the plan quota. Open the test pull request and open More. Expect no "Ask your session…".
+12. Open Settings, Clones. Expect the switch "Let PR Review Inbox find and consult your Claude Code sessions" off, and its text about the folder, branch, time, and title lines and the plan quota. Open the test pull request and open More. Expect no "Ask your session…".
 13. List the files in the projects folder of the session of step 5 (`~/.claude/projects/<folder>`). Record the count of `.jsonl` files only.
 14. Turn the switch on. Open More and click "Ask your session…". Expect the four groups and, under "Session on branch <source branch>", the sessions of that branch. Expect a session in `<CLONE>` first, with "In your clone". Each row shows a title, the folder name, the last use, the size, and a token estimate. Expect the cost line. Expect no message text of a transcript anywhere in the dialog.
 15. Pick the session of step 5. Click "Ask the session". Expect "Your session is answering…" and a "Session" row under the review with a tool call count. Run `git -C <CLONE> status` meanwhile. Expect no change.
@@ -251,7 +251,7 @@ Reply to the newest as is, and revise instead of replace (3398e26):
 
 Copy for your session (2b89d52):
 
-24. Run part K steps 4 and 5 with a build that has commit 2b89d52. Record their result here. Expect the six steps under "What to do", one anchor line per inline item and no code quote, and the label "Kierto's AI view (may be wrong)". Expect the session to ask before a push, a post, or a resolve. [ ] pass [ ] fail
+24. Run part K steps 4 and 5 with a build that has commit 2b89d52. Record their result here. Expect the six steps under "What to do", one anchor line per inline item and no code quote, and the label "PR Review Inbox's AI view (may be wrong)". Expect the session to ask before a push, a post, or a resolve. [ ] pass [ ] fail
 
 MCP redirect of a user-added server (e4f671a):
 

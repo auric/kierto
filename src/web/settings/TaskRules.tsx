@@ -153,8 +153,8 @@ export function TaskRules({ settings, prs, selected }: { settings: SettingsDto; 
         </p>
       </div>
       <p className="m-0 max-w-[72ch] text-sm text-ink-2">
-        Kierto looks for task IDs in each pull request. The rules run from top to bottom. When two rules find the same ID, the first rule
-        names its source. Keys limit the matches to your projects, so UTF-8 or SHA-256 do not count.
+        PR Review Inbox looks for task IDs in each pull request. The rules run from top to bottom. When two rules find the same ID, the
+        first rule names its source. Keys limit the matches to your projects, so UTF-8 or SHA-256 do not count.
       </p>
       <ol aria-label="Task ID rules" className="m-0 list-none border-t p-0">
         {drafts.map((r, i) => (

@@ -262,9 +262,9 @@ export async function buildInstructions(o: {
   }
   if (o.extra.trim()) {
     const bytes = Buffer.byteLength(o.extra);
-    if (fits(bytes, "the text from Kierto settings")) {
+    if (fits(bytes, "the text from PR Review Inbox settings")) {
       files.push({ source: "settings", path: "", bytes });
-      parts.push(`## From Kierto settings\n\n${scan(o.extra).text.trimEnd()}\n`);
+      parts.push(`## From PR Review Inbox settings\n\n${scan(o.extra).text.trimEnd()}\n`);
     }
   }
   return {

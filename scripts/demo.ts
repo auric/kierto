@@ -531,7 +531,7 @@ const activities = new Map<Pr, () => S.Activity[]>([
   [
     own,
     () => {
-      // Thread history (seeded below): Alex asks for a change, my reply from a Kierto draft answers, and I resolve the thread.
+      // Thread history (seeded below): Alex asks for a change, my reply from a PR Review Inbox draft answers, and I resolve the thread.
       let t = thread(base(), HISTORY, alex, 150, "Stop the old timer in dispose(). It still fires after the scheduler takes over.");
       t = S.resolveThread(reply(t, HISTORY, HISTORY + 1, me, 110, HISTORY_POSTED), HISTORY, me, min(109));
       if (phase === 1) return t;
@@ -772,7 +772,7 @@ if (db && evictPr) {
   });
 }
 
-// The Kierto side of thread HISTORY: the runs, the drafts, the fix edits and commit, and the confirmed post with its resolve.
+// The PR Review Inbox side of thread HISTORY: the runs, the drafts, the fix edits and commit, and the confirmed post with its resolve.
 const ownPr = db?.query("SELECT id FROM pull_request WHERE title = $title").get({ title: own.title }) as { id: number } | null;
 if (db && ownPr) {
   const run = (kind: string, key: string, start: number, end: number, text: string, fix: unknown = null) =>
@@ -924,7 +924,7 @@ const server = startServer({
 sync.start();
 void review.start();
 
-console.log(`Kierto demo: http://127.0.0.1:${server.port}/ (pid ${process.pid})`);
+console.log(`PR Review Inbox demo: http://127.0.0.1:${server.port}/ (pid ${process.pid})`);
 console.log(`Fake Bitbucket: ${fake.url}. Fake Jira: ${jira.url}. Data: ${dataDir}`);
 console.log(`Follow by URL: paste ${fake.url}/projects/PROJ3/repos/tools/pull-requests/5 into the filter.`);
 console.log(`Fix it: open "Release the write lock after each entry", draft replies, then fix. Apply commits in ${cloneDir}.`);

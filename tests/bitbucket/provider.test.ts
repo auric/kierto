@@ -586,7 +586,7 @@ describe("forge data", () => {
         {
           segments: [
             { type: "CONTEXT", lines: [1, 2].map(ctx) },
-            ...diffOf(activities("activities-u2-range.json"), 10000002).hunks[0]!.segments,
+            ...(diffOf(activities("activities-u2-range.json"), 10000002).hunks[0]?.segments ?? []),
             { type: "CONTEXT", lines: [13, 14, 15, 16].map(ctx) },
           ],
         },

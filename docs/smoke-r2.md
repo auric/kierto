@@ -14,12 +14,12 @@ This test checks the Release 2 features against a real Bitbucket Server, a real 
 
 ## Preparation
 
-1. Run `bun install`, then `bun run compile`. Expect "Built dist/bin/kierto-<os>-<arch> (<commit>)." Record the commit.
+1. Run `bun install`, then `bun run compile`. Expect "Built dist/bin/pr-review-inbox-<os>-<arch> (<commit>)." Record the commit.
 2. Run `claude --version`. Expect 2.1.295 or later. Run `claude auth status`. Expect `"authMethod": "claude.ai"`.
 3. Run `git --version`. Record it. Expect 2.38 or later, because the re-review range needs `git merge-tree --write-tree`.
 4. Remove `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the terminal. PowerShell: `Remove-Item Env:ANTHROPIC_API_KEY, Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue`.
 5. Set a new data folder. PowerShell: `$env:REVIEW_LOOP_DATA_DIR = Join-Path $env:TEMP "review-loop-smoke-$(Get-Random)"`. Bash: `export REVIEW_LOOP_DATA_DIR="$(mktemp -d)"`.
-6. Start the binary. Expect the startup line "Kierto (<commit>): http://127.0.0.1:7317/" with the commit of step 1.
+6. Start the binary. Expect the startup line "PR Review Inbox (<commit>): http://127.0.0.1:7317/" with the commit of step 1.
 7. Open the URL. Enter `<BITBUCKET_URL>` and your access token. Click Save. Click "Check now". If the test pull request is not in the list, paste `<TEST_PR_URL>` into the filter and click "Follow this pull request".
 
 ## A. Re-review after a push

@@ -77,14 +77,14 @@ async function unreadIds(request: APIRequestContext, title: string) {
 // US9 in the browser: the URL and the token go through the settings screen. Then the first check imports silently.
 async function connect(page: Page, notify = true) {
   await openApp(page);
-  await expect(page.getByText("Connect Kierto to your Bitbucket Server.")).toBeVisible();
+  await expect(page.getByText("Connect PR Review Inbox to your Bitbucket Server.")).toBeVisible();
   await page.getByLabel("Bitbucket URL").fill(FAKE_URL);
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByLabel("Access token")).toBeHidden();
   await control("state", {});
   await expect(row(page, TITLE.a)).toBeVisible();
-  await expect(page).toHaveTitle("Kierto");
+  await expect(page).toHaveTitle("PR Review Inbox");
   // The token is never in the page or in localStorage.
   expect(await page.content()).not.toContain(E2E_TOKEN);
   expect(await page.evaluate(() => JSON.stringify({ ...localStorage }))).not.toContain(E2E_TOKEN);
@@ -109,7 +109,7 @@ test("A1: a reply is one unread event in the right thread and stays unread after
   await park(page);
   await control("state", { reply: "new" });
   await expect(row(page, TITLE.a)).toContainText("1 new");
-  await expect(page).toHaveTitle("(1) Kierto");
+  await expect(page).toHaveTitle("(1) PR Review Inbox");
   await expect.poll(() => notes(page)).toEqual([expect.objectContaining({ tag: "PROJ1/sample-repo-2 #1001" })]);
 
   await control("restart");
@@ -405,7 +405,7 @@ test.describe("denied notifications", () => {
   test("a denied permission does not block the inbox", async ({ page }) => {
     await connect(page, false);
     await page.getByRole("button", { name: "Settings" }).click();
-    await expect(page.getByText("This browser blocks notifications for Kierto.")).toBeVisible();
+    await expect(page.getByText("This browser blocks notifications for PR Review Inbox.")).toBeVisible();
     const toggle = page.getByLabel("Show a desktop notification for new activity");
     await toggle.click();
     await expect(toggle).not.toBeChecked();

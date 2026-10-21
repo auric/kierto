@@ -37,7 +37,7 @@ export function About() {
   };
   return (
     <footer className="mt-10 grid max-w-[560px] gap-1 border-t pt-4 text-xs text-muted-foreground">
-      <p className="m-0 text-sm font-semibold text-ink-2">Kierto by Ihor Lifanov</p>
+      <p className="m-0 text-sm font-semibold text-ink-2">PR Review Inbox by Ihor Lifanov</p>
       {app && (
         <p className="m-0">
           Version {app.version}
@@ -55,7 +55,8 @@ export function About() {
         </p>
       )}
       <p className="m-0">
-        Copyright (c) 2026 Ihor Lifanov. You can share and change Kierto under the GNU AGPL, version 3 or later. It comes with no warranty.
+        Copyright (c) 2026 Ihor Lifanov. You can share and change PR Review Inbox under the GNU AGPL, version 3 or later. It comes with no
+        warranty.
       </p>
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
         {(["license", "notices"] as const).map((d) => (
@@ -63,7 +64,7 @@ export function About() {
             {TITLE[d]}
           </button>
         ))}
-        <a className={linkish} href="https://github.com/auric/kierto" target="_blank" rel="noopener noreferrer">
+        <a className={linkish} href="https://github.com/auric/pr-review-inbox" target="_blank" rel="noopener noreferrer">
           Source code
         </a>
       </div>

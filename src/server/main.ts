@@ -95,7 +95,7 @@ if (import.meta.main && gitMcpAt >= 0) {
       indexHtml,
       assets: indexHtml === undefined ? undefined : serveStatic({ root: WEB_DIR }),
     });
-    console.log(`Kierto (${BUILD_COMMIT ?? "source"}): http://127.0.0.1:${server.port}/`);
+    console.log(`PR Review Inbox (${BUILD_COMMIT ?? "source"}): http://127.0.0.1:${server.port}/`);
     stopOnSignals(() => review.stop());
     sync.start();
     void review.start();

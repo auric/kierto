@@ -1,6 +1,6 @@
 # Third-party notices
 
-Kierto includes the third-party material below. Each part keeps its own license. `bun run notices` writes this file from the bundles. Do not edit it by hand.
+PR Review Inbox includes the third-party material below. Each part keeps its own license. `bun run notices` writes this file from the bundles. Do not edit it by hand.
 
 ## npm packages
 

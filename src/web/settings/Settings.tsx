@@ -290,7 +290,7 @@ export function Settings({
           </div>
           <form className="grid gap-4" onSubmit={submit} key={settings.baseUrl ?? ""}>
             {settings.baseUrl === null && (
-              <p className="m-0">Connect Kierto to your {forge} server. It checks your pull requests every minute.</p>
+              <p className="m-0">Connect PR Review Inbox to your {forge} server. It checks your pull requests every minute.</p>
             )}
             {missing && <p className="m-0">The service restarted, and the token was in memory only. Enter the token again.</p>}
             <FieldGroup className="gap-4">
@@ -410,7 +410,7 @@ function Checks({ settings }: { settings: SettingsDto }) {
           ))}
         </select>
         <FieldDescription id="check-every-help">
-          Kierto asks {forge} for changes at this interval. A new interval starts after the next check.
+          PR Review Inbox asks {forge} for changes at this interval. A new interval starts after the next check.
         </FieldDescription>
       </Field>
       {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
@@ -419,7 +419,8 @@ function Checks({ settings }: { settings: SettingsDto }) {
 }
 
 const PERMISSION_NOTE: Partial<Record<ReturnType<typeof notifyPermission>, string>> = {
-  denied: "This browser blocks notifications for Kierto. Allow them in the site settings. The inbox badges still show new activity.",
+  denied:
+    "This browser blocks notifications for PR Review Inbox. Allow them in the site settings. The inbox badges still show new activity.",
   unsupported: "This browser does not support notifications. The inbox badges still show new activity.",
 };
 

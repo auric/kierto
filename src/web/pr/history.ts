@@ -9,7 +9,7 @@ import { WHY } from "../fix/model";
 import { plural, shortHash } from "../review/model";
 import { type Person, snippet, type ThreadModel } from "./threads";
 
-// at: ms, the sort key. exact false: Kierto keeps no time for the fact, so the line shows none. at then only places the line
+// at: ms, the sort key. exact false: PR Review Inbox keeps no time for the fact, so the line shows none. at then only places the line
 // after the fact that it follows. null: no time at all, so the line goes last.
 // actor: bold, before the text. null for a fact without an actor. tags: short states after the text, never a time.
 // detail: one muted line under the head. run: an AI line, with a link to its run log. diff: your edit of a draft, for Show changes.
@@ -34,9 +34,9 @@ export type HistoryThread = Pick<ThreadModel, "msgs" | "turn" | "resolver" | "re
 type Draft = ThreadHistoryDto["drafts"][number];
 
 export const HISTORY_NOTE = (forge: string) =>
-  `${forge} keeps no record of reopens or earlier text. Kierto keeps only the time of your last change to a draft.`;
+  `${forge} keeps no record of reopens or earlier text. PR Review Inbox keeps only the time of your last change to a draft.`;
 
-const APP = "Kierto";
+const APP = "PR Review Inbox";
 const SNIP = 140;
 const payloadOf = (it: ReviewItemDto) => it.payload as ReplyPayload;
 const who = (p: Person) => (p.me ? "You" : p.name);
@@ -112,7 +112,13 @@ export function historyLines(dto: ThreadHistoryDto, t: HistoryThread, names: His
   // Messages. A confirmed post of the app names its source on the message line.
   for (const m of t.msgs) {
     const post = posted.get(m.id);
-    const how = !post ? "" : post.run === null ? " from Kierto" : post.kind === "reply" ? " from a Kierto draft" : " from a review run";
+    const how = !post
+      ? ""
+      : post.run === null
+        ? " from PR Review Inbox"
+        : post.kind === "reply"
+          ? " from a PR Review Inbox draft"
+          : " from a review run";
     add({
       key: `m${m.id}`,
       at: m.createdAt,
@@ -210,7 +216,7 @@ export function historyLines(dto: ThreadHistoryDto, t: HistoryThread, names: His
       ...(w.ai && { run: it.run }),
     });
 
-    // Kierto keeps one time for your actions on a draft: the newest (touchedAt).
+    // PR Review Inbox keeps one time for your actions on a draft: the newest (touchedAt).
     const replyAt = msgAt.get(p.replyTo);
     const moved =
       p.touchedAt !== undefined &&
@@ -262,7 +268,7 @@ export function historyLines(dto: ThreadHistoryDto, t: HistoryThread, names: His
         actor: "You",
         text: `posted ${what}`,
         tags: ["State unknown"],
-        detail: `${names.forge} gave no clear answer. Kierto looks for the comment before any new send.`,
+        detail: `${names.forge} gave no clear answer. PR Review Inbox looks for the comment before any new send.`,
       });
     else if (p.remoteId === null || !msgAt.has(p.remoteId))
       add({ key: `p${p.id}`, at: p.at, exact: true, actor: "You", text: `posted ${what}` });

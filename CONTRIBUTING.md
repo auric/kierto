@@ -1,13 +1,13 @@
-# Contributing to Kierto
+# Contributing to PR Review Inbox
 
-Thank you for your help. This file tells you how to set up, run, and test Kierto, and which rules a change must follow.
+Thank you for your help. This file tells you how to set up, run, and test PR Review Inbox, and which rules a change must follow.
 
-Report bugs and ideas in the issues: https://github.com/auric/kierto/issues. Send changes as pull requests: https://github.com/auric/kierto/pulls. Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) tells you.
+Report bugs and ideas in the issues: https://github.com/auric/pr-review-inbox/issues. Send changes as pull requests: https://github.com/auric/pr-review-inbox/pulls. Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) tells you.
 
 ## Set up
 
 1. Install Bun 1.x, Node 20 or later, and `git`.
-2. Clone https://github.com/auric/kierto and run `bun install`.
+2. Clone https://github.com/auric/pr-review-inbox and run `bun install`.
 3. Run `bun run dev`. Open the Vite URL, http://127.0.0.1:5173.
 
 You do not need a Bitbucket server or the `claude` CLI for development. `bun run demo` serves the built UI on 127.0.0.1:7399 with a fake Bitbucket, a fake Jira, a fake CLI, and synthetic data. Run `bun run build` first.
@@ -45,6 +45,6 @@ Run e2e only through `bun run test:e2e`. A plain `npx playwright` can use a glob
 
 ## License of contributions
 
-Kierto is under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`), with the additional terms in [NOTICE.md](NOTICE.md). You submit your contribution under the same license and terms.
+PR Review Inbox is under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`), with the additional terms in [NOTICE.md](NOTICE.md). You submit your contribution under the same license and terms.
 
 Sign off each commit with `git commit -s`. The sign-off states that you agree to the Developer Certificate of Origin: https://developercertificate.org/

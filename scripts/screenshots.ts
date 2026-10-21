@@ -186,7 +186,7 @@ async function shots(browser: Browser) {
 
 mkdirSync(OUT, { recursive: true });
 const parent = process.env.SHOTS_TEMP || (process.platform === "win32" ? `${process.env.SystemDrive || "C:"}\\` : tmpdir());
-const temp = mkdtempSync(join(parent, "kierto-shots-"));
+const temp = mkdtempSync(join(parent, "pr-review-inbox-shots-"));
 let demo: ChildProcess | undefined;
 let browser: Browser | undefined;
 try {

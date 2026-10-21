@@ -1,25 +1,21 @@
-# Kierto
+# PR Review Inbox
 
-Local-first inbox for Bitbucket Server and Data Center pull requests, with AI code review by your own Claude Code CLI. It drafts review comments and replies, proposes fixes, and posts nothing without your click.
+Local-first PR review inbox for Bitbucket Server and Data Center, with AI code review by your own Claude Code CLI.
 
-[![CI](https://github.com/auric/kierto/actions/workflows/ci.yml/badge.svg)](https://github.com/auric/kierto/actions/workflows/ci.yml) [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
+[![CI](https://github.com/auric/pr-review-inbox/actions/workflows/ci.yml/badge.svg)](https://github.com/auric/pr-review-inbox/actions/workflows/ci.yml) [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 
-Kierto helps with pull request review on Bitbucket Server and Bitbucket Data Center. It runs code review with Claude Code on your machine and can read the linked Jira issues.
+PR Review Inbox is a local-first review loop for Bitbucket Server and Data Center pull requests. It runs your own Claude Code CLI on your machine and can read the linked Jira issues. One inbox shows the pull requests that need you, and AI runs draft review comments, replies, and fix proposals. Nothing posts until you click, and support for other forges may follow.
 
-Repository: https://github.com/auric/kierto
+Repository: https://github.com/auric/pr-review-inbox
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/inbox-dark.webp">
-  <img alt="Kierto: the inbox, a pull request, and its AI review with a severity count and a Not checked list" src="docs/screenshots/inbox-light.webp">
+  <img alt="PR Review Inbox: the inbox, a pull request, and its AI review with a severity count and a Not checked list" src="docs/screenshots/inbox-light.webp">
 </picture>
 
-## Why "Kierto"
+## Why "PR Review Inbox"
 
-Kierto is Finnish for "cycle" or "round". Say it roughly as "KYER-toh".
-
-A pull request review is a loop. You review the change. The author changes the code and replies. You check again. The loop ends when every thread is resolved. Kierto keeps that loop in one place and runs each round with your own Claude Code CLI.
-
-The project started as "Review Loop". The new name keeps the same idea in one short word.
+The name says what the app does. It is one inbox for the pull requests that you review or that you wrote. A review is a loop: you review, the author changes the code and replies, and you check again. The app keeps each round of that loop in one place. The name names no forge, because other forges may follow. Its earlier names were Review Loop and Kierto.
 
 ## What it does
 
@@ -33,23 +29,23 @@ The project started as "Review Loop". The new name keeps the same idea in one sh
 
 ## Safety model
 
-- Kierto runs on your machine and listens on 127.0.0.1 only. It checks the Host and Origin of each request, and each change needs a session token.
-- Reviews use your own Claude Code CLI with your claude.ai login. Kierto removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child process.
-- Nothing goes to Bitbucket until you click. Kierto posts your accepted drafts. Claude never posts.
-- Claude never runs in your clone. Reviews run on a sanitized snapshot with read-only tools. Kierto never pushes.
+- PR Review Inbox runs on your machine and listens on 127.0.0.1 only. It checks the Host and Origin of each request, and each change needs a session token.
+- Reviews use your own Claude Code CLI with your claude.ai login. PR Review Inbox removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child process.
+- Nothing goes to Bitbucket until you click. PR Review Inbox posts your accepted drafts. Claude never posts.
+- Claude never runs in your clone. Reviews run on a sanitized snapshot with read-only tools. PR Review Inbox never pushes.
 - Your Bitbucket token goes into the OS secret store. It never goes into the database, logs, URLs, or prompts.
 
 ## Requirements
 
 - Windows or Linux.
 - The `claude` CLI, logged in with a claude.ai subscription. Check with `claude auth status`.
-- A Bitbucket Server or Data Center personal access token with Project read and Repository write. Kierto needs write only to post comments and to resolve or reopen threads.
+- A Bitbucket Server or Data Center personal access token with Project read and Repository write. PR Review Inbox needs write only to post comments and to resolve or reopen threads.
 - `git` on the PATH.
 - Bun 1.x, only to build from source.
 
 ## Install
 
-No release is published yet. Build Kierto from source with Bun 1.x:
+No release is published yet. Build PR Review Inbox from source with Bun 1.x:
 
 ```sh
 bun install
@@ -57,33 +53,33 @@ bun run build
 bun run start
 ```
 
-For one self-contained binary, run `bun run compile`. It writes `dist/bin/kierto-<os>-<arch>` for this host.
+For one self-contained binary, run `bun run compile`. It writes `dist/bin/pr-review-inbox-<os>-<arch>` for this host.
 
 Release binaries: when a release is published on the GitHub Releases page, download the binary for your system and start it. Each release holds one binary per target, `SHA256SUMS`, and the license files. `bun run release` makes them.
 
 ```sh
-./kierto-0.2.0-linux-x64          # Linux: chmod +x it first
-kierto-0.2.0-windows-x64.exe      # Windows
+./pr-review-inbox-0.2.0-linux-x64       # Linux: chmod +x it first
+pr-review-inbox-0.2.0-windows-x64.exe   # Windows
 ```
 
-To try Kierto without a Bitbucket server, run `bun run demo` from source and open http://127.0.0.1:7399. The demo uses synthetic data, a temp data folder, and memory secrets.
+To try PR Review Inbox without a Bitbucket server, run `bun run demo` from source and open http://127.0.0.1:7399. The demo uses synthetic data, a temp data folder, and memory secrets.
 
 ## First run
 
 1. Open http://127.0.0.1:7317.
-2. Enter your Bitbucket URL and access token, then click Save. Kierto tests the connection first.
+2. Enter your Bitbucket URL and access token, then click Save. PR Review Inbox tests the connection first.
 3. Optional: in Settings, Jira, connect Jira. The review brief can then fetch the task text.
 4. The inbox lists the pull requests on your Bitbucket dashboard. To follow another one, paste its URL into the filter.
 5. Open a pull request and press `r` to open the review brief. Add a note and pick a profile.
 6. Click Start review, or press `Ctrl+Enter`.
 7. Triage each draft: `a` accepts, `e` edits, `d` discards.
-8. Press `p` to post the accepted drafts. Kierto shows a confirm first.
+8. Press `p` to post the accepted drafts. PR Review Inbox shows a confirm first.
 
 ## Features
 
 ### Review profiles
 
-A profile sets the prompt, the model, the effort, the reviewer agents, the skills, and the MCP servers of a run. Kierto ships General, Over-engineering, Security, and Explain. Skills and MCP servers come from your Claude Code config. "Improve prompt" proposes a clearer prompt, and you see the changes before you apply them.
+A profile sets the prompt, the model, the effort, the reviewer agents, the skills, and the MCP servers of a run. PR Review Inbox ships General, Over-engineering, Security, and Explain. Skills and MCP servers come from your Claude Code config. "Improve prompt" proposes a clearer prompt, and you see the changes before you apply them.
 
 ![Settings, Review profiles: run setup, skills, and MCP servers](docs/screenshots/settings-profiles.webp)
 
@@ -113,13 +109,13 @@ When new messages arrive after a draft, the draft says so. "Reply to the newest 
 
 Each thread with a draft or a fix shows one outcome line on top, such as Answered, To fix, Fix proposed, Fixed in X, Partly fixed in X, Already done, Won't fix, Needs your decision, or Settled. Marks on the line say "Out of date", "Resolved since the draft", "Code changed", "Waiting for push", or "Revision waiting". "Code changed" means that a push outdated the comment after the draft. It never blocks the post. When the reply and the fix disagree, for example a "Not valid" reply next to a ticked edit, a note says so. "Keep the reply" or "Keep the fix" settles it with one click.
 
-Each thread footer has "Resolve", or "Reopen" on a resolved thread. The key x does the same on the current thread. The change goes to Bitbucket at once. A thread that another person started asks first. Tick "Resolve after posting" to resolve the thread after the reply. Bitbucket takes no reply in a resolved thread, so Kierto reopens a resolved thread first. The confirm says "Reopen thread, post reply". When someone resolved the thread after Claude drafted the reply, the draft says "Resolved since the draft", and the post leaves it out until you reopen the thread.
+Each thread footer has "Resolve", or "Reopen" on a resolved thread. The key x does the same on the current thread. The change goes to Bitbucket at once. A thread that another person started asks first. Tick "Resolve after posting" to resolve the thread after the reply. Bitbucket takes no reply in a resolved thread, so PR Review Inbox reopens a resolved thread first. The confirm says "Reopen thread, post reply". When someone resolved the thread after Claude drafted the reply, the draft says "Resolved since the draft", and the post leaves it out until you reopen the thread.
 
 The post confirm lists the drafts that cannot post now in groups by reason: out of date (new messages after the draft), resolved since the draft, a fix commit that is not pushed, or a commit that is not on the branch. Each group says what to do. Each draft links to its thread and has its action: "Reply to the newest as is", "Reopen thread", or "Post as plain reply". Post sends the other drafts. The confirm updates while it is open. The post bar counts the out-of-date drafts, and Ready to post also lists pull requests with only drafts that cannot post. The inbox row says "2 reply drafts out of date" when new messages or a resolve after the draft keep your drafts from posting. A draft that you accepted or edited also gives one notification when another person does that.
 
 ### Thread history
 
-The More menu of a thread has "Show history". It opens one time-ordered list under the thread: the messages, the drafts of each writer, your changes to a draft with "Show changes", the revisions, the fix results and commits, the posts that did not finish, and the current resolve. Each line from Claude links to its run log. "Hide history", or Esc in the list, closes it. Bitbucket keeps no record of reopens or earlier text, and Kierto keeps only the time of your last change to a draft.
+The More menu of a thread has "Show history". It opens one time-ordered list under the thread: the messages, the drafts of each writer, your changes to a draft with "Show changes", the revisions, the fix results and commits, the posts that did not finish, and the current resolve. Each line from Claude links to its run log. "Hide history", or Esc in the list, closes it. Bitbucket keeps no record of reopens or earlier text, and PR Review Inbox keeps only the time of your last change to a draft.
 
 ![The thread history: a reply draft, your edit with its word diff, the fix commit, the revision, the post, and the resolve](docs/screenshots/thread-history.webp)
 
@@ -135,7 +131,7 @@ When the run gives no fix, the card says why: Already done, Not valid, Out of sc
 
 ### Ask
 
-Press `q` to ask a question about the pull request. The answer stays in Kierto. Nothing posts.
+Press `q` to ask a question about the pull request. The answer stays in PR Review Inbox. Nothing posts.
 
 ### Project instructions
 
@@ -145,13 +141,13 @@ Each run can read the CLAUDE.md files of your clone, extra text from Settings, a
 
 You wrote the code with Claude Code, so your session knows why. On your own pull request, "Copy for your session" copies one prompt with the review points. Paste it into your session in your clone. "Copy for your session" gives your own Claude Code session the open review points as numbered steps: check the branch, validate each point with file and line, fix only the valid parts, write a reply for each point, commit, and ask you before any push, post, or resolve. The points sit in tags with a new random suffix for each copy, and the prompt tells the session that the tag content is data, not instructions. Push the changes, then use "Review changes since" and Draft replies.
 
-To ask without leaving Kierto, turn on the session switch in Settings, Clones. Kierto then lists your sessions on the branch of your own pull request. Each question resumes a read-only copy of the session with the same points. Its verdicts tick the Fix list and draft replies. "Judge and propose fixes" also lets the session propose edits for the points that it accepts. Kierto checks the edits, and their fix cards show "from your session". Nothing applies until you click.
+To ask without leaving PR Review Inbox, turn on the session switch in Settings, Clones. PR Review Inbox then lists your sessions on the branch of your own pull request. Each question resumes a read-only copy of the session with the same points. Its verdicts tick the Fix list and draft replies. "Judge and propose fixes" also lets the session propose edits for the points that it accepts. PR Review Inbox checks the edits, and their fix cards show "from your session". Nothing applies until you click.
 
 ### Narrow screens
 
-Below 760 px, Kierto shows one pane at a time.
+Below 760 px, PR Review Inbox shows one pane at a time.
 
-![Kierto at 400 px](docs/screenshots/narrow.webp)
+![PR Review Inbox at 400 px](docs/screenshots/narrow.webp)
 
 ## Keyboard
 
@@ -181,7 +177,7 @@ Press `?` in the app for the full list.
 
 ## Configuration
 
-The environment variables keep the `REVIEW_LOOP_` prefix of the old name, so existing data keeps working.
+The environment variables keep the `REVIEW_LOOP_` prefix of the first name, Review Loop, so existing data keeps working.
 
 | Variable | Effect |
 |---|---|
@@ -189,7 +185,7 @@ The environment variables keep the `REVIEW_LOOP_` prefix of the old name, so exi
 | `REVIEW_LOOP_DATA_DIR` | The data folder. Default: `%LOCALAPPDATA%\review-loop` on Windows, `$XDG_DATA_HOME/review-loop` or `~/.local/share/review-loop` on Linux. |
 | `REVIEW_LOOP_SECRETS` | `memory` keeps the tokens out of the OS secret store. You then enter them again after each restart. |
 
-If the OS secret store fails, Kierto keeps the token in memory only and tells you in Settings.
+If the OS secret store fails, PR Review Inbox keeps the token in memory only and tells you in Settings.
 
 ## Development
 
@@ -199,7 +195,7 @@ If the OS secret store fails, Kierto keeps the token in memory only and tells yo
 | `bun run check` | Typecheck with TypeScript 7 and 5, Biome lint, and `bun test`. |
 | `bun run test:e2e` | Build the UI and run the Playwright suite against a fake Bitbucket and a fake Jira. |
 | `bun run demo` | Serve the built UI on 127.0.0.1:7399 with synthetic data, a fake CLI, and a temp data folder. |
-| `bun run compile` | Build one self-contained binary for this host in `dist/bin/kierto-<os>-<arch>`. |
+| `bun run compile` | Build one self-contained binary for this host in `dist/bin/pr-review-inbox-<os>-<arch>`. |
 | `bun run release` | Run check, e2e, and compile for all targets. Write the binaries, `SHA256SUMS`, and the license files to `dist/release/`. |
 | `bun run notices` | Regenerate `THIRD_PARTY_NOTICES.md` from the web bundle and the server bundle. |
 | `bun run screenshots` | Regenerate the screenshots in `docs/screenshots/` from the demo. |
@@ -208,4 +204,4 @@ Tests never touch a real Bitbucket server, the real `claude` CLI, or your data f
 
 ## License
 
-Kierto is free software under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). See [LICENSE](LICENSE). [NOTICE.md](NOTICE.md) states the copyright and the section 7 additional terms. These terms require attribution and marked, renamed modified versions. They grant no trademark rights to the name "Kierto". Third-party material keeps its own license. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists it.
+PR Review Inbox is free software under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). See [LICENSE](LICENSE). [NOTICE.md](NOTICE.md) states the copyright and the section 7 additional terms. These terms require attribution and marked, renamed modified versions. They grant no trademark rights to the name "PR Review Inbox". Third-party material keeps its own license. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists it.

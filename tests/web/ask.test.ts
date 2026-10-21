@@ -93,7 +93,7 @@ describe("ask", () => {
     });
     expect(askView(ask({ status: "failed", errorKind: "usage_limit", errorText: "Resets at 6pm." }, null), "Claude Code")).toEqual({
       kind: "failed",
-      text: "Claude Code: Resets at 6pm. Kierto does not retry by itself.",
+      text: "Claude Code: Resets at 6pm. PR Review Inbox does not retry by itself.",
       raw: false,
     });
   });

@@ -84,7 +84,7 @@ test("an archived PR waits in Archive after its toast closes, opens there, and U
   await row(page, A).click();
   await expect(detail(page).locator("h1")).toHaveText(A);
   await expect(notice(page)).toContainText("Archived just now");
-  await expect(notice(page)).toContainText("Kierto does not check it while it is archived.");
+  await expect(notice(page)).toContainText("PR Review Inbox does not check it while it is archived.");
   // The detail renders as in any view. The notice holds the one action.
   await expect(detail(page).locator("[data-thread]").first()).toBeVisible();
   await expect(detail(page).getByRole("button", { name: "Archive", exact: true })).toHaveCount(0);

@@ -11,7 +11,7 @@ const TITLE = "Batch cache writes in the sync worker";
 const RUN_MS = 60_000;
 // turns 1: my general comment 1000101 and the reply 1000201 by Alex Smith.
 const T = 1000101;
-const NOTE = "Bitbucket keeps no record of reopens or earlier text. Kierto keeps only the time of your last change to a draft.";
+const NOTE = "Bitbucket keeps no record of reopens or earlier text. PR Review Inbox keeps only the time of your last change to a draft.";
 
 const row = (page: Page) => page.locator("[data-row]", { hasText: TITLE }).first();
 const thread = (page: Page) => page.locator(`#t-${T}`);
@@ -109,7 +109,7 @@ test("More opens the thread history; the lines refresh live and link the run log
   await expect(more(page)).toBeFocused();
 });
 
-test("a posted draft: the message line names the Kierto draft, and the draft line says Posted", async ({ page }) => {
+test("a posted draft: the message line names the PR Review Inbox draft, and the draft line says Posted", async ({ page }) => {
   await connect(page);
   await control("state", { turns: 1 });
   await page.locator("#replies-btn").click();
@@ -133,7 +133,7 @@ test("a posted draft: the message line names the Kierto draft, and the draft lin
     /^Alex Smith replied/,
     /^Claude drafted a reply/,
     /^You accepted the draft/,
-    /^You replied from a Kierto draft/,
+    /^You replied from a PR Review Inbox draft/,
   ]);
   await expect(lines(page).nth(2)).toContainText("Posted");
   await expect(lines(page).nth(4).getByRole("button", { name: "Run log" })).toHaveCount(1);

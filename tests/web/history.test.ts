@@ -185,7 +185,7 @@ describe("historyLines", () => {
       "Lena Petrova replied",
       "Claude proposed a fix",
       "You declined the fix",
-      "Kierto drafted “Won't fix” from your decline",
+      "PR Review Inbox drafted “Won't fix” from your decline",
       "Claude drafted a reply",
       "You accepted the draft",
       "The thread is resolved",
@@ -227,9 +227,9 @@ describe("historyLines", () => {
       "Lena Petrova replied",
       "Claude drafted a reply",
       "You accepted the draft",
-      "You replied from a Kierto draft",
-      "Kierto could not resolve the thread after the post",
-      "You replied from Kierto",
+      "You replied from a PR Review Inbox draft",
+      "PR Review Inbox could not resolve the thread after the post",
+      "You replied from PR Review Inbox",
       "You posted a reply",
       "You posted a reply",
       "You posted a reply",
@@ -279,7 +279,7 @@ describe("historyLines", () => {
       NAMES,
     );
     expect(line(ls, "i10").tags).toEqual(["Replaced by the revision"]);
-    expect(line(ls, "i11")).toMatchObject({ actor: "Kierto", text: "revised your draft for the fix commit ccccccc", tags: [] });
+    expect(line(ls, "i11")).toMatchObject({ actor: "PR Review Inbox", text: "revised your draft for the fix commit ccccccc", tags: [] });
     expect(line(ls, "t11")).toMatchObject({ text: "used the revision and accepted the draft", at: 50, exact: true });
     expect(line(ls, "t10")).toMatchObject({ text: "edited the text", at: 35 });
 

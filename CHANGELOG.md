@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The app is now named PR Review Inbox. Its old name was Kierto. The repository is now github.com/auric/pr-review-inbox. Your data, settings, and stored tokens stay.
+
 ### Consult your session
 
 - The copied points and the points of "Ask your session" sit in tags with a new random suffix each time. The prompt says that the tag content is data from the pull request, not instructions.
@@ -67,7 +69,7 @@
 
 - When a fix run gives no fix, its card names the reason: Already done, Not valid, Out of scope, Unclear, Needs your decision, or Risky. When the fix run drafted your answer, the card says "Reply drafted" and takes you to the draft.
 - "Needs your decision" shows the options of the fix run, with "Fix anyway" and "Don't fix…".
-- When Kierto cannot apply any edit of a proposed fix, the card says "Edits could not be applied" with the reasons, and offers "Fix again" and "Copy prompt". It drafts no reply.
+- When PR Review Inbox cannot apply any edit of a proposed fix, the card says "Edits could not be applied" with the reasons, and offers "Fix again" and "Copy prompt". It drafts no reply.
 - "Don't fix…" on a proposed fix asks for your reason. It drafts a "Won't fix" reply and folds the proposal, also after a reload. Undo brings the proposal and the earlier reply draft back until the reply posts.
 - The Fix list shows the fix outcome of each row: Fix proposed, Fixed in, Partly fixed in, Already done, Won't fix, Follow-up asked, Needs your decision, or Declined. A row without a fix or with a declined fix starts unticked.
 - "Fix anyway" tells the fix run that you chose the fix, so it proposes edits despite the decision or risk note.
@@ -79,7 +81,7 @@
 - The next pull request opens at the top. A key press after a scroll no longer keeps the old position or marks messages below the fold as read.
 - Cancel stops a review while it fetches the repository. A fetch can now take up to the 60-minute run limit, and a stopped fetch does not start a second one.
 - A comment can no longer pose as another message in the pull request text that Claude reads.
-- An invalid profile or rule in config.json no longer gets lost silently on the next save. Kierto keeps a copy in config.json.bak and logs what it ignored.
+- An invalid profile or rule in config.json no longer gets lost silently on the next save. PR Review Inbox keeps a copy in config.json.bak and logs what it ignored.
 - A key that you press right after a dialog opens no longer acts on the page behind the dialog.
 - Keyboard and screen reader fixes. When a sync puts a reply draft out of date, the focus moves from Accept or Edit to "Draft again", and the change is read out once. The "drafting a reply" line takes the focus from the button that started it. Small text buttons have a 24 px target. A discarded reply draft shows its full line on hover. A blocked clipboard shows the runner prompt in a field, selected for Ctrl+C. Failure messages name the next step. The post confirm says why Post is off.
 - More small text buttons and links have a 24 px target, such as Restore, Move, the quote above a reply, "Go to the draft", Log, and the jumps under the pull request title. The layout does not move. More failure messages name the next step, such as a review or a question that did not start.
@@ -87,7 +89,7 @@
 ### Runs
 
 - The run row and the run log name the subagents of a run, with counts and models, for example "Subagents: rl-reviewer ×3 (claude-sonnet-5-5)".
-- In the run log, each subagent row shows its model, tokens, and duration, with its tool calls nested under it. An agent that Kierto did not define shows "built-in".
+- In the run log, each subagent row shows its model, tokens, and duration, with its tool calls nested under it. An agent that PR Review Inbox did not define shows "built-in".
 
 ### Safety
 

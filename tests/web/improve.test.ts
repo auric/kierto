@@ -91,7 +91,7 @@ describe("improveBody", () => {
 describe("texts", () => {
   test("a usage limit and a wrong login use the run line and brief texts; other errors say the proposal failed", () => {
     expect(failedText({ id: 1, status: "failed", kind: "usage_limit", text: "Limit reached." }, RUNNER)).toBe(
-      "Runner Code: Limit reached. Kierto does not retry by itself.",
+      "Runner Code: Limit reached. PR Review Inbox does not retry by itself.",
     );
     expect(failedText({ id: 1, status: "failed", kind: "auth", text: "authMethod is api_key." }, RUNNER)).toBe(
       "authMethod is api_key. Run: runner auth login",

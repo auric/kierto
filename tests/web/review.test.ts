@@ -308,9 +308,9 @@ describe("run line", () => {
 
   test("the usage limit line quotes the CLI message and says that nothing retries", () => {
     expect(limitText("Runner", "Usage limit reached. Your limit resets at 6pm.")).toBe(
-      "Runner: Usage limit reached. Your limit resets at 6pm. Kierto does not retry by itself.",
+      "Runner: Usage limit reached. Your limit resets at 6pm. PR Review Inbox does not retry by itself.",
     );
-    expect(limitText("Runner", null)).toBe("Runner usage limit reached. Kierto does not retry by itself.");
+    expect(limitText("Runner", null)).toBe("Runner usage limit reached. PR Review Inbox does not retry by itself.");
   });
 
   test("tokens add the four usage counters and skip other fields", () => {

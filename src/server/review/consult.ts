@@ -159,15 +159,15 @@ function cacheReader(cache: { cache: string; env: Record<string, string> } | nul
 
 const anchorLine = (n: number, where: string, text: string) => `Anchor line ${n} ${where}: ${oneLine(cut(text)).trim() || "(empty line)"}`;
 
-// ---------- The view of Kierto ----------
+// ---------- The view of PR Review Inbox ----------
 
-const viewBlock = (view: string[]) => (view.length ? ["Kierto's AI view (may be wrong):", ...view] : []);
+const viewBlock = (view: string[]) => (view.length ? ["PR Review Inbox's AI view (may be wrong):", ...view] : []);
 
 function replyView(it: ReviewItemDto | undefined): string[] {
   if (!it || (it.status !== "new" && it.status !== "accepted")) return [];
   const p = it.payload as ReplyPayload & { session?: SessionMark };
   const j = p.judgement ? `judgement ${JUDGEMENT[p.judgement]}, ` : "";
-  const who = p.session ? "your session" : "Kierto";
+  const who = p.session ? "your session" : "PR Review Inbox";
   const state = it.status === "accepted" ? "accepted, not posted" : "not accepted yet";
   return [
     `- Reply draft from ${who} (${j}${state}):`,
@@ -205,7 +205,7 @@ function fixView(fixes: FixDto[], target: { thread?: number; finding?: number })
 
 const GROUP_SOURCE: Record<Exclude<ConsultGroup, "resolved">, string> = {
   reviewers: "reviewer comment",
-  findings: "Kierto finding, posted by you",
+  findings: "PR Review Inbox finding, posted by you",
   own: "your comment",
 };
 
@@ -288,7 +288,7 @@ async function findingItem(r: FindingRow, o: { head: string | null; mergeBase: s
   const where = a ? `${a.path}:${lineText(a)}` : `${f.path}:${f.line}`;
   const lines = [
     `### F${it.id}`,
-    `Source: Kierto finding${f.agent ? ` from agent ${oneLine(f.agent)}` : ""}`,
+    `Source: PR Review Inbox finding${f.agent ? ` from agent ${oneLine(f.agent)}` : ""}`,
     `Status: ${it.status === "accepted" ? "accepted, ready to post" : "new, not triaged"}`,
     `Severity: ${SEVERITY[f.severity]}. Category: ${oneLine(f.category)}. Evidence: ${EVIDENCE[f.evidenceStatus]}, ${f.confidence} confidence.`,
     `Place: ${oneLine(where)}${a ? `, ${a.side} side` : ""}${a?.state === "outside" ? ", outside the diff" : ""}`,
@@ -345,7 +345,7 @@ function header(o: { key: string; title: string; source: string | null; target: 
   const lines = [
     `# Review points on my pull request ${oneLine(o.key)}`,
     "",
-    "You wrote the code of this pull request. Kierto collected the review points below.",
+    "You wrote the code of this pull request. PR Review Inbox collected the review points below.",
     "",
     `- Pull request: ${oneLine(o.key)}, "${oneLine(o.title)}"`,
     `- Branch: ${oneLine(o.source ?? "?")} into ${oneLine(o.target ?? "?")}`,

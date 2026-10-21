@@ -50,7 +50,9 @@ export function Description({ detail, me }: { detail: PrDetail; me: string | nul
       <h2 id="h-desc" className={h2}>
         Description
       </h2>
-      {!pr.followed && <p className="m-0 text-muted-foreground">Not followed. Kierto does not check this pull request for new comments.</p>}
+      {!pr.followed && (
+        <p className="m-0 text-muted-foreground">Not followed. PR Review Inbox does not check this pull request for new comments.</p>
+      )}
       <div id="desc" className="max-w-[72ch] [overflow-wrap:anywhere]">
         {text ? <Text text={long && !more ? (blocks[0] ?? text) : text} /> : <p className="m-0 text-muted-foreground">No description.</p>}
       </div>

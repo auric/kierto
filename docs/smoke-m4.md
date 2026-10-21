@@ -13,12 +13,12 @@ This test checks the compiled binary, the check interval, the profile editor, an
 
 ## Preparation
 
-1. Run `bun install`, then `bun run compile`. Expect "Built dist/bin/kierto-<os>-<arch> (<commit>)." Record the commit.
+1. Run `bun install`, then `bun run compile`. Expect "Built dist/bin/pr-review-inbox-<os>-<arch> (<commit>)." Record the commit.
 2. Run `claude --version`. Expect 2.1.295 or later. Run `claude auth status`. Expect `"authMethod": "claude.ai"`.
 3. Remove `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the terminal. PowerShell: `Remove-Item Env:ANTHROPIC_API_KEY, Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue`.
 4. Make a new, empty folder outside the repository. Copy the binary into it and go to it in the terminal.
 5. Set a new data folder. PowerShell: `$env:REVIEW_LOOP_DATA_DIR = Join-Path $env:TEMP "review-loop-smoke-$(Get-Random)"`. Bash: `export REVIEW_LOOP_DATA_DIR="$(mktemp -d)"`.
-6. Start the binary from that folder. Expect the startup line "Kierto (<commit>): http://127.0.0.1:7317/". The commit must equal the commit of step 1. "source" or a different commit fails the test.
+6. Start the binary from that folder. Expect the startup line "PR Review Inbox (<commit>): http://127.0.0.1:7317/". The commit must equal the commit of step 1. "source" or a different commit fails the test.
 7. Open the URL. Enter `<BITBUCKET_URL>` and your access token. Click Save. Click "Check now". If the test pull request is not in the list, paste `<TEST_PR_URL>` into the filter and click "Follow this pull request".
 
 ## A. Check interval
@@ -51,7 +51,7 @@ This test checks the compiled binary, the check interval, the profile editor, an
 1. Install Bun 1.4.2: `curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.2"`. Run `bun --version`. Expect 1.4.2.
 2. Clone the repository into the Linux file system, not under `/mnt/c`. Run `bun install`.
 3. Run `bun test`. Expect no fails.
-4. Run `bun run compile`. Expect `dist/bin/kierto-linux-x64` (or `-arm64`).
+4. Run `bun run compile`. Expect `dist/bin/pr-review-inbox-linux-x64` (or `-arm64`).
 5. Run `bun test tests/build/compiled.test.ts`. Expect no fails and no skips.
 6. Record the distribution, the kernel version (`uname -r`), and the results.
 
@@ -60,8 +60,8 @@ This test checks the compiled binary, the check interval, the profile editor, an
 This check runs the cross-compiled linux-x64 binary from Windows in WSL. It needs no Bun in WSL.
 
 1. On Windows, run `bun run compile:all` or `bun run release`. Note the path of the linux-x64 binary.
-2. In WSL, copy the binary into the Linux file system, not under `/mnt/c`: `mkdir -p ~/rl-smoke && cp /mnt/d/<repo>/dist/bin/kierto-linux-x64 ~/rl-smoke/ && cd ~/rl-smoke`.
-3. Run `chmod +x kierto-linux-x64`.
-4. Run `REVIEW_LOOP_SECRETS=memory REVIEW_LOOP_DATA_DIR="$(mktemp -d)" ./kierto-linux-x64`. Expect "Kierto (<commit>): http://127.0.0.1:7317/" with the commit of step 1.
+2. In WSL, copy the binary into the Linux file system, not under `/mnt/c`: `mkdir -p ~/rl-smoke && cp /mnt/d/<repo>/dist/bin/pr-review-inbox-linux-x64 ~/rl-smoke/ && cd ~/rl-smoke`.
+3. Run `chmod +x pr-review-inbox-linux-x64`.
+4. Run `REVIEW_LOOP_SECRETS=memory REVIEW_LOOP_DATA_DIR="$(mktemp -d)" ./pr-review-inbox-linux-x64`. Expect "PR Review Inbox (<commit>): http://127.0.0.1:7317/" with the commit of step 1.
 5. On Windows, open the printed URL in the browser. Expect the inbox page. WSL forwards localhost to Windows by default. If the page does not open, record the WSL networking mode (`wsl --version` and `.wslconfig`).
 6. Press Ctrl+C in WSL. Expect the process to stop. Record the distribution, `uname -r`, and the results.

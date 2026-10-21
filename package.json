@@ -1,16 +1,16 @@
 {
-  "name": "kierto",
+  "name": "pr-review-inbox",
   "description": "A local-first inbox for Bitbucket Server pull requests, with AI reviews by your own Claude Code CLI.",
   "version": "0.2.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/auric/kierto.git"
+    "url": "git+https://github.com/auric/pr-review-inbox.git"
   },
-  "homepage": "https://github.com/auric/kierto#readme",
+  "homepage": "https://github.com/auric/pr-review-inbox#readme",
   "bugs": {
-    "url": "https://github.com/auric/kierto/issues"
+    "url": "https://github.com/auric/pr-review-inbox/issues"
   },
   "type": "module",
   "scripts": {
