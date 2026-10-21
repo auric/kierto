@@ -573,21 +573,53 @@ describe("follow state (A15)", () => {
     expect(h.pr(2)).toMatchObject({ state: "MERGED", on_dashboard: 0 });
     const from = fake.requests.length;
     world.own = addReply(base, 1000003, 1000010, OTHER);
+    h.clock.t += 3_600_000;
     await h.cycle();
     expect(fake.requests.slice(from).filter((r) => r === key("GET", PR_PATH))).toEqual([]);
     expect(h.unread()).toBe(1);
   });
 
-  test("a 404 on the single-PR GET sets a reason for that PR only", async () => {
+  test("a merged or declined PR gets at most one activities poll per hour", async () => {
     world.reviewer = [reviewPr()];
+    const h = await setup();
+    await h.cycle();
+    world.reviewer = [];
+    world.author = [];
+    const declined = reviewPr();
+    declined.state = "DECLINED";
+    const merged = ownPr();
+    merged.state = "MERGED";
+    fake.routes[key("GET", REVIEW_PR_PATH)] = { status: 200, body: declined };
+    fake.routes[key("GET", PR_PATH)] = { status: 200, body: merged };
+    await h.cycle();
+    expect(h.pr(1001)).toMatchObject({ state: "DECLINED", followed: 1 });
+    expect(h.pr(2)).toMatchObject({ state: "MERGED", followed: 1 });
+    let from = fake.requests.length;
+    await h.cycle();
+    expect(requests(from, "/activities")).toEqual([]);
+    expect(requests(from, `GET ${REVIEW_PR_PATH}`)).toEqual([]);
+    h.clock.t += 3_600_000;
+    from = fake.requests.length;
+    await h.cycle();
+    expect(requests(from, "/activities")).toHaveLength(2);
+    expect(fake.requests.slice(from).filter((r) => r === `GET ${REVIEW_PR_PATH}`)).toHaveLength(1);
+  });
+
+  test("a 404 on the single-PR GET moves that PR to the archive with its data", async () => {
+    world.reviewer = [reviewPr()];
+    world.own = byUser(inline(), 1000003, OTHER);
     const h = await setup();
     await h.cycle();
     world.author = [];
     await h.cycle();
     expect(h.checkpoint(2)).toMatchObject({ incomplete_reason: "not_found" });
-    expect(h.pr(2)).toMatchObject({ state: "OPEN", followed: 1 });
+    expect(h.pr(2)).toMatchObject({ state: "OPEN", followed: 0, on_dashboard: 0 });
+    expect(h.comment(1000003)).toBeTruthy();
     expect(h.checkpoint(1001)).toMatchObject({ incomplete_reason: null });
     expect(h.engine.status().state).toBe("ok");
+    const from = fake.requests.length;
+    await h.cycle();
+    expect(fake.requests.slice(from).filter((r) => r === key("GET", PR_PATH) || r.startsWith(`GET ${ACTIVITIES_PATH}`))).toEqual([]);
   });
 
   test("unfollow clears initialized_at and stops polling; a later follow imports silently", async () => {
@@ -962,6 +994,21 @@ describe("scheduling", () => {
     const h = await setup();
     h.engine.start();
     await h.timers.fire();
+    expect(h.timers.delays.at(-1)).toBe(300_000);
+  });
+
+  test("a dashboard 429 ends the cycle before the PR calls and keeps the last complete time", async () => {
+    const h = await setup();
+    h.engine.start();
+    await h.timers.fire();
+    const done = h.engine.status().lastCompleteAt;
+    expect(done).not.toBeNull();
+    fake.routes[key("GET", DASHBOARD_PATH)] = { status: 429, body: {}, headers: { "Retry-After": "300" } };
+    const from = fake.requests.length;
+    h.clock.t += 60_000;
+    await h.timers.fire();
+    expect(requests(from, "/activities")).toEqual([]);
+    expect(h.engine.status()).toMatchObject({ state: "error", error: "Bitbucket asks to slow down.", lastCompleteAt: done });
     expect(h.timers.delays.at(-1)).toBe(300_000);
   });
 

@@ -21,14 +21,21 @@ export const DEFAULT_PORT = 7317;
 // scripts/compile.ts embeds dist/web with --asset. Bun puts an asset folder under import.meta.dir by its base name.
 const WEB_DIR = BUILD_COMMIT === null ? resolve(import.meta.dir, "../../dist/web") : join(import.meta.dir, "web");
 
+// Bun closes a connection after idleTimeout seconds with no bytes, also while the handler waits. Only the SSE stream keeps the limit.
+export const idleOnlyForLive =
+  (fetch: (req: Request, srv: Bun.Server<undefined>) => Response | Promise<Response>) => (req: Request, srv: Bun.Server<undefined>) => {
+    if (new URL(req.url).pathname !== "/api/live") srv.timeout(req, 0);
+    return fetch(req, srv);
+  };
+
 export function startServer(opts: Omit<AppOptions, "port"> & { port: number }) {
   let app = createApp(opts);
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: opts.port,
-    // Bun closes a connection after idleTimeout seconds with no bytes, also mid-stream. The SSE heartbeat must stay below it.
+    // The SSE heartbeat must stay below it.
     idleTimeout: 30,
-    fetch: (req, srv) => app.fetch(req, srv),
+    fetch: idleOnlyForLive((req, srv) => app.fetch(req, srv)),
   });
   // Port 0 picks a free port. The guard needs the real one.
   if (server.port !== opts.port) app = createApp({ ...opts, port: server.port ?? opts.port });

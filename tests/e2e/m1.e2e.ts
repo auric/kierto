@@ -3,7 +3,7 @@
 
 // M1 browser acceptance (plan G8, BRIEF section 6). Runs against the fake Bitbucket of serve.ts only.
 import { type APIRequestContext, test as base, expect, type Locator, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp } from "./control";
+import { APP_PORT, control, E2E_TOKEN, FAKE_URL, liveStreams, openApp } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = {
@@ -258,6 +258,31 @@ test("A14: two pages get one notification; read in one page updates the other; a
   await expect(detailTitle(clicker)).toHaveText(TITLE.a);
   await expect(nav(clicker, "Needs you")).toHaveAttribute("aria-current", "page");
   await expect(row(watcher, TITLE.a)).not.toContainText("1 new");
+});
+
+test("three pages share one live stream; a change reaches every page; the stream moves when its page closes", async ({ page, context }) => {
+  const streams: string[] = [];
+  context.on("request", (r) => {
+    if (r.url().endsWith("/api/live")) streams.push(r.url());
+  });
+  await connect(page);
+  const others = [await context.newPage(), await context.newPage()];
+  for (const p of others) await openApp(p);
+  for (const p of [page, ...others]) await park(p);
+  await expect.poll(liveStreams).toBe(1);
+  await page.waitForTimeout(1000);
+  expect(await liveStreams()).toBe(1);
+  expect(streams).toHaveLength(1);
+
+  await control("state", { reply: "new" });
+  for (const p of [page, ...others]) await expect(row(p, TITLE.a)).toContainText("1 new");
+
+  // The first page holds the lock. Another page takes it over.
+  await page.close();
+  await expect.poll(() => streams.length).toBe(2);
+  await control("state", { reply: "two" });
+  for (const p of others) await expect(row(p, TITLE.a)).toContainText("2 new");
+  await expect.poll(liveStreams).toBe(1);
 });
 
 test("A15: a merge leaves Reviewing, stays in Needs you on my turn, and stays followed", async ({ page, request }) => {

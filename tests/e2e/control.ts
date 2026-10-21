@@ -143,6 +143,13 @@ export async function writes(): Promise<string[]> {
   return ((await res.json()) as { writes: string[] }).writes;
 }
 
+// The number of open /api/live streams on the app.
+export async function liveStreams(): Promise<number> {
+  const res = await fetch(`${FAKE_URL}/__control/live`, { method: "POST", headers: { Authorization: `Bearer ${E2E_TOKEN}` } });
+  if (!res.ok) throw new Error(`control live: ${res.status}`);
+  return ((await res.json()) as { streams: number }).streams;
+}
+
 // ---------- Fix it (plan r3): the user's clone ----------
 
 const auth = { Authorization: `Bearer ${E2E_TOKEN}`, "Content-Type": "application/json" };

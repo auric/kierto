@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { QueryClient, type QueryKey } from "@tanstack/react-query";
-import { changedFilters, diffRefresh } from "../../src/web/live";
+import { changedFilters, connectLive, diffRefresh, type LiveEnv, liveEvents } from "../../src/web/live";
 
 const KEYS: QueryKey[] = [
   ["prs"],
@@ -42,5 +42,127 @@ describe("live event keys", () => {
     expect(diffRefresh(1, undefined, "aaa")).toBeNull();
     expect(diffRefresh(1, "aaa", "aaa")).toBeNull();
     expect(diffRefresh(1, "aaa", undefined)).toBeNull();
+  });
+});
+
+// One exclusive lock with the ifAvailable and signal options of the Web Locks API.
+function fakeLocks() {
+  let held = false;
+  const queue: (() => void)[] = [];
+  const request = async (_name: string, opts: LockOptions, cb: (lock: unknown) => Promise<unknown>) => {
+    if (held && opts.ifAvailable) return cb(null);
+    if (held)
+      await new Promise<void>((resolve, reject) => {
+        queue.push(resolve);
+        opts.signal?.addEventListener("abort", () => {
+          queue.splice(queue.indexOf(resolve), 1);
+          reject(new Error("AbortError"));
+        });
+      });
+    held = true;
+    try {
+      return await cb({});
+    } finally {
+      held = false;
+      queue.shift()?.();
+    }
+  };
+  return { request } as unknown as LiveEnv["locks"];
+}
+
+class FakeSource extends EventTarget {
+  closed = false;
+  emit(type: string, data?: string) {
+    this.dispatchEvent(new MessageEvent(type, { data }));
+  }
+  close() {
+    this.closed = true;
+  }
+}
+
+// Tabs that share one lock manager and one broadcast channel name.
+function tabs() {
+  const locks = fakeLocks();
+  const channels: { onmessage: ((e: MessageEvent) => unknown) | null; closed: boolean }[] = [];
+  const sources: FakeSource[] = [];
+  const open = (useLocks = true) => {
+    const calls: unknown[] = [];
+    const ch = {
+      onmessage: null as ((e: MessageEvent) => unknown) | null,
+      closed: false,
+      postMessage(m: unknown) {
+        for (const o of channels) if (o !== ch && !o.closed) queueMicrotask(() => o.onmessage?.(new MessageEvent("message", { data: m })));
+      },
+      close() {
+        ch.closed = true;
+      },
+    };
+    channels.push(ch);
+    const env: LiveEnv = {
+      source: () => {
+        const s = new FakeSource();
+        sources.push(s);
+        return s as unknown as EventSource;
+      },
+      locks: useLocks ? locks : undefined,
+      channel: ch as unknown as LiveEnv["channel"],
+    };
+    const close = connectLive({ invalidateQueries: (f?: unknown) => void calls.push(f ?? "all") } as never, env);
+    return { calls, close };
+  };
+  return { open, sources };
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 5));
+
+describe("live stream shared by tabs", () => {
+  test("three tabs open one stream, and each change and event reaches every tab", async () => {
+    const t = tabs();
+    const all = [t.open(), t.open(), t.open()];
+    await settle();
+    expect(t.sources).toHaveLength(1);
+    let events = 0;
+    const count = () => events++;
+    liveEvents.addEventListener("events", count);
+    try {
+      const s = t.sources[0] as FakeSource;
+      s.emit("open");
+      s.emit("changed", JSON.stringify({ prs: [7] }));
+      s.emit("events");
+      await settle();
+      for (const tab of all)
+        expect(tab.calls).toEqual(changedFilters({ prs: [7] }).map((f) => expect.objectContaining({ queryKey: f.queryKey })));
+      expect(events).toBe(3);
+    } finally {
+      liveEvents.removeEventListener("events", count);
+      for (const tab of all) tab.close();
+    }
+  });
+
+  test("when the owner closes, the next tab opens the stream and every open tab refetches everything", async () => {
+    const t = tabs();
+    const [a, b, c] = [t.open(), t.open(), t.open()];
+    await settle();
+    a.close();
+    await settle();
+    expect(t.sources).toHaveLength(2);
+    expect(t.sources[0]?.closed).toBe(true);
+    t.sources[1]?.emit("open");
+    await settle();
+    expect(b.calls).toEqual(["all"]);
+    expect(c.calls).toEqual(["all"]);
+    expect(a.calls).toEqual([]);
+    b.close();
+    c.close();
+    await settle();
+    expect(t.sources.every((s) => s.closed)).toBe(true);
+  });
+
+  test("without the Web Locks API each tab opens its own stream", async () => {
+    const t = tabs();
+    const all = [t.open(false), t.open(false)];
+    await settle();
+    expect(t.sources).toHaveLength(2);
+    for (const tab of all) tab.close();
   });
 });

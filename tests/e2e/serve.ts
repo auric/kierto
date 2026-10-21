@@ -587,7 +587,7 @@ function boot() {
   sync.start();
   void review.start();
   outbox.start();
-  return { server, settings, sync, review, outbox };
+  return { server, settings, sync, review, outbox, live };
 }
 let app = boot();
 
@@ -670,6 +670,7 @@ r[key("POST", "/__control/writes")] = () =>
   ok({ writes: fake.requests.filter((x) => !x.startsWith("GET ") && !x.includes(" /__control/")) });
 // ---------- Jira attachments (plan r3 S-ATT) ----------
 // Every request to the fake Jira since the last reset.
+r[key("POST", "/__control/live")] = () => ok({ streams: app.live.size() });
 r[key("POST", "/__control/jira-requests")] = () => ok({ requests: jira.requests });
 // Sets the answer of the next open-folder calls. Answers with every folder that the app asked to open since the last reset.
 r[key("POST", "/__control/open-folder")] = async (req) => {

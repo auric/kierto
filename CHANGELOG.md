@@ -86,6 +86,11 @@
 - A key that you press right after a dialog opens no longer acts on the page behind the dialog.
 - Keyboard and screen reader fixes. When a sync puts a reply draft out of date, the focus moves from Accept or Edit to "Draft again", and the change is read out once. The "drafting a reply" line takes the focus from the button that started it. Small text buttons have a 24 px target. A discarded reply draft shows its full line on hover. A blocked clipboard shows the runner prompt in a field, selected for Ctrl+C. Failure messages name the next step. The post confirm says why Post is off.
 - More small text buttons and links have a 24 px target, such as Restore, Move, the quote above a reply, "Go to the draft", Log, and the jumps under the pull request title. The layout does not move. More failure messages name the next step, such as a review or a question that did not start.
+- Many open tabs no longer block each other. All tabs share one live connection, so a seventh tab loads and actions stay fast. When the tab with the connection closes, another tab takes it over.
+- Slow actions no longer fail after 30 seconds with a lost connection. Examples are a Jira fetch, an attachment download, a settings save, Post, and Post again.
+- When Bitbucket answers "too many requests" or "unavailable", the sync stops for this round and shows "The last check failed: Bitbucket asks to slow down." The next sync waits as long as Bitbucket asks. The check time stays at the last full sync.
+- A followed pull request that was deleted on Bitbucket moves to the archive with its messages. The app no longer checks it each round.
+- Merged and declined pull requests get a check for new messages at most once per hour.
 
 ### Runs
 

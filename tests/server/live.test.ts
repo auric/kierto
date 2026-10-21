@@ -3,7 +3,7 @@
 
 import { afterAll, expect, test } from "bun:test";
 import { createLive } from "../../src/server/live";
-import { startServer } from "../../src/server/main";
+import { idleOnlyForLive, startServer } from "../../src/server/main";
 
 const TOKEN = "c".repeat(64);
 const live = createLive(20);
@@ -50,3 +50,24 @@ test("SSE client gets a broadcast and a heartbeat, and abort removes it", async 
   clearTimeout(timeout);
   await waitFor(() => live.size() === 0);
 });
+
+// Bun checks idle sockets in 4 s steps, so a 1 s limit closes the socket after about 4 s.
+test("a slow API request outlives the idle timeout; the live stream keeps it", async () => {
+  const slow = async () => {
+    await Bun.sleep(6000);
+    return new Response("ok");
+  };
+  const s = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 1, fetch: idleOnlyForLive(slow) });
+  const status = (path: string) =>
+    fetch(`http://127.0.0.1:${s.port}${path}`).then(
+      (r) => r.status,
+      (e: Error) => e.message,
+    );
+  try {
+    const [api, stream] = await Promise.all([status("/api/settings"), status("/api/live")]);
+    expect(api).toBe(200);
+    expect(String(stream)).toContain("ECONNRESET");
+  } finally {
+    s.stop(true);
+  }
+}, 20_000);

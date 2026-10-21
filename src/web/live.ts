@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// One EventSource per tab. EventSource reconnects by itself.
+// One EventSource for all tabs of the app. EventSource reconnects by itself.
 import type { InvalidateQueryFilters, QueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
@@ -43,26 +43,79 @@ export const diffRefresh = (
 ): InvalidateQueryFilters | null =>
   before !== undefined && head !== undefined && before !== head ? { queryKey: ["pr", pr, "diff"] } : null;
 
+// resync: the stream reconnected or moved to another tab. Messages in the gap are lost.
+export type LiveMessage = { type: "changed"; data: { prs?: number[]; runs?: number[] } } | { type: "events" } | { type: "resync" };
+
+export function applyLive(qc: Pick<QueryClient, "invalidateQueries">, m: LiveMessage) {
+  if (m.type === "changed") for (const f of changedFilters(m.data)) qc.invalidateQueries(f);
+  if (m.type === "resync") qc.invalidateQueries();
+  // Each tab claims the new events. The server gives each event to one tab only.
+  if (m.type !== "changed") liveEvents.dispatchEvent(new Event("events"));
+}
+
+export type LiveEnv = {
+  source: () => Pick<EventSource, "addEventListener" | "close">;
+  locks?: Pick<LockManager, "request">;
+  channel?: Pick<BroadcastChannel, "postMessage" | "close" | "onmessage">;
+};
+
+const LOCK = "rl-live";
+
+// Browsers allow 6 HTTP/1.1 connections per host across all tabs. The tab that holds the lock owns the only stream
+// and forwards its messages to the other tabs. A hidden tab keeps the stream, because notifications need it.
+export function connectLive(qc: Pick<QueryClient, "invalidateQueries">, env: LiveEnv): () => void {
+  const stop = new AbortController();
+  const { locks, channel } = env;
+  // Resolves on disconnect, which frees the lock.
+  const own = (takeover: boolean) =>
+    new Promise<void>((resolve) => {
+      if (stop.signal.aborted) return resolve();
+      const es = env.source();
+      const send = (m: LiveMessage) => {
+        applyLive(qc, m);
+        channel?.postMessage(m);
+      };
+      let opened = false;
+      es.addEventListener("changed", (e) => {
+        let data: { prs?: number[]; runs?: number[] } = {};
+        try {
+          data = JSON.parse((e as MessageEvent<string>).data);
+        } catch {}
+        send({ type: "changed", data });
+      });
+      es.addEventListener("events", () => send({ type: "events" }));
+      es.addEventListener("open", () => {
+        if (opened || takeover) send({ type: "resync" });
+        opened = true;
+      });
+      stop.signal.addEventListener("abort", () => {
+        es.close();
+        resolve();
+      });
+    });
+  if (!locks || !channel) {
+    void own(false);
+    return () => stop.abort();
+  }
+  channel.onmessage = (e: MessageEvent<LiveMessage>) => applyLive(qc, e.data);
+  // The spec forbids signal together with ifAvailable, so the first request has no signal.
+  locks
+    .request(LOCK, { ifAvailable: true }, (lock) => (lock ? own(false) : locks.request(LOCK, { signal: stop.signal }, () => own(true))))
+    .catch(() => {});
+  return () => {
+    stop.abort();
+    channel.close();
+  };
+}
+
 export function useLive(qc: QueryClient) {
-  useEffect(() => {
-    const es = new EventSource("/api/live");
-    let opened = false;
-    es.addEventListener("changed", (e) => {
-      let data: { prs?: number[]; runs?: number[] } = {};
-      try {
-        data = JSON.parse((e as MessageEvent<string>).data);
-      } catch {}
-      for (const f of changedFilters(data)) qc.invalidateQueries(f);
-    });
-    es.addEventListener("events", () => liveEvents.dispatchEvent(new Event("events")));
-    // A reconnect can follow a server restart or a sleep. Missed messages are lost, so refetch everything.
-    es.addEventListener("open", () => {
-      if (opened) {
-        qc.invalidateQueries();
-        liveEvents.dispatchEvent(new Event("events"));
-      }
-      opened = true;
-    });
-    return () => es.close();
-  }, [qc]);
+  useEffect(
+    () =>
+      connectLive(qc, {
+        source: () => new EventSource("/api/live"),
+        locks: navigator.locks,
+        channel: typeof BroadcastChannel === "function" ? new BroadcastChannel(LOCK) : undefined,
+      }),
+    [qc],
+  );
 }

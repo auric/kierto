@@ -18,18 +18,27 @@ const NETWORK = new Set(["network", "timeout"]);
 export type Timers = { set(fn: () => unknown, ms: number): unknown; clear(handle: unknown): void };
 
 type Params = Record<string, string | number | null>;
-type PrKey = { id: number; project: string; repo: string; pr_id: number };
+type PrKey = { id: number; project: string; repo: string; pr_id: number; state: string | null };
 type Outcome = { state: SyncState; error?: string; pause?: boolean; retryAfterMs?: number };
 type Tally = { startedAt: number; changed: Set<number>; events: number };
 
 class Cancelled extends Error {}
 class Unauthorized extends Error {}
+class RateLimited extends Error {
+  constructor(readonly retryAfter?: string) {
+    super("rate");
+  }
+}
+
+// A merged or declined PR gets at most one poll in this time.
+const CLOSED_POLL_MS = 3_600_000;
 
 const SQL = {
   forget: "UPDATE pull_request SET initialized_at = NULL WHERE initialized_at IS NOT NULL AND (followed = 0 OR archived_at IS NOT NULL)",
-  polled: "SELECT id, project, repo, pr_id FROM pull_request WHERE followed = 1 AND archived_at IS NULL ORDER BY id",
+  polled: "SELECT id, project, repo, pr_id, state FROM pull_request WHERE followed = 1 AND archived_at IS NULL ORDER BY id",
   // Bitbucket cannot reopen a MERGED PR, so its stored state is final.
-  away: "SELECT id, project, repo, pr_id FROM pull_request WHERE followed = 1 AND archived_at IS NULL AND on_dashboard = 0 AND state IS NOT 'MERGED' ORDER BY id",
+  away: "SELECT id, project, repo, pr_id, state FROM pull_request WHERE followed = 1 AND archived_at IS NULL AND on_dashboard = 0 AND state IS NOT 'MERGED' ORDER BY id",
+  unfollow: "UPDATE pull_request SET followed = 0 WHERE id = $id",
   prBefore:
     "SELECT id, my_role, source_head, initialized_at, followed, archived_at FROM pull_request WHERE project = $project AND repo = $repo AND pr_id = $pr_id",
   prUpsert: `INSERT INTO pull_request (project, repo, pr_id, title, description, author_slug, author_name, my_role, my_status, last_reviewed_commit,
@@ -111,6 +120,8 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
   // One provider, so its 2-slot semaphore covers every sync request.
   let provider: ForgeProvider | null = null;
   let failures = 0;
+  // The start time of the last poll of each merged or declined PR.
+  const closedPolledAt = new Map<number, number>();
   const status: Omit<SyncStatus, "running"> = { state: "idle", lastCompleteAt: null, nextAt: null, error: null };
 
   async function cycle(gen: number, tally: Tally): Promise<Outcome> {
@@ -145,9 +156,10 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
     };
     const run = (sql: string, params: Params) => db.query(sql).run(params);
 
-    // Records a failed call and returns its message. A 401 ends the cycle.
+    // Records a failed call and returns its message. A 401, 429, or 503 ends the cycle.
     const failed = (kind: string, err?: ForgeErrorInfo): string => {
       if (kind === "auth") throw new Unauthorized();
+      if (kind === "rate") throw new RateLimited(err?.retryAfter);
       if (!NETWORK.has(kind)) reached = true;
       problems.push({ kind, retryAfter: err?.retryAfter });
       return err?.message ?? kind;
@@ -254,9 +266,12 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
 
     // Step 2: followed PRs off the dashboard get the single-PR GET, for MERGED, DECLINED, and the current role. A stored MERGED PR gets no GET.
     const skip = new Set<number>();
+    const resting = (row: PrKey) =>
+      (row.state === "MERGED" || row.state === "DECLINED") && tally.startedAt - (closedPolledAt.get(row.id) ?? -Infinity) < CLOSED_POLL_MS;
     if (dashboardDone) {
       for (const row of tx(() => db.query(SQL.away).all({}) as PrKey[])) {
         if (gen !== generation) throw new Cancelled();
+        if (resting(row)) continue;
         try {
           // The stored key wins, so the update always hits this row.
           const pr = { ...(await forge.getPullRequest(refOf(row))), ref: refOf(row) };
@@ -269,7 +284,11 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
           if (!(e instanceof ForgeError)) throw e;
           const message = failed(e.kind, e);
           skip.add(row.id);
-          tx(() => checkpoint(`pr:${row.id}`, false, e.kind, message));
+          tx(() => {
+            checkpoint(`pr:${row.id}`, false, e.kind, message);
+            // A deleted PR moves to the archive with its data.
+            if (e.kind === "not_found") run(SQL.unfollow, { id: row.id });
+          });
           tally.changed.add(row.id);
         }
       }
@@ -413,11 +432,12 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
     // Steps 3 to 5 for each followed, non-archived PR.
     // ponytail: one PR at a time; run two workers if the cycle time grows too long (plan R1).
     for (const row of tx(() => db.query(SQL.polled).all({}) as PrKey[])) {
-      if (skip.has(row.id)) continue;
+      if (skip.has(row.id) || resting(row)) continue;
       try {
         await syncPr(row);
+        if (row.state === "MERGED" || row.state === "DECLINED") closedPolledAt.set(row.id, tally.startedAt);
       } catch (e) {
-        if (e instanceof Cancelled || e instanceof Unauthorized) throw e;
+        if (e instanceof Cancelled || e instanceof Unauthorized || e instanceof RateLimited) throw e;
         broken = (e as Error).message;
         log(`Sync error on PR ${row.project}/${row.repo}/${row.pr_id}: ${broken}`);
       }
@@ -444,7 +464,9 @@ export function createSyncEngine(opts: { settings: Settings; live: Live; now?: (
       out =
         e instanceof Unauthorized
           ? { state: "auth", error: "Bitbucket rejected the token.", pause: true }
-          : { state: "error", error: (e as Error).message };
+          : e instanceof RateLimited
+            ? { state: "error", error: "Bitbucket asks to slow down.", retryAfterMs: parseRetryAfter(e.retryAfter) }
+            : { state: "error", error: (e as Error).message };
     }
     if (gen !== generation) return;
     // Step 6: everything below runs after the commits.
