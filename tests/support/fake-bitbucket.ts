@@ -111,6 +111,133 @@ export function startFakeBitbucket(opts: FakeOptions = {}) {
 
 export type FakeBitbucket = ReturnType<typeof startFakeBitbucket>;
 
+type WriteBody = Record<string, unknown> & {
+  title?: string;
+  description?: string;
+  version?: number;
+  fromRef?: Record<string, unknown> & { id: string };
+  toRef?: Record<string, unknown> & { id: string };
+  reviewers?: { user: { name: string } }[];
+};
+
+// The write endpoints of one repository (spec.md section 6.9), shaped as Gates G1 to G6 recorded them (integration-check.md "Review v2").
+// Create: HTTP 201, version 0, state OPEN. The PR author leaves the reviewers without an error (U74). A second open PR of the same refs: 409.
+// PUT and reopen: version + 1, or 409 on a stale version. Build stats: the five keys of Data Center 9.x. writes: each write body.
+export function repoWrites(fake: FakeBitbucket, project = "PROJ", repo = "repo") {
+  const path = `/rest/api/1.0/projects/${project}/repos/${repo}`;
+  const user = (name: string) => ({
+    name,
+    slug: name.toLowerCase(),
+    displayName: `User ${name}`,
+    links: { self: [{ href: `${fake.url}/users/${name}` }] },
+  });
+  const repository = {
+    slug: repo,
+    project: { key: project },
+    links: {
+      clone: [
+        { href: `${fake.url}/scm/${project.toLowerCase()}/${repo}.git`, name: "http" },
+        { href: `ssh://git@127.0.0.1:7999/${project.toLowerCase()}/${repo}.git`, name: "ssh" },
+      ],
+      self: [{ href: `${fake.url}/projects/${project}/repos/${repo}/browse` }],
+    },
+  };
+  const ref = (id: string) => ({
+    id,
+    displayId: id.replace(/^refs\/heads\//, ""),
+    latestCommit: "0".repeat(40),
+    type: "BRANCH",
+    repository,
+  });
+  const reviewersOf = (body: WriteBody) =>
+    (body.reviewers ?? [])
+      .map((r) => r.user.name)
+      .filter((n) => n !== FAKE_USER)
+      .map((n) => ({ user: user(n), role: "REVIEWER", approved: false, status: "UNAPPROVED" }));
+  const newPr = (id: number, body: WriteBody) => ({
+    id,
+    version: 0,
+    title: body.title ?? "",
+    description: body.description,
+    state: "OPEN",
+    open: true,
+    closed: false,
+    draft: false,
+    locked: false,
+    createdDate: 1_790_000_000_000,
+    updatedDate: 1_790_000_000_000,
+    fromRef: ref(body.fromRef?.id ?? ""),
+    toRef: ref(body.toRef?.id ?? ""),
+    author: { user: user(FAKE_USER), role: "AUTHOR", approved: false, status: "UNAPPROVED" },
+    reviewers: reviewersOf(body),
+    participants: [],
+    links: { self: [{ href: `${fake.url}/projects/${project}/repos/${repo}/pull-requests/${id}` }] },
+  });
+  const prs = new Map<number, ReturnType<typeof newPr>>();
+  const builds = new Map<string, Partial<Record<"successful" | "inProgress" | "failed" | "cancelled" | "unknown", number>>>();
+  const writes: { method: string; path: string; body: WriteBody }[] = [];
+  let nextId = 101;
+  const stale = { status: 409, body: { errors: [{ message: "The pull request version is out of date." }] } };
+  const read = async (req: Request) => {
+    const body = (await req.json()) as WriteBody;
+    writes.push({ method: req.method, path: new URL(req.url).pathname, body });
+    return body;
+  };
+  const bump = (pr: ReturnType<typeof newPr>) => {
+    pr.version++;
+    pr.updatedDate++;
+  };
+
+  function register(pr: ReturnType<typeof newPr>) {
+    const p = `${path}/pull-requests/${pr.id}`;
+    fake.routes[key("GET", p)] = () => ({ status: 200, body: pr });
+    fake.routes[key("PUT", p)] = async (req) => {
+      const body = await read(req);
+      if (body.version !== pr.version) return stale;
+      if (body.title !== undefined) pr.title = body.title;
+      if (body.description !== undefined) pr.description = body.description;
+      if (body.reviewers !== undefined) pr.reviewers = reviewersOf(body);
+      if (body.toRef) pr.toRef = ref(body.toRef.id);
+      bump(pr);
+      return { status: 200, body: pr };
+    };
+    fake.routes[key("POST", `${p}/reopen`)] = async (req) => {
+      await read(req);
+      if (Number(new URL(req.url).searchParams.get("version")) !== pr.version) return stale;
+      if (pr.state !== "DECLINED") return { status: 409, body: { errors: [{ message: "The pull request is not declined." }] } };
+      pr.state = "OPEN";
+      bump(pr);
+      return { status: 200, body: pr };
+    };
+  }
+
+  fake.routes[key("GET", path)] = { status: 200, body: { ...repository, id: 1, name: repo, scmId: "git", state: "AVAILABLE" } };
+  fake.routes[key("POST", `${path}/pull-requests`)] = async (req) => {
+    const body = await read(req);
+    const twin = [...prs.values()].find((p) => p.state === "OPEN" && p.fromRef.id === body.fromRef?.id && p.toRef.id === body.toRef?.id);
+    if (twin)
+      return { status: 409, body: { errors: [{ message: "Only one pull request may be open for a given source and target branch." }] } };
+    const pr = newPr(nextId++, body);
+    prs.set(pr.id, pr);
+    register(pr);
+    return { status: 201, body: pr };
+  };
+  fake.routes[key("GET", `${path}/pull-requests`)] = (req) => {
+    const q = new URL(req.url).searchParams;
+    const at = q.get("at");
+    const values = [...prs.values()].filter(
+      (p) => p.state === (q.get("state") ?? "OPEN") && (!at || (q.get("direction") === "OUTGOING" ? p.fromRef.id : p.toRef.id) === at),
+    );
+    return { status: 200, body: { size: values.length, limit: Number(q.get("limit") ?? 25), start: 0, isLastPage: true, values } };
+  };
+  fake.routes[key("GET", "/rest/build-status/1.0/commits/stats/*")] = (req) => {
+    const counts = builds.get(new URL(req.url).pathname.split("/").pop() ?? "");
+    return { status: 200, body: { successful: 0, inProgress: 0, failed: 0, cancelled: 0, unknown: 0, ...counts } };
+  };
+
+  return { path, prs, builds, writes, repository };
+}
+
 // Reads a recorded fixture: { status, body }.
 export function fixture<T = unknown>(name: string): { status: number; body: T } {
   return JSON.parse(readFileSync(join(import.meta.dir, "../../fixtures/bitbucket", name), "utf8"));

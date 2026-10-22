@@ -17,13 +17,35 @@ import {
   type User,
 } from "../../shared/types";
 import { type ClientOptions, createClient, ForgeError } from "./client";
-import { activity, change, comment, commit, postedComment, pullRequest, type RawComment, type RawDiff, type user } from "./schemas";
+import { NoCloneLink } from "./errors";
+import {
+  activity,
+  buildStats,
+  change,
+  comment,
+  commit,
+  page,
+  postedComment,
+  pullRequest,
+  type RawComment,
+  type RawDiff,
+  type user,
+} from "./schemas";
 
 const API = "/rest/api/1.0";
 const DASHBOARD = `${API}/dashboard/pull-requests`;
+// spec.md section 2.8 (S20) and Gate G9: one page of open PRs.
+const OPEN_PR_LIMIT = 50;
+const HASH = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
-const prPath = (ref: PrRef) =>
-  `${API}/projects/${encodeURIComponent(ref.project)}/repos/${encodeURIComponent(ref.repo)}/pull-requests/${ref.id}`;
+const repoPath = (project: string, repo: string) => `${API}/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(repo)}`;
+const prPath = (ref: PrRef) => `${repoPath(ref.project, ref.repo)}/pull-requests/${ref.id}`;
+// The ref object of a create or a retarget (spec.md section 6.9, Gates G2 and G4).
+const branchRef = (project: string, repo: string, branch: string) => ({
+  id: `refs/heads/${branch}`,
+  repository: { slug: repo, project: { key: project } },
+});
+const reviewerList = (names: string[]) => names.map((name) => ({ user: { name } }));
 const toUser = (u: z.infer<typeof user>): User => ({ slug: u.slug, name: u.displayName, login: u.name });
 
 const cloneRepo = z.object({
@@ -127,6 +149,18 @@ export type ResolveResult =
   | { status: "done"; state: ThreadState; from: number; put: boolean }
   | { status: "changed" | "forbidden" | "gone" | "ignored" };
 
+// from, to: branch names without refs/heads/. reviewers: usernames (User.login). The PR author is never a reviewer (U74).
+export type NewPullRequest = { title: string; description: string; from: string; to: string; reviewers: string[] };
+// dropped: requested usernames that the created PR does not list. Bitbucket drops the PR author without an error (Gate G2, U74).
+// exists: an open PR from the same branch to the same target, found after a 409 or after a write with an unknown outcome.
+export type CreateResult = { status: "created"; pr: PullRequest; dropped: string[] } | { status: "exists"; pr: PullRequest };
+// version: the PR version that the caller read. toBranch: the new target branch (retarget).
+export type PrUpdate = { version: number; title?: string; description?: string; reviewers?: string[]; toBranch?: string };
+// All zeros: no build reported a status for the commit (spec.md section 6.10).
+export type BuildStats = { successful: number; inProgress: number; failed: number; cancelled: number; unknown: number };
+// config: for git fetch and push only, in the GIT_CONFIG env. It holds the token as an http.extraHeader value.
+export type RepoRemote = { url: string; config: [string, string][] };
+
 export function createBitbucketProvider(opts: ClientOptions) {
   const client = createClient(opts);
   const origin = new URL(opts.baseUrl).origin;
@@ -185,6 +219,22 @@ export function createBitbucketProvider(opts: ClientOptions) {
     }
   }
 
+  // Gate 0 ls-remote: git takes the token as an http.extraHeader value.
+  const gitConfig = (): [string, string][] => [
+    ["http.extraHeader", `Authorization: Bearer ${opts.token}`],
+    ...(opts.caFile ? [["http.sslCAInfo", opts.caFile] as [string, string]] : []),
+  ];
+
+  // One page of OPEN PRs of a repository. branch: only the PRs from this branch.
+  // Pending Gate G9: the open-PR list of a repository is checked only by the gate fake (spec.md section 2.8).
+  async function listOpenPullRequests(project: string, repo: string, branch?: string): Promise<ListResult<PullRequest>> {
+    const at = branch === undefined ? "" : `&at=${encodeURIComponent(`refs/heads/${branch}`)}&direction=OUTGOING`;
+    const path = `${repoPath(project, repo)}/pull-requests?state=OPEN${at}&limit=${OPEN_PR_LIMIT}`;
+    const { data } = await client.get(path, page(pullRequest));
+    const items = data.values.map(toPr);
+    return data.isLastPage ? { items, complete: true } : { items, complete: false, reason: "page_limit" };
+  }
+
   return {
     // The username of the token owner, from the X-AUSERNAME header. It can differ from the slug.
     async currentUser(): Promise<string> {
@@ -210,9 +260,73 @@ export function createBitbucketProvider(opts: ClientOptions) {
       const url = httpClone(data.toRef.repository);
       const sourceUrl = httpClone(data.fromRef.repository);
       if (!url || !sourceUrl) throw new Error("The pull request has no http clone link on the configured server.");
-      const fetchConfig: [string, string][] = [["http.extraHeader", `Authorization: Bearer ${opts.token}`]];
-      if (opts.caFile) fetchConfig.push(["http.sslCAInfo", opts.caFile]);
-      return { url, sourceUrl, sourceRef: data.fromRef.id, targetRef: data.toRef.id, fetchConfig };
+      return { url, sourceUrl, sourceRef: data.fromRef.id, targetRef: data.toRef.id, fetchConfig: gitConfig() };
+    },
+
+    // The git remote of a task without a PR (spec.md section 6.9, Gate G1: the http link has the origin of the base URL).
+    async repoRemote(project: string, repo: string): Promise<RepoRemote> {
+      const url = httpClone((await client.get(repoPath(project, repo), cloneRepo)).data);
+      if (!url) throw new NoCloneLink(project, repo);
+      return { url, config: gitConfig() };
+    },
+
+    listOpenPullRequests,
+
+    // One POST, never repeated (spec.md section 6.9, Gate G2: HTTP 201 with the PR).
+    // A 409 or an unknown outcome reads the open PRs of the branch first. Other errors throw a ForgeError.
+    async createPullRequest(project: string, repo: string, input: NewPullRequest): Promise<CreateResult> {
+      const body = {
+        title: input.title,
+        description: input.description,
+        fromRef: branchRef(project, repo, input.from),
+        toRef: branchRef(project, repo, input.to),
+        reviewers: reviewerList(input.reviewers),
+      };
+      try {
+        const pr = toPr(await client.post(`${repoPath(project, repo)}/pull-requests`, body, pullRequest));
+        const kept = new Set(pr.reviewers.map((r) => r.login));
+        return { status: "created", pr, dropped: input.reviewers.filter((name) => !kept.has(name)) };
+      } catch (e) {
+        if (!(e instanceof ForgeError)) throw e;
+        // client.ts: a timeout, a network error, a 5xx, or a 2xx with a bad body can follow an accepted write.
+        const unknown = e.kind === "timeout" || e.kind === "network" || e.kind === "shape" || (e.status ?? 0) >= 500;
+        if (e.status !== 409 && !unknown) throw e;
+        const open = await listOpenPullRequests(project, repo, input.from).catch(() => null);
+        const pr = open?.items.find((p) => p.sourceBranch === input.from && p.targetBranch === input.to);
+        if (pr) return { status: "exists", pr };
+        throw e;
+      }
+    },
+
+    // One PUT with the caller's version, never repeated (spec.md section 6.9, Gate G4: HTTP 200, version + 1).
+    // A stale version throws a ForgeError with status 409.
+    // Gate G4 checked only that a PUT without a title keeps it. A field that the caller leaves out gets its value from a fresh read.
+    async updatePullRequest(ref: PrRef, u: PrUpdate): Promise<PullRequest> {
+      const read = u.title === undefined || u.description === undefined || u.reviewers === undefined;
+      const now = read ? (await client.get(prPath(ref), pullRequest)).data : undefined;
+      const title = u.title ?? now?.title;
+      const description = u.description ?? now?.description;
+      const body = {
+        version: u.version,
+        ...(title !== undefined && { title }),
+        ...(description !== undefined && { description }),
+        reviewers: reviewerList(u.reviewers ?? now?.reviewers.map((r) => r.user.name) ?? []),
+        ...(u.toBranch !== undefined && { toRef: branchRef(ref.project, ref.repo, u.toBranch) }),
+      };
+      return toPr(await client.put(prPath(ref), body, pullRequest));
+    },
+
+    // spec.md section 6.8 "Open the PR again". Bitbucket REST docs: POST .../reopen?version=<n>, as decline in the gate cleanup.
+    // Not checked on Data Center 9.x. A stale version or a refused reopen throws a ForgeError.
+    async reopenPullRequest(ref: PrRef, version: number): Promise<PullRequest> {
+      return toPr(await client.post(`${prPath(ref)}/reopen?version=${version}`, {}, pullRequest));
+    },
+
+    // spec.md section 6.9, Gate G3: the stats read also counts the statuses of the repository-scoped build POST.
+    async buildStats(commitId: string): Promise<BuildStats> {
+      if (!HASH.test(commitId)) throw new Error(`Invalid commit hash: ${commitId}`);
+      const s = (await client.get(`/rest/build-status/1.0/commits/stats/${commitId}`, buildStats)).data;
+      return { successful: s.successful, inProgress: s.inProgress, failed: s.failed, cancelled: s.cancelled ?? 0, unknown: s.unknown ?? 0 };
     },
 
     // Replies have no activity of their own. They are nested in comment.comments[] of the root comment.
@@ -267,6 +381,7 @@ export function createBitbucketProvider(opts: ClientOptions) {
       return { ...r, items: newestFirst(items) };
     },
 
+    // Pending Gate G12 for a PR where the token user is neither author nor reviewer (spec.md section 2.8).
     async listChanges(ref: PrRef): Promise<ListResult<Change>> {
       const r = await client.list(`${prPath(ref)}/changes`, change);
       return { ...r, items: r.items.map((c) => ({ path: c.path.toString, srcPath: c.srcPath?.toString ?? null, type: c.type })) };

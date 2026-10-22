@@ -137,6 +137,15 @@ export const commit = z.object({
 const filePath = z.object({ toString: z.string() });
 export const change = z.object({ path: filePath, srcPath: filePath.optional(), type: z.string() });
 
+// GET /rest/build-status/1.0/commits/stats/{commit} (Gate G3). Data Center 9.x adds cancelled and unknown. Older servers can omit them.
+export const buildStats = z.object({
+  successful: z.number(),
+  inProgress: z.number(),
+  failed: z.number(),
+  cancelled: z.number().optional().catch(undefined),
+  unknown: z.number().optional().catch(undefined),
+});
+
 export const page = <T extends z.ZodType>(item: T) =>
   z.object({
     start: z.number(),
