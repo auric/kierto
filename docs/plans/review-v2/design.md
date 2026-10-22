@@ -123,6 +123,19 @@ PR context and PR notes (added 2026-10-22, section 10.3; spec.md sections 2.7 to
 | D12 | A proposal needs a live message of the user in its thread. A repeat of any note text drops. | Accept any proposal. A similarity rule. | A comment of another person alone cannot plant a note. Exact repeats only, no heuristic. |
 | D13 | Reply and discuss results give cites: the threads whose decision the answer relies on. The app checks each number, and the draft card links the threads. | A free-text mention. | The user sees why Claude changed its answer. The eval case scores it. |
 
+Ask follow-ups (added 2026-10-22, section 10.3 Q41; spec.md sections 2.14 to 2.18):
+
+Today each Ask is a fresh run. Earlier answers reach it only through context/history.md (context-files.ts historyFile, HISTORY_ASK_BYTES 40 KB, newest first), and the model reads that file only when it decides to. A question such as "and the second caller?" then gets a guess.
+
+| ID | Decision | Alternatives | Why |
+|---|---|---|---|
+| D14 | A follow-up is a normal ask run with a parent ask run. The stdin of a follow-up gets a section "# Conversation so far" with the last ASK_TURNS (3) turns of its chain, oldest first: each earlier question cut at 1 KB and each answer cut at 2 KB. Older turns stay in history.md. | `--resume` of the earlier ask session. A context file context/conversation.md. All turns in stdin. | BRIEF 3.5: runs never resume. A file is read only when the model decides to, which is today's problem. Three short turns cost about 10 KB at most and carry the reference that the question makes. |
+| D15 | history.md stays as it is for ask runs, with every finished ask in full text. The section names the "## Ask run N" heading of history.md for a cut answer, only when history.md holds that run. | Drop the conversation turns from history.md. Drop the Ask part of history.md for ask runs. | The cut needs a source of the full text, and history.md is the one place. The copy costs at most 3 × 3 KB. Questions of other conversations stay useful as background. |
+| D16 | The section is data. Its first line says so: the answers are Claude's own earlier output, the questions are earlier words of the user, and only the text in "Your instructions" is an instruction. Each question and answer is an indented block, so no stored text starts a heading. The section stands before the project instructions, so the question stays the last text of "Your instructions" (prompt.ts common()). | Quote the turns inside "Your instructions". A context file. | One instruction per run, as today. The indent rule is the one of history.md. |
+| D17 | Chain data: review_run gains parent_run (INTEGER REFERENCES review_run (id) ON DELETE SET NULL) with a unique partial index, so a chain is a line and never a tree. WP-AF adds it with ALTER TABLE ADD COLUMN in the next free migration, with no rebuild (WP-R1 already built 030). "New question" sends no parent and starts a new chain. | A payload key in a JSON column. A new conversation table. A change to 030. | review_run has no payload column for ask runs. A column gives an exact lookup, and the unique index blocks a fork from two tabs in the database. ADD COLUMN needs no table rebuild, and a built migration never changes. |
+| D18 | A follow-up keeps the profile of its parent run. A new question uses the brief profile, as today. When the parent profile no longer exists, the follow-up uses the brief profile, and the hint line says so. | Always the brief profile. | The model and the effort stay the same for one conversation. A brief change for the next review does not change a running talk silently. |
+| D19 | The Ask panel shows the newest conversation oldest first, with one "Follow up" box under its newest turn. "New question" switches the same box to a fresh question. Earlier conversations follow below, read only. The q key focuses the box, as today. | One box per conversation. A separate chat page. | UX rules 1 and 10: one box, one primary action, the existing key. |
+
 ### 4.3 Part 3: Explain this PR
 
 | ID | Decision | Alternatives | Why |
@@ -148,7 +161,7 @@ PR context and PR notes (added 2026-10-22, section 10.3; spec.md sections 2.7 to
 |---|---|---|---|
 | B1 | Three sizes. Small: one PR with a short plan and the code. Medium: a spec PR, then one code PR. Large: a spec PR, an optional contract PR, stacked part PRs, and a cleanup PR. Claude proposes the size. Two app rules raise it: a migration or an API change gives at least medium; an estimate over the line budget gives large. The user confirms before code. | One flow for all tasks. | A one-line fix does not need a spec review. A big feature needs small PRs. |
 | B2 | An interview comes first: structured questions with options and a recommended answer, at most 2 rounds. | Spec first, questions inside it. | Unknowns surface before the spec. The answers feed the spec. |
-| B3 | The spec lives in the repository at `specs/<KEY>/` (per-repo setting). Small uses one file plan.md with three sections. Medium and large use design.md, spec.md, and tasks.md. | Only in the app data folder. | Colleagues review it in Bitbucket, and it stays with the code. |
+| B3 | The spec lives in the repository at `specs/<KEY>/` (per-repo setting), in the own change plan format (section 5.5, Libraries; spec.md section 6.4). Small uses one file plan.md of about one screen with three sections. Medium and large use short design.md, spec.md, and tasks.md. | Only in the app data folder. | Colleagues review it in Bitbucket, and it stays with the code. |
 | B4 | The spec PR is a normal Bitbucket PR that the app creates on a click. Draft replies, Fix, revisions, "Fixed in", and resolve work on it as on any own PR. | A review screen inside the app. | Reuse. Colleagues use the tool they know. |
 | B5 | Code goes into separate PRs. Medium: one code PR stacked on the spec branch. Large: each part PR targets the branch of the part before it. | Spec and code in one PR for every size. | Small reviewable PRs. The code does not wait for the spec merge. |
 | B6 | Write runs (kind implement) run only in an app-owned worktree of the cache, never in the user's clone. Claude gets Read, Grep, Glob, Edit, Write, and the read-only git tools. It gets no shell. The app runs the allowlisted build and test commands. | Give Claude an allowlisted Bash. | S15: Bash rules are no boundary, and native Windows has no sandbox. The app keeps a full log of each command. |
@@ -253,6 +266,24 @@ run start (reply, discuss, review, fix, ask)
 | Storage | migration 032 | pr_note. |
 | UI | src/web/pr/Notes.tsx (new), src/web/pr/PrDetail.tsx, src/web/review/ReplyDraft.tsx | The Notes block, the suggestion row and the cites line on the draft card. |
 
+Ask follow-ups (D14 to D19):
+
+```
+POST /api/prs/:id/ask {question, parent?}
+   -> parent checks (same PR, kind ask, no child yet) -> profile of the parent, else the brief
+   -> run (kind ask, parent_run) -> context files as today (history.md, pr-context.md, notes.md)
+   -> askConversation (pure over rows): the last 3 turns of the chain, cut -> stdin "# Conversation so far"
+   -> answer -> GET asks gives parent -> the panel groups chains
+```
+
+| Area | File | Change |
+|---|---|---|
+| Storage | the next free migration (WP-AF), ALTER TABLE ADD COLUMN | review_run.parent_run and the unique index review_run_parent. |
+| Conversation | src/server/review/context-files.ts (askConversation, ASK_TURNS, the two cut constants) | Pure builder over the chain rows. It names a history.md heading only when history.md holds the run. historyFile also gives the ask run IDs it kept. |
+| Prompt | src/server/review/prompt.ts (buildAskPrompt, common()), catalog.ts (askAgent with the follow-up rule) | The section before the project instructions. One rule line in askAgent only for a follow-up. |
+| Run and route | src/server/review/jobs.ts (ask with parent, key, profile), routes.ts, run-rows.ts (asks with parent_run, chain query), src/shared/dto.ts (askInput parent, AskDto parent) | Parent checks and 409 for a chain that moved on. |
+| UI | src/web/ask/{AskPanel.tsx, model.ts, data.ts} | Conversation groups, the Follow up box, "New question". Text uses Markdown.tsx with diagrams, as today. |
+
 ### 5.3 Part 3: Explain
 
 - Start: the action bar button "Explain this PR" (key w). The setup comes from the Explain profile (model, effort, turns, prompt lens). With 2 or more explain profiles, the page shows a small picker.
@@ -350,6 +381,20 @@ Stop points (each one says why and offers one button): red after 3 fixes; a chec
 - Each Claude step takes the slot. Checks, git, and Bitbucket calls do not. A user start during a step gets 409 with "Pause building after this step". The loop waits for a free slot and says "Waiting for your review of PR #12 to finish."
 - task_event notifies only for: needs you, a part ready to open, and spec approved. One tab claims each event. The notifications setting applies.
 
+#### Libraries (decided 2026-10-22)
+
+| Library | Decision | Why |
+|---|---|---|
+| Claude Agent SDK | Rejected for now. The app keeps running the user's installed Claude Code (`claude -p`, `--restricted`, the user's own login). Revisit only when Anthropic allows subscription login for SDK apps. | The Agent SDK overview (code.claude.com/docs/en/agent-sdk/overview, read 2026-10-22) says: "Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK." The same page puts the SDK under Anthropic's Commercial Terms of Service, so it is not open source. Unverified here: it bundles its own CLI of about 230 MB per platform, and `bun build --compile` needs a bunfs workaround for it. |
+| canUseTool and PreToolUse hooks | Not used. | `--restricted` (Gate B17) and the `git status` path check after each step stay the write guard. A hook adds a second guard that the CLI, not the app, enforces. |
+| spec-kit (github/spec-kit) | Rejected, also as a file format (user decision, 2026-10-22). The app uses its own lean "change plan" format for existing projects (spec.md section 6.4). | spec-kit targets new projects. It needs a constitution and many documents, which is too heavy for a small feature or a bug fix in an existing project. The goal is a short, well-defined change to an existing repository at a low token cost. |
+| Change plan format (own) | Size-scaled: small is one plan.md of about one screen; medium and large are design.md, spec.md, and tasks.md, each short. An integration map comes first, with file:line references from the repository (CodeGraph when the run has it, else Grep): the files and functions to change, the pattern to copy ("the same way as X in Y"), the tests to extend, the affected callers, and the migration or API touch points. Acceptance criteria are testable lines, each mapped to a test. Each task lists its files, the existing tests to run, and a done check. No constitution and no boilerplate sections: the repository's own CLAUDE.md, AGENTS.md, and conventions are the standing rules, read through the sanitized context as today. | Each loop step reads only its task, its files, and its tests, so a step costs few tokens. The map grounds the plan in code that exists, and the app can check each reference. The task-by-task pattern stays: work one task at a time and tick `[x]` in the commit that finishes it. |
+| XState v5 | Adopted as a pure transition function only (user decision, 2026-10-22). src/server/tasks/machine.ts declares the task and part states and events with `setup({...}).createMachine({...})`. The app builds a snapshot from the state in SQLite with `machine.resolveState({ value, context })`, checks an event with `snapshot.can(event)`, and computes the next state with the pure `transition(machine, snapshot, event)` (xstate 5.19.0 and later). No actor runs (no `createActor`), the machine has no actions with effects, and no XState snapshot is stored. The task and task_step rows stay the single source of truth. A restart resumes from the last committed step. | Guarded transitions in one declared place, a diagram of the loop for docs and review, and a table test over every state and event. MIT (npm registry, 5.33.3). bundlephobia: 46.8 KB minified, 14.5 KB gzip, no dependencies; it is server code inside the compiled binary. Unverified: Bun support (no statement in the XState docs; the WP-B0 tests under `bun test` and tests/build/compiled.test.ts prove it). |
+| Temporal, Inngest, Restate, Trigger.dev, LangGraph.js, Mastra | Rejected. Each step is a fresh run that reads tasks.md and the worktree. | One process, one run slot, and the state already lives in SQLite. An engine adds a service or a runtime that the app does not need. |
+| simple-git, isomorphic-git, p-queue, diff libraries | Rejected. | The app uses the git CLI with an isolated config, one run slot, and `git diff --numstat` for the line budget. |
+
+Risk note (unverified wording): the usage terms speak of "ordinary, individual usage". Bounded runs that the user starts with a click fit it. Long unattended loops are a grey zone, which is one reason why Autopilot is on hold. Re-read the terms before a release (Q5).
+
 ### 5.6 UX rules for every part
 
 1. One primary action per state, with a short step strip.
@@ -363,7 +408,7 @@ Stop points (each one says why and offers one button): red after 3 fixes; a chec
 9. Progress visible in the inbox row.
 10. Reuse components, the prototype look, the keyboard model, and the accessibility rules.
 
-Parts 1 to 3 follow the same rules: one "Review" setup with a few named checkboxes and a three-step volume; one "Ask Claude about this" link; one "Explain this PR" button; one "Notes" block with "Add a note" and Keep or Dismiss on each suggestion. Part 7 (on hold) has one switch "Autopilot" with one status sentence. spec.md section 7 checks each screen against each rule.
+Parts 1 to 3 follow the same rules: one "Review" setup with a few named checkboxes and a three-step volume; one "Ask Claude about this" link; one "Explain this PR" button; one "Notes" block with "Add a note" and Keep or Dismiss on each suggestion; one "Follow up" box under the newest Ask answer, with "New question". Part 7 (on hold) has one switch "Autopilot" with one status sentence. spec.md section 7 checks each screen against each rule.
 
 ### 5.7 Part 7: Autopilot replies
 
@@ -406,6 +451,7 @@ Cost: one autopilot run per burst of comments, about one reply-run cost. A guard
 - Results: new keys of finding, verify, and summary parse with defaults. A finding without verify shows as "Not checked", in the main list as today.
 - Database: 030 rebuilds review_run for kinds explain and discuss and adds prompt_version, item, and discuss_json. 031 rebuilds review_run again for kinds interview, spec, and implement, makes pr nullable, adds task, and adds the task tables (spec.md section 8). 032 adds pr_note (part 2, spec.md section 2.9) with no rebuild. db.ts sets the version by list order, so the file that merges first takes the lower free number: if WP-PN merges before WP-B0, it becomes 031 and part 6 takes 032. The part 7 migration (on hold) takes the next free number, 033 or later, and no longer creates pr_note.
 - PR notes: existing PRs have no notes. Old reply drafts and discuss turns read cites and notes as empty.
+- Ask follow-ups: WP-AF adds review_run.parent_run and the unique index review_run_parent with ALTER TABLE ADD COLUMN and CREATE UNIQUE INDEX in the next free migration, with no rebuild. 030 stays as WP-R1 built it. db.ts sets the version by list order, so the file takes the number after the newest merged migration (after WP-PN's pr_note file, because WP-AF merges after WP-PN). If WP-PN's migration is still unmerged when WP-AF merges, the two statements join that file instead. Old ask runs read parent_run NULL, so each one shows as a conversation of one question.
 - Autopilot (on hold): every existing PR reads as mode off. No old data changes meaning. The AI mark setting keeps its meaning for manual confirms.
 
 ## 7. Risks
@@ -427,6 +473,7 @@ Cost: one autopilot run per burst of comments, about one reply-run cost. A guard
 | The State line disagrees with the UI. | One shared threadOutcome (D8) and a parity test over the outcome.test.ts cases. |
 | The open-PR reads slow the run start or fail. | One 15 s budget, an in-memory cache, at most 30 change lists, Cancel stops them, and a failure falls back to stored rows with a line in the file. |
 | A huge PR fills the context. | 48 KB cap with a fixed trim order. pr.md keeps every message. |
+| An earlier Ask answer quotes a comment, and the follow-up stdin then carries that text. | The answers are Claude's own output, which the user already saw. The section says it is data, the blocks are indented, the caps keep it small, and only "Your instructions" holds an instruction. A canary test checks that no comment text reaches stdin through any other path. |
 | Autopilot posts a wrong answer or a commitment. | Class table, commits flag, guard phase, evidence check, 60 s cancel window, Delete, eval gate with 0 wrong auto-posts. |
 | A comment injects instructions into Autopilot. | Comment text only in untrusted context files, numeric IDs in stdin, read-only tools, no write calls in the Autopilot code path, proposed notes untrusted until the user keeps them. |
 | Two bots answer each other without end. | Prefix check, Bot accounts setting, SERVICE users (Gate G10), 3 posts per thread since the user's last message, per-PR daily cap. |
@@ -528,3 +575,4 @@ The user decided Q25 to Q27 on 2026-10-22. Q25 changes a BRIEF hard rule and con
 38. Q38 Part 7 Autopilot: on hold. The user paused autopilot; a human posts every reply. Keep the part 7 text for later. Its waves leave the active order (tasks.md section 1). Its migration takes the next free number when it resumes. Gate G9 and the pr_note table move to part 2.
 39. Q39 PR context and PR notes join part 2 (D6 to D13, spec.md sections 2.7 to 2.13). No memory: the app rebuilds the files before every run, with no Claude call. A proposed note counts only after the user clicks Keep.
 40. Q40 Choices made in the plan, with reasons in D7, D9, and D11 (the user can change them): Ask gets the PR context and Explain does not; other open PRs come from stored rows plus new Bitbucket reads behind Gate G9 and G12; kept notes go into their own file without the UNTRUSTED banner; migration 032 is reserved for pr_note.
+41. Q41 Ask follow-ups join part 2 (decided by the user, 2026-10-22; D14 to D19, spec.md sections 2.14 to 2.18). The last 3 Ask turns of a conversation go into the Ask stdin as data. "New question" starts without them. Choices made in the plan, with reasons in D15, D17, and D18: history.md stays unchanged; parent_run comes with ALTER TABLE in the next free migration (030 is built); a follow-up keeps the profile of its parent.
