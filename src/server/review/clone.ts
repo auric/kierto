@@ -9,6 +9,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { CloneDto, CloneProblem, FixCommitDto, FixCommitState, FixMode } from "../../shared/dto";
 import { applyEdits, deniedPath, fold, type Located, locate, prepareFile } from "./edits";
 import { GitError, git, userGitEnv } from "./git";
+import { inside } from "./paths";
 import { repoPath } from "./validate";
 import { cachePath, diffArgs, gitSetup, locked, longPath } from "./workspace";
 
@@ -44,11 +45,6 @@ const succeeds = (p: Promise<unknown>) =>
     () => false,
   );
 
-const inside = (root: string, p: string) => {
-  const r = relative(root, p);
-  return !isAbsolute(r) && r !== ".." && !r.startsWith(`..${sep}`);
-};
-
 function realPath(p: string): string | null {
   try {
     return realpathSync.native(p);
@@ -62,7 +58,8 @@ export async function clonePath(raw: string, dataDir: string): Promise<{ path: s
   if (!isAbsolute(raw)) return { error: "Enter an absolute path." };
   const path = realPath(raw);
   if (path === null || !statSync(path).isDirectory()) return { error: "The folder does not exist." };
-  if (inside(realPath(dataDir) ?? resolve(dataDir), path)) return { error: "The clone cannot be in the app data folder." };
+  if (inside(realPath(dataDir) ?? resolve(dataDir), path, { withRoot: true }))
+    return { error: "The clone cannot be in the app data folder." };
   const bare = await inClone(path, ["rev-parse", "--is-bare-repository"]).catch(() => null);
   if (bare === null) return { error: "The folder is not in a git clone." };
   if (bare.trim() === "true") return { error: "The folder is a bare repository. Choose a clone with a working tree." };
@@ -125,7 +122,7 @@ export async function hooksFolder(path: string): Promise<string | null> {
   const v = (await inClone(path, ["config", "--type=path", "--get", "core.hooksPath"]).catch(() => "")).trim();
   if (!v) return null;
   const r = relative(path, resolve(path, v));
-  return inside(path, resolve(path, v)) ? r.split(sep).join("/") : null;
+  return inside(path, resolve(path, v), { withRoot: true }) ? r.split(sep).join("/") : null;
 }
 
 // The hook keys of a package.json text. null: the text is not JSON.

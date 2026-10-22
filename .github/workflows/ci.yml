@@ -43,6 +43,7 @@ jobs:
       - run: bun install --frozen-lockfile
       # The compiled-binary test skips, because dist/bin does not exist on a fresh checkout.
       - run: bun run check
+      - run: bun run notices --check
 
   e2e:
     runs-on: ubuntu-latest

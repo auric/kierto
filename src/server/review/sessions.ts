@@ -7,8 +7,9 @@
 import type { Dirent } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { open, readdir, stat } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { oneLine, SESSION_ID } from "../../shared/consult";
+import { inside } from "./paths";
 
 // In a sample of 54 transcripts (2026-10-16), the first cwd line started within 2 KB of the file start, the last branch line within
 // 23 KB of the end, and the last title line within 37 KB of the end. A cut line at a cap edge is dropped.
@@ -125,12 +126,6 @@ export async function readMeta(f: File, branch: string, caps?: { head: number; t
   return m;
 }
 
-const fold = (p: string) => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
-export function inside(root: string, p: string): boolean {
-  const r = relative(fold(root), fold(p));
-  return r === "" || (r !== ".." && !r.startsWith(`..${sep}`) && !isAbsolute(r));
-}
-
 async function listFiles(projectsDir: string): Promise<File[]> {
   let dirs: Dirent[];
   try {
@@ -186,7 +181,7 @@ export async function findSessions(o: FindInput): Promise<FoundSession[]> {
     next.matched ||= m.matched;
     next.title ??= m.title;
   }
-  const run = (cwd: string | null) => cwd !== null && o.exclude.some((root) => inside(root, cwd));
+  const run = (cwd: string | null) => cwd !== null && o.exclude.some((root) => inside(root, cwd, { withRoot: true }));
   return metas
     .filter((m) => m.matched && !m.superseded && !run(m.cwd))
     .map((m) => ({
@@ -198,7 +193,7 @@ export async function findSessions(o: FindInput): Promise<FoundSession[]> {
       folder: m.cwd ? basename(m.cwd) : "",
       cwd: m.cwd,
       branch: o.branch,
-      inClone: o.clone !== null && m.cwd !== null && inside(o.clone, m.cwd),
+      inClone: o.clone !== null && m.cwd !== null && inside(o.clone, m.cwd, { withRoot: true }),
     }))
     .sort((a, b) => Number(b.inClone) - Number(a.inClone) || b.lastAt - a.lastAt)
     .slice(0, MAX_SESSIONS);

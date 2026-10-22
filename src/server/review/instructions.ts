@@ -7,10 +7,11 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
 import { CLONE_INSTRUCTION_FILES, type InstructionFileDto, type InstructionsInput, instructionsInput } from "../../shared/dto";
 import { blobBytes } from "./clone";
 import { GitError, git } from "./git";
+import { inside } from "./paths";
 
 export const FILE_CAP = 64 * 1024;
 // The text goes into each prompt, so the total is capped below the CLI's own warning floor for all instruction files: 120,000 characters (CLI 2.1.296).
@@ -34,11 +35,6 @@ export type Reader = { load(from: string | null, raw: string): Promise<Loaded> }
 const MISSING = { error: "the file does not exist", missing: true } as const;
 const OVER = { error: `the file is over ${FILE_CAP / 1024} KB` };
 
-const inside = (root: string, p: string) => {
-  const r = relative(root, p);
-  return r !== "" && r !== ".." && !r.startsWith(`..${sep}`) && !isAbsolute(r);
-};
-
 // Reads only below the folder root. A link that points out of the folder does not load.
 // home: "~/" paths resolve from it, as in Claude Code. Without it, a "~" path does not load.
 function folderReader(folder: string, where: { name: string; gone: string }, home?: string): Reader {
@@ -59,7 +55,7 @@ function folderReader(folder: string, where: { name: string; gone: string }, hom
           ? resolve(raw)
           : resolve(root, from ? dirname(from) : "", raw);
       // A "~/" path can name the folder by a link or by a short name. The real path check below decides for it.
-      const lexical = inside(root, abs) || inside(resolve(folder), abs);
+      const lexical = inside(root, abs, { withRoot: false }) || inside(resolve(folder), abs, { withRoot: false });
       if (!lexical && !tilde) return outside;
       let real: string;
       try {
@@ -67,13 +63,13 @@ function folderReader(folder: string, where: { name: string; gone: string }, hom
       } catch {
         return lexical ? MISSING : outside;
       }
-      if (!inside(root, real)) return lexical ? { error: `a link points outside ${where.name}` } : outside;
+      if (!inside(root, real, { withRoot: false })) return lexical ? { error: `a link points outside ${where.name}` } : outside;
       const st = statSync(real);
       if (!st.isFile()) return { error: "the path is not a file" };
       if (st.size > FILE_CAP) return OVER;
       const bytes = readFileSync(real);
       if (bytes.length > FILE_CAP) return OVER;
-      return { key: real, path: relative(root, inside(root, abs) ? abs : real).replaceAll("\\", "/"), bytes };
+      return { key: real, path: relative(root, inside(root, abs, { withRoot: false }) ? abs : real).replaceAll("\\", "/"), bytes };
     },
   };
 }
