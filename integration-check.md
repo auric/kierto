@@ -373,7 +373,7 @@ Run: `bun scripts/gate0/resolve-thread.ts --pr <TEST_PR_URL> --thread <ID>` on a
 
 ## Review v2 (not run)
 
-Status: B17 to B20 RUN on the real CLI, 2026-10-22: claude 2.1.306, subscription login (`authMethod` claude.ai), reported cost 0.0119 USD, sanitizer hits=0. All gate calls used `--model haiku`. G1 to G6 RUN on the test repository (a personal repository), 2026-10-22. G7 is not run. B20 used the gate's own draft-07 schema copies in scripts/gate/claude-checks.ts. WP-R1 and WP-B0 must ship schemas equal to these copies, or run B20 again.
+Status: B17 to B20 RUN on the real CLI, 2026-10-22: claude 2.1.306, subscription login (`authMethod` claude.ai), reported cost 0.0119 USD, sanitizer hits=0. All gate calls used `--model haiku`. G1 to G6 RUN on the test repository (a personal repository), 2026-10-22. G7, G9, and G12 are not run. B20 used the gate's own draft-07 schema copies in scripts/gate/claude-checks.ts. WP-R1 and WP-B0 must ship schemas equal to these copies, or run B20 again.
 
 Run: `bun scripts/gate/claude-checks.ts --only B17,B18,B19,B20`. Bitbucket: `bun scripts/gate/bitbucket-write.ts --only G1,G2,G3` and `--only G4,G5,G6` (docs/gate-v2.md).
 
@@ -397,3 +397,5 @@ Run: `bun scripts/gate/claude-checks.ts --only B17,B18,B19,B20`. Bitbucket: `bun
 | G5. Delete the target branch of a stacked PR | PASS (2026-10-22) | Delete: exit 0, marker `[deleted]`. Within 30 s the stacked PR is DECLINED, its toRef is still the deleted lower branch, version 2 -> 3. Design rule (spec.md section 6.8, tasks.md WP-B8): retarget an upper PR to the target branch before the lower branch goes away, for example before a lower PR merges with "delete source branch". Never delete a lower branch while an upper PR targets it. Detect a declined upper PR and offer to open it again. |
 | G6. Push with a stale lease | PASS (2026-10-22) | Move of the remote branch: exit 0. Push with the old lease: exit 1, markers `[rejected]` and `(stale info)`. The remote keeps the moved commit. |
 | G7. Task chip for a PR with a Jira key in its title | NOT RUN | |
+| G9. Open-PR list of the test repository (limit 50): id, title, author, state, fromRef, toRef, updatedDate, isLastPage | NOT RUN | `bun scripts/gate/bitbucket-write.ts --repo <URL> --only G9,G12` (read only). |
+| G12. Changes of an open PR where the token user is not the author, a reviewer, or a participant: path, srcPath, type, isLastPage | NOT RUN | The same run as G9. PASS needs the shape of listChanges of an own PR. |

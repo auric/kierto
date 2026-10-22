@@ -2,9 +2,11 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Gate G1 to G7 (docs/plans/review-v2/tasks.md WP-G0, docs/gate-v2.md): the Bitbucket write facts for building Jira tasks.
-// It WRITES to the server: branches, pull requests, and one branch delete. Run it only on a test repository that you may change.
+// G1 to G7 WRITE to the server: branches, pull requests, and one branch delete. Run them only on a test repository that you may change.
+// G9 and G12 (WP-PG) only read: the open PRs of the repository and the changes of an open PR without the token user.
 // Usage: bun scripts/gate/bitbucket-write.ts --repo <repository URL> --target <branch> --authorize-writes [--only G1,G2] [G3 ...]
 //          [--reviewer <user slug>] [--build-commit <commit>] [--readonly-token-env <VAR>] [--jira-key <KEY>] [--keep]
+//        bun scripts/gate/bitbucket-write.ts --repo <repository URL> --only G9,G12
 //        bun scripts/gate/bitbucket-write.ts --repo <repository URL> --authorize-writes --cleanup
 //        bun scripts/gate/bitbucket-write.ts --dry-run [--only G1,G2]
 // --dry-run: the same steps against a loopback fake server and a local bare repository. It reads no secret, and nothing leaves the machine.
@@ -14,6 +16,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type { z } from "zod";
+import { change, page, pullRequest } from "../../src/server/bitbucket/schemas";
 import { gitEnv } from "../../src/server/review/git";
 
 const SERVICE = "review-loop";
@@ -25,11 +29,16 @@ const G5_WAIT_MS = 30_000;
 const G5_POLL_MS = 2_000;
 // Every branch that the script creates or deletes has this prefix. The target branch never gets a push.
 const PREFIX = "rl-gate-";
-const CHECKS = ["G1", "G2", "G3", "G4", "G5", "G6", "G7"] as const;
+const CHECKS = ["G1", "G2", "G3", "G4", "G5", "G6", "G7", "G9", "G12"] as const;
 type CheckId = (typeof CHECKS)[number];
+// These checks send only GET requests. They need no --authorize-writes and no --target.
+const READ_ONLY = new Set<CheckId>(["G9", "G12"]);
+// The open-PR list of G9 and G12: one page, as provider.listOpenPullRequests reads it (spec.md section 2.8).
+const OPEN_PR_LIMIT = 50;
 const USAGE = [
   "usage: bun scripts/gate/bitbucket-write.ts --repo <repository URL> --target <branch> --authorize-writes [--only G1,G2] [G3 ...]",
   "         [--reviewer <user slug>] [--build-commit <commit>] [--readonly-token-env <VAR>] [--jira-key <KEY>] [--keep]",
+  "       bun scripts/gate/bitbucket-write.ts --repo <repository URL> --only G9,G12",
   "       bun scripts/gate/bitbucket-write.ts --repo <repository URL> --authorize-writes --cleanup",
   "       bun scripts/gate/bitbucket-write.ts --dry-run [--only G1,G2]",
 ].join("\n");
@@ -94,6 +103,21 @@ const exceptionNames = (body: unknown): string[] =>
 const keysOf = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? Object.keys(v).sort() : []);
 const enumLike = (v: unknown) => (typeof v === "string" && /^[A-Z][A-Z0-9_]*$/.test(v) ? v : v === undefined ? "absent" : "<value>");
 const hash = (s: unknown) => (typeof s === "string" ? createHash("sha256").update(s).digest("hex") : null);
+// Issue paths hold schema key names and array indexes only, never values.
+function shape(schema: z.ZodType, body: unknown) {
+  const r = schema.safeParse(body);
+  return r.success
+    ? "ok"
+    : `failed ${r.error.issues
+        .slice(0, 5)
+        .map((i) => `${i.path.join(".") || "<root>"}:${i.code}`)
+        .join(",")}`;
+}
+const valuesOf = (body: unknown) => {
+  const v = (body as { values?: unknown } | null)?.values;
+  return Array.isArray(v) ? v : [];
+};
+const keyUnion = (items: unknown[]) => [...new Set(items.flatMap(keysOf))].sort().join(",") || "none";
 // git output markers. Remote text can hold names, so only these tokens leave the script.
 const MARKERS = /\[new branch\]|\[deleted\]|\[rejected\]|\[remote rejected\]|\(stale info\)|non-fast-forward|fetch first|up to date/g;
 function gitFacts(text: string) {
@@ -116,7 +140,8 @@ type Ctx = {
   jiraKey?: string;
   keep: boolean;
 };
-type Call = { status: number; body: unknown };
+// user: the X-AUSERNAME header, the username of the token owner (provider.currentUser).
+type Call = { status: number; body: unknown; user?: string | null };
 type Pr = { id?: unknown; version?: unknown; state?: unknown; title?: unknown; toRef?: { id?: unknown }; reviewers?: unknown[] };
 
 // ---------- the session: HTTP, git, and the objects that this run made ----------
@@ -170,7 +195,7 @@ function session(ctx: Ctx) {
       try {
         json = text ? JSON.parse(text) : null;
       } catch {}
-      return { status: res.status, body: json };
+      return { status: res.status, body: json, user: res.headers.get("x-ausername") };
     } catch (e) {
       return { status: 0, body: { network: (e as Error).name } };
     }
@@ -275,6 +300,7 @@ function session(ctx: Ctx) {
       return p;
     };
   };
+  const openPrs = memo(() => call("GET", `${repoPath}/pull-requests?state=OPEN&limit=${OPEN_PR_LIMIT}`));
   const lower = memo(async () => branch("lower", await targetHead()));
   const upper = memo(async () => branch("upper", (await lower()).sha));
 
@@ -359,6 +385,7 @@ function session(ctx: Ctx) {
     kept,
     pushes,
     repoInfo,
+    openPrs,
     lower,
     upper,
     stacked,
@@ -510,7 +537,70 @@ async function g7(s: Session): Promise<Result> {
   };
 }
 
-const RUNNERS: Record<CheckId, (s: Session) => Promise<Result>> = { G1: g1, G2: g2, G3: g3, G4: g4, G5: g5, G6: g6, G7: g7 };
+async function g9(s: Session): Promise<Result> {
+  const r = await s.openPrs();
+  const values = valuesOf(r.body);
+  const first = (values[0] ?? {}) as { author?: unknown; fromRef?: unknown };
+  const last = (r.body as { isLastPage?: unknown } | null)?.isLastPage;
+  const schema = shape(page(pullRequest), r.body);
+  return {
+    check: "G9",
+    status: r.status === 200 && schema === "ok" ? "PASS" : "FAIL",
+    evidence: `open PRs (limit ${OPEN_PR_LIMIT}): HTTP ${r.status}${exceptionNames(r.body).length ? ` ${exceptionNames(r.body).join(",")}` : ""} count=${values.length} isLastPage=${typeof last === "boolean" ? last : "absent"} page schema=${schema}; keys=${keysOf(r.body).join(",") || "none"}; PR keys=${keyUnion(values)}; author keys=${keysOf(first.author).join(",") || "none"}; fromRef keys=${keysOf(first.fromRef).join(",") || "none"}; X-AUSERNAME=${r.user ? "present" : "absent"}`,
+  };
+}
+
+type Who = { user?: { name?: unknown; slug?: unknown } };
+async function g12(s: Session): Promise<Result> {
+  const list = await s.openPrs();
+  const me = list.user?.toLowerCase();
+  if (list.status !== 200 || !me)
+    return { check: "G12", status: "FAIL", evidence: `open PRs: HTTP ${list.status} X-AUSERNAME=${me ? "present" : "absent"}` };
+  const isMe = (w: Who | undefined) => [w?.user?.name, w?.user?.slug].some((v) => typeof v === "string" && v.toLowerCase() === me);
+  // The user takes part as author, reviewer, or participant. The list keeps the server order, newest update first.
+  const takesPart = (pr: { author?: Who; reviewers?: Who[]; participants?: Who[] }) =>
+    isMe(pr.author) || (pr.reviewers ?? []).some(isMe) || (pr.participants ?? []).some(isMe);
+  const prs = valuesOf(list.body) as { id?: unknown; author?: Who; reviewers?: Who[]; participants?: Who[] }[];
+  const other = prs.find((p) => typeof p.id === "number" && !takesPart(p));
+  const own = prs.find((p) => typeof p.id === "number" && takesPart(p));
+  const counts = `open PRs read=${prs.length} without the user=${prs.filter((p) => !takesPart(p)).length}`;
+  if (!other)
+    return {
+      check: "G12",
+      status: "SKIPPED",
+      evidence: `${counts}. No open PR without the token user in the first ${OPEN_PR_LIMIT}. Ask another user to open one on the test repository.`,
+    };
+  const changes = async (id: unknown) => {
+    const r = await s.call("GET", `${s.prPath(id as number)}/changes?limit=${OPEN_PR_LIMIT}`);
+    const values = valuesOf(r.body);
+    const last = (r.body as { isLastPage?: unknown } | null)?.isLastPage;
+    const schema = shape(page(change), r.body);
+    const types = [...new Set(values.map((v) => enumLike((v as { type?: unknown }).type)))].sort().join(",") || "none";
+    return {
+      ok: r.status === 200 && schema === "ok",
+      line: `HTTP ${r.status}${exceptionNames(r.body).length ? ` ${exceptionNames(r.body).join(",")}` : ""} count=${values.length} isLastPage=${typeof last === "boolean" ? last : "absent"} page schema=${schema} change keys=${keyUnion(values)} types=${types}`,
+    };
+  };
+  const theirs = await changes(other.id);
+  const mine = own ? await changes(own.id) : null;
+  return {
+    check: "G12",
+    status: theirs.ok && (!mine || mine.ok) ? "PASS" : "FAIL",
+    evidence: `${counts}; changes of a PR without the user: ${theirs.line}; changes of an own PR: ${mine ? mine.line : "no own open PR in the list"}`,
+  };
+}
+
+const RUNNERS: Record<CheckId, (s: Session) => Promise<Result>> = {
+  G1: g1,
+  G2: g2,
+  G3: g3,
+  G4: g4,
+  G5: g5,
+  G6: g6,
+  G7: g7,
+  G9: g9,
+  G12: g12,
+};
 
 async function runGate(ctx: Ctx) {
   const s = session(ctx);
@@ -555,10 +645,39 @@ function fakeServer(token: string, origin: string, buildCommit: string) {
     number,
     Record<string, unknown> & { version: number; state: string; fromRef: { id: string }; toRef: { id: string } }
   >();
-  const json = (status: number, body: unknown) => Response.json(body, { status });
+  const json = (status: number, body: unknown) => Response.json(body, { status, headers: { "X-AUSERNAME": "dry-user" } });
   // Successful build keys per commit. The --build-commit of the dry run starts with one build.
   const builds = new Map<string, Set<string>>([[buildCommit, new Set(["dry-ci"])]]);
   const repoPath = "/ctx/rest/api/1.0/projects/DRY/repos/dry-repo";
+  // G9 and G12: two open PRs that the gate does not create. 101 is by the token user, 102 is by another user.
+  const who = (name: string) => ({ user: { name, slug: name, displayName: name } });
+  const peerRef = (b: string) => ({
+    id: `refs/heads/${b}`,
+    displayId: b,
+    latestCommit: buildCommit,
+    repository: { slug: "dry-repo", project: { key: "DRY" } },
+  });
+  const peer = (id: number, author: string, reviewer: string) => ({
+    id,
+    version: 0,
+    title: `Dry peer ${id}`,
+    state: "OPEN",
+    updatedDate: 1_760_000_000_000 + id,
+    author: who(author),
+    reviewers: [{ ...who(reviewer), role: "REVIEWER", status: "UNAPPROVED" }],
+    participants: [],
+    fromRef: peerRef(`feature/${id}`),
+    toRef: peerRef("main"),
+    links: {},
+  });
+  const peers = [peer(102, "dry-other", "dry-reviewer"), peer(101, "dry-user", "dry-reviewer")];
+  const peerChanges: Record<number, unknown[]> = {
+    101: [{ path: { toString: "README.md" }, type: "MODIFY" }],
+    102: [
+      { path: { toString: "README.md" }, type: "MODIFY" },
+      { path: { toString: "docs/new.md" }, srcPath: { toString: "docs/old.md" }, type: "MOVE" },
+    ],
+  };
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -588,7 +707,15 @@ function fakeServer(token: string, origin: string, buildCommit: string) {
         });
       if (p === `${repoPath}/pull-requests` && req.method === "GET") {
         const at = url.searchParams.get("at");
+        // The repository list (no at) holds only the seeded PRs: the gate PRs lack the read schema fields.
+        if (!at) return json(200, { size: peers.length, limit: 50, start: 0, isLastPage: true, values: peers });
         return json(200, { values: [...prs.values()].filter((x) => x.fromRef.id === at && x.state === "OPEN"), isLastPage: true });
+      }
+      const cm = p.match(/\/pull-requests\/(\d+)\/changes$/);
+      if (req.method === "GET" && cm) {
+        const values = peerChanges[Number(cm[1])];
+        if (!values) return json(404, { errors: [{ exceptionName: "dry.NoSuchPullRequest" }] });
+        return json(200, { size: values.length, limit: 50, start: 0, isLastPage: true, values });
       }
       if (p === `${repoPath}/pull-requests` && req.method === "POST") {
         const b = (await req.json()) as {
@@ -690,12 +817,15 @@ if (DRY) {
 } else {
   // ---------- live run: separate authorization, a repository named on the command line ----------
   if (!opt["--repo"]) usage("--repo is required. Name your test repository.");
-  if (!flags.has("--authorize-writes"))
-    usage("Refused: this script creates branches and pull requests and deletes a branch. Add --authorize-writes for your test repository.");
-  const repo = parseRepoUrl(opt["--repo"]);
   const cleanupMode = flags.has("--cleanup");
+  const writes = cleanupMode || selected.some((c) => !READ_ONLY.has(c));
+  if (writes && !flags.has("--authorize-writes"))
+    usage(
+      "Refused: G1 to G7 create branches and pull requests and delete a branch. Add --authorize-writes for your test repository, or select only G9,G12.",
+    );
+  const repo = parseRepoUrl(opt["--repo"]);
   const target = opt["--target"];
-  if (!cleanupMode) {
+  if (writes && !cleanupMode) {
     if (!target) usage("--target is required: the branch that the gate branches start from.");
     if (!/^[A-Za-z0-9._/-]+$/.test(target) || target.includes("..") || target.startsWith(PREFIX))
       usage("--target is not a usable branch name.");
@@ -736,7 +866,7 @@ if (DRY) {
   } else {
     const { results, tail } = await runGate(ctx);
     report(results, tail, `result${part}.json`);
-    console.log("Copy the lines above into the Review v2 rows G1 to G7 of integration-check.md.");
+    console.log("Copy the lines above into the Review v2 rows of these checks in integration-check.md.");
     if (results.some((r) => r.status === "FAIL")) process.exitCode = 1;
   }
 }

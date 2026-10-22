@@ -63,13 +63,14 @@ describe("claude-checks.ts B17 to B20", () => {
   });
 });
 
-describe("bitbucket-write.ts G1 to G7", () => {
+describe("bitbucket-write.ts G1 to G7, G9, and G12", () => {
   test("a dry run passes all checks against the loopback fake and prints no host", () => {
     const r = run(BITBUCKET_WRITE, ["--dry-run"], GIT_DIR);
     expect(r.err).toBe("");
     expect(r.code).toBe(0);
     for (const id of ["G1", "G2", "G3", "G4", "G5", "G6"]) expect(r.out).toContain(`PASS    ${id} `);
     expect(r.out).toContain("INFO    G7 ");
+    for (const id of ["G9", "G12"]) expect(r.out).toContain(`PASS    ${id} `);
     expect(r.out).toContain("(stale info)");
     const g3 = r.out.split("\n").find((l) => l.startsWith("PASS    G3 ")) ?? "";
     expect(g3).toContain("of the new gate commit: HTTP 200 keys=failed,inProgress,successful counts=0/0/0");
@@ -88,16 +89,40 @@ describe("bitbucket-write.ts G1 to G7", () => {
     expect(r.out).not.toContain("G1 ");
   }, 120_000);
 
+  test("a dry run of the read checks G9 and G12 passes and prints only key names and counts", () => {
+    const r = run(BITBUCKET_WRITE, ["--dry-run", "--only", "g9,g12"], GIT_DIR);
+    expect(r.err).toBe("");
+    expect(r.code).toBe(0);
+    const g9 = r.out.split("\n").find((l) => l.startsWith("PASS    G9 ")) ?? "";
+    expect(g9).toContain("open PRs (limit 50): HTTP 200 count=2 isLastPage=true page schema=ok");
+    expect(g9).toContain("PR keys=author,fromRef,id,links,participants,reviewers,state,title,toRef,updatedDate,version");
+    expect(g9).toContain("X-AUSERNAME=present");
+    const g12 = r.out.split("\n").find((l) => l.startsWith("PASS    G12 ")) ?? "";
+    expect(g12).toContain("open PRs read=2 without the user=1");
+    expect(g12).toContain(
+      "changes of a PR without the user: HTTP 200 count=2 isLastPage=true page schema=ok change keys=path,srcPath,type types=MODIFY,MOVE",
+    );
+    expect(g12).toContain("changes of an own PR: HTTP 200 count=1 isLastPage=true page schema=ok change keys=path,type types=MODIFY");
+    expect(r.out).not.toContain("G1 ");
+    for (const secret of ["dry-user", "dry-other", "Dry peer", "README.md", "docs/", "127.0.0.1", tmpdir()])
+      expect(r.out).not.toContain(secret);
+    expect(r.out).toContain("dry run: PASS");
+  }, 120_000);
+
   test.each([
     [[], "--repo is required"],
-    [["--repo", REPO, "--target", "main"], "Refused: this script creates branches"],
+    [["--repo", REPO, "--target", "main"], "Refused: G1 to G7 create branches"],
+    [["--repo", REPO, "--only", "G9,G1"], "Refused: G1 to G7 create branches"],
+    [["--only", "G9,G12"], "--repo is required"],
+    [["--repo", "https://example.invalid/browse", "G12"], "--repo is not a repository URL"],
+    [["--repo", "ssh://user@example.invalid/projects/A/repos/b", "G9"], "--repo needs an http or https URL"],
     [["--repo", REPO, "--target", "main", "--authorize-writes", "G2"], "G2 needs --reviewer"],
     [["--repo", REPO, "--target", "main", "--authorize-writes", "G7", "--jira-key", "lower-1"], "G7 needs --jira-key"],
     [["--repo", REPO, "--authorize-writes", "G1"], "--target is required"],
     [["--repo", REPO, "--target", "rl-gate-x", "--authorize-writes"], "--target is not a usable branch name"],
     [["--repo", "https://example.invalid/browse", "--target", "main", "--authorize-writes"], "--repo is not a repository URL"],
     [["--repo", REPO, "--target", "main", "--authorize-writes", "G3", "--build-commit", "xyz"], "--build-commit needs a commit ID"],
-    [["--dry-run", "G9"], "unknown check: G9"],
+    [["--dry-run", "G8"], "unknown check: G8"],
     [["--dry-run", "--bogus"], "unknown argument: --bogus"],
   ])("refuses %j before any request", (args, message) => {
     const r = run(BITBUCKET_WRITE, args, GIT_DIR);

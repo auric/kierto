@@ -1,6 +1,6 @@
 # Gate v2: CLI and Bitbucket facts for review v2 and task building
 
-This gate records facts that review v2 and the task builder need (docs/plans/review-v2/tasks.md, WP-G0). You run each check on your own machine. B17 to B20 use your Claude Code login. G1 to G7 write to a Bitbucket test repository.
+This gate records facts that review v2 and the task builder need (docs/plans/review-v2/tasks.md, WP-G0). You run each check on your own machine. B17 to B20 use your Claude Code login. G1 to G7 write to a Bitbucket test repository. G9 and G12 only read from it.
 
 | Checks | Run before | Script |
 |---|---|---|
@@ -10,6 +10,7 @@ This gate records facts that review v2 and the task builder need (docs/plans/rev
 | G1 to G3 | WP-B1 | `scripts/gate/bitbucket-write.ts` |
 | G4 to G6 | WP-B8 | `scripts/gate/bitbucket-write.ts` |
 | G7 | No fixed point. INFO only. | `scripts/gate/bitbucket-write.ts` |
+| G9, G12 | WP-PN uses the Bitbucket peer reads. Read only. | `scripts/gate/bitbucket-write.ts` |
 
 ## Record the results
 
@@ -99,3 +100,26 @@ These checks write to the server. Run them only on a test repository that you ma
 | G5 | Deletes the lower branch, which is the target of the stacked PR. Reads the PR for up to 30 s. | The delete exits 0 and the PR read gives HTTP 200. Record the outcome: the state (DECLINED or OPEN) and the toRef (lower branch, target branch, or other). |
 | G6 | Moves the remote upper branch, then pushes another commit with the old lease. | The move exits 0, the second push fails with `(stale info)`, and the remote keeps the moved commit. |
 | G7 | Creates a PR with the Jira key in its title and keeps it. | INFO. Record whether the app shows the task chip after a sync. |
+
+## Part G, read only: G9 and G12 for the PR context
+
+G9 and G12 send only GET requests (tasks.md WP-PG, spec.md section 2.8). They need no `--authorize-writes` and no `--target`. They still need `--repo` with your test repository. The script has no default host. Token, origin rule, and output rules are the same as for G1 to G7. A token with Repository read is enough.
+
+### Before you run
+
+1. The test repository must have one open PR where you are not the author, a reviewer, or a participant. Ask another user to open one if necessary. An own open PR is optional: G12 then also reads its changes for a comparison.
+2. Run the dry run: `bun scripts/gate/bitbucket-write.ts --dry-run --only G9,G12`. It must print `dry run: PASS`.
+
+### Run
+
+- `bun scripts/gate/bitbucket-write.ts --repo <URL> --only G9,G12`
+- The console and `.gate0/bitbucket-write/result.g9-g12.json` hold only status codes, counts, key names, and enum-like change types. They never hold a title, a name, a path, or a host.
+
+### What each check does
+
+| Check | What it does | PASS |
+|---|---|---|
+| G9 | Reads the open PRs of the repository: `GET .../pull-requests?state=OPEN&limit=50`. Records the page keys, the PR keys, the author and fromRef keys, the count, `isLastPage`, and whether the `X-AUSERNAME` header is present. | HTTP 200, and the page parses with the app schema `page(pullRequest)` (id, title, author, state, fromRef, toRef, updatedDate, isLastPage). |
+| G12 | Takes the newest PR of the G9 list where the token user (`X-AUSERNAME`) is not the author, a reviewer, or a participant. Reads its changes: `GET .../pull-requests/{id}/changes?limit=50`. Reads the changes of one own PR of the list the same way, if one exists. | HTTP 200, and the page parses with the app schema `page(change)` (path, srcPath, type, isLastPage). The own PR read, if any, must pass the same way. SKIPPED: the list has no PR without you. Fix the setup and run again. |
+
+Record G9 and G12 in their "Review v2" rows of integration-check.md. A FAIL of G9 or G12 means that the PR context lists only PRs from your inbox (spec.md section 2.11).
