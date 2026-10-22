@@ -5,6 +5,7 @@
 import type {
   BriefDto,
   CommitDto,
+  DiscardReason,
   ExcerptLine,
   InstructionFileDto,
   ItemActionInput,
@@ -494,6 +495,14 @@ export function profileSetupText(p: ProfileDto, defaults: RunnerDefaults | null)
 // ---------- Drafts and summary ----------
 
 export const SEVERITY: Record<AnchoredFinding["severity"], string> = { blocker: "Blocker", major: "Major", minor: "Minor", nit: "Nit" };
+// docs/plans/review-v2/spec.md section 4.1: the discard reason chips.
+export const DISCARD_LABEL: Record<DiscardReason, string> = {
+  bug: "Not a bug",
+  worth: "Not worth fixing",
+  duplicate: "Duplicate",
+  intended: "Intended",
+  place: "Wrong place",
+};
 export const EVIDENCE: Record<AnchoredFinding["evidenceStatus"], string> = {
   code: "Shown in code",
   reproduced: "Reproduced",
@@ -585,6 +594,8 @@ export function triageText(before: ReviewItemDto, after: ReviewItemDto, action: 
       return "Kept your draft. The revision is gone.";
     case "reply-to-newest":
       return "The draft answers the newest message now.";
+    case "reason":
+      return "Saved the reason.";
   }
 }
 

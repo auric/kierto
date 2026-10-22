@@ -15,6 +15,8 @@
 
 ### Reviews
 
+- After you discard a finding, its card offers the optional reasons "Not a bug", "Not worth fixing", "Duplicate", "Intended", and "Wrong place".
+- Settings has a new "Review quality" table for the last 30 days. Each row shows one profile and prompt version: runs, shown findings per run, check results, accepted, discarded by reason, posted, addressed, outdated, median time, and cost per run.
 - The "General" profile is now named "Review". It has a new prompt and runs at high effort. Its reviewer agents also run at high effort.
 - A review now reports each problem with a title, a concrete case, a severity, and a confidence. It reports only what the change adds, and it skips style, linter output, and behavior that the pull request or the task asks for.
 - "Review" checks security, threads and races, compatibility, the project rules, and the task goal. Each finding names the check that found it.

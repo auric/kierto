@@ -124,6 +124,14 @@ async function shots(browser: Browser) {
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.waitForTimeout(500);
   await save(page, "inbox-light");
+  // A discard offers the reason chips on the card. One chip is picked.
+  await page.locator("[data-draft]").first().getByRole("button", { name: "Discard" }).click();
+  const chips = page.locator("[data-reason-chips]");
+  await chips.getByRole("button", { name: "Not a bug" }).click();
+  await chips.locator("[aria-pressed='true']").waitFor();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await toTop(page.locator("#s-drafts"), 64);
+  await save(page, "discard-reason");
 
   // Fix it on my own PR: a review, reply drafts, then the Fix list.
   await openPr(page, "Release the write lock after each entry");
@@ -164,6 +172,10 @@ async function shots(browser: Browser) {
   await page.locator("#h-profiles").waitFor();
   await toTop(page.locator("#h-profiles"));
   await save(page, "settings-profiles");
+  await page.goto(`${BASE}/settings/quality`);
+  await page.locator("[data-stats-row]").first().waitFor();
+  await toTop(page.locator("#h-quality"));
+  await save(page, "settings-quality");
   await ctx.close();
 
   const narrow = await browser.newContext({ viewport: NARROW, colorScheme: "light", reducedMotion: "reduce" });

@@ -510,7 +510,13 @@ export type ReviewItemDto = {
   // finding: the AnchoredFinding as validated. question: the Question. reply: the ReplyPayload; body is empty for action none.
   // carried: the item came from the base run of a re-review. fixed: findings only, a fix commit covers the finding.
   // session: the verdict of your session (docs/plans/session-consult.md part C).
-  payload: (AnchoredFinding | Question | ReplyPayload) & { carried?: Carried; fixed?: FixedMark; session?: SessionMark };
+  // discardReason: the reason chip of a finding that the user discarded (docs/plans/review-v2/spec.md section 4.1).
+  payload: (AnchoredFinding | Question | ReplyPayload) & {
+    carried?: Carried;
+    fixed?: FixedMark;
+    session?: SessionMark;
+    discardReason?: { code: DiscardReason };
+  };
   // Findings only: the current anchor.
   anchor: (Anchor & { side: Side }) | null;
   status: ItemStatus;
@@ -522,6 +528,10 @@ export type ReviewItemDto = {
   // Reply items only: the run that wrote the draft. head: the source head at the run start. finishedAt: null while it runs.
   drafted?: { kind: RunKind; startedAt: number; finishedAt: number | null; head: string };
 };
+
+// docs/plans/review-v2/spec.md section 4.1: the codes of payload.discardReason. Not a bug, Not worth fixing, Duplicate, Intended, Wrong place.
+export const DISCARD_REASONS = ["bug", "worth", "duplicate", "intended", "place"] as const;
+export type DiscardReason = (typeof DISCARD_REASONS)[number];
 
 // POST /api/items/:id. revision: the item revision on screen. A mismatch gives 409 with ItemConflict.
 // Every change raises the revision. edit also accepts the item. move takes a line of moveChoices(excerpt, side).
@@ -539,11 +549,10 @@ export const itemActionInput = z.discriminatedUnion("action", [
   z.object({ action: z.literal("keep-mine"), revision: version }),
   // An open reply draft: answer the newest live message of the thread with the same text. No AI run.
   z.object({ action: z.literal("reply-to-newest"), revision: version }),
+  // A finding that the user discarded: store payload.discardReason {code}. The item stays discarded.
+  z.object({ action: z.literal("reason"), revision: version, code: z.enum(DISCARD_REASONS) }),
 ]);
 export type ItemActionInput = z.infer<typeof itemActionInput>;
-// docs/plans/review-v2/spec.md section 4.1: the codes of payload.discardReason. Not a bug, Not worth fixing, Duplicate, Intended, Wrong place.
-export const DISCARD_REASONS = ["bug", "worth", "duplicate", "intended", "place"] as const;
-export type DiscardReason = (typeof DISCARD_REASONS)[number];
 // item: the current item, for a reload.
 export type ItemConflict = ApiError & { item: ReviewItemDto };
 
@@ -999,3 +1008,31 @@ export type TaskPreviewDto = {
 };
 
 export type TaskPreviewError = ApiError & { rules: TaskPreviewDto["rules"] };
+
+// ---------- Review quality (docs/plans/review-v2/spec.md section 4.2) ----------
+
+// GET /api/stats/review?days=30: the review runs that started in the last `days` days.
+export const reviewStatsInput = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) });
+// One row per profile name and prompt version. A finding counts once, in the run that first found it. A re-review copy gives
+// the later outcome of its source. shown: in the main list of the run volume. accepted: accepted or posted. edited: accepted with
+// your text. discarded: by you only, not by the check, a fix commit, a re-review, or your session. byReason: per reason code;
+// "none" counts discards without a chip. addressed: posted, and its thread is resolved or has a "Fixed in" draft. outdated: posted,
+// and its root comment turned orphaned after the post. medianMinutes: of the run time; null without an ended run.
+// usage: the sum over the runs that report it.
+export type ReviewStatsDto = {
+  profile: string;
+  promptVersion: string;
+  runs: number;
+  candidates: number;
+  refuted: number;
+  unsure: number;
+  shown: number;
+  accepted: number;
+  edited: number;
+  discarded: { total: number; byReason: Record<DiscardReason | "none", number> };
+  posted: number;
+  addressed: number;
+  outdated: number;
+  medianMinutes: number | null;
+  usage: { costUsd: number; turns: number };
+};

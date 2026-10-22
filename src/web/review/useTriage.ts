@@ -5,7 +5,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "@/components/ui/toast";
-import type { ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunDetail } from "../../shared/dto";
+import type { DiscardReason, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunDetail } from "../../shared/dto";
 import type { ThreadModel } from "../pr/threads";
 import { planKey } from "../publish/data";
 import { failText } from "../shell/model";
@@ -34,7 +34,7 @@ export function useTriage(
   // An unsent edit from an earlier visit opens its editor again (plan pr-view-v4 section 5).
   const [triage, setTriage] = useState<TriageState>(() => {
     const id = storedEdit(pr.id);
-    return { open: id === null ? null : { id, mode: "edit", quiet: true }, busy: new Set() };
+    return { open: id === null ? null : { id, mode: "edit", quiet: true }, busy: new Set(), chips: null };
   });
 
   // Stable while the items stay, so the diff renders again only when they change.
@@ -110,6 +110,8 @@ export function useTriage(
   // Resolves to true when the server took the change.
   async function send(it: ReviewItemDto, input: ItemActionInput, close = false): Promise<boolean> {
     setBusy(it.id, true);
+    // docs/plans/review-v2/spec.md section 4.1: the chips leave on the next move.
+    if (input.action !== "reason") setTriage((s) => (s.chips === null ? s : { ...s, chips: null }));
     try {
       const r = await sendItem(it.id, input);
       if ("conflict" in r) {
@@ -125,8 +127,10 @@ export function useTriage(
       // The focus goes on to the next item, so the live region says what happened to this one.
       o.announce(triageText(it, r.item, input.action));
       if (close) setTriage((s) => ({ ...s, open: s.open?.id === it.id ? null : s.open }));
+      if (input.action === "discard" && r.item.kind === "finding" && r.item.status === "discarded")
+        setTriage((s) => ({ ...s, chips: r.item.id }));
       if (input.action === "move") focusAfter({ id: domId(r.item), block: "nearest", flash: false });
-      else advance(r.item);
+      else if (input.action !== "reason") advance(r.item);
       return true;
     } catch (e) {
       toast.add({ title: "The change was not saved", description: failText(e) });
@@ -160,6 +164,7 @@ export function useTriage(
     move: (it: ReviewItemDto | null) => openMode(it, "move"),
     moveTo: (it: ReviewItemDto, line: number) => void send(it, { action: "move", revision: it.revision, line }, true),
     tick: (it: ReviewItemDto, on: boolean) => void send(it, { action: "resolve", revision: it.revision, resolve: on }),
+    reason: (it: ReviewItemDto, code: DiscardReason) => void send(it, { action: "reason", revision: it.revision, code }),
     plain: (it: ReviewItemDto) => void send(it, { action: "plain", revision: it.revision }),
     takeRevision: (rev: ReviewItemDto, mine: ReviewItemDto) =>
       void send(rev, { action: "use-revision", revision: rev.revision, draft: mine.revision }),
@@ -181,6 +186,7 @@ export function useTriage(
       move: (it) => onTriage.current.move(it),
       moveTo: (it, l) => onTriage.current.moveTo(it, l),
       tick: (it, on) => onTriage.current.tick(it, on),
+      reason: (it, code) => onTriage.current.reason(it, code),
       quiet: (id) => quiet.current === id,
     }),
     [prId],

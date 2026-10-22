@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR, S-ASK, r3 S-FIX): brief, start, re-review, ask, reply drafts, fix runs, cancel, run,
-// raw output, item triage, and Improve prompt. Every mutation of PR data broadcasts `changed`.
+// raw output, item triage, review quality stats, and Improve prompt. Every mutation of PR data broadcasts `changed`.
 // Improve prompt: a new start replaces the running proposal. Nothing saves until the user applies the proposal.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
@@ -16,11 +16,13 @@ import {
   itemActionInput,
   replyRunInput,
   reviewRunInput,
+  reviewStatsInput,
 } from "../../shared/dto";
 import type { Live } from "../live";
 import { threadHistory } from "./history";
 import { triage } from "./items";
 import type { ReviewJobs } from "./jobs";
+import { reviewStats } from "./stats";
 
 const positiveId = (what: string) =>
   validator("param", (v: Record<string, string>, c) => {
@@ -233,6 +235,17 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       review.improve.cancel(c.req.valid("param").id)
         ? c.json({ cancelling: true }, 202)
         : c.json<ApiError>({ error: "The proposal is not running." }, 409),
+    )
+    .get(
+      "/stats/review",
+      validator("query", (v, c) => {
+        const r = reviewStatsInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid number of days. Use 1 to 365." }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        return c.json(db ? reviewStats(db, c.req.valid("query").days) : [], 200);
+      },
     )
     .post("/runs/:id/cancel", runParam, (c) => {
       const db = review.open();

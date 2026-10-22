@@ -16,6 +16,7 @@ export const SETTINGS_SECTIONS = [
   "posts",
   "appearance",
   "profiles",
+  "quality",
   "task-ids",
   "tracker",
   "clones",

@@ -24,7 +24,7 @@ import {
   SEVERITY,
   sessionNote,
 } from "./model";
-import { Acts, Editor, Mover, type TriageCtx, type TriageMode } from "./Triage";
+import { Acts, Editor, Mover, ReasonChips, type TriageCtx, type TriageMode } from "./Triage";
 
 const icon = "size-[15px] shrink-0";
 const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
@@ -93,11 +93,13 @@ export const draftDomId = (it: ReviewItemDto) => (it.kind === "question" ? `q-${
 
 // One row: kind, title, place, and state. Enter, o, or a click opens the body with the triage actions (plan pr-view-v4 2.7).
 // mode: the open editor or line field of this draft. busy: a triage request of this draft is out. fix: the fix card of the finding.
+// chips: the discard reason chips show under the row.
 export const Draft = memo(function Draft({
   it,
   open,
   mode,
   busy,
+  chips,
   fix,
   ctx,
 }: {
@@ -105,6 +107,7 @@ export const Draft = memo(function Draft({
   open: boolean;
   mode: TriageMode;
   busy: boolean;
+  chips?: boolean;
   fix?: ReactNode;
   ctx: DraftCtx;
 }) {
@@ -185,6 +188,7 @@ export const Draft = memo(function Draft({
           </span>
         ) : null}
       </button>
+      {chips && f && <ReasonChips it={it} busy={busy} ctx={ctx.triage} />}
       <div id={`db-${it.id}`} hidden={!open}>
         {open &&
           (f ? (
@@ -313,10 +317,12 @@ function QuestionBody({ it, mode, busy, ctx }: { it: ReviewItemDto; mode: Triage
 }
 
 // open: the item with an open editor or line field. quiet: the editor opened again with its unsent text when the PR opened.
-// busy: items with a triage request out.
+// busy: items with a triage request out. chips: the finding that the user just discarded. Its card shows the reason chips
+// until the next triage action.
 export type TriageState = {
   open: { id: number; mode: Exclude<TriageMode, null>; quiet?: boolean } | null;
   busy: ReadonlySet<number>;
+  chips: number | null;
 };
 export const modeOf = (s: TriageState, id: number): TriageMode => (s.open?.id === id ? s.open.mode : null);
 
@@ -355,6 +361,7 @@ export function Drafts({
                 open={isOpen(it) || mode !== null}
                 mode={mode}
                 busy={triage.busy.has(it.id)}
+                chips={triage.chips === it.id && it.status === "discarded"}
                 fix={cards.get(it.id)}
                 ctx={ctx}
               />

@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { MAX_NOTE, type ReviewItemDto } from "../../shared/dto";
+import { DISCARD_REASONS, type DiscardReason, MAX_NOTE, type ReviewItemDto } from "../../shared/dto";
 import { moveChoices } from "../../shared/review";
+import { DISCARD_LABEL } from "./model";
 
 export type TriageAction = "accept" | "discard" | "restore";
 // The open triage control of one item.
@@ -27,6 +28,8 @@ export type TriageCtx = {
   moveTo: (it: ReviewItemDto, line: number) => void;
   // Reply drafts only: the "Resolve after posting" tick.
   tick: (it: ReviewItemDto, on: boolean) => void;
+  // A finding that the user discarded: the reason chip.
+  reason: (it: ReviewItemDto, code: DiscardReason) => void;
   // true: the editor of this item opened again with its unsent text when the PR opened. It then leaves the focus where it is.
   quiet: (id: number) => boolean;
 };
@@ -163,6 +166,28 @@ export function RestoreButton({ it, busy, ctx }: { it: ReviewItemDto; busy: bool
       <Undo2 aria-hidden className="size-[15px]" />
       Restore
     </button>
+  );
+}
+
+// docs/plans/review-v2/spec.md section 4.1: after a discard, the card offers the reason chips. No chip is required.
+export function ReasonChips({ it, busy, ctx }: { it: ReviewItemDto; busy: boolean; ctx: TriageCtx }) {
+  const now = it.payload.discardReason?.code;
+  return (
+    <fieldset data-reason-chips className="m-0 flex flex-wrap items-center gap-1.5 border-0 px-1.5 pb-2.5 pl-[30px]">
+      <legend className="float-left mr-1 text-xs text-muted-foreground">Why? Optional.</legend>
+      {DISCARD_REASONS.map((code) => (
+        <Button
+          key={code}
+          size="xs"
+          variant={now === code ? "secondary" : "outline"}
+          aria-pressed={now === code}
+          disabled={busy}
+          onClick={() => ctx.reason(it, code)}
+        >
+          {DISCARD_LABEL[code]}
+        </Button>
+      ))}
+    </fieldset>
   );
 }
 

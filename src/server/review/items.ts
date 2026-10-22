@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Triage of review items (plan v3 WP12): accept, discard, restore, edit, move, and the resolve tick of a reply draft.
+// docs/plans/review-v2/spec.md section 4.1: the discard reason of a finding.
 // docs/plans/thread-outcome.md: Use revision and Keep mine for a revision of the user's draft, and Reply to the newest as is.
 import type { Database } from "bun:sqlite";
 import type { ItemActionInput, ItemConflict, ReviewItemDto } from "../../shared/dto";
@@ -10,6 +11,7 @@ import {
   type AnchorState,
   diffLine,
   type ExcerptLine,
+  type FindingPayload,
   type FixedMark,
   moveChoices,
   type ReplyPayload,
@@ -64,7 +66,12 @@ export function triage(db: Database, id: number, input: ItemActionInput, at = Da
   if (row.revision !== input.revision) return conflict(CHANGED);
 
   // Plan r2 S-RR: a carried finding whose code is gone has no anchor. The post plan cannot place it.
-  if (row.kind === "finding" && input.action !== "discard" && (row.path === null || row.side === null || row.line === null))
+  if (
+    row.kind === "finding" &&
+    input.action !== "discard" &&
+    input.action !== "reason" &&
+    (row.path === null || row.side === null || row.line === null)
+  )
     return { status: 400, error: "The finding has no place in the code." };
   const next = { ...row };
   const reply = row.kind === "reply" ? (JSON.parse(row.payload_json) as ReplyPayload) : null;
@@ -97,7 +104,19 @@ export function triage(db: Database, id: number, input: ItemActionInput, at = Da
     case "discard":
       next.status = "discarded";
       if (reply) next.payload_json = JSON.stringify({ ...reply, discardedBy: "user" } satisfies ReplyPayload);
+      // A new discard asks for a new reason.
+      else if (row.kind === "finding") {
+        const { discardReason: _, ...rest } = JSON.parse(row.payload_json) as FindingPayload & { discardReason?: unknown };
+        next.payload_json = JSON.stringify(rest);
+      }
       break;
+    case "reason": {
+      const p = JSON.parse(row.payload_json) as FindingPayload;
+      if (row.kind !== "finding" || row.status !== "discarded" || p.discardedBy === "verify")
+        return { status: 400, error: "Only a finding that you discarded takes a reason." };
+      next.payload_json = JSON.stringify({ ...p, discardReason: { code: input.code } });
+      break;
+    }
     case "restore": {
       // docs/plans/fix-ux.md decision 3: a restore of a finding that a fix commit discarded returns its earlier status. The mark stays.
       // session-consult.md part C: a session reject discards only open findings, so its mark is newer than a fixed mark. The restore

@@ -21,6 +21,7 @@ import { Clones } from "./Clones";
 import { JiraSettings } from "./JiraSettings";
 import { ProjectInstructions } from "./ProjectInstructions";
 import { ReviewProfiles } from "./ReviewProfiles";
+import { ReviewQuality } from "./ReviewQuality";
 import { TaskRules } from "./TaskRules";
 
 // The section links focus these headings, so each heading takes focus from script only.
@@ -50,6 +51,7 @@ const HEADINGS: Record<SettingsSection, string> = {
   posts: "mark-title",
   appearance: "h-appearance",
   profiles: "h-profiles",
+  quality: "h-quality",
   "task-ids": "h-taskids",
   tracker: "h-tracker",
   clones: "h-clones",
@@ -177,6 +179,7 @@ export function Settings({
           ["posts", "Posts"],
           ["appearance", "Appearance"],
           ["profiles", "Review profiles"],
+          ["quality", "Review quality"],
           ["task-ids", "Task IDs"],
           ...(tracker ? ([["tracker", tracker.name]] as [SettingsSection, string][]) : []),
           ["clones", "Clones"],
@@ -368,6 +371,7 @@ export function Settings({
         {settings.baseUrl !== null && <AiMark settings={settings} />}
         {settings.baseUrl !== null && <Appearance />}
         {settings.baseUrl !== null && <ReviewProfiles settings={settings} target={target} />}
+        {settings.baseUrl !== null && <ReviewQuality />}
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
         {settings.baseUrl !== null && <JiraSettings settings={settings} />}
         {settings.baseUrl !== null && <Clones settings={settings} />}
