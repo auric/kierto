@@ -143,7 +143,7 @@ test("Settings sections and Edit <profile> push entries; Back walks the sections
 
   // "Edit <profile>" in the brief opens the profile URL. Back returns to the PR.
   await page.keyboard.press("r");
-  await page.locator("#brief").getByRole("link", { name: "Edit General" }).click();
+  await page.locator("#brief").getByRole("link", { name: "Edit Review" }).click();
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
   await expect(page).toHaveURL(`${APP}/settings/profiles/general`);
   await page.goBack();

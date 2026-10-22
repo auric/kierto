@@ -181,6 +181,11 @@ const F = (o: Partial<Finding>): Finding => ({
   evidenceStatus: "code",
   confidence: "high",
   agent: null,
+  title: "",
+  trigger: "",
+  cause: null,
+  rule: "",
+  module: "core",
   ...o,
 });
 

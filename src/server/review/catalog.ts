@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { DEFAULT_REVIEWER, type ProfileId, type ProfileInput } from "../../shared/dto";
+import { DEFAULT_REVIEWER, DEFAULT_VERIFIER, type ModuleId, type ProfileId, type ProfileInput } from "../../shared/dto";
 import { FIX_EDIT_RULES, FIX_WHY_RULES } from "../../shared/review";
 import { type AgentSpec, type McpServerSpec, NAME } from "./claude";
 import { SKILL_INDEX, SKILL_INDEX_AFTER } from "./skills";
@@ -55,12 +55,34 @@ const V2_GENERAL =
   "Find defects in the change: wrong logic, missed edge cases, races and lock order, resource leaks, error handling, and effects on callers outside the diff.";
 const V2_OVER =
   "Find code that the change can delete or simplify: abstractions with one use, code that the standard library or the platform already gives, unneeded dependencies, settings for fixed values, and dead code.";
+// The shipped prompts of PROFILES_VERSION 3 and 4. V4_EXPLAIN is also the current one until WP-X1 (EXPLAIN_V2).
+const V4_GENERAL = [
+  V2_GENERAL,
+  "When the change fixes a bug in one place, Grep the other callers of the same code. A caller with the same bug is a finding.",
+].join("\n");
+const V4_EXPLAIN =
+  "Explain the change for a reviewer: what it does, why, and which parts need attention. Ask a question where the intent is not clear. Report no findings.";
+
+// docs/plans/review-v2/spec.md sections 1.5 and 3.4: the Review lens and the Explain lens.
+const REVIEW_LENS = [
+  "Find problems that this change adds: wrong logic, missed edge cases, wrong error handling, resource leaks, and effects on callers outside the diff.",
+  "When the change fixes a bug in one place, Grep the other callers of the same code. A caller with the same bug is a finding.",
+  "Read each changed function to its end, and read its callers, before you judge it.",
+].join("\n");
+const EXPLAIN_LENS = [
+  "Explain the change to a reviewer who has not seen it.",
+  "Start with what the change does and why, from ./context/pr.md and ./context/task.md.",
+  "Give the files in the order that makes the change easy to follow: entry points and data first, then callers, then tests.",
+  "In walkthrough, explain the change by theme. Under each theme, name the files and link the key lines.",
+  "Name the parts that need a careful look, and say why. Link each one to its code in risks.",
+  "Ask a question where the intent is not clear.",
+].join("\n");
 
 export const SHIPPED_PROFILES: Profile[] = [
   {
     id: "general",
-    name: "General",
-    note: "Correctness, concurrency, effects outside the diff",
+    name: "Review",
+    note: "Bugs, security, and effects outside the change",
     explain: false,
     maxTurns: 100,
     docs: true,
@@ -69,54 +91,12 @@ export const SHIPPED_PROFILES: Profile[] = [
     alwaysSkills: [],
     mcp: [],
     model: null,
-    effort: null,
-    reviewer: { ...DEFAULT_REVIEWER },
-    prompt: [
-      V2_GENERAL,
-      "When the change fixes a bug in one place, Grep the other callers of the same code. A caller with the same bug is a finding.",
-    ].join("\n"),
-  },
-  {
-    id: "over",
-    name: "Over-engineering",
-    note: "What to delete or simplify",
-    explain: false,
-    maxTurns: 100,
-    docs: true,
-    languageChecks: false,
-    skills: [],
-    alwaysSkills: [],
-    mcp: [],
-    model: null,
-    effort: null,
-    reviewer: { ...DEFAULT_REVIEWER },
-    prompt: [
-      "Find code that the change can delete or simplify.",
-      "Check each new function, class, dependency, and setting in this order. Is it needed? Does the repository have it? Does the standard library have it? Does the platform have it? Does an installed dependency have it?",
-      "Set category to delete, reuse, stdlib, native, yagni, or shrink.",
-      "In body, name what to cut and what replaces it: the function, the platform feature, or the repository path. For shrink, show the shorter form.",
-      "Use minor for a cut and nit for shrink. Use major when the cut removes a dependency or a layer.",
-      "Never propose to cut a security check or input validation at a trust boundary. Also keep error handling that prevents data loss, and small tests.",
-      "Put a defect that you notice into risks, not into findings.",
-      "In summary, give the number of lines that the cuts remove.",
-    ].join("\n"),
-  },
-  {
-    id: "security",
-    name: "Security",
-    note: "Trust boundaries, secrets, unsafe memory",
-    explain: false,
-    maxTurns: 100,
-    docs: true,
-    languageChecks: true,
-    skills: [],
-    alwaysSkills: [],
-    mcp: [],
-    model: null,
-    effort: null,
-    reviewer: { ...DEFAULT_REVIEWER },
-    prompt:
-      "Find security defects: trust boundaries, input validation, injection, secrets in code or logs, authentication and authorization, unsafe memory use, and unsafe defaults.",
+    effort: "high",
+    reviewer: { model: null, effort: "high", mode: "auto" },
+    modules: ["security", "concurrency", "api", "rules", "intent"],
+    volume: "balanced",
+    verifier: { mode: "on", model: null, effort: "medium" },
+    prompt: REVIEW_LENS,
   },
   {
     id: "explain",
@@ -132,15 +112,83 @@ export const SHIPPED_PROFILES: Profile[] = [
     model: null,
     effort: null,
     reviewer: { ...DEFAULT_REVIEWER },
-    prompt:
-      "Explain the change for a reviewer: what it does, why, and which parts need attention. Ask a question where the intent is not clear. Report no findings.",
+    modules: [],
+    volume: "balanced",
+    verifier: { mode: "off", model: null, effort: null },
+    prompt: V4_EXPLAIN,
   },
 ];
+// docs/plans/review-v2/tasks.md WP-X1: the Explain values for the explainResult schema. The current Explain run has no walkthrough
+// field, so the shipped Explain keeps its version 4 values. WP-X1 spreads these into it, bumps PROFILES_VERSION, and adds
+// FORMER[5].explain with the version 4 note, prompt, maxTurns, and effort.
+export const EXPLAIN_V2: Pick<Profile, "note" | "maxTurns" | "effort" | "prompt"> = {
+  note: "A readable walkthrough of the change",
+  maxTurns: 60,
+  effort: "medium",
+  prompt: EXPLAIN_LENS,
+};
+
+// The shipped Over-engineering and Security profiles of PROFILES_VERSION 4. Version 5 retires each one that the user never edited
+// (settings.ts upgradeConfig), and general gets its module. An edited one stays as the user's own profile.
+const v4Profile = (p: Pick<Profile, "id" | "name" | "note" | "prompt" | "languageChecks">): Profile => ({
+  ...p,
+  explain: false,
+  maxTurns: 100,
+  docs: true,
+  skills: [],
+  alwaysSkills: [],
+  mcp: [],
+  model: null,
+  effort: null,
+  reviewer: { ...DEFAULT_REVIEWER },
+  modules: [],
+  volume: "balanced",
+  verifier: { ...DEFAULT_VERIFIER },
+});
+export const RETIRED_PROFILES: Partial<Record<string, Profile>> = {
+  over: v4Profile({
+    id: "over",
+    name: "Over-engineering",
+    note: "What to delete or simplify",
+    languageChecks: false,
+    prompt: [
+      "Find code that the change can delete or simplify.",
+      "Check each new function, class, dependency, and setting in this order. Is it needed? Does the repository have it? Does the standard library have it? Does the platform have it? Does an installed dependency have it?",
+      "Set category to delete, reuse, stdlib, native, yagni, or shrink.",
+      "In body, name what to cut and what replaces it: the function, the platform feature, or the repository path. For shrink, show the shorter form.",
+      "Use minor for a cut and nit for shrink. Use major when the cut removes a dependency or a layer.",
+      "Never propose to cut a security check or input validation at a trust boundary. Also keep error handling that prevents data loss, and small tests.",
+      "Put a defect that you notice into risks, not into findings.",
+      "In summary, give the number of lines that the cuts remove.",
+    ].join("\n"),
+  }),
+  security: v4Profile({
+    id: "security",
+    name: "Security",
+    note: "Trust boundaries, secrets, unsafe memory",
+    languageChecks: true,
+    prompt:
+      "Find security defects: trust boundaries, input validation, injection, secrets in code or logs, authentication and authorization, unsafe memory use, and unsafe defaults.",
+  }),
+};
+// The shipped names before PROFILES_VERSION 5. A run row from before migration 010 has no profile_name and ran with one of them.
+export const FORMER_NAMES: Partial<Record<string, string>> = {
+  general: "General",
+  over: "Over-engineering",
+  security: "Security",
+  explain: "Explain",
+};
+// The module of general that replaces a retired profile.
+export const RETIRED_MODULE: Partial<Record<string, ModuleId>> = { over: "simplify", security: "security" };
 
 // list: at least one profile (profileList).
 export const profileOf = (list: Profile[], id: string): Profile => list.find((p) => p.id === id) ?? (list[0] as Profile);
-const defaultReviewer = (p: Profile) =>
-  p.reviewer.model === DEFAULT_REVIEWER.model && p.reviewer.effort === DEFAULT_REVIEWER.effort && p.reviewer.mode === DEFAULT_REVIEWER.mode;
+// JSON text with sorted object keys, so equal arrays and objects compare equal whatever their key order.
+const canon = (v: unknown) =>
+  JSON.stringify(v, (_k, x: unknown) =>
+    x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x,
+  );
+export const sameValue = (a: unknown, b: unknown) => canon(a) === canon(b);
 // The replacer array fixes the key order. Each later field joins the hash only when it differs from its default, so the revisions of older runs stay valid.
 export const profileRevision = (p: Profile) =>
   createHash("sha256")
@@ -149,8 +197,11 @@ export const profileRevision = (p: Profile) =>
     .update(p.alwaysSkills.length ? `always${JSON.stringify(p.alwaysSkills)}` : "")
     .update(p.mcp.length ? `mcp${JSON.stringify(p.mcp, ["server", "tools"])}` : "")
     .update(p.model !== null || p.effort !== null ? `run${JSON.stringify([p.model, p.effort])}` : "")
-    .update(defaultReviewer(p) ? "" : `reviewer${JSON.stringify(p.reviewer, ["model", "effort", "mode"])}`)
+    .update(sameValue(p.reviewer, DEFAULT_REVIEWER) ? "" : `reviewer${JSON.stringify(p.reviewer, ["model", "effort", "mode"])}`)
     .update(p.languageChecks ? "lang" : "")
+    .update(p.modules.length ? `modules${JSON.stringify(p.modules)}` : "")
+    .update(p.volume === "balanced" ? "" : `volume${p.volume}`)
+    .update(sameValue(p.verifier, DEFAULT_VERIFIER) ? "" : `verifier${JSON.stringify(p.verifier, ["mode", "model", "effort"])}`)
     .digest("hex");
 // A review run of the profile gets the rl-reviewer agent. The caller checks the run kind.
 export const usesReviewer = (p: Profile) => !p.explain && p.reviewer.mode !== "off";
@@ -158,10 +209,15 @@ export const DEFAULT_PROFILE: ProfileId = "general";
 // Fix and reply runs get at least this turn cap, whatever the profile.
 export const MIN_EDIT_TURNS = 100;
 
-// The shipped field values of each former PROFILES_VERSION (src/server/config.ts) that differ from the current ones.
+// The shipped field values of each former PROFILES_VERSION (src/server/config.ts). The value of a field at version v is its entry at v,
+// else its entry at the next later version that has it, else the current value. So an entry holds each field whose value differs from that.
 // A change to a shipped value needs a PROFILES_VERSION bump and an entry with the old value. Without it, saved profiles keep the old value.
 // languageChecks: absent before version 3, so a stored profile of that time parses as false.
-type Former = Partial<Pick<Profile, "prompt" | "maxTurns" | "languageChecks">>;
+// modules, volume, verifier: absent before version 5, so a stored profile of that time parses with their defaults.
+// A retired profile (RETIRED_PROFILES) upgrades to its version 4 values and gets no entry from version 4 on.
+type Former = Partial<
+  Pick<Profile, "name" | "note" | "prompt" | "maxTurns" | "languageChecks" | "effort" | "reviewer" | "modules" | "volume" | "verifier">
+>;
 const FORMER: Record<number, Record<string, Former>> = {
   1: {
     general: { maxTurns: 40, prompt: V2_GENERAL, languageChecks: false },
@@ -170,16 +226,31 @@ const FORMER: Record<number, Record<string, Former>> = {
     explain: { maxTurns: 12 },
   },
   2: { general: { prompt: V2_GENERAL, languageChecks: false }, over: { prompt: V2_OVER }, security: { languageChecks: false } },
+  4: {
+    general: {
+      name: "General",
+      note: "Correctness, concurrency, effects outside the diff",
+      prompt: V4_GENERAL,
+      effort: null,
+      reviewer: { ...DEFAULT_REVIEWER },
+      modules: [],
+      verifier: { ...DEFAULT_VERIFIER },
+    },
+    explain: { verifier: { ...DEFAULT_VERIFIER } },
+  },
 };
+const FORMER_VERSIONS = Object.keys(FORMER)
+  .map(Number)
+  .sort((a, b) => b - a);
 // version: the PROFILES_VERSION of the saved config. A field equal to its shipped value of that version was never edited,
 // so it gets the current shipped value. A field equal to an older shipped value was set back on purpose, so it stays.
 // The version 3 upgrade replaced only whole unedited profiles. A version 3 profile with its version 2 prompt kept all its version 2 fields.
 export function upgradeProfile(p: Profile, version: number): Profile {
-  const shipped = SHIPPED_PROFILES.find((s) => s.id === p.id);
+  const shipped = SHIPPED_PROFILES.find((s) => s.id === p.id) ?? RETIRED_PROFILES[p.id];
   if (!shipped) return p;
   const from = version === 3 && p.prompt === FORMER[2]?.[p.id]?.prompt ? 2 : version;
-  const former = FORMER[from]?.[p.id] ?? {};
-  const unedited = (Object.keys(former) as (keyof Former)[]).filter((k) => p[k] === former[k]);
+  const former: Former = Object.assign({}, ...FORMER_VERSIONS.filter((v) => v >= from).map((v) => FORMER[v]?.[p.id]));
+  const unedited = (Object.keys(former) as (keyof Former)[]).filter((k) => sameValue(p[k], former[k]));
   return { ...p, ...Object.fromEntries(unedited.map((k) => [k, shipped[k]])) };
 }
 

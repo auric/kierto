@@ -24,7 +24,15 @@ import { createJiraSource } from "./context/jira";
 import { ContextError, type ContextSource } from "./context/source";
 import { listPrs } from "./inbox/queries";
 import { log } from "./log";
-import { type Profile, SHIPPED_PROFILES, upgradeProfile } from "./review/catalog";
+import {
+  DEFAULT_PROFILE,
+  type Profile,
+  RETIRED_MODULE,
+  RETIRED_PROFILES,
+  SHIPPED_PROFILES,
+  sameValue,
+  upgradeProfile,
+} from "./review/catalog";
 import { createSecrets, type Secrets } from "./secrets";
 import { openDb } from "./storage/db";
 import {
@@ -53,10 +61,24 @@ const activeRules = (c: Config): TaskRule[] => rulesOf(c).flatMap(({ timedOut, .
 
 const DEFAULT_CHECK_SECONDS = 60;
 const profilesOf = (c: Config | null): Profile[] => c?.profiles ?? SHIPPED_PROFILES;
-const upgradeConfig = (c: Config | null): Config | null =>
-  c?.profiles && c.profilesVersion !== PROFILES_VERSION
-    ? { ...c, profiles: c.profiles.map((p) => upgradeProfile(p, c.profilesVersion ?? 1)) }
-    : c;
+const upgradeConfig = (c: Config | null): Config | null => {
+  if (!c?.profiles || c.profilesVersion === PROFILES_VERSION) return c;
+  const version = c.profilesVersion ?? 1;
+  const profiles = c.profiles.map((p) => upgradeProfile(p, version));
+  return { ...c, profiles: version <= 4 ? retire(profiles) : profiles };
+};
+
+// docs/plans/review-v2/spec.md section 1.2, retire rule: a Security or Over-engineering profile with every field at its version 4
+// value leaves the list. general gets its module while general.modules holds the shipped value. Without general, no profile retires,
+// because the module has no profile to go to.
+function retire(list: Profile[]): Profile[] {
+  const general = list.find((p) => p.id === DEFAULT_PROFILE);
+  const gone = list.filter((p) => sameValue(p, RETIRED_PROFILES[p.id]));
+  if (!general || !gone.length) return list;
+  const shipped = SHIPPED_PROFILES.find((p) => p.id === DEFAULT_PROFILE) as Profile;
+  const add = sameValue(general.modules, shipped.modules) ? gone.flatMap((p) => RETIRED_MODULE[p.id] ?? []) : [];
+  return list.filter((p) => !gone.includes(p)).map((p) => (p === general ? { ...p, modules: [...new Set([...p.modules, ...add])] } : p));
+}
 const checkSecondsOf = (c: Config | null) => c?.checkSeconds ?? DEFAULT_CHECK_SECONDS;
 
 const originOf = (url: string) => new URL(url).origin;

@@ -608,7 +608,7 @@ test("the Fix list: three rows, my own comment unticked; F opens it, the reasons
   await expect(pickRow(page, "Release the lock").getByRole("checkbox")).toBeChecked();
   await expect(pickRow(page, "Take the lock once").getByRole("checkbox")).toBeChecked();
   await expect(pickRow(page, "Note to self").getByRole("checkbox")).not.toBeChecked();
-  await expect(list.locator("#fix-why")).toContainText("Nothing posts. Profile: General.");
+  await expect(list.locator("#fix-why")).toContainText("Nothing posts. Profile: Review.");
 
   // No tick: Propose stays focusable, and the reason is text.
   await pickRow(page, "Release the lock").getByRole("checkbox").uncheck();

@@ -142,6 +142,10 @@ function setClaude(c: ClaudeScenario) {
     fix: c.fix,
     improve: c.improve,
     consult: c.consult,
+    verify: c.verify,
+    explain: c.explain,
+    discuss: c.discuss,
+    bySchema: c.bySchema,
     authMethod: c.login,
   });
 }

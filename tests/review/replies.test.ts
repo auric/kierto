@@ -274,18 +274,18 @@ describe("profile for one run", () => {
       const reply = (body: unknown) => h.json<RunDto & ApiError>(`/api/prs/${h.pr}/reply-run`, { body });
       const refused = (r: { status: number; body: ApiError }) => [r.status, r.body.error];
       expect(refused(await reply({ profile: "nope" }))).toEqual([400, "Unknown review profile."]);
-      expect(refused(await reply({ profile: "Security" }))).toEqual([400, "Unknown review profile."]);
-      expect(refused(await reply({ threads: [], profile: "security" }))).toEqual([400, "Invalid thread list."]);
+      expect(refused(await reply({ profile: "Explain" }))).toEqual([400, "Unknown review profile."]);
+      expect(refused(await reply({ threads: [], profile: "explain" }))).toEqual([400, "Invalid thread list."]);
       expect(h.runCalls()).toEqual([]);
 
-      const r = await reply({ threads: [101], profile: "security" });
+      const r = await reply({ threads: [101], profile: "explain" });
       expect(r.status).toBe(202);
-      expect(r.body).toMatchObject({ kind: "reply", profile: "security", profileName: "Security" });
+      expect(r.body).toMatchObject({ kind: "reply", profile: "explain", profileName: "Explain" });
       expect((await h.finish(r.body.id)).run.status).toBe("completed");
       expect((await h.json<{ profile: string }>(`/api/prs/${h.pr}/brief`)).body.profile).toBe("general");
       // The same threads without a profile are another run, with the brief profile.
       const plain = await h.run([101]);
-      expect(plain.run).toMatchObject({ profile: "general", profileName: "General" });
+      expect(plain.run).toMatchObject({ profile: "general", profileName: "Review" });
 
       const review = (profile: string) => h.json<RunDto & ApiError>(`/api/prs/${h.pr}/review?profile=${profile}`, { method: "POST" });
       expect(refused(await review("nope"))).toEqual([400, "Unknown review profile."]);

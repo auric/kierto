@@ -64,6 +64,10 @@ export type Draft = {
   model: string;
   effort: Effort | "";
   reviewer: { model: string; effort: Effort | ""; mode: ReviewerMode };
+  // No editor control yet. The editor keeps the saved values.
+  modules: ProfileInput["modules"];
+  volume: ProfileInput["volume"];
+  verifier: ProfileInput["verifier"];
 };
 
 let lastKey = 0;
@@ -119,6 +123,9 @@ export function toProfiles(list: Draft[]): ProfileInput[] {
       model: d.model.trim() || null,
       effort: d.effort || null,
       reviewer: { model: d.reviewer.model.trim() || null, effort: d.reviewer.effort || null, mode: d.reviewer.mode },
+      modules: d.modules,
+      volume: d.volume,
+      verifier: d.verifier,
     };
   });
 }
@@ -142,6 +149,9 @@ const KEYS = [
   "effort",
   "reviewer",
   "mode",
+  "modules",
+  "volume",
+  "verifier",
 ];
 export const sameProfiles = (a: ProfileInput[], b: ProfileInput[]) => JSON.stringify(a, KEYS) === JSON.stringify(b, KEYS);
 
@@ -190,6 +200,9 @@ const newProfile = (id: string): ProfileInput => ({
   model: null,
   effort: null,
   reviewer: { model: null, effort: null, mode: "auto" },
+  modules: [],
+  volume: "balanced",
+  verifier: { mode: "on", model: null, effort: null },
 });
 
 // The list that an autosave sends. A field with a problem keeps its saved value, so the other fields still save.

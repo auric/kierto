@@ -11,12 +11,19 @@ export const MAX_FINDINGS = 100;
 
 const lineNo = z.number().int().min(1);
 
-export const finding = z.object({
+// Raise it with each change of the review agent prompts. A run row with prompt_version NULL reads as "1".
+export const REVIEW_PROMPT_VERSION = "1";
+
+const place = {
   path: z.string().describe("File path relative to the repository root, with / separators."),
   side: z.enum(["new", "old"]).describe("new: the line exists at the head commit. old: a removed line, numbered at the base commit."),
   line: lineNo.describe("First line of the range on that side."),
   lineEnd: lineNo.nullable().describe("Last line of the range, or null for one line."),
   anchorText: z.string().describe("Code copied verbatim from the lines line..lineEnd. It anchors the finding."),
+};
+
+export const finding = z.object({
+  ...place,
   severity: z.enum(severities),
   category: z.string(),
   body: z.string(),
@@ -24,6 +31,20 @@ export const finding = z.object({
   evidenceStatus: z.enum(evidenceStatuses),
   confidence: z.enum(confidences),
   agent: z.string().nullable().describe("Name of the subagent that found it, or null for the main agent."),
+  // docs/plans/review-v2/spec.md section 1.5. The defaults keep results stored before these keys valid. --json-schema still lists them as required.
+  title: z.string().max(200).default("").describe("The problem in one line of 12 words or fewer."),
+  trigger: z
+    .string()
+    .max(2000)
+    .default("")
+    .describe("A concrete case: the input or state, the path through the code, and the wrong result. Empty when you cannot name one."),
+  cause: z
+    .object(place)
+    .nullable()
+    .default(null)
+    .describe("The changed line that adds the problem, when the anchor is on unchanged code. null when the anchor is on a changed line."),
+  rule: z.string().max(2000).default("").describe("The exact sentence of the project rule, for a rule finding. Else empty."),
+  module: z.string().max(40).default("core").describe("core, or the ID of the check section that found it."),
 });
 
 export const question = z.object({ text: z.string(), why: z.string() });
@@ -92,6 +113,104 @@ export type ReviewResult = z.infer<typeof reviewResult>;
 // An Explain run gets no answered key: it judges no answer (docs/plans/thread-outcome.md section 9).
 export const reviewJsonSchema = (explain = false): Record<string, unknown> =>
   z.toJSONSchema(explain ? reviewResult.omit({ answered: true }) : reviewResult, { target: "draft-07" });
+
+// ---------- Verify phase (docs/plans/review-v2/spec.md sections 1.6 to 1.8) ----------
+
+// The name verdicts belongs to the re-review verdicts below.
+export const verifyVerdicts = ["confirmed", "refuted", "unsure", "question", "duplicate"] as const;
+export type VerifyVerdictName = (typeof verifyVerdicts)[number];
+
+export const verifyVerdict = z.object({
+  candidate: lineNo.describe("A candidate number from ./context/candidates.md."),
+  verdict: z.enum(verifyVerdicts),
+  severity: z.enum(severities).describe("The severity after your check."),
+  reason: z.string().max(1000).describe("One or two sentences: why this verdict, with path:line."),
+  evidence: z.string().max(1000).describe("path:line of the line that confirms or refutes it."),
+  // The defaults keep entries without these keys valid. --json-schema still lists them as required.
+  duplicateOf: lineNo.nullable().default(null).describe("For duplicate: the candidate that it repeats. Else null."),
+  question: z.string().max(1000).default("").describe("For question: the question for the author. Else empty."),
+});
+
+export const verifyResult = z.object({ verdicts: z.array(verifyVerdict).max(MAX_FINDINGS), coverage });
+
+export type VerifyVerdict = z.infer<typeof verifyVerdict>;
+export type VerifyResult = z.infer<typeof verifyResult>;
+
+export const verifyJsonSchema = (): Record<string, unknown> => z.toJSONSchema(verifyResult, { target: "draft-07" });
+
+export type Severity = (typeof severities)[number];
+// The check state of a finding item. It comes from the verdict at read time (spec.md section 1.7).
+export type Check = "checked" | "unsure" | "unchecked";
+// payload.verify of a finding item with a verdict. duplicateOf: an item ID. by: the agent that gave the verdict.
+export type VerifyMark = Omit<VerifyVerdict, "candidate" | "question" | "duplicateOf"> & { duplicateOf: number | null; by: string };
+// A finding item payload. finderSeverity: set when the verdict changed the severity. discardedBy "verify": a refuted or duplicate item.
+export type FindingPayload = AnchoredFinding & { verify?: VerifyMark; finderSeverity?: Severity; discardedBy?: "verify" };
+
+// ---------- Discuss a finding (docs/plans/review-v2/spec.md section 2) ----------
+
+export const MAX_DISCUSS_MESSAGES = 20;
+export const MAX_DISCUSS_ANSWER = 8000;
+export const discussVerdicts = ["upheld", "revised", "withdrawn"] as const;
+export type DiscussVerdict = (typeof discussVerdicts)[number];
+
+export const discussResult = z.object({
+  answer: z.string().max(MAX_DISCUSS_ANSWER).describe("The answer as short Markdown."),
+  verdict: z.enum(discussVerdicts),
+  reason: z.string().max(500).describe("One line: why this verdict."),
+  // The defaults keep results without these keys valid. --json-schema still lists them as required.
+  revision: z
+    .object({ severity: z.enum(severities), title: z.string().max(200), body: z.string().max(4000) })
+    .nullable()
+    .default(null)
+    .describe("For revised: the new finding text. Else null."),
+  reply: z.string().max(4000).default("").describe("For a posted finding: a reply to the thread in the user's voice, or empty."),
+  coverage,
+});
+
+export type DiscussResult = z.infer<typeof discussResult>;
+
+export const discussJsonSchema = (): Record<string, unknown> => z.toJSONSchema(discussResult, { target: "draft-07" });
+
+// ---------- Explain this PR (docs/plans/review-v2/spec.md section 3) ----------
+
+export const MAX_WALKTHROUGH = 60_000;
+export const MAX_DIAGRAMS = 3;
+export const MAX_DIAGRAM_CHARS = 20_000;
+export const fileRoles = ["core", "supporting", "tests", "config", "generated", "docs"] as const;
+export type FileRole = (typeof fileRoles)[number];
+
+export const explainResult = z.object({
+  summary: z.string().max(300).describe("One line: what the change does."),
+  walkthrough: z.string().max(MAX_WALKTHROUGH).describe("The walkthrough as Markdown. Links into the change use diff: links."),
+  order: z
+    .array(z.object({ path: z.string(), why: z.string().max(300) }))
+    .max(60)
+    .describe("The files in the order to read them."),
+  files: z.array(z.object({ path: z.string(), role: z.enum(fileRoles), summary: z.string().max(600) })).max(300),
+  risks: z
+    .array(
+      z.object({
+        text: z.string().max(600),
+        path: z.string().nullable(),
+        side: z.enum(["new", "old"]),
+        line: lineNo.nullable(),
+        lineEnd: lineNo.nullable(),
+        anchorText: z.string(),
+      }),
+    )
+    .max(30),
+  // The default keeps results without this key valid. --json-schema still lists it as required.
+  glossary: z
+    .array(z.object({ term: z.string().max(80), meaning: z.string().max(300) }))
+    .max(40)
+    .default([]),
+  questions: z.array(question).max(20),
+  coverage,
+});
+
+export type ExplainResult = z.infer<typeof explainResult>;
+
+export const explainJsonSchema = (): Record<string, unknown> => z.toJSONSchema(explainResult, { target: "draft-07" });
 
 // ---------- Reply drafts (plan replies.md WP17) ----------
 
@@ -363,12 +482,16 @@ export type Anchor = {
   excerpt: ExcerptLine[];
 };
 
-export type AnchoredFinding = Finding & { anchor: Anchor };
+// A finding as review_item.payload_json and summary_json.dropped store it. Rows stored before review v2 lack the v2 keys.
+type V2Keys = "title" | "trigger" | "cause" | "rule" | "module";
+export type StoredFinding = Omit<Finding, V2Keys> & Partial<Pick<Finding, V2Keys>>;
+
+export type AnchoredFinding = StoredFinding & { anchor: Anchor };
 
 // path: absolute, "..", or outside the snapshot. file: no such file on that side. match: the quote is not in the file.
 // size: the file or the range is above the scan limits.
 export type DropReason = "path" | "file" | "match" | "size";
-export type DroppedFinding = Finding & { reason: DropReason };
+export type DroppedFinding = StoredFinding & { reason: DropReason };
 
 export type ValidatedResult = Omit<ReviewResult, "findings"> & { findings: AnchoredFinding[]; dropped: DroppedFinding[] };
 

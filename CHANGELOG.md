@@ -15,6 +15,8 @@
 
 ### Reviews
 
+- The "General" profile is now named "Review". It has a new prompt and runs at high effort. Its reviewer agents also run at high effort.
+- An update removes the shipped Security and Over-engineering profiles only when you never edited them. An edited one stays as your own profile.
 - A review and "Review changes since" now read the answers to the questions that you posted. Each answered question gets one outcome.
 - An answer that settles the question gets a reply draft, such as "Thanks, clear.", with "Resolve after posting" proposed. The box is ticked on threads that you started.
 - A partial or unclear answer gets a reply draft with the next question. An answer that shows a real problem gets a new finding and a reply draft that points to it.

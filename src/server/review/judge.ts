@@ -7,7 +7,6 @@ import { MAX_NOTE, type RunSummary } from "../../shared/dto";
 import {
   type AnchoredFinding,
   askResult,
-  type Finding,
   type FixNote,
   type FixWhy,
   fixResult,
@@ -17,6 +16,7 @@ import {
   replyResult,
   rereviewResult,
   reviewResult,
+  type StoredFinding,
 } from "../../shared/review";
 import type { RunErrorKind, RunStatus } from "../../shared/run-log";
 import type { Profile } from "./catalog";
@@ -158,7 +158,7 @@ function ended(raw: string, o: RunOutcome, result: NonNullable<Ending["result"]>
 }
 
 // Reads the finding files from the cache clone, never from the sanitized worktree. The lookup matches validate().
-async function readBlobs(ws: Workspace, findings: Finding[]) {
+async function readBlobs(ws: Workspace, findings: StoredFinding[]) {
   const byNew = new Map<string, DiffFile>();
   const byOld = new Map<string, DiffFile>();
   for (const f of parseDiff(ws.diff)) {
@@ -168,7 +168,7 @@ async function readBlobs(ws: Workspace, findings: Finding[]) {
   const newFiles = new Map<string, string>();
   const oldFiles = new Map<string, string>();
   const big = new Set<string>();
-  const blobOf = (f: Finding) => {
+  const blobOf = (f: StoredFinding) => {
     const p = repoPath(f.path);
     if (p === null) return null;
     const file = byNew.get(p) ?? byOld.get(p);
@@ -190,7 +190,7 @@ async function readBlobs(ws: Workspace, findings: Finding[]) {
       // No such file on that side. The validator drops the finding with reason "file".
     }
   }
-  const oversized = (f: Finding) => {
+  const oversized = (f: StoredFinding) => {
     const b = blobOf(f);
     return b !== null && big.has(b.object);
   };

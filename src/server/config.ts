@@ -47,7 +47,9 @@ export type Config = z.infer<typeof config>;
 // Version 2: the shipped turn caps went from 40 and 12 to 100 and 50.
 // Version 3: General and Security got language checks. General and Over-engineering got new prompts.
 // Version 4: no shipped value changed. The upgrade goes field by field, so profiles with other edits also get the version 3 values.
-export const PROFILES_VERSION = 4;
+// Version 5: review v2 (docs/plans/review-v2/spec.md section 1.2). General became Review with modules, a volume, a verify phase, and
+// efforts. Explain got a new prompt, effort, and turn cap. Unedited Security and Over-engineering profiles retire.
+export const PROFILES_VERSION = 5;
 
 export function dataDir(): string {
   const env = process.env;

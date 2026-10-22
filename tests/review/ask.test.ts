@@ -271,9 +271,9 @@ describe("ask runs", () => {
       expect(refused(await ask("nope"))).toEqual([400, "Unknown review profile."]);
       expect(refused(await ask("a b"))).toEqual([400, "Unknown review profile."]);
       expect(h.runCalls()).toEqual([]);
-      const r = await ask("security");
+      const r = await ask("explain");
       expect(r.status).toBe(202);
-      expect(r.body).toMatchObject({ kind: "ask", profile: "security", profileName: "Security" });
+      expect(r.body).toMatchObject({ kind: "ask", profile: "explain", profileName: "Explain" });
       await h.finish(r.body.id);
     },
     SLOW,

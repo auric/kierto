@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 import { describe, expect, test } from "bun:test";
-import { SEVERITY_RULES, SHIPPED_PROFILES } from "../../src/server/review/catalog";
+import { RETIRED_PROFILES, SEVERITY_RULES } from "../../src/server/review/catalog";
 import { parseDiff } from "../../src/server/review/diffmap";
 import { CHECKLISTS, LANGUAGE_INTRO, LANGUAGES, languageLines, languagesOf, withLanguages } from "../../src/server/review/languages";
 
@@ -87,7 +87,8 @@ describe("checklist text", () => {
   });
 
   test("each sentence of the items, the intro, the severity rules, and the Over-engineering task has at most 20 words", () => {
-    const over = SHIPPED_PROFILES.find((p) => p.id === "over")?.prompt ?? "";
+    // The Over-engineering task stays in RETIRED_PROFILES for the simplify module (docs/plans/review-v2/spec.md section 1.3).
+    const over = RETIRED_PROFILES.over?.prompt ?? "";
     expect(over).toContain("Set category to delete, reuse, stdlib, native, yagni, or shrink.");
     // The category before the colon and the level in brackets are tags, not words of the sentence.
     const prose = items.map((i) => i.replace(/^[a-z-]+: /, "").replace(/ \[\w+\]$/, ""));

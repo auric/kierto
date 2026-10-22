@@ -11,7 +11,6 @@ import { buildRepo, FIXTURE_SUFFIX, INSTRUCTION_FILE, loadCases } from "../../sc
 import { compareText } from "../../scripts/eval/compare";
 import { DEFAULT_MODEL_WARNING, parseOptions, WARNING } from "../../scripts/eval/run";
 import { type EvalResult, score } from "../../scripts/eval/score";
-import { SHIPPED_PROFILES } from "../../src/server/review/catalog";
 import { git } from "../../src/server/review/git";
 import { readRecords } from "../support/fake-claude";
 import { claudeStream } from "../support/review-fixture";
@@ -91,13 +90,6 @@ describe("eval harness without --real (AC-M2)", () => {
     const r = await bun([RUN, "--real", "--runner", process.execPath, FAKE, "none.json"]);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("Pass --real or --runner, not both.");
-  });
-
-  // Prompt version 1 profiles have no modules field. spec.md section 1.2 adds it, and then this case cannot occur.
-  test.if(!("modules" in (SHIPPED_PROFILES[0] ?? {})))("refuses a profile field that this app version does not have", async () => {
-    const r = await bun([RUN, "--modules", "security", "--runner", process.execPath, FAKE, "none.json"]);
-    expect(r.code).toBe(2);
-    expect(r.stderr).toContain("no profile field modules");
   });
 });
 
@@ -219,8 +211,8 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       expect(files).toHaveLength(1);
       const file = join(out, files[0] as string);
       const result = JSON.parse(readFileSync(file, "utf8")) as EvalResult;
-      expect(result).toMatchObject({ format: 1, promptVersion: "1", runner: "fake", repeat: 1, volume: null });
-      expect(result.requested).toEqual({ model: "default", effort: "default" });
+      expect(result).toMatchObject({ format: 1, promptVersion: "1", runner: "fake", repeat: 1, volume: "balanced" });
+      expect(result.requested).toEqual({ model: "default", effort: "high" });
       expect(r.stdout).toContain(DEFAULT_MODEL_WARNING);
       expect(result.cliVersion).toContain("2.1.295");
       expect(result.profile).toMatchObject({ id: "general" });

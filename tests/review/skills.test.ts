@@ -185,10 +185,25 @@ describe("skill prompts and profiles", () => {
 
   test("a saved profile without skills reads as no skills and keeps its revision", () => {
     const dir = temp("cfg");
-    const { skills, languageChecks: _lang, ...old } = { ...general, prompt: "Mine." };
+    // A profile as a config before PROFILES_VERSION 5 stored it: no modules, volume, or verifier.
+    const {
+      skills,
+      languageChecks: _lang,
+      modules: _m,
+      volume: _v,
+      verifier: _r,
+      ...old
+    } = { ...general, prompt: "Mine.", effort: null, reviewer: { model: null, effort: null, mode: "auto" as const } };
     json(join(dir, "config.json"), { baseUrl: "https://example.test", userSlug: "me", notifications: false, profiles: [old] });
     const read = readConfig(dir)?.profiles?.[0];
-    expect(read).toEqual({ ...old, skills: [], languageChecks: false });
+    expect(read).toEqual({
+      ...old,
+      skills: [],
+      languageChecks: false,
+      modules: [],
+      volume: "balanced",
+      verifier: { mode: "on", model: null, effort: null },
+    });
     const before = createHash("sha256")
       .update(JSON.stringify(old, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
       .digest("hex");
@@ -266,7 +281,20 @@ describe("skill index (more than SKILL_INDEX_AFTER skills)", () => {
 
   test("a saved profile without the run setup reads as the defaults and keeps its revision", () => {
     const dir = temp("cfg-setup");
-    const { model, effort, reviewer, languageChecks: _lang, ...old } = { ...general, prompt: "Mine.", skills: ["x"] };
+    const {
+      model,
+      effort,
+      reviewer,
+      languageChecks: _lang,
+      modules: _m,
+      volume: _v,
+      verifier: _r,
+      ...old
+    } = {
+      ...general,
+      prompt: "Mine.",
+      skills: ["x"],
+    };
     json(join(dir, "config.json"), { baseUrl: "https://example.test", userSlug: "me", notifications: false, profiles: [old] });
     const read = readConfig(dir)?.profiles?.[0];
     expect(read).toEqual({
@@ -275,6 +303,9 @@ describe("skill index (more than SKILL_INDEX_AFTER skills)", () => {
       effort: null,
       reviewer: { model: null, effort: null, mode: "auto" },
       languageChecks: false,
+      modules: [],
+      volume: "balanced",
+      verifier: { mode: "on", model: null, effort: null },
     });
     const before = createHash("sha256")
       .update(JSON.stringify(old, ["id", "name", "note", "prompt", "explain", "docs", "maxTurns"]))
@@ -352,7 +383,13 @@ describe("always-use skills", () => {
 
   test("a saved profile without always skills reads as none and keeps its revision; a mark changes it", () => {
     const dir = temp("cfg-always");
-    const { alwaysSkills: _a, ...old } = { ...general, prompt: "Mine.", skills: ["x"] };
+    const {
+      alwaysSkills: _a,
+      modules: _m,
+      volume: _v,
+      verifier: _r,
+      ...old
+    } = { ...general, prompt: "Mine.", skills: ["x"], effort: null, reviewer: { model: null, effort: null, mode: "auto" as const } };
     json(join(dir, "config.json"), { baseUrl: "https://example.test", userSlug: "me", notifications: false, profiles: [old] });
     const read = readConfig(dir)?.profiles?.[0] as typeof general;
     expect(read.alwaysSkills).toEqual([]);

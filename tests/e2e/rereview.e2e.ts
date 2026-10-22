@@ -81,7 +81,7 @@ test("a push after a review: c and the button open the brief; Start reviews the 
   await page.keyboard.press("c");
   await expect(brief.getByRole("heading", { name: `Review changes since ${head}` })).toBeVisible();
   await expect(brief).toContainText(`after ${head}. The open drafts carry over and get a new check.`);
-  await expect(brief).toContainText("Run setup: default model, default effort. Reviewer agents: Auto.");
+  await expect(brief).toContainText("Run setup: default model, high effort. Reviewer agents: Auto.");
   await expect(page.getByLabel("Your note")).toBeFocused();
   await expect(page.getByLabel("Your note")).toHaveValue("ABC-1: check the lock scope.");
   await brief.getByRole("button", { name: "Cancel" }).click();
@@ -95,7 +95,7 @@ test("a push after a review: c and the button open the brief; Start reviews the 
   const go = brief.getByRole("button", { name: "Review changes" });
   await expect(go).toHaveAttribute("aria-disabled", "true");
   await expect(go).toHaveAccessibleDescription("The Explain profile gives no findings. Pick a review profile first.");
-  await brief.getByRole("radio", { name: /^General/ }).check();
+  await brief.getByRole("radio", { name: /^Review/ }).check();
   await expect(go).not.toHaveAttribute("aria-disabled", "true");
 
   // A cancelled re-review keeps the drafts and the offer of the review before it.

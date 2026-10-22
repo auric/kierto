@@ -30,13 +30,13 @@ import { runnerDefaults } from "../../src/server/review/defaults";
 import { EFFORTS } from "../../src/shared/dto";
 import {
   coverage,
+  discussResult,
+  explainResult,
   fixJsonSchema,
   fixResult,
-  MAX_FINDINGS,
-  question,
   replyJsonSchema,
   replyResult,
-  severities,
+  verifyResult,
 } from "../../src/shared/review";
 
 const ROOT = resolve(import.meta.dir, "../..");
@@ -1761,67 +1761,8 @@ async function b16() {
 }
 
 // ---------- B17 to B20: review v2 and task runs (docs/plans/review-v2/tasks.md WP-G0, docs/gate-v2.md) ----------
-// shortcut: gate copies of the spec.md schemas (sections 1.6, 2.4, 3.3, 6.5). Use the src/shared exports after WP-R1 and WP-B0.
-const lineNo = z.number().int().min(1);
-const verifyResult = z.object({
-  verdicts: z
-    .array(
-      z.object({
-        candidate: z.number().int().min(1),
-        verdict: z.enum(["confirmed", "refuted", "unsure", "question", "duplicate"]),
-        severity: z.enum(severities),
-        reason: z.string().max(1000),
-        evidence: z.string().max(1000),
-        duplicateOf: z.number().int().min(1).nullable().default(null),
-        question: z.string().max(1000).default(""),
-      }),
-    )
-    .max(MAX_FINDINGS),
-  coverage,
-});
-const explainResult = z.object({
-  summary: z.string().max(300),
-  walkthrough: z.string().max(60_000),
-  order: z.array(z.object({ path: z.string(), why: z.string().max(300) })).max(60),
-  files: z
-    .array(
-      z.object({
-        path: z.string(),
-        role: z.enum(["core", "supporting", "tests", "config", "generated", "docs"]),
-        summary: z.string().max(600),
-      }),
-    )
-    .max(300),
-  risks: z
-    .array(
-      z.object({
-        text: z.string().max(600),
-        path: z.string().nullable(),
-        side: z.enum(["new", "old"]),
-        line: lineNo.nullable(),
-        lineEnd: lineNo.nullable(),
-        anchorText: z.string(),
-      }),
-    )
-    .max(30),
-  glossary: z
-    .array(z.object({ term: z.string().max(80), meaning: z.string().max(300) }))
-    .max(40)
-    .default([]),
-  questions: z.array(question).max(20),
-  coverage,
-});
-const discussResult = z.object({
-  answer: z.string().max(8000),
-  verdict: z.enum(["upheld", "revised", "withdrawn"]),
-  reason: z.string().max(500),
-  revision: z
-    .object({ severity: z.enum(severities), title: z.string().max(200), body: z.string().max(4000) })
-    .nullable()
-    .default(null),
-  reply: z.string().max(4000).default(""),
-  coverage,
-});
+// shortcut: gate copies of the spec.md section 6.5 schemas. Use the src/shared/task.ts exports after WP-B0.
+// B18 and B20 use the shipped verify, explain, and discuss schemas of src/shared/review.ts.
 const option = z.object({ label: z.string().max(120), detail: z.string().max(300) });
 const interviewResult = z.object({
   done: z.boolean(),

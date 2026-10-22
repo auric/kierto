@@ -8,7 +8,7 @@ import type { DiffRowDto, FixEditDto, ReviewItemDto, RunDto, RunKind, RunSummary
 import type { AnchoredFinding, Question, ReplyPayload } from "../../shared/review";
 import type { RunErrorKind, RunStatus } from "../../shared/run-log";
 import type { Comment, ExcerptLine, PullRequest } from "../../shared/types";
-import { SHIPPED_PROFILES } from "./catalog";
+import { FORMER_NAMES } from "./catalog";
 import { runEffort } from "./defaults";
 
 export type PrRow = {
@@ -317,7 +317,7 @@ export function toRunDto(r: RunRow, resolve = effortsNow()): RunDto {
     pr: r.pr,
     kind: r.kind,
     profile: r.profile,
-    profileName: r.profile_name ?? SHIPPED_PROFILES.find((p) => p.id === r.profile)?.name ?? r.profile,
+    profileName: r.profile_name ?? FORMER_NAMES[r.profile] ?? r.profile,
     explain: r.explain === null ? null : r.explain === 1,
     note: r.note,
     status: r.status,

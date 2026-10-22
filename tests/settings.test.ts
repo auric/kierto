@@ -9,10 +9,10 @@ import { createApp } from "../src/server/app";
 import { dbPath, PROFILES_VERSION, readConfig } from "../src/server/config";
 import { createLive } from "../src/server/live";
 import { log } from "../src/server/log";
-import { type Profile, SHIPPED_PROFILES } from "../src/server/review/catalog";
+import { EXPLAIN_V2, type Profile, profileRevision, RETIRED_PROFILES, SHIPPED_PROFILES } from "../src/server/review/catalog";
 import { createSecrets, type SecretBackend } from "../src/server/secrets";
 import { createSettings, type Settings } from "../src/server/settings";
-import type { SettingsDto } from "../src/shared/dto";
+import { profileInput, type SettingsDto } from "../src/shared/dto";
 import { FAKE_TOKEN, type FakeBitbucket, fixture, key, startFakeBitbucket, TEST_CA_FILE } from "./support/fake-bitbucket";
 import { type FakeJira, JIRA_TOKEN, startFakeJira } from "./support/fake-jira";
 import { DASHBOARD_PATH } from "./support/scenarios";
@@ -243,14 +243,14 @@ describe("settings API", () => {
     expect((await setup().get()).askAttachments).toBe(true);
   });
 
-  test("GET gives the four shipped profiles with their full prompts", async () => {
+  test("GET gives the two shipped profiles with their full prompts", async () => {
     const { profiles } = await setup().get();
-    expect(profiles.map((p) => p.id)).toEqual(["general", "over", "security", "explain"]);
-    expect(profiles[0]?.prompt).toStartWith("Find defects in the change");
+    expect(profiles.map((p) => p.id)).toEqual(["general", "explain"]);
+    expect(profiles[0]?.prompt).toStartWith("Find problems that this change adds");
     expect(profiles).toEqual(SHIPPED_PROFILES);
   });
 
-  const custom = {
+  const custom: Profile = {
     id: "perf",
     name: "Performance",
     note: "Hot paths",
@@ -264,7 +264,10 @@ describe("settings API", () => {
     mcp: [],
     model: null,
     effort: null,
-    reviewer: { model: null, effort: null, mode: "auto" as const },
+    reviewer: { model: null, effort: null, mode: "auto" },
+    modules: [],
+    volume: "balanced",
+    verifier: { mode: "on", model: null, effort: null },
   };
 
   test("saved profiles and checkSeconds persist offline, with no secret in config.json", async () => {
@@ -361,17 +364,44 @@ describe("settings API", () => {
     }
   });
 
-  // The shipped profiles before PROFILES_VERSION 3, as the configs of that time stored them: without languageChecks.
-  const [general, over, security, explain] = SHIPPED_PROFILES as [Profile, Profile, Profile, Profile];
+  // The shipped profiles of PROFILES_VERSION 5, and the version 4 Over-engineering and Security profiles that version 5 retires.
+  const [general, explain] = SHIPPED_PROFILES as [Profile, Profile];
+  const over = RETIRED_PROFILES.over as Profile;
+  const security = RETIRED_PROFILES.security as Profile;
   const OLD_GENERAL =
     "Find defects in the change: wrong logic, missed edge cases, races and lock order, resource leaks, error handling, and effects on callers outside the diff.";
   const OLD_OVER =
     "Find code that the change can delete or simplify: abstractions with one use, code that the standard library or the platform already gives, unneeded dependencies, settings for fixed values, and dead code.";
-  const stored = (p: Profile, o: Partial<Profile> = {}) => {
+  const V4_GENERAL = `${OLD_GENERAL}\nWhen the change fixes a bug in one place, Grep the other callers of the same code. A caller with the same bug is a finding.`;
+  const V4_EXPLAIN =
+    "Explain the change for a reviewer: what it does, why, and which parts need attention. Ask a question where the intent is not clear. Report no findings.";
+  // A profile as a config stored it before version 5: without modules, volume, and verifier.
+  const v4stored = (p: Profile, o: Partial<Profile> = {}) => {
+    const { modules: _m, volume: _v, verifier: _r, ...rest } = { ...p, ...o };
+    return rest;
+  };
+  const v4 = {
+    general: v4stored(general, {
+      name: "General",
+      note: "Correctness, concurrency, effects outside the diff",
+      prompt: V4_GENERAL,
+      effort: null,
+      reviewer: { model: null, effort: null, mode: "auto" },
+    }),
+    explain: v4stored(explain, { note: "Summary and questions only, at lower cost", prompt: V4_EXPLAIN, effort: null, maxTurns: 50 }),
+    over: v4stored(over),
+    security: v4stored(security),
+  };
+  // A profile as a config stored it before version 3: also without languageChecks.
+  const stored = (p: ReturnType<typeof v4stored>, o: Partial<Profile> = {}) => {
     const { languageChecks: _, ...rest } = { ...p, ...o };
     return rest;
   };
-  const v2 = { general: stored(general, { prompt: OLD_GENERAL }), over: stored(over, { prompt: OLD_OVER }), security: stored(security) };
+  const v2 = {
+    general: stored(v4.general, { prompt: OLD_GENERAL }),
+    over: stored(v4.over, { prompt: OLD_OVER }),
+    security: stored(v4.security),
+  };
   const v1 = { general: { ...v2.general, maxTurns: 40 }, over: { ...v2.over, maxTurns: 40 }, security: { ...v2.security, maxTurns: 40 } };
   // A version 3 config stores every field. The version 3 upgrade skipped each profile with an edit, so it kept its version 2 values.
   const v3 = {
@@ -388,6 +418,8 @@ describe("settings API", () => {
     effort: "high" as const,
     reviewer: { model: "sonnet", effort: "low" as const, mode: "always" as const },
   };
+  // general after an unedited Over-engineering profile retired: the shipped modules and simplify.
+  const withSimplify = { ...general, modules: [...general.modules, "simplify" as const] };
   const oldConfig = async () => {
     const s = setup();
     expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
@@ -409,29 +441,30 @@ describe("settings API", () => {
 
   test("a config from before PROFILES_VERSION jumps to the current shipped values field by field and keeps edited fields", async () => {
     const { file, write } = await oldConfig();
-    write(undefined, [v1.general, { ...v1.over, note: "My note" }, { ...v1.security, maxTurns: 30 }, { ...explain, maxTurns: 12 }, custom]);
+    const v1explain = { ...v4.explain, maxTurns: 12 };
+    write(undefined, [v1.general, { ...v1.over, note: "My note" }, { ...v1.security, maxTurns: 30 }, v1explain, stored(v4stored(custom))]);
     const upgraded = [general, { ...over, note: "My note" }, { ...security, maxTurns: 30 }, explain, custom];
     const again = setup();
     expect((await again.get()).profiles).toEqual(upgraded);
     // A save stamps the version, so a cap of 40 set after the update stays.
     expect((await again.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
-    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ profiles: upgraded, profilesVersion: 4 });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ profiles: upgraded, profilesVersion: 5 });
     const oldGeneral = { ...general, maxTurns: 40 };
     expect((await again.put({ baseUrl: fake.url, profiles: [oldGeneral] })).status).toBe(200);
     again.settings.close();
     expect((await setup().get()).profiles).toEqual([oldGeneral]);
   });
 
-  test("a version 2 config gets language checks and the new prompts field by field", async () => {
+  test("a version 2 config gets the new values field by field, and its unedited Security and Over-engineering profiles retire", async () => {
     const { write, load } = await oldConfig();
-    write(2, [v2.general, v2.over, v2.security, explain, custom]);
-    expect(await load()).toEqual([general, over, security, explain, custom]);
-    expect(general.languageChecks && security.languageChecks).toBe(true);
-    expect(general.prompt).not.toBe(OLD_GENERAL);
-    expect(over.prompt).not.toBe(OLD_OVER);
+    write(2, [v2.general, v2.over, v2.security, v4.explain, stored(v4stored(custom))]);
+    expect(await load()).toEqual([withSimplify, explain, custom]);
     // Version 2 upgraded the version 1 caps. A cap of 40 in a version 2 config was set back on purpose. The other fields still upgrade.
-    write(2, [v1.general, over, { ...v2.security, note: "Mine" }]);
-    expect(await load()).toEqual([{ ...general, maxTurns: 40 }, over, { ...security, note: "Mine" }]);
+    write(2, [v1.general, v4.over, { ...v2.security, note: "Mine" }]);
+    expect(await load()).toEqual([
+      { ...withSimplify, maxTurns: 40 },
+      { ...security, note: "Mine" },
+    ]);
   });
 
   test("a profile with run setup edits and the old shipped prompt gets the new prompt and language checks, and keeps its setup", async () => {
@@ -460,30 +493,39 @@ describe("settings API", () => {
     ]);
     // In a version 3 config, an edited prompt does not show whether the user switched the checks off.
     write(3, [{ ...v3.general, prompt: "My prompt" }]);
-    expect(await load()).toEqual([{ ...v3.general, prompt: "My prompt" }]);
+    expect(await load()).toEqual([{ ...general, prompt: "My prompt", languageChecks: false }]);
   });
 
   test("a version 3 config upgrades the profiles that the version 3 upgrade skipped", async () => {
-    expect(PROFILES_VERSION).toBe(4);
     const { write, load } = await oldConfig();
-    write(3, [{ ...v3.general, ...setupEdits }, { ...v3.over, ...setupEdits }, { ...v3.security, ...setupEdits }, explain]);
+    write(3, [{ ...v3.general, ...setupEdits }, { ...v3.over, ...setupEdits }, { ...v3.security, ...setupEdits }, v4.explain]);
     // The version 2 prompt shows that the version 3 upgrade skipped General and Over-engineering.
     // Security kept its prompt in version 3, so no field tells a skipped profile from one with the checks switched off.
-    expect(await load()).toEqual([{ ...general, ...setupEdits }, { ...over, ...setupEdits }, { ...v3.security, ...setupEdits }, explain]);
+    expect(await load()).toEqual([
+      { ...general, ...setupEdits },
+      { ...over, ...setupEdits },
+      { ...security, ...setupEdits, languageChecks: false },
+      explain,
+    ]);
     // The version 3 prompt shows that the version 3 upgrade replaced General. The user switched the checks off after it.
-    const off = { ...general, languageChecks: false, note: "Mine" };
-    write(3, [off]);
-    expect(await load()).toEqual([off]);
+    write(3, [{ ...v4.general, languageChecks: false, note: "Mine" }]);
+    expect(await load()).toEqual([{ ...general, languageChecks: false, note: "Mine" }]);
   });
 
   test("custom profiles keep every field, also the prompt and the turn cap of an old shipped profile", async () => {
     const { write, load } = await oldConfig();
-    const { languageChecks: _, ...bare } = custom;
     const lookalike = { ...v1.general, id: "mine", name: "Mine" };
-    write(undefined, [bare, lookalike]);
-    expect(await load()).toEqual([custom, { ...lookalike, languageChecks: false }]);
-    write(3, [bare, { ...lookalike, languageChecks: false }]);
-    expect(await load()).toEqual([custom, { ...lookalike, languageChecks: false }]);
+    const parsed: Profile = {
+      ...lookalike,
+      languageChecks: false,
+      modules: [],
+      volume: "balanced",
+      verifier: { mode: "on", model: null, effort: null },
+    };
+    write(undefined, [stored(v4stored(custom)), lookalike]);
+    expect(await load()).toEqual([custom, parsed]);
+    write(3, [stored(v4stored(custom)), { ...lookalike, languageChecks: false }]);
+    expect(await load()).toEqual([custom, parsed]);
   });
 
   test("the upgrade runs once: after a save stamps the version, a value set back on purpose stays", async () => {
@@ -496,10 +538,106 @@ describe("settings API", () => {
     expect((await again.get()).profiles).toEqual(upgraded);
     expect((await again.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ profiles: upgraded, profilesVersion: PROFILES_VERSION });
-    const setBack = { ...general, ...setupEdits, prompt: OLD_GENERAL, languageChecks: false };
+    const setBack = { ...general, ...setupEdits, prompt: OLD_GENERAL, languageChecks: false, modules: [] };
     expect((await again.put({ baseUrl: fake.url, profiles: [setBack] })).status).toBe(200);
     again.settings.close();
     expect(await load()).toEqual([setBack]);
+  });
+
+  // ---------- PROFILES_VERSION 5 (docs/plans/review-v2/spec.md section 1.2) ----------
+
+  test("AC-R11: a version 4 config with unedited Security and Over-engineering profiles upgrades to two profiles; an edited one stays", async () => {
+    expect(PROFILES_VERSION).toBe(5);
+    const { write, load } = await oldConfig();
+    write(4, [v4.general, v4.over, v4.security, v4.explain]);
+    const two = await load();
+    expect(two).toEqual([withSimplify, explain]);
+    expect(two[0]).toMatchObject({
+      name: "Review",
+      effort: "high",
+      reviewer: { effort: "high" },
+      verifier: { mode: "on", effort: "medium" },
+    });
+    expect(two[0]?.modules).toEqual(["security", "concurrency", "api", "rules", "intent", "simplify"]);
+    // An edited Over-engineering profile stays. The unedited Security profile retires, and general already has the security module.
+    write(4, [v4.general, { ...v4.over, note: "Mine" }, v4.security, v4.explain]);
+    expect(await load()).toEqual([general, { ...over, note: "Mine" }, explain]);
+    // A run setup edit counts as an edit.
+    write(4, [v4.general, { ...v4.security, reviewer: { model: null, effort: "low", mode: "auto" } }]);
+    expect(await load()).toEqual([general, { ...security, reviewer: { model: null, effort: "low", mode: "auto" } }]);
+  });
+
+  test("AC-R12: a version 4 general profile with an edited prompt keeps the prompt and gets the modules, the volume, and the efforts", async () => {
+    const { write, load } = await oldConfig();
+    write(4, [{ ...v4.general, prompt: "My prompt" }, v4.explain]);
+    const [mine] = await load();
+    expect(mine).toEqual({ ...general, prompt: "My prompt" });
+    expect(mine).toMatchObject({ volume: "balanced", effort: "high", reviewer: { effort: "high" }, verifier: { effort: "medium" } });
+  });
+
+  // AC-X8 (the new Explain lens) moves to WP-X1. Until then the shipped Explain keeps its version 4 values.
+  test("a version 4 Explain profile keeps its version 4 values and gets the Explain verifier", async () => {
+    const { write, load } = await oldConfig();
+    write(4, [v4.general, v4.explain]);
+    expect((await load())[1]).toEqual(explain);
+    expect(explain).toMatchObject({ prompt: V4_EXPLAIN, maxTurns: 50, effort: null, verifier: { mode: "off" } });
+    expect(EXPLAIN_V2.prompt).toContain("walkthrough");
+    write(4, [v4.general, { ...v4.explain, prompt: "My walkthrough" }]);
+    expect((await load())[1]).toEqual({ ...explain, prompt: "My walkthrough" });
+  });
+
+  test("a version 4 config with every profile edited keeps all four", async () => {
+    const { write, load } = await oldConfig();
+    write(4, [
+      { ...v4.general, note: "A" },
+      { ...v4.over, note: "B" },
+      { ...v4.security, maxTurns: 30 },
+      { ...v4.explain, prompt: "C" },
+    ]);
+    expect(await load()).toEqual([
+      { ...general, note: "A" },
+      { ...over, note: "B" },
+      { ...security, maxTurns: 30 },
+      { ...explain, prompt: "C" },
+    ]);
+  });
+
+  test("a version 5 config changes nothing, also a profile with the values of a retired one", async () => {
+    const { write, load } = await oldConfig();
+    const mine: Profile = { ...general, name: "Mine", modules: [] };
+    write(5, [mine, over, security, { ...explain, maxTurns: 50, verifier: { mode: "on" } }]);
+    expect(await load()).toEqual([mine, over, security, { ...explain, maxTurns: 50, verifier: { mode: "on", model: null, effort: null } }]);
+  });
+
+  test("no profile retires without general; an edited general.modules gets no module", async () => {
+    const { write, load } = await oldConfig();
+    write(4, [v4.over, v4.security, v4.explain]);
+    expect(await load()).toEqual([over, security, explain]);
+    write(4, [{ ...v4.general, modules: ["tests"] }, v4.over, v4.explain]);
+    expect(await load()).toEqual([{ ...general, modules: ["tests"] }, explain]);
+  });
+
+  test("the revision of an unchanged version 4 profile stays the same when the new fields hold their defaults", () => {
+    // profileRevision of the shipped profiles at commit 510d890 (PROFILES_VERSION 4).
+    const before = {
+      general: "3a4df4727d3b45ecb2b399e811d6bc1a9d379877122c4137d88e672f6c6789d8",
+      over: "99470d18890bea43ecdc96a81c23017594ccd9c19b27927e8a30815acfd8117a",
+      security: "2994da6534136157d8a6af436088833bc7c045e349cbdf838efaac0aff6ad13e",
+      explain: "ec5819f967fae6d422ce0d2e30632f834d6b76f9b9563a7c81ff7163fecea6aa",
+    };
+    for (const [id, hash] of Object.entries(before)) expect(profileRevision(profileInput.parse(v4[id as keyof typeof v4]))).toBe(hash);
+    const edits = {
+      skills: ["a"],
+      alwaysSkills: ["a"],
+      mcp: [{ server: "s", tools: ["t"] }],
+      model: "opus",
+      effort: "high",
+      reviewer: { model: "sonnet", effort: "low", mode: "always" },
+    };
+    expect(profileRevision(profileInput.parse({ ...v4.general, ...edits }))).toBe(
+      "eff11ed00c2ce5ec5dea8e278425693a9a0d6b0c76784afa8369b4081299ec2f",
+    );
+    expect(profileRevision(profileInput.parse({ ...v4.general, volume: "quiet" }))).not.toBe(before.general);
   });
 
   test("401 gives 400 and stores nothing", async () => {

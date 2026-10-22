@@ -5,6 +5,7 @@
 // E2E_APP_PORT, E2E_FAKE_PORT, and E2E_JIRA_PORT move the servers, so that two checkouts can run e2e at the same time.
 // Playwright passes its environment to the web server command.
 import type { Locator, Page, Request } from "@playwright/test";
+import type { FakeScenario } from "../support/fake-claude";
 
 export const APP_PORT = Number(process.env.E2E_APP_PORT || 7399);
 export const FAKE_URL = `http://127.0.0.1:${Number(process.env.E2E_FAKE_PORT || 7398)}`;
@@ -38,6 +39,47 @@ export async function openApp(page: Page, path = "/"): Promise<void> {
     page.off("requestfailed", note);
   }
   if (lost.length) throw new Error(`App assets failed twice: ${lost.join(", ")}`);
+}
+
+// Two review profiles of the user after the shipped Review profile: the edited Over-engineering and Security profiles that the
+// version 5 upgrade keeps (docs/plans/review-v2/spec.md section 1.2). Tests of the profile editor and the brief need several profiles.
+const OWN_PROFILES = [
+  {
+    id: "over",
+    name: "Over-engineering",
+    note: "What to delete or simplify",
+    prompt: "Find code that the change can delete or simplify.",
+    explain: false,
+    docs: true,
+    languageChecks: false,
+    maxTurns: 100,
+  },
+  {
+    id: "security",
+    name: "Security",
+    note: "Trust boundaries, secrets, unsafe memory",
+    prompt: "Find security defects: trust boundaries, input validation, injection, and secrets in code or logs.",
+    explain: false,
+    docs: true,
+    languageChecks: true,
+    maxTurns: 100,
+  },
+];
+
+// Saves the profile list Review, Over-engineering, Security, Explain through the app API of the open page, then reloads it.
+export async function addOwnProfiles(page: Page): Promise<void> {
+  const status = await page.evaluate(async (own) => {
+    const headers = {
+      "X-RL-Session": document.querySelector<HTMLMetaElement>('meta[name="rl-session"]')?.content ?? "",
+      "Content-Type": "application/json",
+    };
+    const s = (await (await fetch("/api/settings", { headers })).json()) as { baseUrl: string; profiles: unknown[] };
+    const [first, ...rest] = s.profiles;
+    const body = JSON.stringify({ baseUrl: s.baseUrl, profiles: [first, ...own, ...rest] });
+    return (await fetch("/api/settings", { method: "PUT", headers, body })).status;
+  }, OWN_PROFILES);
+  if (status !== 200) throw new Error(`PUT /api/settings: ${status}`);
+  await page.reload();
 }
 
 // The animation name and the running animations of an element.
@@ -104,6 +146,11 @@ export type ClaudeScenario = {
   fix?: unknown;
   improve?: unknown;
   consult?: unknown;
+  // Review v2 results (tests/support/fake-claude.ts). bySchema: fields for one schema only, such as a hang in the verify phase.
+  verify?: unknown;
+  explain?: unknown;
+  discuss?: unknown;
+  bySchema?: FakeScenario["bySchema"];
   login?: string;
 };
 

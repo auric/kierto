@@ -31,7 +31,7 @@ const urlTransform: UrlTransform = (url, key) => {
 
 // images: maps an image source to a local URL; null shows the alt text. Without it, an image is a link and an attachment shows its alt text.
 // Pass a stable images function: a new one remounts the rendered images.
-// diagrams: a ```mermaid block shows as a diagram (src/web/explain/mermaid.ts). Only for text that Claude wrote for the user.
+// diagrams: a ```mermaid block shows as a diagram (src/web/explain/mermaid.ts). Only for text that the AI wrote for the user.
 export function Markdown({ text, images, diagrams }: { text: string; images?: (src: string) => string | null; diagrams?: boolean }) {
   const components = useMemo<Components>(
     () => ({

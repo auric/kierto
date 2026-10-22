@@ -79,7 +79,7 @@ To try PR Review Inbox without a Bitbucket server, run `bun run demo` from sourc
 
 ### Review profiles
 
-A profile sets the prompt, the model, the effort, the reviewer agents, the skills, and the MCP servers of a run. PR Review Inbox ships General, Over-engineering, Security, and Explain. Skills and MCP servers come from your Claude Code config. "Improve prompt" proposes a clearer prompt, and you see the changes before you apply them.
+A profile sets the prompt, the model, the effort, the reviewer agents, the skills, and the MCP servers of a run. PR Review Inbox ships Review and Explain. An update removes the old Security and Over-engineering profiles when you never edited them, and keeps them when you did. Skills and MCP servers come from your Claude Code config. "Improve prompt" proposes a clearer prompt, and you see the changes before you apply them.
 
 ![Settings, Review profiles: run setup, skills, and MCP servers](docs/screenshots/settings-profiles.webp)
 

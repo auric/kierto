@@ -257,6 +257,11 @@ describe("earlier findings", () => {
     evidenceStatus: "code",
     confidence: "high",
     agent: null,
+    title: "",
+    trigger: "",
+    cause: null,
+    rule: "",
+    module: "core",
   });
   const verdict = (id: number, status: EarlierVerdict["status"], o: Partial<EarlierVerdict> = {}): EarlierVerdict => ({
     id,

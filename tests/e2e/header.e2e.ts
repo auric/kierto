@@ -334,7 +334,7 @@ test("Review and Draft replies are plain buttons; a zero count explains itself; 
   await expect(replies).toHaveText(/^Draft replies\s*2$/, { useInnerText: true });
   await replies.click();
   await expect(page.locator("#runline [data-run-kind='reply']")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
-  await expect(page.locator("#runline [data-run-kind='reply']")).toContainText("General profile");
+  await expect(page.locator("#runline [data-run-kind='reply']")).toContainText("Review profile");
 
   // docs/plans/thread-outcome.md: both threads have a draft now, so no thread still needs a reply and the count goes.
   await expect(replies).toHaveAccessibleName("Draft replies");

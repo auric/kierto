@@ -313,6 +313,20 @@ export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancel
     doing: "asking your session about",
     now: "asking your session",
   },
+  explain: {
+    running: "Explaining…",
+    failed: "The walkthrough failed.",
+    cancelled: "the walkthrough",
+    doing: "explaining",
+    now: "explaining the change",
+  },
+  discuss: {
+    running: "Answering…",
+    failed: "The answer about the finding failed.",
+    cancelled: "the answer about the finding",
+    doing: "answering about a finding on",
+    now: "answering about a finding",
+  },
 };
 
 // R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, the brief,
@@ -330,6 +344,8 @@ export const KIND_LABEL: Record<RunKind, string> = {
   fix: "Fixes",
   ask: "Ask",
   session: "Session",
+  explain: "Explain",
+  discuss: "Ask about a finding",
 };
 
 // The newest run of each kind, newest first. runs: newest first.

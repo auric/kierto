@@ -49,6 +49,9 @@ const p = (id: string, name: string, o: Partial<ProfileInput> = {}): ProfileInpu
   model: null,
   effort: null,
   reviewer: { model: null, effort: null, mode: "auto" },
+  modules: [],
+  volume: "balanced",
+  verifier: { mode: "on", model: null, effort: null },
   ...o,
 });
 const SAVED = [p("general", "General"), p("security", "Security"), p("explain", "Explain", { explain: true, docs: false, maxTurns: 12 })];

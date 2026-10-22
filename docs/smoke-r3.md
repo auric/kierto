@@ -100,7 +100,7 @@ This test checks the Release 3 features against a real Bitbucket Server, a real 
 5. Click "Open folder". Expect the file manager to open the task folder, not a file. Without a file manager, expect the path with "Copy the folder path".
 6. Turn on "Include <name> in runs" for the image. Expect a dialog that names the company AI policy. Expect "Include in runs" disabled until you tick "My company AI policy allows sending this file to an AI service." Press Esc. Expect the switch to stay off. Turn it on again, tick the box, and click "Include in runs". Expect "Included in runs." Include the log the same way.
 7. Expect no include switch for the binary file and "Downloaded. Runs list it by name only."
-8. Press Shift+R and start a General review. Wait for the end. Press 3. Expect a Read of `context/task.md`, a Read of `context/attachments/<id>.png` or `.jpg` without an error (U23, U24), and a Read of `context/attachments/<id>.txt`. Expect no file for the binary file in `context/attachments/`. Press Esc.
+8. Press Shift+R and start a review with the Review profile. Wait for the end. Press 3. Expect a Read of `context/task.md`, a Read of `context/attachments/<id>.png` or `.jpg` without an error (U23, U24), and a Read of `context/attachments/<id>.txt`. Expect no file for the binary file in `context/attachments/`. Press Esc.
 9. Open the AI summary. Expect the Context row to name `<KEY>` with the fetch time of this run.
 10. Click Delete on each file. Expect "Not downloaded." again. Click Remove on the task chip. Expect the task folder to be gone from the data folder.
 
@@ -129,8 +129,8 @@ The capture of 2026-10-12 recorded U2 and U12. Tests use `activities-u2-range.js
 
 Use a test pull request that changes C++, C, or Python files for step 4. If it has none, record step 4 as not run.
 
-1. Press r on the test pull request. Expect the brief, not a run. Expect the run setup of the default profile, with "Language checks" for General. Open the Review menu and pick Security. Expect the brief with Security. Press Esc. Open Settings > Review profiles. Expect General as the default, unchanged.
-2. In Settings > Review profiles > General, open the skills dialog. Tick one skill and mark it "Always use". Expect the chip "<skill> · Always". Save.
+1. Press r on the test pull request. Expect the brief, not a run. Expect the run setup of the default profile, with "Language checks" for Review. Open the Review menu and pick Explain. Expect the brief with Explain. Press Esc. Open Settings > Review profiles. Expect Review as the default, unchanged.
+2. In Settings > Review profiles > Review, open the skills dialog. Tick one skill and mark it "Always use". Expect the chip "<skill> · Always". Save.
 3. In Settings > Project instructions, open the test repository. Put "In the summary, give the word KIWI-SMOKE." into "Extra text (optional)". Expect the preview line "A run gets <size> from <n> sources". Open "Show the text". Expect the trust line first and the heading "## From PR Review Inbox settings". Turn on "Use your global CLAUDE.md" only under the rule above. Expect the global file as the first source. A file that does not load shows as "Not loaded: <file>".
 4. Press r and click "Start review". Wait for the end of the run. Expect the server terminal to show "Review run <id> language checks:" with the languages of the change. Expect the run row and the run log to list the skill with "(always)" and the instruction sources with sizes.
 5. Press 3. Expect a Read of `skills/<folder>/SKILL.md` among the first tool calls of rl-main. If coverage says "Skill <id> (always use): the model did not read SKILL.md.", record it.
@@ -216,18 +216,18 @@ Part M checks commits b7013d1, 4a0c12f, 3398e26, 2b89d52, and e4f671a. "(real CL
 
 Preparation for steps 1 to 12:
 
-1. (real CLI) Press r on the test pull request and start a General review. Wait for the end. Accept two questions and three findings. If the run gave fewer, edit other drafts into questions or findings with your own text. Press p and post them. Expect one general comment with both questions and one inline comment for each finding. [ ] pass [ ] fail
+1. (real CLI) Press r on the test pull request and start a review with the Review profile. Wait for the end. Accept two questions and three findings. If the run gave fewer, edit other drafts into questions or findings with your own text. Press p and post them. Expect one general comment with both questions and one inline comment for each finding. [ ] pass [ ] fail
 2. Ask the second user to answer as follows. General comment: answer question 1 fully, answer question 2 only in part. Finding F1: "Yes, this is on purpose." with a reason. Finding F2: an answer that shows a real defect, for example "Right, this also leaks when the call throws." Finding F3: no answer. Click "Check now". [ ] pass [ ] fail
 
 Answered questions in a review (b7013d1):
 
-3. (real CLI) Press r and start a General review. Wait for the end. Expect the run line to end with "N answered threads", with N = 3 (the general comment, F1, and F2). Expect no schema error in the run row. [ ] pass [ ] fail
+3. (real CLI) Press r and start a review with the Review profile. Wait for the end. Expect the run line to end with "N answered threads", with N = 3 (the general comment, F1, and F2). Expect no schema error in the run row. [ ] pass [ ] fail
 4. Press 3. Click "Show raw output". Expect the key `answered` in the structured output, with one entry per answered question. Expect each entry to have `thread`, `question`, `outcome`, `evidence`, `reply`, and `finding`. Record the count of entries and the outcome of each. Record no text. [ ] pass [ ] fail
 5. Open the F1 thread. Expect a reply draft "from the review" with the chip "Settled", a short thanks, and "Resolve after posting" ticked, because you started the thread. Expect "Claude proposes it:" with a quote of the answer as proof. [ ] pass [ ] fail
 6. Open the general comment thread. Expect one reply draft for both questions, with the chip "Follow-up question". Expect the reply to ask the open part of question 2. Expect "Resolve after posting" not ticked. [ ] pass [ ] fail
 7. Open the F2 thread. Expect a new finding in Drafts for the defect, and a reply draft in the F2 thread that points to it. Expect the box not ticked. [ ] pass [ ] fail
 8. Open the F3 thread. Expect no reply draft. [ ] pass [ ] fail
-9. (real CLI) Edit the F1 draft and change one word. Start one more General review. Expect your edited F1 draft to stay unchanged. Expect no second draft in the F1 thread. [ ] pass [ ] fail
+9. (real CLI) Edit the F1 draft and change one word. Start one more review with the Review profile. Expect your edited F1 draft to stay unchanged. Expect no second draft in the F1 thread. [ ] pass [ ] fail
 10. (real CLI) Open the Review menu and pick Explain. Start it and wait for the end. Expect no "answered threads" in its run line and no new reply draft. Press 3. Expect no Read of `context/questions.md` in the log. [ ] pass [ ] fail
 11. (real CLI) Push one small commit to the source branch yourself. Ask the second user to answer F3 fully. Click "Check now", then "Review changes since". Wait for the end. Expect the run line to count 1 answered thread, and a "Settled" draft with the box ticked in the F3 thread. [ ] pass [ ] fail
 12. Accept the F1 draft. Press p. Expect the line "Then resolves the thread." Click Post. Expect the reply first and the thread resolved in Bitbucket. Discard the other answer drafts and the new finding. [ ] pass [ ] fail
@@ -255,7 +255,7 @@ Copy for your session (2b89d52):
 
 MCP redirect of a user-added server (e4f671a):
 
-25. Use an MCP server that needs no secret header, of type `http` or `sse`. Add it to your Claude config (`.claude.json`, key `mcpServers`) as `smoke-direct` with its own URL. Open Settings > Review profiles > General > MCP servers > Choose. Open the tools of `smoke-direct`. Expect its tool list. [ ] pass [ ] fail
+25. Use an MCP server that needs no secret header, of type `http` or `sse`. Add it to your Claude config (`.claude.json`, key `mcpServers`) as `smoke-direct` with its own URL. Open Settings > Review profiles > Review > MCP servers > Choose. Open the tools of `smoke-direct`. Expect its tool list. [ ] pass [ ] fail
 26. Start a redirector on this machine: `bun -e "Bun.serve({ hostname: '127.0.0.1', port: 7601, fetch: () => Response.redirect('<URL of the server of step 25>', 307) })"`. Add a second entry `smoke-redirect` of the same type with the URL `http://127.0.0.1:7601/mcp`. Reload Settings. Open the tools of `smoke-redirect`. Expect "Could not list the tools of smoke-redirect: <reason>." and no tool list. Record the reason. [ ] pass [ ] fail
 27. Stop the redirector with Ctrl+C. Remove both entries from your Claude config. Reload Settings. Expect neither server in the list. [ ] pass [ ] fail
 

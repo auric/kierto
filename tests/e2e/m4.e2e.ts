@@ -5,12 +5,12 @@
 // and the settings section links.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp, runAgents, runMcp, runSkills, testCheckSkill } from "./control";
+import { APP_PORT, addOwnProfiles, control, E2E_TOKEN, FAKE_URL, openApp, runAgents, runMcp, runSkills, testCheckSkill } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
 // src/server/review/catalog.ts SHIPPED_PROFILES.
-const SHIPPED = ["General", "Over-engineering", "Security", "Explain"];
+const SHIPPED = ["Review", "Explain"];
 // A run passes the git workspace, the fake CLI, and the validator.
 const RUN_MS = 60_000;
 const SAVED = "Saved. New runs use these profiles.";
@@ -53,6 +53,8 @@ async function connect(page: Page) {
   await page.getByLabel("Access token").fill(E2E_TOKEN);
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByLabel("Access token")).toBeHidden();
+  // The profiles Review, Over-engineering, Security, and Explain.
+  await addOwnProfiles(page);
   await control("state", {});
   await row(page).click();
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(TITLE);
@@ -134,7 +136,7 @@ test("a renamed profile shows in the brief and in the run labels; a run keeps th
   await connect(page);
   await openSettings(page);
   const name = field(page, "Name", 1);
-  await expect(name).toHaveValue("General");
+  await expect(name).toHaveValue("Review");
   await name.fill("Correctness");
   await name.blur();
   await saved(page);
@@ -230,20 +232,20 @@ test("an added profile appears in the brief, and a removed one disappears after 
   await removeProfile(page, "Over-engineering");
   await expect(page.getByRole("button", { name: "Remove Security" })).toBeFocused();
   await saved(page);
-  expect(await names(page)).toEqual(["General", "Security", "Explain", "API review"]);
+  expect(await names(page)).toEqual(["Review", "Security", "Explain", "API review"]);
   await expect
     .poll(async () => (await settingsApi(request)).profiles.map((p) => [p.id, p.name]))
     .toEqual([
-      ["general", "General"],
+      ["general", "Review"],
       ["security", "Security"],
       ["explain", "Explain"],
       ["new-profile", "API review"],
     ]);
   await closeSettings(page);
-  expect(await briefNames(page)).toEqual(["General", "Security", "Explain", "API review"]);
+  expect(await briefNames(page)).toEqual(["Review", "Security", "Explain", "API review"]);
 });
 
-test("reset brings back the four shipped profiles", async ({ page, request }) => {
+test("reset brings back the two shipped profiles", async ({ page, request }) => {
   await connect(page);
   await openSettings(page);
   await field(page, "Name", 1).fill("Mine");
@@ -277,7 +279,7 @@ test("skills picked in the dialog save at once and are copied into the run folde
   const chips = page.getByRole("list", { name: "Skills of profile 1" });
   await expect(chips).toHaveCount(0);
   await page.getByRole("button", { name: "Choose… skills of profile 1" }).click();
-  const dialog = page.getByRole("dialog", { name: "Skills of General" });
+  const dialog = page.getByRole("dialog", { name: "Skills of Review" });
   await expect(dialog.getByText("Finds changed code without a test.")).toBeVisible();
   await expect(dialog.getByText("Plugin 1.2.0 · Checks the naming style.")).toBeVisible();
   // Search narrows the list. Select all then picks only the shown skills.
@@ -314,7 +316,7 @@ test("an Always use skill shows on its chip, goes first, and blocks the review w
   await connect(page);
   await openSettings(page);
   await page.getByRole("button", { name: "Choose… skills of profile 1" }).click();
-  const dialog = page.getByRole("dialog", { name: "Skills of General" });
+  const dialog = page.getByRole("dialog", { name: "Skills of Review" });
   // Only a ticked row has the mark. It is its own box, outside the row label.
   await expect(dialog.getByRole("checkbox", { name: "Always use test-check" })).toHaveCount(0);
   await dialog.getByRole("checkbox", { name: /^test-check test-check/ }).check();
@@ -371,7 +373,7 @@ test("an MCP server picked in the dialog gets only its ticked tools in the run",
   await connect(page);
   await openSettings(page);
   await page.getByRole("button", { name: "Choose… MCP servers of profile 1" }).click();
-  const dialog = page.getByRole("dialog", { name: "MCP servers of General" });
+  const dialog = page.getByRole("dialog", { name: "MCP servers of Review" });
   await expect(dialog.getByRole("checkbox", { name: /^e2e-plugin:docs Local command, plugin e2e-plugin$/ })).toBeVisible();
   await dialog.getByRole("checkbox", { name: /^fake-docs Local command/ }).check();
   const tools = page.getByRole("group", { name: "Tools of fake-docs" });
@@ -458,13 +460,13 @@ test("Copy to all profiles asks first, then gives every profile the skills and M
   await connect(page);
   await openSettings(page);
   await page.getByRole("button", { name: "Choose… skills of profile 1" }).click();
-  const skills = page.getByRole("dialog", { name: "Skills of General" });
+  const skills = page.getByRole("dialog", { name: "Skills of Review" });
   await skills.getByRole("checkbox", { name: /^test-check test-check/ }).check();
   await skills.getByRole("checkbox", { name: /^style e2e-plugin:style/ }).check();
   await skills.getByRole("checkbox", { name: "Always use test-check" }).check();
   await skills.getByRole("button", { name: "Done" }).click();
   await page.getByRole("button", { name: "Choose… MCP servers of profile 1" }).click();
-  const servers = page.getByRole("dialog", { name: "MCP servers of General" });
+  const servers = page.getByRole("dialog", { name: "MCP servers of Review" });
   await servers.getByRole("checkbox", { name: /^fake-docs Local command/ }).check();
   await expect(page.getByRole("group", { name: "Tools of fake-docs" }).getByRole("checkbox", { checked: true })).toHaveCount(2);
   await servers.getByRole("button", { name: "Done" }).click();
@@ -475,9 +477,9 @@ test("Copy to all profiles asks first, then gives every profile the skills and M
   const copy = page.getByRole("button", { name: "Copy to all profiles from profile 1" });
   await expect(copy).toHaveAccessibleDescription("Gives the other profiles these skills and MCP servers.");
   await copy.click();
-  const ask = page.getByRole("dialog", { name: "Copy the skills and MCP servers of General?" });
+  const ask = page.getByRole("dialog", { name: "Copy the skills and MCP servers of Review?" });
   await expect(ask).toContainText(
-    "General has 2 skills and 1 MCP server. Each profile in the list gets the same skills, Always use marks, MCP servers, and tools. This replaces its current skills and MCP servers.",
+    "Review has 2 skills and 1 MCP server. Each profile in the list gets the same skills, Always use marks, MCP servers, and tools. This replaces its current skills and MCP servers.",
   );
   await expect(ask.getByRole("list", { name: "Profiles that change" }).getByRole("listitem")).toHaveText([
     "Over-engineering",
@@ -493,7 +495,7 @@ test("Copy to all profiles asks first, then gives every profile the skills and M
   await copy.click();
   await ask.getByRole("button", { name: "Copy to 3 profiles" }).click();
   await expect(ask).toHaveCount(0);
-  await expect(status(page)).toHaveText("Saved. 3 profiles got the skills and MCP servers of General.");
+  await expect(status(page)).toHaveText("Saved. 3 profiles got the skills and MCP servers of Review.");
   expect(puts.length - before).toBe(1);
   expect((await settingsApi(request)).profiles.map((p) => ({ skills: p.skills, alwaysSkills: p.alwaysSkills, mcp: p.mcp }))).toEqual([
     SETUP,
@@ -534,7 +536,7 @@ test("Improve prompt shows a line diff of the proposal; Apply saves it for good,
   const before = await prompt.inputValue();
   const improve = page.getByRole("button", { name: "Improve prompt… of profile 1" });
   await expect(improve).toHaveAccessibleDescription("Proposes a clearer prompt. You see the changes before you apply them.");
-  const dialog = page.getByRole("dialog", { name: "Improve the prompt of General" });
+  const dialog = page.getByRole("dialog", { name: "Improve the prompt of Review" });
   const goal = dialog.getByLabel("What should the prompt focus on? Optional.");
   const changes = dialog.getByRole("region", { name: "Changes to the prompt" });
 
@@ -591,12 +593,11 @@ test("the run setup saves model, effort, and reviewer agents; the run row and th
   request,
 }) => {
   await connect(page);
-  // Before any change, a run shows the defaults: the init event names the model, and no --effort went out.
-  // The fixture settings file sets no model and no effort, so the run gets the default effort of the init model.
+  // Before any change, a run shows the shipped setup: the init event names the model, and the Review profile sends --effort high.
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
-  await expect(runRow(page).locator("[data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, medium effort (your default)");
+  await expect(runRow(page).locator("[data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, high effort");
 
   await openSettings(page);
   // The settings file names no model, so the default model and its effort are unknown. An alias has a known default effort.
@@ -613,7 +614,8 @@ test("the run setup saves model, effort, and reviewer agents; the run row and th
   await id.blur();
   // The server resolves the default effort for the full model ID of the profile too.
   await expect(field(page, "Effort", 1).locator("option").first()).toHaveText("Use my default (medium)");
-  await field(page, "Effort", 1).selectOption("high");
+  // xhigh, not the shipped high, so the run line of the next run differs from the first one.
+  await field(page, "Effort", 1).selectOption("xhigh");
   await page.getByRole("radiogroup", { name: "Reviewer agents of profile 1" }).getByText("Always", { exact: true }).click();
   await expect(page.getByRole("radio", { name: "Always" }).first()).toBeChecked();
   await field(page, "Agent effort", 1).selectOption("low");
@@ -624,7 +626,7 @@ test("the run setup saves model, effort, and reviewer agents; the run row and th
       const p = (await settingsApi(request)).profiles[0];
       return [p?.model, p?.effort, p?.reviewer];
     })
-    .toEqual(["claude-opus-5-5", "high", { model: "haiku", effort: "low", mode: "always" }]);
+    .toEqual(["claude-opus-5-5", "xhigh", { model: "haiku", effort: "low", mode: "always" }]);
   // Explain only turns the reviewer agents off for the profile.
   await field(page, "Explain only", 1).check();
   await expect(page.locator("#profile-0-reviewer-help")).toHaveText("Explain only runs use no reviewer agents.");
@@ -636,18 +638,18 @@ test("the run setup saves model, effort, and reviewer agents; the run row and th
   // The brief shows the run setup of the profile before the run.
   await page.keyboard.press("Shift+R");
   await expect(page.locator("#brief-setup")).toHaveText(
-    "Run setup: claude-opus-5-5, high effort. Reviewer agents: Always. No skills or MCP servers.",
+    "Run setup: claude-opus-5-5, xhigh effort. Reviewer agents: Always. No skills or MCP servers.",
   );
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   // The fake CLI init event names claude-haiku-5-5, the model that ran.
-  await expect(runRow(page).locator("[data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, high effort");
+  await expect(runRow(page).locator("[data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, xhigh effort");
   await page.keyboard.press("3");
-  await expect(runLog(page).locator("footer [data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, high effort");
+  await expect(runLog(page).locator("footer [data-run-setup]")).toHaveText("Model and effort: claude-haiku-5-5, xhigh effort");
 });
 
 // The native scenario moves the PR head to a commit with native/hash.h, native/hash.cpp, and tools/check.py.
-test("Language checks: on for General and Security, saved at once, and a review run gives both agents the lists of the changed languages", async ({
+test("Language checks: on for Review and Security, saved at once, and a review run gives both agents the lists of the changed languages", async ({
   page,
   request,
 }) => {
@@ -700,7 +702,7 @@ test("Edit <profile> in the brief opens the settings at the checked profile, thr
   const brief = page.locator("#brief");
   // The Edit link keeps its own name: the radio group is named "Profile" only.
   await expect(brief.getByRole("group", { name: "Profile", exact: true })).toBeVisible();
-  await expect(brief.getByRole("link", { name: "Edit General" })).toHaveAttribute("href", "/settings/profiles/general");
+  await expect(brief.getByRole("link", { name: "Edit Review" })).toHaveAttribute("href", "/settings/profiles/general");
   await brief.getByRole("radio", { name: /^Security/ }).check();
   const edit = brief.getByRole("link", { name: "Edit Security" });
   await expect(edit).toHaveAttribute("href", "/settings/profiles/security");
@@ -735,9 +737,9 @@ test("every review start opens the brief first; Cancel and Esc start nothing; th
   // The Review button opens the brief with the run setup of the brief profile. Cancel starts nothing.
   await reviewButton(page).click();
   await expect(note).toBeFocused();
-  await expect(setup).toHaveText("Run setup: default model, default effort. Reviewer agents: Auto. No skills or MCP servers.");
+  await expect(setup).toHaveText("Run setup: default model, high effort. Reviewer agents: Auto. No skills or MCP servers.");
   // No stored brief and no profile used yet: the default profile, without the mark.
-  await expect(radio("General")).toBeChecked();
+  await expect(radio("Review")).toBeChecked();
   await expect(lastUsed).toHaveCount(0);
   await brief.getByRole("button", { name: "Cancel" }).click();
   await expect(brief).toHaveCount(0);

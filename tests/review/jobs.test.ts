@@ -355,7 +355,8 @@ describe("run pipeline", () => {
         via: "pull-request-ref",
         cliVersion: "2.1.295",
         model: "claude-haiku-5-5",
-        effort: "default",
+        // docs/plans/review-v2/spec.md section 1.2: the shipped Review profile runs with effort high.
+        effort: "high",
         stale: null,
         hasRaw: true,
         findings: 2,
@@ -413,7 +414,7 @@ describe("run pipeline", () => {
     "the note reaches stdin only in its own section; task IDs only as metadata; no PR text",
     async () => {
       const h = await setup();
-      await h.brief(NOTE, "security");
+      await h.brief(NOTE, "general");
       const { body } = await h.start();
       await h.finish(body.id);
       const stdin = h.runCall()?.stdin ?? "";
@@ -430,7 +431,7 @@ describe("run pipeline", () => {
       expect(stdin.split("ABC-1").length).toBe(2);
       expect(sections.Metadata).toContain("ABC-1 (branch)");
       expect(sections.Metadata).toContain("PROJ/repo#2");
-      expect(sections.Metadata).toContain("Profile: Security");
+      expect(sections.Metadata).toContain("Profile: Review");
       expect(sections.Task).toContain(`${h.repo.base}..${h.repo.source}`);
       for (const canary of ["DESCRIPTION-CANARY", "TITLE-CANARY", "COMMENT-CANARY"]) expect(stdin).not.toContain(canary);
       // No task_context row: no task.md and no Tools line for it.
@@ -682,7 +683,7 @@ describe("acceptance", () => {
       expect(a.body.id).toBe(b.body.id);
       expect((h.db.query("SELECT COUNT(*) AS n FROM review_run").get() as { n: number }).n).toBe(1);
 
-      await h.brief(NOTE, "over");
+      await h.brief(NOTE, "explain");
       const other = await h.json<RunConflict>(`/api/prs/${h.pr}/review`, { method: "POST" });
       expect(other.status).toBe(409);
       expect(other.body.running).toEqual({ run: a.body.id, pr: h.pr });
@@ -864,7 +865,7 @@ describe("brief and meta", () => {
     expect(list.map((r) => r.id)).toEqual([...replies.slice(0, 20), cancelled, review]);
   });
 
-  test("meta gives the runner, tool labels, the four profiles, and no context source", async () => {
+  test("meta gives the runner, tool labels, the two profiles, and no context source", async () => {
     const h = await setup();
     const meta = (await h.json<MetaDto>("/api/meta")).body;
     expect(meta.runner).toEqual({
@@ -878,9 +879,7 @@ describe("brief and meta", () => {
       defaults: null,
     });
     expect(meta.profiles.map((p) => [p.id, p.name, p.explain, p.maxTurns])).toEqual([
-      ["general", "General", false, 100],
-      ["over", "Over-engineering", false, 100],
-      ["security", "Security", false, 100],
+      ["general", "Review", false, 100],
       ["explain", "Explain", true, 50],
     ]);
     expect(meta.tools["mcp__rl-git__git_log"]).toBe("Git log");
@@ -1303,6 +1302,8 @@ describe("editable profiles (M4)", () => {
             haiku: { value: "low", sure: true },
           },
         });
+        // A profile without an effort runs without --effort.
+        expect((await putProfiles(h, [{ ...general, effort: null }])).status).toBe(200);
         await h.brief(NOTE, "general");
         const a = await h.start();
         expect(a.body).toMatchObject({ effort: "default", effortDefault: "xhigh" });
@@ -1322,7 +1323,13 @@ describe("editable profiles (M4)", () => {
         expect(await runOf()).toMatchObject({ effort: "high", effortDefault: null, effortNow: false });
 
         // The model text of each profile is a key of its own, so the settings page and the brief find its default effort.
-        const own = { ...general, model: "Opus[1m]", skills: ["a-skill"], reviewer: { model: null, effort: null, mode: "off" as const } };
+        const own = {
+          ...general,
+          model: "Opus[1m]",
+          effort: null,
+          skills: ["a-skill"],
+          reviewer: { model: null, effort: null, mode: "off" as const },
+        };
         expect((await putProfiles(h, [own, { ...general, id: "full", name: "Full ID", model: "claude-opus-5-5-20260101" }])).status).toBe(
           200,
         );
@@ -1343,7 +1350,7 @@ describe("editable profiles (M4)", () => {
     "a deleted profile in a stored brief falls back to the first profile; PUT brief refuses an unknown ID",
     async () => {
       const h = await setup();
-      await h.brief(NOTE, "security");
+      await h.brief(NOTE, "explain");
       const perf = {
         id: "perf",
         name: "Performance",
@@ -1359,10 +1366,13 @@ describe("editable profiles (M4)", () => {
         model: null,
         effort: null,
         reviewer: { model: null, effort: null, mode: "auto" as const },
+        modules: [],
+        volume: "balanced" as const,
+        verifier: { mode: "on" as const, model: null, effort: null },
       };
       expect((await putProfiles(h, [perf, general])).status).toBe(200);
       expect((await h.json<BriefDto>(`/api/prs/${h.pr}/brief`)).body.profile).toBe("perf");
-      expect((await h.brief(NOTE, "security")).status).toBe(400);
+      expect((await h.brief(NOTE, "explain")).status).toBe(400);
       expect((await h.brief(NOTE, "no-such-id")).status).toBe(400);
       const meta = (await h.json<MetaDto>("/api/meta")).body;
       expect(meta.profiles).toEqual([
@@ -1381,7 +1391,7 @@ describe("editable profiles (M4)", () => {
         },
         {
           id: "general",
-          name: "General",
+          name: general.name,
           note: general.note,
           explain: false,
           maxTurns: 100,

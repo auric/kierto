@@ -61,6 +61,9 @@ describe("improveBody", () => {
         model: "opus",
         effort: "high",
         reviewer: { model: null, effort: null, mode: "auto" },
+        modules: [],
+        volume: "balanced",
+        verifier: { mode: "on", model: null, effort: null },
       },
     ]);
     if (!d) throw new Error("no draft");

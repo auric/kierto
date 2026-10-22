@@ -4,7 +4,7 @@
 // M2 browser acceptance (plan v3 WP11): the review brief, the run line, the run log, drafts, and raw output.
 // Runs against serve.ts only: the fake Bitbucket, a temp git remote, and the fake Claude Code CLI.
 import { type APIRequestContext, test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, control, E2E_TOKEN, FAKE_URL, openApp } from "./control";
+import { APP_PORT, addOwnProfiles, control, E2E_TOKEN, FAKE_URL, openApp } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Batch cache writes in the sync worker";
@@ -67,6 +67,10 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   request,
 }) => {
   await connect(page);
+  // The profiles Review, Over-engineering, Security, and Explain. The reload keeps the list, so the row opens the PR again.
+  await addOwnProfiles(page);
+  await row(page).click();
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(TITLE);
   await page.keyboard.press("Shift+R");
   await expect(page.getByLabel("Your note")).toBeFocused();
   await page.getByLabel("Your note").fill(NOTE);

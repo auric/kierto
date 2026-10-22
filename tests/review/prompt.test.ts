@@ -350,23 +350,39 @@ describe("reviewer agents (profile run setup)", () => {
     expect(usesReviewer(general)).toBe(true);
   });
 
+  // A profile with no run setup and the defaults of the review v2 fields.
+  const bare = {
+    ...general,
+    effort: null,
+    reviewer: { model: null, effort: null, mode: "auto" as const },
+    modules: [],
+    verifier: { mode: "on" as const, model: null, effort: null },
+  };
+
   test("the reviewer agent gets model and effort only when the profile sets them", () => {
-    expect(reviewerAgent(general)).not.toHaveProperty("model");
-    expect(reviewerAgent(general)).not.toHaveProperty("effort");
+    expect(reviewerAgent(bare)).not.toHaveProperty("model");
+    expect(reviewerAgent(bare)).not.toHaveProperty("effort");
+    // docs/plans/review-v2/design.md R11: the shipped Review profile pins the rl-reviewer effort.
+    expect(reviewerAgent(general)).toMatchObject({ effort: "high" });
     const set = reviewerAgent({ ...general, reviewer: { model: "haiku", effort: "low", mode: "auto" } });
     expect(set).toMatchObject({ model: "haiku", effort: "low" });
   });
 
   test("the run setup joins the revision only when it differs from the defaults", () => {
-    const base = profileRevision(general);
-    expect(profileRevision({ ...general, model: null, effort: null, reviewer: { model: null, effort: null, mode: "auto" } })).toBe(base);
+    const base = profileRevision(bare);
+    expect(profileRevision({ ...bare, model: null, effort: null, reviewer: { model: null, effort: null, mode: "auto" } })).toBe(base);
+    expect(profileRevision({ ...bare, modules: [], volume: "balanced", verifier: { mode: "on", model: null, effort: null } })).toBe(base);
     const changed = [
-      { ...general, model: "opus" },
-      { ...general, effort: "high" as const },
-      { ...general, reviewer: { ...general.reviewer, mode: "off" as const } },
-      { ...general, reviewer: { ...general.reviewer, model: "haiku" } },
-      { ...general, reviewer: { ...general.reviewer, effort: "max" as const } },
-      { ...general, languageChecks: !general.languageChecks },
+      { ...bare, model: "opus" },
+      { ...bare, effort: "high" as const },
+      { ...bare, reviewer: { ...bare.reviewer, mode: "off" as const } },
+      { ...bare, reviewer: { ...bare.reviewer, model: "haiku" } },
+      { ...bare, reviewer: { ...bare.reviewer, effort: "max" as const } },
+      { ...bare, languageChecks: !bare.languageChecks },
+      { ...bare, modules: ["tests" as const] },
+      { ...bare, volume: "quiet" as const },
+      { ...bare, verifier: { ...bare.verifier, mode: "off" as const } },
+      { ...bare, verifier: { ...bare.verifier, effort: "high" as const } },
     ].map(profileRevision);
     expect(new Set([base, ...changed]).size).toBe(changed.length + 1);
   });

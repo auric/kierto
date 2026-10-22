@@ -8,6 +8,9 @@ import {
   type AnchoredFinding,
   type Carried,
   type DiffKind,
+  type DiscussResult,
+  type DiscussVerdict,
+  type ExplainResult,
   type FixedMark,
   type FixNote,
   MAX_FIX_EDITS,
@@ -108,12 +111,28 @@ export const reviewerSetup = z.object({
 export type ReviewerSetup = z.infer<typeof reviewerSetup>;
 export const DEFAULT_REVIEWER: ReviewerSetup = { model: null, effort: null, mode: "auto" };
 
+// docs/plans/review-v2/spec.md sections 1.2 to 1.4: the check sections of the finder prompt, the volume, and the verify phase.
+export const MODULE_IDS = ["security", "concurrency", "performance", "tests", "api", "docs", "simplify", "rules", "intent"] as const;
+export type ModuleId = (typeof MODULE_IDS)[number];
+export const VOLUMES = ["quiet", "balanced", "thorough"] as const;
+export type Volume = (typeof VOLUMES)[number];
+export const VERIFIER_MODES = ["on", "off"] as const;
+// null model: the profile model. null effort: medium.
+export const verifierSetup = z.object({
+  mode: z.enum(VERIFIER_MODES).default("on"),
+  model: modelName.nullable().default(null),
+  effort: z.enum(EFFORTS).nullable().default(null),
+});
+export type VerifierSetup = z.infer<typeof verifierSetup>;
+export const DEFAULT_VERIFIER: VerifierSetup = { mode: "on", model: null, effort: null };
+
 // prompt: the profile part of both agent prompts. docs: the run gets the documentation servers.
 // skills: the run gets a copy of each skill in ./skills. Absent in profiles saved before skills existed.
 // mcp: servers of the user's Claude config with the chosen tools. Absent in profiles saved before this field existed.
 // model, effort: --model and --effort of every run of the profile. reviewer: the rl-reviewer agent of review runs. Absent in older profiles.
 // alwaysSkills: chosen skills that every run reads first. A run does not start without them. Absent in older profiles.
 // languageChecks: review runs get the checklists for the languages of the change. Absent in older profiles.
+// modules, volume, verifier: absent in profiles saved before PROFILES_VERSION 5. A module ID that this version does not know drops.
 export const profilePrompt = z.string().trim().min(1).max(MAX_NOTE);
 export const profileInput = z
   .object({
@@ -143,6 +162,13 @@ export const profileInput = z
     model: modelName.nullable().default(null),
     effort: z.enum(EFFORTS).nullable().default(null),
     reviewer: reviewerSetup.default(() => ({ ...DEFAULT_REVIEWER })),
+    modules: z
+      .array(z.enum(MODULE_IDS).nullable().catch(null))
+      .max(50)
+      .default([])
+      .transform((l) => [...new Set(l.filter((m) => m !== null))]),
+    volume: z.enum(VOLUMES).default("balanced"),
+    verifier: verifierSetup.default(() => ({ ...DEFAULT_VERIFIER })),
   })
   .refine((p) => p.alwaysSkills.every((id) => p.skills.includes(id)), {
     message: "Each always-use skill must be a chosen skill.",
@@ -394,11 +420,20 @@ export type ProfileDto = {
 };
 
 export type RunUsage = { costUsd: number; turns: number; durationMs: number; tokens: Record<string, unknown> };
+// docs/plans/review-v2/spec.md section 1.8: the verdict counts of a run with a verify phase.
+export type VerifySummary = Record<"candidates" | "confirmed" | "refuted" | "unsure" | "questions" | "duplicates" | "unchecked", number>;
+export type RunPhase = { name: "find" | "check"; startedAt: number; endedAt: number | null; usage: RunUsage | null };
 // dropped: findings that the validator could not anchor. They show as coverage only.
-export type RunSummary = Pick<ValidatedResult, "summary" | "risks" | "coverage" | "dropped">;
+// volume, verify, phases: absent in summaries stored before review v2. The display uses the volume of the run, not of the profile.
+export type RunSummary = Pick<ValidatedResult, "summary" | "risks" | "coverage" | "dropped"> & {
+  volume?: Volume;
+  verify?: VerifySummary;
+  phases?: RunPhase[];
+};
 
 // session: a direct consult of the user's own session (docs/plans/session-consult.md part C).
-export type RunKind = "review" | "reply" | "ask" | "fix" | "session";
+// explain: an Explain this PR run. discuss: one turn of a talk about a finding (docs/plans/review-v2/spec.md sections 2 and 3).
+export type RunKind = "review" | "reply" | "ask" | "fix" | "session" | "explain" | "discuss";
 
 export type RunDto = {
   id: number;
@@ -505,6 +540,9 @@ export const itemActionInput = z.discriminatedUnion("action", [
   z.object({ action: z.literal("reply-to-newest"), revision: version }),
 ]);
 export type ItemActionInput = z.infer<typeof itemActionInput>;
+// docs/plans/review-v2/spec.md section 4.1: the codes of payload.discardReason. Not a bug, Not worth fixing, Duplicate, Intended, Wrong place.
+export const DISCARD_REASONS = ["bug", "worth", "duplicate", "intended", "place"] as const;
+export type DiscardReason = (typeof DISCARD_REASONS)[number];
 // item: the current item, for a reload.
 export type ItemConflict = ApiError & { item: ReviewItemDto };
 
@@ -610,6 +648,24 @@ export const askInput = z.object({ question: z.string().trim().min(1).max(MAX_QU
 export type AskInput = z.infer<typeof askInput>;
 // answer: null until the run ends with a valid result.
 export type AskDto = { run: RunDto; answer: string | null };
+
+// ---------- Review v2: Explain and Discuss (docs/plans/review-v2/spec.md sections 2.3 and 3.2) ----------
+
+// GET /api/prs/:id/explain: the newest explain run. result: null until the run ends with a valid result.
+export type ExplainDto = { run: RunDto; result: ExplainResult | null };
+// GET /api/items/:id/discuss gives DiscussTurnDto[], oldest first. run: the discuss run. message: the user message. at: ms of the start.
+// answer, verdict, reason, revision: null until the run ends with a valid result. error: the error text of a failed run.
+export type DiscussTurnDto = {
+  run: number;
+  status: RunStatus;
+  message: string;
+  answer: string | null;
+  verdict: DiscussVerdict | null;
+  reason: string | null;
+  revision: DiscussResult["revision"];
+  at: number;
+  error: string | null;
+};
 
 // ---------- Improve prompt (Settings > Review profiles) ----------
 

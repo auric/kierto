@@ -17,6 +17,7 @@ import type {
   ReplyResult,
   ReviewResult,
   Side,
+  StoredFinding,
   ValidatedResult,
   Verdict,
 } from "../../shared/review";
@@ -143,7 +144,7 @@ function excerpt(t: Text, file: DiffFile | undefined, side: Side, s: number, e: 
 }
 
 // The anchor of one finding against the diff and the file contents, or the reason to drop it.
-function anchorer(input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles">): (f: Finding) => Anchor | DropReason {
+function anchorer(input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles">): (f: StoredFinding) => Anchor | DropReason {
   const files = parseDiff(input.diff);
   const byNew = new Map<string, DiffFile>();
   const byOld = new Map<string, DiffFile>();
@@ -158,7 +159,7 @@ function anchorer(input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles">):
     return t;
   };
 
-  return (f: Finding): Anchor | DropReason => {
+  return (f: StoredFinding): Anchor | DropReason => {
     const p = repoPath(f.path);
     if (p === null) return "path";
     const file = byNew.get(p) ?? byOld.get(p);
@@ -214,9 +215,9 @@ export function validate(input: ValidateInput): ValidatedResult & { kept: (numbe
 // ---------- Earlier findings of a re-review (plan r2 S-RR) ----------
 
 // id: the source item ID. finding: the stored finding at the item's current path and lines.
-export type EarlierItem = { id: number; finding: Finding };
+export type EarlierItem = { id: number; finding: StoredFinding };
 // finding: the stored finding with the verdict path and line. anchor: null when its code is not at the head.
-export type EarlierCase = { id: number; verdict: Verdict; reason: string; finding: Finding };
+export type EarlierCase = { id: number; verdict: Verdict; reason: string; finding: StoredFinding };
 export type CheckedEarlier = EarlierCase & { anchor: Anchor | null };
 
 export const NO_VERDICT = "The run gave no verdict.";

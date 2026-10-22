@@ -333,7 +333,15 @@ describe("user MCP prompts and profiles", () => {
   });
 
   test("an old profile reads as no MCP servers and keeps its revision", () => {
-    const { mcp: _, languageChecks: _lang, ...old } = general;
+    // A profile as a config before PROFILES_VERSION 5 stored it: no run setup, no modules, volume, or verifier.
+    const {
+      mcp: _,
+      languageChecks: _lang,
+      modules: _m,
+      volume: _v,
+      verifier: _r,
+      ...old
+    } = { ...general, effort: null, reviewer: { model: null, effort: null, mode: "auto" as const } };
     const parsed = profileInput.parse(old);
     expect(parsed.mcp).toEqual([]);
     const before = createHash("sha256")

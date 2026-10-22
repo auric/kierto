@@ -33,7 +33,25 @@ export type FakeScenario = {
   fix?: unknown;
   improve?: unknown;
   consult?: unknown;
+  // Review v2 (docs/plans/review-v2/spec.md): verify (properties.verdicts), explain (properties.walkthrough), and discuss
+  // (properties.verdict and properties.answer) results. Absent: the echo.
+  verify?: unknown;
+  explain?: unknown;
+  discuss?: unknown;
+  // Fields that replace the scenario fields for a run with that schema, for example a usage limit or a hang in the verify phase only.
+  bySchema?: Partial<Record<SchemaKind, Partial<Omit<FakeScenario, "record" | "auth" | "bySchema">>>>;
 };
+
+export type SchemaKind = "verify" | "explain" | "discuss";
+// The review v2 run kind that a --json-schema shape names, else null.
+export const schemaKind = (props: Record<string, unknown>): SchemaKind | null =>
+  props.verdicts !== undefined
+    ? "verify"
+    : props.walkthrough !== undefined
+      ? "explain"
+      : props.verdict !== undefined && props.answer !== undefined
+        ? "discuss"
+        : null;
 
 // Each complete record ends with "\n". The last part can be a record that the fake still writes, so it is dropped.
 export function readRecords<T = Record<string, unknown>>(path: string): T[] {
@@ -110,15 +128,63 @@ export function echoImprove(stdin: string) {
   return { prompt: `${current}\nEcho: report each finding with its trigger.`, reasons: ["Echo: added the trigger rule."] };
 }
 
-// An ask result. The question line is the last line with text in the "# Your instructions" section of the stdin.
-export function echoAnswer(stdin: string) {
+// The last line with text in the "# Your instructions" section of the stdin.
+function lastInstruction(stdin: string) {
   const lines = stdin.split(/\r?\n/);
   const start = lines.indexOf("# Your instructions");
   const end = lines.findIndex((l, i) => i > start && l.startsWith("# "));
   const section = start < 0 ? [] : lines.slice(start + 1, end < 0 ? undefined : end);
-  const question = section.filter((l) => l.trim()).at(-1) ?? "";
-  return { answer: `Echo: ${question}`, coverage: NO_COVERAGE };
+  return section.filter((l) => l.trim()).at(-1) ?? "";
 }
+
+// An ask result. The question line is the last line with text in the "# Your instructions" section of the stdin.
+export function echoAnswer(stdin: string) {
+  return { answer: `Echo: ${lastInstruction(stdin)}`, coverage: NO_COVERAGE };
+}
+
+// A verify result: one confirmed verdict per "## Candidate N" heading of candidates (the text of ./context/candidates.md), with the
+// severity of its "- Severity: <s>." line and the path:line of its "- Place: <path>:<line>" line.
+export function echoVerify(candidates: string) {
+  const blocks = candidates.split(/^## Candidate (?=\d+\s*$)/m).slice(1);
+  return {
+    verdicts: blocks.map((b) => {
+      const candidate = Number(/^\d+/.exec(b)?.[0]);
+      const place = /^- Place: (\S+?):(\d+)/m.exec(b);
+      return {
+        candidate,
+        verdict: "confirmed",
+        severity: /^- Severity: (blocker|major|minor|nit)\./m.exec(b)?.[1] ?? "minor",
+        reason: `Echo: the code shows candidate ${candidate}.`,
+        evidence: place ? `${place[1]}:${place[2]}` : "",
+        duplicateOf: null,
+        question: "",
+      };
+    }),
+    coverage: NO_COVERAGE,
+  };
+}
+
+// An explain result with no files, no risks, and no questions.
+export const echoExplain = () => ({
+  summary: "Echo: the change in one line.",
+  walkthrough: "## Echo\n\nThe echo walkthrough.",
+  order: [],
+  files: [],
+  risks: [],
+  glossary: [],
+  questions: [],
+  coverage: NO_COVERAGE,
+});
+
+// A discuss result that keeps the finding. The message is the last line with text in the "# Your instructions" section.
+export const echoDiscuss = (stdin: string) => ({
+  answer: `Echo: ${lastInstruction(stdin)}`,
+  verdict: "upheld",
+  reason: "Echo: the code still shows the problem.",
+  revision: null,
+  reply: "",
+  coverage: NO_COVERAGE,
+});
 
 // A session answer (docs/plans/session-consult.md part C): one reject per item tag with status open in the stdin.
 // fix: the schema asks for fixes too (part D). A reject needs no fix, so the fix has no note and no edit.
@@ -133,7 +199,12 @@ export function echoConsult(stdin: string, fix = false) {
 
 async function main() {
   const [scenarioPath = "", ...args] = process.argv.slice(2);
-  const s: FakeScenario = JSON.parse(readFileSync(scenarioPath, "utf8"));
+  const base: FakeScenario = JSON.parse(readFileSync(scenarioPath, "utf8"));
+  // The --json-schema shape picks the result. A review run keeps the fixture result.
+  const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+  const props = JSON.parse(flag("--json-schema") ?? "null")?.properties ?? {};
+  const kind = schemaKind(props);
+  const s: FakeScenario = { ...base, ...(kind ? base.bySchema?.[kind] : undefined) };
   const record = (x: Record<string, unknown>) => appendFileSync(s.record, `${JSON.stringify(x)}\n`);
   const run = args.includes("-p");
   const stdin = run ? await Bun.stdin.text() : "";
@@ -178,13 +249,16 @@ async function main() {
     record({ childPid: child.pid });
   }
 
-  // The --json-schema shape picks the result. A review run keeps the fixture result.
-  const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
-  const props = JSON.parse(flag("--json-schema") ?? "null")?.properties ?? {};
   const agentTool = (flag("--tools") ?? "").split(",").includes("Agent");
   // code.claude.com/docs/en/cli-reference: --tools "" disables every built-in tool. No MCP server stays, so init keeps StructuredOutput only.
   const noTools = flag("--tools") === "";
   const result = (fixture: unknown) => {
+    if (kind === "verify") {
+      const file = join(process.cwd(), "context", "candidates.md");
+      return s.verify ?? echoVerify(existsSync(file) ? readFileSync(file, "utf8") : "");
+    }
+    if (kind === "explain") return s.explain ?? echoExplain();
+    if (kind === "discuss") return s.discuss ?? echoDiscuss(stdin);
     if (props.replies !== undefined) return s.replies ?? echoReplies(stdin);
     if (props.earlier !== undefined) return s.rereview ?? echoRereview(stdin, fixture);
     if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);
