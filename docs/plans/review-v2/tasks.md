@@ -95,12 +95,12 @@ Shared-file ownership (merge order):
 
 ## 2. Work packages: parts 1 to 4
 
-### WP-D1. Docs for parts 1 to 4 (implementer, W1)
+### WP-D1. Docs for parts 1 to 4 (implementer, W1; done, 0eb56e5)
 
 - Files: BRIEF.md (sections of spec.md section 10 for parts 1 to 4 only), CLAUDE.md (status line, document map row for docs/plans/review-v2/), integration-check.md (rows "Review v2 (not run)": U-rows for the verify schema, the explain schema, the discuss schema, and the effort per agent).
 - Tests: none.
 
-### WP-M1. Eval harness and fixture cases (implementer-xhigh, W1)
+### WP-M1. Eval harness and fixture cases (implementer-xhigh, W1; done, 9391ec4)
 
 - Files: scripts/eval/{run.ts, score.ts, compare.ts, cases.ts} (new); fixtures/eval/cases/<12 cases>/ (new); fixtures/eval/README.md; package.json scripts `eval`, `eval:compare`; tests/eval/{score.test.ts, harness.test.ts} (new).
 - Behavior: spec.md section 4.3. It runs the current review pipeline (version 1 prompts), so the baseline is real. The scorer reads both version 1 items (no verdict: all shown) and version 2 items.
@@ -109,7 +109,7 @@ Shared-file ownership (merge order):
 - Control mutation: make the overlap test exclusive at the ends. A boundary case must fail.
 - Risk: the review job needs settings and a provider. Use the `gitRemote` and data-folder options that the e2e serve.ts already uses.
 
-### WP-G0. Gate checks for the new CLI and Bitbucket facts (implementer, W1)
+### WP-G0. Gate checks for the new CLI and Bitbucket facts (implementer, W1; done, c192040 and e80f4de)
 
 - Files: scripts/gate/claude-checks.ts (B17 to B20), scripts/gate/bitbucket-write.ts (new, G1 to G7), docs/gate-v2.md (how to run, what PASS means).
 - B17 write confinement: a throwaway temp folder with repo/ and context/. Flags of an implement run (`--tools Read,Grep,Glob,Edit,Write`, `--allowedTools` the same, `--restricted`, `--strict-mcp-config`, no `--permission-mode`). Prompt: write repo/a.txt, ../outside.txt, and an absolute temp path. PASS: repo/a.txt exists, the other two do not, and init lists only the five tools and StructuredOutput.
@@ -120,7 +120,7 @@ Shared-file ownership (merge order):
 - Each check has `--dry-run`. Cost caps and output sanitizing as B1 to B16.
 - Tests: argument parsing and dry-run output only.
 
-### WP-R1. Contracts for review v2 (implementer-xhigh, W2)
+### WP-R1. Contracts for review v2 (implementer-xhigh, W2; done, 44106c6)
 
 - Files: src/shared/review.ts (finding v2 keys, verifyResult, explainResult, discussResult, REVIEW_PROMPT_VERSION, constants); src/shared/dto.ts (modules, volume, verifier; RunKind adds explain and discuss; ItemActionInput reason; DTOs for discuss, explain, stats); src/server/storage/migrations/030_review_v2.sql; src/server/storage/db.ts; src/server/review/catalog.ts (SHIPPED_PROFILES, FORMER[4], Former keys, deep compare); src/server/config.ts (PROFILES_VERSION 5); src/server/settings.ts (retire rule); src/web/review/model.ts (RUN_TEXT and KIND_LABEL for the new kinds); tests/support/fake-claude.ts (echo per new schema).
 - Behavior: spec.md sections 1.2, 1.5 (schema only), 1.6 (schema only), 2.2, 3.3, 8 (030).
@@ -142,14 +142,14 @@ Shared-file ownership (merge order):
 - Control mutations: skip the cap for unsure (AC-R5 fails); drop the changed-line test (AC-R7 fails).
 - Risk: the workspace removal moves after phase 2. Check the restart recovery and the held.ws path.
 
-### WP-M2. Outcome tracking and stats (implementer, W3)
+### WP-M2. Outcome tracking and stats (implementer, W3; done, merge pending)
 
 - Files: src/server/review/items.ts (action reason); src/server/review/stats.ts (new); src/server/review/routes.ts (GET /api/stats/review); src/shared/dto.ts (ReviewStatsDto, reason action); src/web/review/Drafts.tsx (discard reason chips, small part only); src/web/settings/ReviewQuality.tsx (new); tests/review/stats.test.ts (new); tests/e2e/m4.e2e.ts or a new stats.e2e.ts. Ports 7527/7528/7529.
 - Behavior: spec.md sections 4.1, 4.2. AC-M4, AC-M5.
 - Gates: screenshots and README for the chips and the Settings table.
 - Control mutation: count refuted items as discarded by the user. The stats test must fail.
 
-### WP-PG. Gate checks G9 and G12 for the PR context (implementer, W2)
+### WP-PG. Gate checks G9 and G12 for the PR context (implementer, W2; done, merge pending)
 
 - Files: scripts/gate/bitbucket-write.ts (adds G9, moved from WP-GA, and G12), docs/gate-v2.md (rows), integration-check.md (rows G9 and G12, "not run").
 - G9: GET the open PRs of the test repository with limit 50. Record the shape: id, title, author, state, fromRef, toRef, updatedDate, isLastPage.

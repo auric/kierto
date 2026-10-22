@@ -25,7 +25,7 @@ This test checks reviews, triage, posts, replies, and reply drafts against the r
 ## A. Review, triage, and post
 
 1. Press Shift+R. Expect the review brief with the focus in "Your note".
-2. Type a short note, for example "Check the error handling first." Keep the profile General. Press Ctrl+Enter.
+2. Type a short note, for example "Check the error handling first." Keep the profile Review. Press Ctrl+Enter.
 3. Expect "Reviewing…" in the run line, with a count of tool calls that goes up. Press 3. Expect the run log. Each subagent has its own fold. Press Esc.
 4. Wait for the end of the run. Expect the review record above the Description, with the summary and a count per severity. If the record shows "Not checked: N", click it. Expect one plain line per item in place, and no jump to the run log. Record the items.
 5. Accept one finding. Expect "Accepted" on it and the focus on the next draft. Discard one finding. Expect "Discarded:" and a Restore button. Edit one finding, change one word, and press Ctrl+Enter. Expect "edited by you" and "Accepted".

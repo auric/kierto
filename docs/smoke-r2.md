@@ -24,7 +24,7 @@ This test checks the Release 2 features against a real Bitbucket Server, a real 
 
 ## A. Re-review after a push
 
-1. Open the test pull request. Press r and start a General review. Wait for the end of the run. Expect "Claude reviewed <hash>" and at least one finding. If it has no finding, add a small defect in step 3 instead.
+1. Open the test pull request. Press r and start a review with the Review profile. Wait for the end of the run. Expect "Claude reviewed <hash>" and at least one finding. If it has no finding, add a small defect in step 3 instead.
 2. Accept one finding. Leave one finding new. Discard one, if the run has three. Expect the "Accepted" mark on the first and one muted line with Restore for the discarded one.
 3. Push one commit to the source branch. Let it fix the code of the new finding and leave the accepted finding untouched. Expect no change in the app before the next check.
 4. Click "Check now". Expect the run line to show the review as stale on the source side. Expect the button "Review changes since <hash>".
@@ -48,7 +48,7 @@ This test checks the Release 2 features against a real Bitbucket Server, a real 
 2. Open Settings again. Expect the token field to be empty, with a "stored" note. Open the config file in the data folder. Expect `jira.baseUrl` and no token.
 3. Open the test pull request. Expect a chip for each Jira key that the pull request names. Click Fetch on one key. Expect the summary and the fetch time. Open the imported fold. Expect plain text, closed by default.
 4. Click Fetch on a key that does not exist or that you may not view, if the pull request names one. Expect the fixed "not found" text and no stored row.
-5. Start a General review. Wait for the end. Press 3. Expect a Read of `context/task.md`. Expect the AI summary Context row to list the fetched task and its fetch time.
+5. Start a review with the Review profile. Wait for the end. Press 3. Expect a Read of `context/task.md`. Expect the AI summary Context row to list the fetched task and its fetch time.
 6. Record the payload shapes: the keys and types of the `myself` response, the issue `fields.summary`, `fields.description`, `fields.status`, and the comment page (`startAt`, `maxResults`, `total`, `comments[]` and each comment's `author`, `created`, `body`). Record whether `description` was null, plain text, or wiki markup. Record any redirect, with its status only. Expect no token, host name, or issue text in the record.
 7. Click Remove on the chip. Expect the chip to return to Fetch.
 

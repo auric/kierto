@@ -31,6 +31,7 @@ spec-kit steps:
 - I want AI review with my Claude Code subscription. The subscription works only inside Claude Code. Other tools must not use its credentials.
 - AI review invents library facts and misses side effects on other code. It must use real documentation and the whole repository, not only the diff.
 - AI findings are noisy. The model rates its own confidence, and nothing checks a finding before I see it. I cannot prove that a prompt change finds more real bugs with less noise.
+- A small Jira task still takes much manual work before colleagues can review it. A big task often becomes one big PR that nobody reviews well.
 
 ## 2. Goals and build order
 
@@ -49,7 +50,7 @@ Release 1 goals:
 Non-goals for Release 1:
 - No diff viewer. Links open the diff in Bitbucket.
 - No automatic review without a click. No automatic approval, merge, thread resolution, or code edit.
-- Release 3 changes code only after an explicit Apply click. The app never pushes.
+- Release 3 changes code only after an explicit Apply click. The app never pushes. Review v2 part 6 pushes only task branches, on a click (section 3.6).
 - No team features, no hosted server, no multi-user mode, no desktop shell.
 - No Bitbucket Cloud, GitHub, or GitLab. Code-host access stays behind one boundary (ForgeProvider).
 
@@ -77,11 +78,18 @@ Release 3 (plan: docs/plans/r3.md):
 - Resolved threads: a resolved thread shows who resolved it and when, read from Bitbucket. The diff folds resolved threads to one line.
 - Resolve threads (user decision, 2026-10-19): a reply draft with "Resolve after posting" ticked resolves its thread after the reply posts, or without a reply. Draft replies, "Review changes since" (for my posted findings that the new commits fix), a review run (for my posted questions that an answer settles), and a Fix commit propose the resolve with proof. Only threads that I started get the tick by default. The thread footer button "Resolve" or "Reopen", or the key x, acts at once and asks first on a thread that another person started. Nothing resolves without my click. Bitbucket takes no reply in a resolved thread, so a reply post reopens a resolved thread first and then posts. A ticked draft resolves it again after the reply. A failed reopen posts no reply. The post confirm and Ready to post say "Reopen thread, post reply". A draft card says "Resolved since the draft" when the thread was open at the draft. The post plan then leaves the draft out until I reopen the thread (Thread outcome). A resolve or a reopen moves the stored version and the read mark only when the stored root has the version of the first read, so an edit before the resolve still arrives. The Data Center 9.x gate confirms the PUT body `{version, threadResolved}`: the version stays, and a reply in a resolved thread gets 400 ArgumentValidationException (integration-check.md U62 to U67).
 
-Review v2 (plan: docs/plans/review-v2/; parts 1 to 4 here, part 6 "Build a Jira task" comes later):
+Review v2 (plan: docs/plans/review-v2/; parts 1 to 4 and part 6 here; part 7 "Autopilot replies" is on hold):
 - Review quality: the finder reports every candidate with a severity and a confidence. A verify phase in the same run gives each candidate a verdict: confirmed, refuted, unsure, question, or duplicate. The app applies caps from structured fields only and shows confirmed points first. Unsure points wait in a fold. Refuted and duplicate points stay in the run record with Restore.
 - Discuss a finding: "Ask Claude about this" starts a short talk about one finding, one run per message. Each answer has a verdict: upheld, revised, or withdrawn. A revision never overwrites my text. Nothing posts.
 - Explain this PR: a readable walkthrough page with a reading order, checked links into the diff, risks on code, and at most 3 safe diagrams. It replaces the Explain profile run.
 - Measure quality: an eval harness on synthetic fixture PRs scores recall, precision, and noise per prompt version. Settings shows outcome counts per profile and prompt version from my own triage. A discard can carry an optional reason.
+- Build a Jira task (part 6, user decisions Q1 to Q24 of 2026-10-22, design.md section 10): I type a Jira key or start from the task of a PR. Claude asks a few questions, writes a short change plan, and builds the code in steps. It stops when it needs me. Nothing goes to Bitbucket without my click.
+- Task sizes: small gives one PR with a short plan and the code. Medium gives a spec PR, then one code PR stacked on the spec branch. Large gives a spec PR, an optional contract PR, stacked part PRs, and an optional cleanup PR. Claude proposes the size. A migration or an API change gives at least medium. An estimate over the line budget gives large. The line budget is 400 changed lines per PR, lock files excluded, per repository. I confirm the size before any code. At most 2 code PRs of a task are open at once.
+
+Non-goals for part 6:
+- No code change outside an app-owned worktree. The app never writes in my clone.
+- No push without a click. No push to a branch that the task did not create. Never a push to the target branch.
+- No automatic approval, merge, or retarget. A retarget is one click with one confirm.
 
 ## 3. Decisions
 
@@ -100,7 +108,9 @@ Review v2 (plan: docs/plans/review-v2/; parts 1 to 4 here, part 6 "Build a Jira 
 - The app starts the official `claude` binary in headless mode (`claude -p`). This is ordinary Claude Code use by the subscriber.
 - The app never reads, stores, or forwards Claude credentials. Each user logs in to their own Claude Code.
 - The app does not use the Agent SDK with subscription login. Anthropic requires API keys for that.
+- No Claude Agent SDK, also not for part 6 (decided 2026-10-22). The SDK overview (read 2026-10-22) says: "Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK." The SDK also falls under the Commercial Terms of Service, so it is not open source. The app keeps running the user's installed `claude -p` with the user's own login. Revisit only when Anthropic allows subscription login for SDK apps.
 - Every review starts from a human click. This keeps the use "ordinary" and individual.
+- Build a Jira task (decision Q5): after one plan approval, the task loop runs many Claude runs until it needs me. Each run is one bounded step. Each part stops at its PR click and at the colleagues' review. Read the usage terms again before a release.
 - Before each run, the app confirms the subscription login route (section 3.5). It never falls back to paid API use.
 
 Anthropic terms (checked 2026-10-09): "OAuth authentication ... is designed to support ordinary use of Claude Code and other native Anthropic applications." "Developers building products or services that interact with Claude's capabilities, including those using the Agent SDK, should use API key authentication." Read the current terms again before you publish the tool.
@@ -132,6 +142,11 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 - A separate folder is not an OS sandbox. The review gets read-only tools only, no shell, and no code-host token.
 - Fix runs (Release 3) are read-only, like reviews. They get no Edit, Write, or Agent tool. They return exact text replacements in `structured_output`. The app checks each edit. It applies the edits only after the user clicks Apply.
 - The app never runs `claude` in the user's clone. A fix run uses the same sanitized snapshot as a review.
+- Implement runs (Review v2 part 6, decision Q1): kind implement gets Read, Grep, Glob, Edit, Write, and the read-only git MCP. It gets no shell, no Agent tool, and no web tool. It runs only in an app-owned worktree of the cache, never in the user's clone. Gate B17 (CLI 2.1.306) confirmed that `--restricted` keeps Edit and Write inside the run folder. Review, re-review, Ask, reply, fix, discuss, Explain, interview, and spec runs stay read-only.
+- The task worktree uses sparse checkout. `.claude/`, `.mcp.json`, `.codegraph/`, CLAUDE.md, CLAUDE.local.md, AGENTS.md, `.gitmodules`, and hook sources are absent on disk. It sets `core.symlinks=false` and an empty `core.hooksPath`. Commits run no hook.
+- After each Claude step, the app runs `git status`. A denied path (Denied paths, section 7), a link, or a path outside repo/ fails the step. The app saves the changes as a patch, then resets the worktree to the last commit.
+- App-run commands (decision Q2): Claude never starts a process. The app runs only the build, test, and lint argv lists that the user approved with the plan. Each command has a timeout and a process-tree kill. No shell form exists. The first plan of a repository shows one warning, and the user clicks "I understand". The env is the scrubbed child environment plus CI=1, with no token. HOME is a temp folder by default.
+- Not enforceable: a test or build command runs code that Claude wrote. It can read the user's files and reach the network. Native Windows has no OS sandbox. Safeguards: the plan approval, the own review, the user's look at each PR before the push, and the first-use warning. A WSL2 or sandbox runner comes later.
 
 ### 3.6 Local server safety
 
@@ -142,6 +157,9 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 - Release 2: outbound calls can also go to the configured Jira origin. They occur only on a Settings save or a Fetch click, never during polling. The Jira client sends GET only, follows no redirect, and calls no other origin.
 - Release 3: a Download click also calls Jira. The attachment download follows same-origin redirects only, at most 3 hops. It checks the origin and the base path on each hop. A cross-origin redirect is an error, so the token never leaves the Jira origin.
 - Release 3: the app runs git in the user's clone only on a clone check, Apply, and Undo. It runs no git network command there. Apply and the confirm of a post call Bitbucket once for the live PR state.
+- Review v2 part 6 (decision Q3): `git push` and PR create or update go to Bitbucket only on a click. A push goes only to a branch that the task created, never to the target branch, and always with `--force-with-lease`. The app refuses any other refspec before git runs. A force push after a rebase needs a confirm. The push runs from the cache, not from the user's clone. The token goes in the GIT_CONFIG env, never in argv, the worktree, or logs. The token needs Repository write.
+- Review v2 part 6 also reads the build stats of a commit and the clone links of the repository. On "Build a Jira task", the Jira client fetches the key that the user typed (decision Q4).
+- Stack order (Gate G5): Bitbucket declines an open PR within 30 s when its target branch is deleted. So the app retargets the upper PR before the lower branch is deleted, for example before a lower PR merges with "delete source branch". The app never deletes a lower branch while an upper PR targets it. The part PR text asks the merger to keep the branch until the next PR moves.
 - Attachment files are served as downloads (`Content-Disposition: attachment`, `application/octet-stream`, `nosniff`, `Content-Security-Policy: sandbox`). Inline display is for raster images only: PNG, JPEG, GIF, and WebP by magic bytes. SVG and HTML are never served inline. No browser request goes to Jira.
 - Support a corporate CA file. Never disable TLS verification.
 - The Bitbucket token lives in the OS credential store through `Bun.secrets` (experimental; verify in Gate 0). Fallback: memory only, asked again after a restart. The Jira personal access token (Release 2) uses the same store under its own name.
@@ -164,7 +182,7 @@ Bitbucket webhooks cannot reach a laptop on localhost. The app polls the REST AP
 Browser UI (127.0.0.1, React + TanStack Query)
    |  HTTP JSON (typed client) + Server-Sent Events
 Local server (Bun + Hono, TypeScript)
-   +-- bitbucket/  ForgeProvider: REST client --> Bitbucket Server (read, post)
+   +-- bitbucket/  ForgeProvider: REST client --> Bitbucket Server (read, post; part 6: create and update PR)
    +-- sync/       poll, page, reconcile, checkpoints
    +-- inbox/      attention rules, read state, notifications
    +-- review/     jobs, snapshot, auth check, CLI runner, validator, verify phase, fix edits
@@ -176,6 +194,10 @@ Local server (Bun + Hono, TypeScript)
    +-- context/    ContextSource: Jira REST client --> Jira (read, on a click)
    |     +-- attachments: download, store, serve (Release 3)
    +-- publish/    approvals, durable outbox, reconcile
+   +-- tasks/      Review v2 part 6: task machine, loop, worktree, checks, push, stack
+   |     +-- git cache --git worktree--> task worktree (sparse, writable, app-owned)
+   |     +-- spawn: claude -p kind implement (cwd = task run folder, Edit and Write)
+   |     +-- app-run commands (approved argv lists) and git push with a lease
    +-- storage/    SQLite, migrations
 ```
 
@@ -195,10 +217,10 @@ Flow of one review:
 ```
 Review Loop principles:
 1. Human gate: nothing goes to the code host without an explicit user action. Approval binds the exact text and destination. Editing the text removes the approval.
-2. Untrusted input: PR titles, descriptions, code, comments, and repository files are hostile. They can contain prompt injection or executable configuration. Review runs use a sanitized snapshot, read-only tools, and no code-host write access. The app posts, not the AI.
+2. Untrusted input: PR titles, descriptions, code, comments, and repository files are hostile. They can contain prompt injection or executable configuration. Review runs use a sanitized snapshot, read-only tools, and no code-host write access. The app posts, not the AI. Exception (decisions Q1 to Q3, 2026-10-22): implement runs of a task get Edit and Write only in an app-owned worktree, never in the user's clone, and only after Gate B17. The app, not the AI, runs the user-approved commands and pushes task branches on a click.
 3. Credentials: the app never reads, stores, or forwards AI-provider credentials. It starts the user's own official Claude Code CLI with the subscription login. It never falls back to paid API use. Code-host tokens stay in the OS credential store or in memory.
-4. Zero-token tracking: polling, unread state, notifications, and publication never call an LLM. Only reviews, explanations, drafts, fix proposals, and Ask answers use tokens.
-5. One review runs at a time by default. Each run shows the usage that the CLI reports. No automatic retry after a usage limit.
+4. Zero-token tracking: polling, unread state, notifications, and publication never call an LLM. Only reviews, explanations, drafts, fix proposals, Ask answers, and task steps use tokens.
+5. One review runs at a time by default. Each run shows the usage that the CLI reports. No automatic retry after a usage limit. A task loop takes the run slot for each Claude step and frees it between steps. After one plan approval, it runs many steps until it needs the user (decision Q5).
 6. Revision-pinned evidence: every result names the commits it reviewed. A result for older commits shows as stale.
 7. Honest coverage: every result lists what it read, skipped, and could not reach. An incomplete run never reports "no issues".
 8. No blind retry: after an unknown write outcome, reconcile with the code host first. Never claim exactly-once delivery without server support.
@@ -244,6 +266,9 @@ Acceptance: discarded items are never posted. Editing an approved text removes i
 US8 Replies (P1). As a reviewer or author, I write a reply to any thread in the tool. I see a preview and confirm before it is sent. I can ask the AI to draft replies for all threads that wait for me, or for one thread. An AI draft is a draft only: I accept, edit, or discard it like a finding. I can copy the raw Markdown of any message. The same posting rules as US7 apply.
 
 US9 Settings (P2). As a user, I set the code-host URL, my access token, the check interval, notifications, and the review profiles. A profile has a name and a prompt. The tool ships with one review setup and one Explain setup. The review setup has a few named checks, such as security, races, compatibility, and simplify, and a volume with three steps: only what matters, balanced, and show everything. I see accept, discard, and post counts per setup. The token is kept safely and is never shown again after entry.
+
+US10 Build a Jira task (P2). As an author, I type a Jira key, or I start from the task of a pull request. The AI asks a few questions, each with options and a recommended answer. Then it writes a short change plan for the existing code: what to change, where, the pattern to copy, and the tests. I pick the size and approve the plan. The tool then writes tests and code step by step, runs my approved build and test commands, and reviews its own work. It stops when it needs me and says why. Small: one pull request with a short plan and the code. Medium: colleagues review the plan first, then one pull request with the code. Large: colleagues review the plan first, then the code comes in small pull requests, one after another. Each pull request opens only on my click.
+Acceptance: the tool never changes my own clone. It never pushes to the target branch or to a branch that it did not create. A pull request that grows past the line budget stops and proposes a split. A stopped task resumes from its last good step.
 
 User experience: the tool looks clean and modern, like a good email client. It has three panes, as in the prototype: sidebar, list, and detail. The sidebar holds the views: Needs you, Reviewing, My PRs, Following, Archive, Review runs, Ready to post. It also holds the repositories with unread counts, the check status, the theme switch, settings, and a Collapse sidebar control. The list pane shows the view name, the count, a repository chip, and a filter field. The detail pane shows, in scroll order: a header, a sticky action bar, a status strip, a panel slot, the review record, the Description, Drafts, Threads, Files, and Commits. Once a review exists, the review record comes before the Description. Header: the key "PROJ/repo #id" is one link to the PR in Bitbucket. Below it are the title and a byline: the author (a link when the server gives the user page), the source branch link with a visible copy button, the target branch link, and the task chips. A chip without a task link is a dashed button that opens Settings, Task IDs. Action bar: Ask (q), Draft replies N, Fix N (own PR only), Review (r), Full width (z), and More (Open on the server, Copy the pull request link). It has no split buttons and no profile menu. A button never goes disabled without a reason in text: Draft replies with no thread to answer opens a popover that says why. Status strip: one line of jumps: your turn, new messages, open threads, drafts, and files. Panel slot: the review brief or Ask opens under the strip, one at a time. Esc closes it. Ask holds the box and all answers of the PR, newest first. Review record: the newest run with its profile, head commit, and age, then its summary and a ledger of severity counts. "Not checked: N" opens in place with one plain line per skipped or unavailable item. It never jumps to the run log. Run setup and Log are on the same line. Drafts: findings and questions are compact rows in one section. o or Enter opens a row with its code, comment, and actions. Threads: groups Your turn, Waiting on others, and Other discussions, with an "All | Need me" toggle. Each thread footer holds the reply box, Draft reply, Fix (own PR), and More. Files: each file row is one button. Without the code, a click first gets the code of both branches, then opens the diff of that file. One bottom bar holds the fix part and Ready to post. Panels: a splitter on the list edge sets the list width from 280 to 560 px by drag or keys. The detail keeps at least 560 px. The sidebar becomes an icon rail below 1440 px, or by choice. The width and the sidebar choice stay in localStorage only. z or Full width hides the sidebar and the list. Prose keeps its reading width. Only diffs use the extra width. Below 760 px, one pane shows at a time. URL and Back: the URL holds the view, the selected PR (/:view/:project/:repo/:id), the thread, the open file and line, full width (full=1), the repository filter, the filter text, and the Settings section or profile. A view change, a PR open by click, a file open, full width, and a Settings link push a history entry. j, k, thread focus, and filter edits replace it. Back and Forward walk these entries and restore the detail scroll. A reload or a link in a new tab opens the same place. A URL with an unknown PR shows "Cannot find this pull request". Dialogs, menus, the panel slot, triage state, and panel widths never go into the URL. Keyboard: j and k move in the focused pane, and over drafts, threads, and file rows in the detail; Enter or → goes into the detail pane; Esc or ← goes back (Esc closes a menu, a dialog, the panel slot, and full width first); 1, 2, 3 go to the top, the drafts, and the run log; r opens the review brief; q opens Ask; z toggles full width; a, d, e accept, discard, or edit the current draft; f and F open the Fix list on an own PR; p posts the accepted items after confirmation; n jumps to the next unread message; / filters the list; ? shows all keys. Each message has a copy button that copies its raw Markdown. Status is never shown by color alone; an icon or text always goes with it. The scroll position stays when new events arrive. Focus is always visible. The tool supports light and dark themes.
 
@@ -291,6 +316,9 @@ Stack:
 - Diff viewer (Release 2): no diff library. It uses the parsed git diff rows and the existing excerpt styles. Release 3 fix edits use the same rows. There is still no diff library.
 - Jira Markdown (Release 3): turndown 7.2.4 (exact pin) converts the rendered Jira HTML on the server. Tables use an own rule, not a plugin. The conversion runs in a worker, one per issue fetch, with a budget of 3 s per field and 10 s per fetch. The UI renders Markdown with react-markdown 10.1.0 and remark-gfm 4.0.1 (exact pins), so GFM tables show as tables.
 - Diagrams (Review v2): mermaid with one exact pin, at least 11.16.1, loaded lazily on the Explain page only. Each diagram renders to an SVG string with securityLevel strict and htmlLabels false, without `%%{` directives, and shows as a data-URL image, so the CSP does not change. A diagram that fails shows its code and the error line.
+- Task states (Review v2 part 6, decided 2026-10-22): xstate v5 with one exact pin, 5.19.0 or later, as a pure transition function only. src/server/tasks/machine.ts declares the task and part machines with `setup({...}).createMachine({...})`. The app builds a snapshot from the SQLite row with `machine.resolveState({ value, context })`, checks an event with `snapshot.can(event)`, and gets the next state from the pure `transition(machine, snapshot, event)`. No actor runs (no `createActor`). The machine has no entry, exit, or transition actions and no invoke. No XState snapshot is stored. SQLite (the task, task_part, and task_step rows) is the only state store. A restart resumes from the last committed step. The app runs every effect after the commit, from the new state.
+- Rejected for part 6: the Claude Agent SDK (section 3.2); canUseTool and PreToolUse hooks (`--restricted` and the `git status` path check stay the write guard); workflow engines (Temporal, Inngest, Restate, Trigger.dev, LangGraph.js, Mastra); simple-git, isomorphic-git, p-queue, and diff libraries. The state already lives in SQLite, and the app has one process and one run slot.
+- Task spec files (Review v2 part 6): an own lean "change plan" format for changes to existing projects. No spec-kit, also not as a file format (user decision, 2026-10-22): spec-kit targets new projects and needs a constitution and many documents. The files live in the repository under `specs/<KEY>/` (a per-repository setting). Small: one plan.md of about one screen with "## Integration map", "## Change", and "## Tasks". Medium and large: short design.md, spec.md, and tasks.md. The integration map comes first: file:line references to the code to change, the pattern to copy, the tests to extend, the affected callers, and the migration or API touch points. The app checks each map path and line against the base commit and marks a miss. Acceptance criteria are testable lines, each mapped to a test. Each task lists its files, the tests to run, and a done check. No constitution and no boilerplate sections: the repository's own CLAUDE.md, AGENTS.md, and conventions are the standing rules. A loop step reads only its own task slice (context/step.md). The commit that finishes a task ticks `[x]` in tasks.md.
 - Distribution: bun build --compile makes one executable for Windows and one for Linux, with the UI embedded. Users need no runtime install.
 - Windows checks first (Gate 0): start claude.exe, send the prompt on stdin, cancel a run, read and write Bun.secrets. Cancel must stop the whole process tree, including MCP servers (taskkill /T /F on Windows). If Bun fails one check, switch to Node. Keep the code on web-standard APIs plus a thin spawn, SQLite, and secrets layer. Gate 0 passed all Windows checks on Bun 1.4.2; the Node fallback stays for Linux and future regressions.
 
@@ -308,6 +336,8 @@ Layout:
 - src/server/context/ (Release 2: ContextSource, Jira REST client, task.md; Release 3: markdown.ts, attachments.ts)
 - src/server/publish/ (approvals, durable outbox, reconcile)
 - src/server/storage/ (SQLite, migrations)
+- src/server/tasks/ (Review v2 part 6: machine, tasks, interview, plan, worktree, checks, implement, loop, push, stack)
+- src/web/tasks/ (Review v2 part 6: the Task view)
 - src/shared/ (IDs, DTOs, zod schemas)
 - fixtures/ (sanitized Bitbucket payloads, fake CLI output), tests/ (unit, contract, Playwright)
 
@@ -320,6 +350,16 @@ Bitbucket Server REST 1.0, auth with an HTTP access token as Bearer (Gate 0: Dat
 - Comments carry an integer version. Edits and deletes need the current version. A stale version returns 409 CommentOutOfDateException. Delete replies before their parent.
 - Gate 0 observed: only commentAction ADDED occurs. An edit changes the existing activity in place: comment version goes from 0 to 1, and updatedDate changes. A reply has no activity. It sits in the parent's comment.comments[] and has no parent field. A delete returns 204 and removes the activity. The server keeps no tombstone. GET of a deleted comment returns 404. Sync code depends only on recorded fixtures.
 - All Bitbucket calls live in src/server/bitbucket/. It returns plain types (PullRequest, Activity, Comment) without Bitbucket names.
+
+Bitbucket write calls (Review v2 part 6; Gate G1 to G6 on Data Center 9.x, 2026-10-22, integration-check.md "Review v2"):
+- Create PR: POST .../pull-requests with title, description, fromRef, toRef, and reviewers. It returns HTTP 201 with version 0 (G2).
+- The PR author cannot be a reviewer. Bitbucket drops the author from reviewers without an error (G2, U74). The app never offers the author as a reviewer. After a create, it reads back reviewers and tells the user about a dropped reviewer. A create with a non-author reviewer is not verified yet.
+- Update PR: PUT .../pull-requests/{id} with version and a new toRef retargets the PR. It returns HTTP 200, and the version goes up by 1 (G4). Whether a PUT without reviewers keeps them is unverified.
+- Build stats: GET /rest/build-status/1.0/commits/stats/{commit} gives successful, inProgress, and failed, plus cancelled and unknown (G3). The app reads the last two as optional. No build statuses count as green.
+- Repository: GET /rest/api/1.0/projects/{p}/repos/{r} gives the http clone link for a task without a PR (G1). `git ls-remote --symref <url> HEAD` gives the default target branch.
+- Push: `git push` from the cache with the token in the GIT_CONFIG env. A new branch uses an empty lease (`--force-with-lease=refs/heads/<b>:`). A later push uses the last pushed hash (G1). A stale lease fails with `[rejected]` and `(stale info)`, and the remote keeps its commit (G6). The app then offers "Get their commits", with no force.
+- Stack order (G5): when the target branch of an open PR is deleted, Bitbucket declines that PR within 30 s and keeps the deleted branch as its toRef. Retarget the upper PR before the lower branch is deleted. Never delete a lower branch while an upper PR targets it. A declined upper PR gets "Open the PR again". A reopen with a deleted toRef is unverified.
+- Error mapping: 401, 403, 404, and 409 give one sentence and one button. A 409 on create because a PR for the branch exists links that PR. A timeout after a create reads the open PRs of the branch first, with no blind retry.
 
 Jira Server REST 2 (Release 2, from the Jira 9.12 docs; not verified on a real server):
 - Auth: a personal access token as Authorization: Bearer.
@@ -388,7 +428,7 @@ Review runner:
 - Copy to all profiles: a button in the Run setup of each profile. After a confirm, it gives every other profile the same skills, Always use marks, MCP servers, and tools in one save.
 - Improve prompt: a button under the prompt of each profile. One run of the user's CLI proposes a new prompt and one reason per change. The input is the profile name, note, Explain flag, and prompt, an optional goal, and the rules that every run adds. The prompt and the goal are marked as data. The run uses the profile model and effort, `--tools ""`, no MCP server, and the usual auth check and child environment. Its cwd is a new empty temp folder, which the app deletes after the run. It gets no repository, no PR data, and no token. The dialog shows a line diff and the reasons. Only Apply changes the profile, through the autosave. A proposal does not use the review run slot. A new start replaces a running proposal, and closing the dialog cancels it. Verify in a smoke run that init lists only StructuredOutput.
 - Each run stores the profile name, revision, and explain flag at its start. A later profile edit does not change an old run.
-- Run kinds: review, reply, ask (Release 2), and fix (Release 3). A re-review is kind review with since_head set. Ask and fix run without the Agent tool and share the one run slot. Ask writes no items. Review v2 adds explain and discuss. Both run without the Agent tool and share the one run slot. Each run row stores REVIEW_PROMPT_VERSION in prompt_version; NULL reads as "1".
+- Run kinds: review, reply, ask (Release 2), and fix (Release 3). A re-review is kind review with since_head set. Ask and fix run without the Agent tool and share the one run slot. Ask writes no items. Review v2 adds explain and discuss. Both run without the Agent tool and share the one run slot. Review v2 part 6 adds interview, spec, and implement (Task runs). Each run row stores REVIEW_PROMPT_VERSION in prompt_version; NULL reads as "1".
 - Tasks: every run kind gets context/task.md with all fetched tasks of the PR. The PR has one task set and no per-run picker. Each run stores its task keys and fetch times at its start. Its run line shows them.
 - Answered questions (user decision, 2026-10-20): review and re-review runs, not Explain, get context/questions.md. It lists each open thread of items that I posted from earlier runs (the general comment with its questions and outside findings, or one inline finding) when another person wrote the newest message. Each item is one numbered question, marked as asked by me, with the later messages. The result gains answered [{thread, question, outcome, evidence, reply, finding}], outcome settled, followup, or issue. Older results parse with an empty list. settled gives an unaccepted reply draft with a resolve proposal, ticked on threads that I started. followup gives a draft with the next question. issue gives a normal finding and a draft that points to it. One draft per thread: resolve only when each question of the thread is settled, else the reply names the open ones. Unanswered questions get nothing. The writer priority and the revisions apply (Thread outcome, docs/plans/thread-outcome.md section 9).
 - History: Ask, reply, and fix runs get context/history.md when the PR has earlier results. It holds the newest completed or incomplete review or re-review (not Explain): profile, reviewed head, summary, and findings with their triage state. It also holds the earlier finished Ask runs, newest first. Findings stop at 60 KB and Ask runs at 40 KB. A line counts the items left out. No run resumes a session. context/pr.md marks a task comment "(task, open)" or "(task, resolved)".
@@ -417,6 +457,12 @@ Review runner:
 - Discuss (Review v2): one run of kind discuss per user message, with no Agent tool and no resume. The workspace is at the current heads. context/finding.md holds the finding with its verdict and my current text. context/discussion.md holds the earlier turns, newest last, with a 40 KB cap. The message is the only content of "Your instructions". At most 20 messages per finding, 4,000 characters per message, 8,000 per answer, 40 turns per run. upheld changes nothing. revised stores a revision item (status discarded, payload revises <finding>) with Use the new text and Keep mine. withdrawn discards the finding with a mark and Restore. On a posted finding, a reply becomes a reply draft with origin discuss and the writer rank of a reply run; withdrawn also proposes resolve, ticked on threads that I started. A finding that changed during the run gets nothing. Ready to post, the post plan, history.md, and the counts skip finding revisions. Nothing posts.
 - Explain (Review v2): run kind explain with its own schema: summary, Markdown walkthrough (60,000 characters), reading order, file roles, risks with anchors, glossary, questions, and coverage. It uses the Explain profile, no Agent tool, no history.md, and no questions.md. The server checks each `diff:<path>#N<line>` or `#O<line>` link against the change and turns a bad link into plain text. It keeps the first 3 mermaid blocks of up to 20,000 characters, turns the others into text blocks, and strips `%%{` lines. explain_json holds the result. The page `/:view/:project/:repo/:id/explain` (key w) shows the newest result, marks it stale when the heads move, and runs again only on a click. Old explain runs (kind review, explain 1) keep their run line.
 - Measure (Review v2): `bun run eval -- --real` runs the review pipeline with the real CLI on synthetic fixture cases in temp repositories and a temp database. It scores items by path, side, and line overlap with both ends inclusive. Without `--real` it exits 2 and starts no process. GET /api/stats/review counts per profile and prompt version: runs, candidates, refuted, unsure, shown, accepted, edited, discarded by reason, posted, addressed, outdated, time, and usage. A discarded finding can carry an optional reason: Not a bug, Not worth fixing, Duplicate, Intended, or Wrong place. "Learn from discards" waits for these numbers.
+- Task runs (Review v2 part 6): interview and spec runs are read-only in a sanitized snapshot of the target head (a replan reads the spec branch). Implement runs work in the task worktree (section 3.5). The own review of a part is kind review with task set, on the part base..head, in a sanitized snapshot of the commit. Every task run is a review_run row with task set and pr NULL. It shares the one run slot, the log, cancel, usage, and restart recovery. No PR view, run list, Ready to post, or stats show it. The restart recovery marks a running task run failed.
+- Interview: structured questions with options and a recommended answer, at most 2 rounds. Spec run: the plan files, the tasks, and the estimate (parts, changed lines, files, db and api flags). The app applies the size rules (section 2). Plan approval stores the picked commands per repository.
+- Task loop of one part: a tests step whose new tests must fail, then per task an implement step, the checks, at most 3 fix steps, and a commit that ticks the task. A part over the line budget stops and proposes a split. Then the own review (finder and verify phase) fixes confirmed blocker and major points, at most 2 tries. Minor points stay listed with "Fix these too". Then the part waits for its PR click. Each stop says why and offers one button. Resume restarts the stopped step from the last commit and keeps the discarded changes as a patch file.
+- Living spec: a step that changes a file under the spec folder stops for the user. Accept keeps the commit on the spec branch or the part branch.
+- Part gate: the next part starts when the PR below it has at least 1 approval, no Needs work, no open blocker task, and green or no builds. One confirm overrides it. At most 2 open code PRs per task. After a lower PR merges, the app proposes the retarget of the next PR (one click, one confirm). After a squash merge, it adds a rebase and a force push with a lease, after a confirm. A replan run after each merge proposes changes to tasks.md for the user's approval.
+- Task notifications: needs you, a part ready to open, and spec approved. One tab claims each event.
 
 Job states: running, completed, incomplete, cancelled, failed. There is no queued state. Freshness is computed on read: a result turns stale when the source or target head changes. One run slot: a start while another run uses it gets 409 with the running run. Job start is idempotent: the running-job key is PR, source head, target head, profile ID, profile revision, and the note hash (a reply run adds its threads). A second tab or a refresh with the same key gets the existing run.
 
@@ -479,7 +525,13 @@ Data model (SQLite):
 - acknowledgement(comment key, acknowledged_version, acknowledged_at)
 - sync_checkpoint(scope, cursor_json, last_complete_at, incomplete_reason, last_error)
 - pr_brief(pr, note, profile, updated_at)
-- review_run(id, pr, kind: review|reply|ask, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, merge_base, fetch_via, status, error_kind, error_text, session_id, cli_version, model, usage_json, summary_json, raw_output, started_at, finished_at, since_head, range_base, question, answer). One running row per idem_key. Release 2 adds kind ask and the last four columns. Release 3 adds kind fix, fix_json (the thread notes of a fix run), and tasks_json (the task keys and fetch times of the run). Review v2 (migration 030) adds kinds explain and discuss, prompt_version, item (the finding of a discuss run), discuss_json, and explain_json.
+- review_run(id, pr, kind: review|reply|ask, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, merge_base, fetch_via, status, error_kind, error_text, session_id, cli_version, model, usage_json, summary_json, raw_output, started_at, finished_at, since_head, range_base, question, answer). One running row per idem_key. Release 2 adds kind ask and the last four columns. Release 3 adds kind fix, fix_json (the thread notes of a fix run), and tasks_json (the task keys and fetch times of the run). Review v2 (migration 030) adds kinds explain and discuss, prompt_version, item (the finding of a discuss run), discuss_json, and explain_json. Review v2 part 6 (migration 031) rebuilds the table: pr becomes nullable, task is new, CHECK (pr IS NOT NULL OR task IS NOT NULL), and kind adds interview, spec, and implement. Every query that reads review_run has a test with a task row present.
+- task(project, repo, key, title, origin_pr, state, stopped_from, size, size_by, target_branch, base_commit, spec_dir, spec_branch, issue_json, docs_json, estimate_json, settings_json, blocked_json, version, created_at, updated_at, closed_at). Review v2 part 6. One open task per repository and key. Every write checks version.
+- task_question(task, source: interview|loop, round, ord, text, why, kind, options_json, recommended, answer_json). Review v2 part 6.
+- task_part(task, ord, kind: spec|contract|part|cleanup|spike|single, title, branch, base_branch, pr, remote_pr, state, head, pushed, lines, usage_json). Review v2 part 6. One row per PR of the task. pushed is the lease of the next push.
+- task_step(task, part, ord, kind, run, state: waiting|running|ok|failed|cancelled|skipped, attempt, detail_json). Review v2 part 6. detail_json holds the commands with argv, exit code, time, and output tail, the diff stat, and the findings.
+- task_event(task, kind: needs_you|part_ready|spec_approved, ref, claimed_at). Review v2 part 6.
+- repo_task_settings(project, repo, spec_dir, branch_prefix, line_budget, max_open, approvals, commands_json, test_globs_json, exclude_globs_json, isolate_home, warned_at). Review v2 part 6. commands_json holds argv lists only, never a shell string.
 - task_context(pr, key, source: jira, json, fetched_at). Release 2. One row per PR and issue key.
 - task_attachment(pr, key, att_id, filename, mime, size, file, sha256, image, text, include, downloaded_at). Release 3. A task_context delete removes its rows.
 - repo_clone(project, repo, path, updated_at). Release 3. One clone path per repository.
@@ -506,6 +558,13 @@ Review v2 routes (zod input on each):
 - POST /api/items/:id: action reason on a discarded finding; use-revision and keep-mine also for findings.
 - GET /api/stats/review?days=30 (1 to 365).
 
+Review v2 part 6 routes (zod input on each):
+- POST and GET /api/tasks; GET /api/tasks/:id.
+- POST /api/tasks/:id/answers, /plan, /spec-pr, /build, /size, /spec-change/:step, /pause, /resume, /stop, and /close; PUT /api/tasks/:id/docs.
+- POST /api/tasks/:id/parts/:part/pr, /push (409 on a lease failure), and /retarget; GET /api/tasks/:id/parts/:part/diff.
+- GET and PUT /api/repos/:project/:repo/task-settings.
+- Every task mutation checks task.version and returns 409 with the current task on a mismatch.
+
 Tests:
 - Sanitized fixtures from Gate 0: nested replies, edits, deletions, duplicate activities, out-of-order activities, a late message during mark-read, paging, truncation.
 - A fake claude executable that replays recorded stream-json, errors, usage limits, malformed output, and slow runs for cancel.
@@ -515,6 +574,7 @@ Tests:
 - A separately authorized smoke test on the real server, on the designated test PR only.
 - Record which tests ran on Windows and which on Linux. Never point a test at a live or shared service.
 - Eval harness (Review v2): fixtures/eval/ holds synthetic cases with seeded bugs and traps in TypeScript, C++, and Python. `bun test` never starts it with the real CLI. The user runs it before and after each prompt change.
+- Task machine (Review v2 part 6): a table test over every state and event pair of both machines, with `snapshot.can` and `transition`. Push tests use a local bare repository or the fake Bitbucket, never the real server.
 ```
 
 ## 8. Phase 0: use this week, no code
@@ -538,9 +598,9 @@ Phase 2, close the loop:
 - Snooze a thread, personal reminders, and a deterministic daily digest.
 
 Phase 3, author mode (my own PRs):
-- Self-review before I open a PR.
+- Self-review before I open a PR: partly moved to Review v2 part 6 (the own review of each task part).
 - A digest of incoming feedback, grouped by topic.
-- Draft fixes for accepted feedback: moved to Release 3 as Fix it (section 2). I review, apply, and push.
+- Draft fixes for accepted feedback: moved to Release 3 as Fix it (section 2). I review, apply, and push. Review v2 part 6 builds new code from a Jira task.
 - Draft a PR description from the commits and the Jira issue.
 
 Phase 4, better reviews:
@@ -611,3 +671,6 @@ Review v2 sources (checked 2026-10-22; docs/plans/review-v2/design.md section 3 
 - Greptile: https://www.greptile.com/blog/make-llms-shut-up (nit share, feedback learning).
 - Google: https://research.google/blog/resolving-code-review-comments-with-ml ; ByteDance BitsAI-CR: arXiv 2501.15134 (precision targets, outdated rate).
 - Mermaid docs and security advisories (11.15, 11.16): securityLevel strict, htmlLabels false, `%%{init}` stripping. Not browser-verified.
+- Claude Agent SDK overview (read 2026-10-22): https://code.claude.com/docs/en/agent-sdk/overview (no claude.ai login for third-party SDK products unless approved; Commercial Terms of Service).
+- XState v5: https://stately.ai/docs/pure-transitions (`transition` and `initialTransition`, no action runs; 5.19.0 and later), https://stately.ai/docs/persistence (`machine.resolveState`), https://stately.ai/docs/states (`snapshot.can`). Bun support is unverified in the docs; WP-B0 tests and the compiled binary prove it.
+- spec-kit (rejected for task spec files): https://github.com/github/spec-kit
