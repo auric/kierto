@@ -2,7 +2,7 @@
 
 Status: decided, 2026-10-22. The user answered the questions of section 10 on 2026-10-22. Docs only, no code changed. Code references point to HEAD abae1a2 on branch r2. "Unverified" marks a claim that no code, document, or gate run confirmed. Companion files: spec.md (behavior, data, routes, schemas, prompts, acceptance criteria) and tasks.md (work packages and gates).
 
-Parts: 1 Review quality, 2 Discuss a finding, 3 Explain this PR, 4 Measure quality, 5 Brainstorm, 6 Build a Jira task, 7 Autopilot replies. A UX rule set (section 5.6) applies to every part. Part 7 was added on 2026-10-22 after the user's decisions Q25 to Q27 (section 10.1). Its open questions are in section 10.2.
+Parts: 1 Review quality, 2 Discuss a finding, 3 Explain this PR, 4 Measure quality, 5 Brainstorm, 6 Build a Jira task, 7 Autopilot replies. A UX rule set (section 5.6) applies to every part. Part 7 was added on 2026-10-22 after the user's decisions Q25 to Q27 (section 10.1). Its open questions are in section 10.2. Part 7 is on hold since 2026-10-22, and part 2 gained "PR context and PR notes" on the same day (section 10.3).
 
 ## 0. Sources and rules
 
@@ -39,16 +39,16 @@ Parts: 1 Review quality, 2 Discuss a finding, 3 Explain this PR, 4 Measure quali
 
 Goals:
 - G-R. More real findings and less noise: the finder reports all, a verify phase filters, the app applies caps from structured fields, and the UI shows confirmed points first.
-- G-D. A short talk with Claude about one finding. Claude answers with a verdict: upheld, revised, or withdrawn. A revision never overwrites the user's text.
+- G-D. A short talk with Claude about one finding. Claude answers with a verdict: upheld, revised, or withdrawn. A revision never overwrites the user's text. Every reply, discuss, review, fix, and ask run sees the whole PR in a short map (all threads with their state, the build, other open PRs on the same files) and the user's PR notes.
 - G-X. "Explain this PR" gives a readable walkthrough with a reading order, links into the diff, risks on code, and safe diagrams.
 - G-M. Numbers: precision, recall, noise, and cost per profile and prompt version, from synthetic fixtures and from real outcomes in the app.
 - G-B. From a Jira task to reviewed PRs: questions, a spec that colleagues review, tests first, own review, small PRs on click.
 - G-UX. One primary action per state, plain words, no setup before first use.
 
 Non-goals:
-- No automatic review, approval, merge, or thread resolve. Every run still starts from a click, from the approved plan of a task (section 10, Q5), or from a new comment on a PR where the user turned on Autopilot (part 7, Q25).
+- No automatic review, approval, merge, or thread resolve. Every run still starts from a click, from the approved plan of a task (section 10, Q5), or from a new comment on a PR where the user turned on Autopilot (part 7, Q25; on hold, so today no run starts from a comment).
 - No hosted service, no team features, no other code host.
-- No post without a click, except Autopilot replies on a PR where the user turned on Autopilot (part 7, Q25). The app never pushes to a target branch and never force-pushes without a confirm.
+- No post without a click, except Autopilot replies on a PR where the user turned on Autopilot (part 7, Q25; on hold, so today a human posts every reply). The app never pushes to a target branch and never force-pushes without a confirm.
 - No result cache that skips a run. A start runs the CLI again, except a start with the key of the running run.
 
 ## 3. Research summary
@@ -74,7 +74,7 @@ Non-goals:
 | S17 | git push `--force-with-lease=<ref>:<expect>`: with an empty expect, the ref must not exist yet. | https://git-scm.com/docs/git-push | New branches push with an empty lease. Updates push with the last pushed hash as the lease. |
 | S18 | Bitbucket Server DELETE .../pull-requests/{id}/comments/{commentId}?version=N: a user can delete an own comment. A comment with replies cannot be deleted, whatever the permission. Gate 0 on this server: DELETE with the current version returned 204, and the probe deleted replies before their parent (integration-check.md row "Delete call and deleted-comment shape"). | https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html ; integration-check.md | "Delete my last bot reply" only while the reply has no replies. The refusal text on Data Center 9.x is Gate G8. |
 | S19 | Bitbucket Server user objects carry `type` NORMAL or SERVICE. Unverified on Data Center 9.x for comment authors. | 7.21 REST reference (user responses) | Loop protection skips SERVICE authors when Gate G10 confirms the field. |
-| S20 | GET /rest/api/1.0/projects/{p}/repos/{r}/pull-requests?state=OPEN lists the open PRs of a repository (REPO_READ). | 7.21 REST reference | Autopilot resolves references such as "the mac build scripts PR" against this list. Gate G9. |
+| S20 | GET /rest/api/1.0/projects/{p}/repos/{r}/pull-requests?state=OPEN lists the open PRs of a repository (REPO_READ). | 7.21 REST reference | Part 2 lists other open PRs that change the same files (D9). Autopilot (on hold) resolves references such as "the mac build scripts PR" against this list. Gate G9. |
 
 ## 4. Decisions
 
@@ -109,6 +109,19 @@ Non-goals:
 | D3 | No message table. Each turn is a review_run row: question (the user message), answer, discuss_json (verdict and revision), and item (the finding). | A new item_message table. | Run rows already give status, log, cancel, usage, and errors. |
 | D4 | Verdict upheld changes nothing. Revised stores a revision item of the finding (payload revises) for Use revision or Keep mine. Withdrawn discards the finding with a mark and Restore. On a posted finding, the answer can make a reply draft through the writer priority. Nothing posts. | Overwrite the finding text. | The thread-outcome revision rule (BRIEF, Revisions): no AI writer overwrites the user's text. |
 | D5 | One link "Ask Claude about this" on the finding card opens an inline chat under the card. Key t. | A panel or a dialog. | UX rule 1 and 10: the talk stays next to the code. |
+
+PR context and PR notes (added 2026-10-22, section 10.3; spec.md sections 2.7 to 2.13):
+
+| ID | Decision | Alternatives | Why |
+|---|---|---|---|
+| D6 | A PR context file context/pr-context.md: the PR text, the linked tasks, the build, every thread (the threads of the run in full text, the others as a digest with the State line), and other open PRs that change the same files. App code builds it again before every run. No memory, no Claude call. | A session per PR with `--resume`. A Claude summary of the threads. pr.md only. | BRIEF 3.5: runs never resume. A summary by Claude costs quota and can be wrong or injected. pr.md has every message but no state and no peers, and a reply run reads only its own thread first. |
+| D7 | Reply, discuss, review and re-review (all agents), fix, and ask runs get the file. Explain gets none. Ask gets it, because users ask "what is left on this PR?". | Every run kind. Reply and discuss only. | A decision in another thread changes a review point, a fix, and an answer. Explain explains code and has no thread action. |
+| D8 | The State line reuses threadOutcome: it moves from src/web/review/outcome.ts to src/shared/outcome.ts, with its pure helpers. The server builds the same input from the same rows as the routes. | A server-side state list of its own. | One table of words. The file and the UI can never disagree. No second rule set that drifts. |
+| D9 | Other open PRs: stored pr_change rows of open inbox PRs in the same repository (no call), plus the open-PR list (S20) and the change list of each listed PR that is not stored, at most 30 per build, cached in memory by PR and updatedDate. Overlap is exact path equality, renames through src_path. Gate G9 and G12 come first. | Stored rows only. A new table of peer PRs. | Stored rows miss a colleague's PR that the user is not on, which is the case that matters most. An in-memory cache keeps the calls low without schema. The gate confirms the shapes and the permission on Data Center 9.x. |
+| D10 | The build line reads build stats of the PR head at the run start (S16, Gate G3 PASS). WP-PN adds provider.buildStats, and WP-B1 reuses it. | Wait for part 6. | The call is verified and small. A failed check changes the right answer to "is this ready?". |
+| D11 | PR notes: the pr_note table (moved from part 7 A5). The user adds, edits, and deletes notes. A reply or discuss run can propose up to 2 notes. A proposal counts only after the user clicks Keep. Runs see kept notes in context/notes.md, a file without the UNTRUSTED banner, and never see proposals. | Notes in pr-context.md under the banner. Proposals as hints. Notes in localStorage. | Kept notes are the user's decisions, so they need their own trusted file. A comment can steer a proposal, so a proposal is never a fact. Notes must reach every run, so they live in SQLite. |
+| D12 | A proposal needs a live message of the user in its thread. A repeat of any note text drops. | Accept any proposal. A similarity rule. | A comment of another person alone cannot plant a note. Exact repeats only, no heuristic. |
+| D13 | Reply and discuss results give cites: the threads whose decision the answer relies on. The app checks each number, and the draft card links the threads. | A free-text mention. | The user sees why Claude changed its answer. The eval case scores it. |
 
 ### 4.3 Part 3: Explain this PR
 
@@ -150,6 +163,10 @@ Non-goals:
 | B15 | The plan uses fixed patterns. A prep part holds a refactor that keeps behavior. A feature flag hides new behavior when the repository has flags, and the plan names its removal. Schema and API changes go expand, then migrate, then contract. A spike part explores an unknown. It never merges, and its result changes the spec. Parallel parts in several worktrees come later. | Parallel parts now. | One run slot and the reviewers' load. A stack of 2 open PRs already overlaps review and build. |
 
 ### 4.6 Part 7: Autopilot replies
+
+On hold (2026-10-22): the user paused autopilot; a human posts every reply. Keep for later.
+
+When part 7 resumes, A4 and A5 use the part 2 PR context and PR notes (D6 to D12): the pr_note table, the Notes block, and context/notes.md come from part 2, and Gate G9 runs in part 2.
 
 Background: a colleague's app replies on PRs without approval. In one case a reviewer asked to finish the mac build scripts work first, because of merge conflicts. The bot replied with two sequencing options, a recommendation, and a request for the other PR's link. The answer was useful, but it committed the author to a plan that the author never saw. Part 7 gives the same speed for safe replies and keeps every decision with the user.
 
@@ -213,6 +230,28 @@ Failure rules: a verify phase that fails (usage limit, auth, max turns, schema) 
 - Apply at the run end: upheld changes nothing. Revised stores a revision item (kind finding, status discarded, payload revises <finding>). Withdrawn discards the finding with withdrawn {run, reason, was}. A posted finding gets a reply draft (origin discuss, writer rank of a reply run) when reply has text. Withdrawn on a posted finding also proposes resolve, ticked when the user started the thread.
 - Items: items.ts use-revision and keep-mine accept a finding revision. Ready to post, history.md, and the post plan skip a finding with revises set.
 - Limits: 20 user messages per finding, 4,000 characters per message, 8,000 per answer, 40 turns per run.
+
+PR context and PR notes (D6 to D13):
+
+```
+run start (reply, discuss, review, fix, ask)
+   -> loadPrContext: rows (PR, tasks, comments, drafts, fixes, commits, pr_change, notes)
+      + Bitbucket reads (build stats, open-PR list, change lists; 15 s cap, cached)
+   -> prContextFile (pure) -> context/pr-context.md (UNTRUSTED)
+   -> kept notes -> context/notes.md (the user's decisions)
+   -> run -> validate cites and note proposals (app) -> drafts + suggestions in one transaction
+```
+
+| Area | File | Change |
+|---|---|---|
+| Outcome | src/shared/outcome.ts (new; moved from src/web/review/outcome.ts with fixState, fixWaiting, WHY, snippet, plural, shortHash, touchedDraft) | One threadOutcome for the server and the UI. The web modules re-export the moved names. |
+| Builder | src/server/review/context-files.ts (prContextFile, notesFile); src/server/review/pr-context.ts (new: loadPrContext) | Pure builder with caps and the trim rule. The loader reads rows and the Bitbucket facts. |
+| Run wiring | src/server/review/jobs.ts, prompt.ts (Tools lines), catalog.ts (PR_CONTEXT_RULES, NOTES_RULES) | The two files for the run kinds of D7. Focus threads per kind. Counts in the log. |
+| Bitbucket | src/server/bitbucket/provider.ts | listOpenPullRequests (S20) and buildStats (S16). listChanges and getPullRequest exist. |
+| Schemas | src/shared/review.ts, src/shared/dto.ts | noteProposal, cites, notes; NoteDto and the route inputs. |
+| Notes | src/server/review/notes.ts, notes-routes.ts (new) | Validation of proposals and cites, the CRUD routes, PR link states. |
+| Storage | migration 032 | pr_note. |
+| UI | src/web/pr/Notes.tsx (new), src/web/pr/PrDetail.tsx, src/web/review/ReplyDraft.tsx | The Notes block, the suggestion row and the cites line on the draft card. |
 
 ### 5.3 Part 3: Explain
 
@@ -324,9 +363,11 @@ Stop points (each one says why and offers one button): red after 3 fixes; a chec
 9. Progress visible in the inbox row.
 10. Reuse components, the prototype look, the keyboard model, and the accessibility rules.
 
-Parts 1 to 3 follow the same rules: one "Review" setup with a few named checkboxes and a three-step volume; one "Ask Claude about this" link; one "Explain this PR" button. Part 7 has one switch "Autopilot" with one status sentence. spec.md section 7 checks each screen against each rule.
+Parts 1 to 3 follow the same rules: one "Review" setup with a few named checkboxes and a three-step volume; one "Ask Claude about this" link; one "Explain this PR" button; one "Notes" block with "Add a note" and Keep or Dismiss on each suggestion. Part 7 (on hold) has one switch "Autopilot" with one status sentence. spec.md section 7 checks each screen against each rule.
 
 ### 5.7 Part 7: Autopilot replies
+
+On hold (2026-10-22): the user paused autopilot; a human posts every reply. Keep for later.
 
 ```
 sync (comment_new on an own PR, mode draft or post)
@@ -349,7 +390,7 @@ sync (comment_new on an own PR, mode draft or post)
 | Outbox | src/server/publish/outbox.ts | Rows with auto 1 and not_before. Fresh thread read before the send. Mark from the Autopilot settings. Cancel and delete. |
 | Bitbucket | src/server/bitbucket/provider.ts | deleteComment (S18), listOpenPullRequests (S20), user type on comment authors (S19). |
 | Dependencies | src/server/autopilot/deps.ts (new); sync | A cheap GET of each blocking PR per cycle. Event dependency_merged. Level 3 hands the merge to the part 6 loop. |
-| Storage | migration 032 | pr_autopilot, autopilot_queue, autopilot_turn, pr_note, pr_dependency; review_run kind autopilot; post auto, not_before, deleted_at; event kinds. |
+| Storage | migration 033 or the next free number (032 went to part 2) | pr_autopilot, autopilot_queue, autopilot_turn, pr_dependency (pr_note comes from part 2); review_run kind autopilot; post auto, not_before, deleted_at; event kinds. |
 | UI | src/web/autopilot/ (new), PR header, src/web/settings/, inbox PrRow, src/web/notify.ts | Switch, status sentence, activity list, notes, dependency line, Settings section, row badge. |
 
 Run state: the queue row, the run row, and the turn rows hold all state. A restart keeps the queue and marks a running autopilot run failed (kind restart). The next scheduler pass runs it again when the comments are still unanswered.
@@ -363,8 +404,9 @@ Cost: one autopilot run per burst of comments, about one reply-run cost. A guard
 - Retire: a shipped security or over profile whose every field equals its version 4 value leaves the list. An edited one stays as the user's own profile and gets no later upgrades. pr_brief.profile with a removed ID falls back to the default (profileOf, catalog.ts:141). Old runs keep profile_name.
 - Explain: the explain profile stays as the setup of "Explain this PR". Its prompt and effort upgrade field by field. Old explain runs (kind review, explain 1) keep their old run line.
 - Results: new keys of finding, verify, and summary parse with defaults. A finding without verify shows as "Not checked", in the main list as today.
-- Database: 030 rebuilds review_run for kinds explain and discuss and adds prompt_version, item, and discuss_json. 031 rebuilds review_run again for kinds interview, spec, and implement, makes pr nullable, adds task, and adds the task tables (spec.md section 8). 032 rebuilds review_run for kind autopilot, rebuilds event for the new kinds, adds the post columns, and adds the part 7 tables (spec.md section 11.11).
-- Autopilot: every existing PR reads as mode off. No old data changes meaning. The AI mark setting keeps its meaning for manual confirms.
+- Database: 030 rebuilds review_run for kinds explain and discuss and adds prompt_version, item, and discuss_json. 031 rebuilds review_run again for kinds interview, spec, and implement, makes pr nullable, adds task, and adds the task tables (spec.md section 8). 032 adds pr_note (part 2, spec.md section 2.9) with no rebuild. db.ts sets the version by list order, so the file that merges first takes the lower free number: if WP-PN merges before WP-B0, it becomes 031 and part 6 takes 032. The part 7 migration (on hold) takes the next free number, 033 or later, and no longer creates pr_note.
+- PR notes: existing PRs have no notes. Old reply drafts and discuss turns read cites and notes as empty.
+- Autopilot (on hold): every existing PR reads as mode off. No old data changes meaning. The AI mark setting keeps its meaning for manual confirms.
 
 ## 7. Risks
 
@@ -381,6 +423,10 @@ Cost: one autopilot run per burst of comments, about one reply-run cost. A guard
 | Bitbucket declines a stacked PR when its target branch is deleted. | Gate G5. PR text asks to keep the branch. "Open the PR again". |
 | A loop holds the slot for long. | Per-step time caps (20 min default) and "Pause building after this step". |
 | Terms: many runs after one click. | Each part waits for colleagues anyway. Per-part budgets. Section 10 Q5. |
+| A comment steers a run through pr-context.md, or plants a note. | pr-context.md has the UNTRUSTED banner. stdin holds no comment or note text (canary test). A proposal needs a message of the user in its thread and counts only after Keep. |
+| The State line disagrees with the UI. | One shared threadOutcome (D8) and a parity test over the outcome.test.ts cases. |
+| The open-PR reads slow the run start or fail. | One 15 s budget, an in-memory cache, at most 30 change lists, Cancel stops them, and a failure falls back to stored rows with a line in the file. |
+| A huge PR fills the context. | 48 KB cap with a fixed trim order. pr.md keeps every message. |
 | Autopilot posts a wrong answer or a commitment. | Class table, commits flag, guard phase, evidence check, 60 s cancel window, Delete, eval gate with 0 wrong auto-posts. |
 | A comment injects instructions into Autopilot. | Comment text only in untrusted context files, numeric IDs in stdin, read-only tools, no write calls in the Autopilot code path, proposed notes untrusted until the user keeps them. |
 | Two bots answer each other without end. | Prefix check, Bot accounts setting, SERVICE users (Gate G10), 3 posts per thread since the user's last message, per-PR daily cap. |
@@ -456,13 +502,15 @@ The user answered every question on 2026-10-22. Q1 to Q5 change BRIEF hard rules
 
 ### 10.1 Part 7 decisions (2026-10-22)
 
+On hold (2026-10-22): the user paused autopilot; a human posts every reply. Keep for later. WP-DA does not write Q25 into BRIEF.md or CLAUDE.md until part 7 resumes.
+
 The user decided Q25 to Q27 on 2026-10-22. Q25 changes a BRIEF hard rule and constitution principles 1 and 4. WP-DA writes them into BRIEF.md and CLAUDE.md.
 
 25. Q25 Human gate: "Nothing goes to Bitbucket without an explicit user action" becomes "Nothing goes to Bitbucket without an explicit user action, unless the user turned on Autopilot for that PR." Turning on Autopilot post mode for one PR is the explicit action. Safeguards that come with the change: off by default; own open PRs only; reply comments only, never approve, needs work, merge, decline, resolve, or reopen; the bot mark that cannot be turned off; the class table with the commits flag; the guard phase; the evidence check; the secrets check; caps per thread and per PR; quiet hours; loop protection; the global pause and the per-PR switch; the 60 s cancel window; Delete; the full log; the eval gate before level 2. Principle 4 ("polling never calls an LLM") gets the same exception for draft and post modes.
 26. Q26 Levels: level 2 built in steps. Level 1 (auto-draft and notify) ships first. Level 2 (Autopilot per PR for safe reply classes) follows after the eval gate and the user smoke. Level 3 actions come with part 6.
 27. Q27 Bot mark: configurable prefix and footer. The default prefix is the robot emoji "🤖 ". The mark can never be fully turned off: the prefix is required.
 
-### 10.2 Part 7 open questions (recommended defaults, not answered yet)
+### 10.2 Part 7 open questions (recommended defaults, not answered yet; on hold with part 7)
 
 28. Q28 Task PRs (part 6): start in draft mode when the task opens the PR? Recommended: yes, draft mode only. Post mode always needs the user's switch.
 29. Q29 Notify on each auto-post? Recommended: yes, one note per PR and sync ("Autopilot answered Anna on PR 12."), with a setting "Tell me when Autopilot posts" (on).
@@ -474,3 +522,9 @@ The user decided Q25 to Q27 on 2026-10-22. Q25 changes a BRIEF hard rule and con
 35. Q35 SERVICE users. Recommended: skip them when Gate G10 shows the field. Else rely on the Bot accounts setting.
 36. Q36 Footer text. Recommended: "_Automatic reply from the author's assistant. The author reads this thread later._"
 37. Q37 Level 3 "ask for review again": Bitbucket 7.21 has no re-request call (unverified for 9.x, Gate G11 INFO). Recommended: a marked comment that names the reviewers, posted only by the level 3 loop.
+
+### 10.3 Decisions of 2026-10-22 (later the same day)
+
+38. Q38 Part 7 Autopilot: on hold. The user paused autopilot; a human posts every reply. Keep the part 7 text for later. Its waves leave the active order (tasks.md section 1). Its migration takes the next free number when it resumes. Gate G9 and the pr_note table move to part 2.
+39. Q39 PR context and PR notes join part 2 (D6 to D13, spec.md sections 2.7 to 2.13). No memory: the app rebuilds the files before every run, with no Claude call. A proposed note counts only after the user clicks Keep.
+40. Q40 Choices made in the plan, with reasons in D7, D9, and D11 (the user can change them): Ask gets the PR context and Explain does not; other open PRs come from stored rows plus new Bitbucket reads behind Gate G9 and G12; kept notes go into their own file without the UNTRUSTED banner; migration 032 is reserved for pr_note.
