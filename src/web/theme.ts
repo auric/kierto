@@ -73,4 +73,6 @@ const subscribe = (fn: () => void) => {
 };
 
 export const useTheme = () => useSyncExternalStore(subscribe, theme);
+// The applied scheme, also under "system". apply() sets the class before it calls the listeners.
+export const useDark = () => useSyncExternalStore(subscribe, () => document.documentElement.classList.contains("dark"));
 export const useCompact = () => useSyncExternalStore(subscribe, compact);

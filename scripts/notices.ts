@@ -34,6 +34,9 @@ const SKILL_LICENSE: Record<string, string> = {
   "vercel-labs/agent-skills": "MIT",
 };
 
+// The license of npm packages whose package.json has no license field, from the license file of the package.
+const NPM_LICENSE: Record<string, string> = { "khroma@2.1.0": "MIT" };
+
 type Text = { name: string; text: string };
 type Pkg = { name: string; version: string; license: string; dir: string; where: Set<string> };
 
@@ -65,7 +68,8 @@ async function main() {
     const id = `${json.name}@${json.version}`;
     const known = pkgs.get(id);
     if (known) return void known.where.add(where);
-    const license = typeof json.license === "string" ? json.license : (json.license?.type ?? json.licenses?.[0]?.type ?? "UNKNOWN");
+    const license =
+      typeof json.license === "string" ? json.license : (json.license?.type ?? json.licenses?.[0]?.type ?? NPM_LICENSE[id] ?? "UNKNOWN");
     pkgs.set(id, { name: json.name, version: json.version, license, dir, where: new Set([where]) });
   }
 

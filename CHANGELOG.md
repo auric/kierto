@@ -3,6 +3,7 @@
 ## Unreleased
 
 - The app is now named PR Review Inbox. Its old name was Kierto. The repository is now github.com/auric/pr-review-inbox. Your data, settings, and stored tokens stay.
+- An Ask answer now shows Mermaid flowchart, sequence, and class diagrams as pictures, with "Show code" and "Copy code". A diagram that does not render shows its code and the first error line. Other diagram types show as code.
 - "Include in runs" on a Jira attachment asks about your company AI policy only the first time. The new switch "Ask before Claude reads a Jira attachment" in Settings, Jira, brings the question back.
 
 ### Consult your session

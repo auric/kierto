@@ -309,7 +309,7 @@ function Answer(props: {
       </div>
       {v.kind === "answered" && v.answer !== null && (
         <div id={`ask-${id}-a`} className="rl-fade max-w-[72ch] pl-7 [overflow-wrap:anywhere]">
-          <Text text={v.answer} />
+          <Text text={v.answer} diagrams />
         </div>
       )}
       {v.kind === "answered" && v.gaps.length > 0 && (

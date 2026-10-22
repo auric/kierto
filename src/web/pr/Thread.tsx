@@ -64,10 +64,10 @@ import {
 // The Markdown renderer loads on first use, so the main chunk stays small. Plain text shows until then.
 const Markdown = lazy(() => import("./Markdown").then((m) => ({ default: m.Markdown })));
 
-export function Text({ text }: { text: string }) {
+export function Text({ text, diagrams }: { text: string; diagrams?: boolean }) {
   return (
     <Suspense fallback={<p className="m-0 whitespace-pre-wrap">{text}</p>}>
-      <Markdown text={text} />
+      <Markdown text={text} diagrams={diagrams} />
     </Suspense>
   );
 }

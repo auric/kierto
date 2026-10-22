@@ -18,7 +18,13 @@ const devSessionToken: Plugin = {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), devSessionToken],
-  resolve: { alias: { "@": fileURLToPath(new URL("./src/web", import.meta.url)) } },
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src/web", import.meta.url)),
+      // mermaid imports elkjs (EPL-2.0) only for the ELK layout, which the app never uses. bun run notices refuses EPL-2.0.
+      "elkjs/lib/elk.bundled.js": fileURLToPath(new URL("./src/web/explain/no-elk.ts", import.meta.url)),
+    },
+  },
   build: {
     outDir: "dist/web",
     emptyOutDir: true,

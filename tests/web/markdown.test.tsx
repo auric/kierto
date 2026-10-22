@@ -20,3 +20,19 @@ test("Markdown drops raw HTML, turns images into links, and opens links in a new
   expect(html).toContain('<a href="https://x.test/i.png" target="_blank" rel="noopener noreferrer">pic</a>');
   expect(html).not.toContain("javascript:");
 });
+
+const FENCES = "```mermaid\ngraph TD\n  A --> B\n```\n\n```ts\nconst a = 1;\n```";
+
+test("A mermaid block stays code without diagrams", () => {
+  const html = renderToStaticMarkup(<Markdown text={FENCES} />);
+  expect(html).toContain('<pre><code class="language-mermaid">graph TD\n  A --&gt; B\n</code></pre>');
+  expect(html).toContain('<pre><code class="language-ts">');
+});
+
+// The diagram module loads lazily, so a static render shows the code until then. Other code blocks do not change.
+test("With diagrams, a mermaid block shows its code until the diagram loads", () => {
+  const html = renderToStaticMarkup(<Markdown text={FENCES} diagrams />);
+  expect(html).toContain("<pre><code>graph TD\n  A --&gt; B\n</code></pre>");
+  expect(html).not.toContain("language-mermaid");
+  expect(html).toContain('<pre><code class="language-ts">');
+});
