@@ -18,7 +18,8 @@ Run this once on the current prompts (prompt version 1), before any review v2 pr
 bun run eval -- --real --cases all --repeat 2 --model opus
 ```
 
-- Profile: the shipped `general` profile, unedited, with `--model opus`. The effort stays unset, so the default effort of your Claude Code settings applies. The harness never reads your own config or profiles.
+- Profile: the shipped `general` profile of that time, unedited, with `--model opus`. Its effort was unset, so the default effort of your Claude Code settings applied. The harness never reads your own config or profiles.
+- Profile version 5 changed the shipped `general` profile (now Review): a new note and prompt, and effort high. To run the v1 cases on the profile of this baseline again, add `--profile-version 4`.
 - Later runs must use the same `--model` and `--effort` values, or the numbers do not compare. Without both flags, the result depends on your Claude Code default model, and the harness prints a warning.
 - The result file records the requested model and effort (`requested`, or `default` for no flag). Each run records the model that ran (`model`, `models` with the subagent models), its effort (`effort`, `effortDefault`), and its coverage (`coverage`).
 - The first baseline file (commit 9391ec4) has no `requested` field. It ran Opus 5.5 at the default effort, high. compare.ts compares such a file by the models and efforts that ran, so a later run with `--model opus` gives no false warning.
@@ -31,12 +32,15 @@ bun run eval -- --real --cases all --repeat 2 --model opus
 
 ## Hard set baseline
 
-The v1 set is at its ceiling: the first baseline found all 27 bugs in repeat 1. The hard set in `fixtures/eval/hard/` has bugs that need unchanged code, bugs that look correct, two diffs of about 1100 lines, 3 or 4 traps per case, and two cases with no bug. Run its baseline once, without `--model`, as the first baseline ran:
+The v1 set is at its ceiling: the first baseline found all 27 bugs in repeat 1. The hard set in `fixtures/eval/hard/` has bugs that need unchanged code, bugs that look correct, two diffs of about 1100 lines, 3 or 4 traps per case, and two cases with no bug. Run its baseline once, without `--model`, on the profile of the first baseline:
 
 ```
-bun run eval -- --real --set hard --repeat 2
+bun run eval -- --real --set hard --repeat 2 --profile-version 4
 ```
 
+- `--profile-version 4` runs the shipped `general` profile of profile version 4: name General, the version 4 prompt, no effort, and the default reviewer. The first baseline (commit 9391ec4) ran this profile, revision `3a4df472`. Without the flag, the run uses the current Review profile, and the numbers measure the new profile, not the hard cases.
+- The run prints the model and the effort that it uses. With profile version 4 both come from your Claude Code settings. The first baseline ran Opus 5.5 at the default effort, high.
+- To measure the Review profile later, run the same command without `--profile-version 4` and compare the two files with `bun run eval:compare`. compare warns that the profiles differ. That is expected: the profile is the change that you measure.
 - Runs: 9 cases x 2 repeats = 18 review runs. `--cases all` without `--set` still means the 12 v1 cases, so the v1 baseline stays comparable.
 - Time and cost: an estimate from the v1 baseline, not measured. The 7 cases of 150 to 290 lines take about 0.6 to 0.9 minutes and $0.15 to $0.31 each. The 2 cases of about 1100 lines take about 1.5 to 3 minutes and $0.40 to $0.80 each. One repeat takes about 7 to 12 minutes and $2 to $4; two repeats take about 15 to 25 minutes and $4 to $8 of reported cost.
 - Compare a later run with `bun run eval:compare <baseline>.json <new>.json`. If the case files changed after the baseline, re-score it first (see below).
@@ -66,7 +70,7 @@ Run the same command on the new head, then compare the two files:
 bun run eval:compare eval-results/<baseline>.json eval-results/<new>.json
 ```
 
-It prints one table per metric with the delta, for all cases and for each case. It warns when a case changed between the two files; the numbers of such a case do not compare. It also warns when the two files used different models or efforts.
+It prints one table per metric with the delta, for all cases and for each case. It warns when a case changed between the two files; the numbers of such a case do not compare. It also warns when the two files used different models or efforts, or profiles with different revisions. The revision hashes each profile field that changes the run, so a file without a profile version still compares by its revision.
 
 ## Options
 
@@ -74,9 +78,11 @@ It prints one table per metric with the delta, for all cases and for each case. 
 - `--set v1` or `--set hard`: the case set, `fixtures/eval/cases/` or `fixtures/eval/hard/`. Default: v1.
 - `--cases all` or `--cases id,id`: the cases of the set to run. Default: all.
 - `--profile <id>`: a shipped review profile. Default: `general`.
+- `--profile-version N`: run the shipped values of the profile at profile version N, 1 to the current version (5). The result file records it as `profileVersion`. Default: no flag, so the current shipped profile runs.
 - `--modules a,b` and `--volume quiet|balanced|thorough`: profile fields of prompt version 2. Prompt version 1 refuses them.
-- `--model <name>`: the model of the runs, for this eval only. A model alias such as `haiku`, `sonnet`, or `opus`, or a full model ID such as `claude-opus-5-5`. Default: no flag, so your Claude Code default applies.
-- `--effort low|medium|high|xhigh|max`: the effort of the runs, for this eval only. Default: no flag, so your Claude Code default applies.
+- The run prints `Model:` and `Effort:`: the value of the profile after `--model` and `--effort`, else the default of your Claude Code settings.
+- `--model <name>`: the model of the runs, for this eval only. A model alias such as `haiku`, `sonnet`, or `opus`, or a full model ID such as `claude-opus-5-5`. Default: the model of the profile, else your Claude Code default.
+- `--effort low|medium|high|xhigh|max`: the effort of the runs, for this eval only. Default: the effort of the profile (high for the current Review profile), else your Claude Code default.
 - `--repeat N`: runs of each case, 1 to 10. Default: 1.
 - `--out <folder>`: the folder for the result file. Default: `eval-results/` in the repository, which git ignores.
 - `--keep`: keep the temp folders of each case for a look at the run.

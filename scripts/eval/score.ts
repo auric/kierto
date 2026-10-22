@@ -82,6 +82,8 @@ export type EvalResult = {
   commit: string;
   dirty: boolean;
   promptVersion: string;
+  // The PROFILES_VERSION of the shipped profile values that ran (--profile-version). Absent in files made before this field existed.
+  profileVersion?: number;
   cliVersion: string;
   runner: "real" | "fake";
   profile: Record<string, unknown> & { id: string; name: string; revision: string };

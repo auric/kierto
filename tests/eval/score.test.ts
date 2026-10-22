@@ -257,6 +257,18 @@ describe("compare by the models and efforts that ran", () => {
     expect(compareText(OLD, low)).toContain("A and B used different efforts.");
     expect(compareText(OLD, low)).not.toContain("used different models");
   });
+
+  test("a different profile revision warns, and the header names the profile version", () => {
+    const v4 = { ...LATER, profileVersion: 4 };
+    const text = compareText(OLD, v4);
+    expect(text).not.toContain("used different profiles");
+    expect(text).toContain("profile general of profile version 4 (revision 01234567)");
+    const review = { ...LATER, profileVersion: 5, profile: { ...LATER.profile, name: "Review", revision: "abcdef0123" } };
+    expect(compareText(v4, review)).toContain(
+      "A and B used different profiles: revision 01234567 of profile version 4, revision abcdef01 of profile version 5. The numbers do not compare.",
+    );
+    expect(compareText(OLD, review)).toContain("revision 01234567 of profile version not recorded");
+  });
 });
 
 describe("eval:rescore", () => {

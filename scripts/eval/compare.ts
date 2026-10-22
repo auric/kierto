@@ -66,7 +66,7 @@ const header = (r: EvalResult) => {
   const q = r.requested ?? { model: "not recorded", effort: "not recorded" };
   const runs = `${r.cases.length} case${r.cases.length === 1 ? "" : "s"} x ${r.repeat}`;
   const rescored = r.rescoredAt ? `, re-scored ${r.rescoredAt}` : "";
-  return `commit ${r.commit}${r.dirty ? " (uncommitted changes)" : ""}, set ${r.set ?? "v1"}${rescored}, prompt version ${r.promptVersion}, profile ${r.profile.id} (revision ${r.profile.revision.slice(0, 8)}), volume ${r.volume ?? "none"}, CLI ${r.cliVersion}, model ${q.model} (ran ${list(usedModels(r))}), effort ${q.effort} (ran ${list(usedEfforts(r))}), ${r.runner} CLI, ${runs}`;
+  return `commit ${r.commit}${r.dirty ? " (uncommitted changes)" : ""}, set ${r.set ?? "v1"}${rescored}, prompt version ${r.promptVersion}, profile ${r.profile.id}${r.profileVersion === undefined ? "" : ` of profile version ${r.profileVersion}`} (revision ${r.profile.revision.slice(0, 8)}), volume ${r.volume ?? "none"}, CLI ${r.cliVersion}, model ${q.model} (ran ${list(usedModels(r))}), effort ${q.effort} (ran ${list(usedEfforts(r))}), ${r.runner} CLI, ${runs}`;
 };
 
 export function summaryText(r: EvalResult, s: Score = score(r)): string {
@@ -119,6 +119,11 @@ export function compareText(a: EvalResult, b: EvalResult): string {
   if ((qa && qb && qa.model !== qb.model) || !same(ran(a), ran(b))) out.push("A and B used different models. The numbers do not compare.");
   if ((qa && qb && qa.effort !== qb.effort) || !same(usedEfforts(a), usedEfforts(b)))
     out.push("A and B used different efforts. The numbers do not compare.");
+  // The revision hashes each profile field that changes the run, so equal revisions mean equal profiles whatever the versions say.
+  if (a.profile.revision !== b.profile.revision)
+    out.push(
+      `A and B used different profiles: revision ${a.profile.revision.slice(0, 8)} of profile version ${a.profileVersion ?? "not recorded"}, revision ${b.profile.revision.slice(0, 8)} of profile version ${b.profileVersion ?? "not recorded"}. The numbers do not compare.`,
+    );
   const ids = [...ta.keys()].filter((id) => tb.has(id)).sort();
   for (const m of METRICS) {
     const rows = [

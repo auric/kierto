@@ -9,9 +9,9 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { writeConfig } from "../../src/server/config";
+import { PROFILES_VERSION, writeConfig } from "../../src/server/config";
 import { createLive } from "../../src/server/live";
-import { type ListTools, profileOf, profileRevision, SHIPPED_PROFILES } from "../../src/server/review/catalog";
+import { type ListTools, profileOf, profileRevision, SHIPPED_PROFILES, shippedProfileAt } from "../../src/server/review/catalog";
 import { createClaudeRunner } from "../../src/server/review/claude";
 import { git, gitEnv } from "../../src/server/review/git";
 import { saveInstructionSettings } from "../../src/server/review/instructions";
@@ -39,8 +39,11 @@ import {
 
 const REPO = resolve(import.meta.dir, "../..");
 export const WARNING = "Each case runs your Claude CLI and uses your plan quota.";
-export const DEFAULT_MODEL_WARNING =
-  "No --model or --effort: the runs use the default model and effort of your Claude Code settings. The result depends on them.";
+export const DEFAULT_MODEL_WARNING = "The result depends on your Claude Code settings.";
+const CLI_DEFAULT = "the default of your Claude Code settings";
+// The model and effort of the main run: the profile value after the flags, else the CLI default.
+export const runSetup = (p: { model: string | null; effort: string | null }) =>
+  `Model: ${p.model ?? CLI_DEFAULT}. Effort: ${p.effort ?? CLI_DEFAULT}.${p.model === null || p.effort === null ? ` ${DEFAULT_MODEL_WARNING}` : ""}`;
 const VOLUMES = ["quiet", "balanced", "thorough"] as const;
 const MAX_REPEAT = 10;
 // No request goes to this origin: the gitRemote option serves the repository.
@@ -50,7 +53,7 @@ const TASK_KEY = "EVAL-1";
 // prompt version 2 adds REVIEW_PROMPT_VERSION (spec.md section 0). Version 1 has none.
 const PROMPT_VERSION = String((review as unknown as Record<string, unknown>).REVIEW_PROMPT_VERSION ?? "1");
 
-const USAGE = `Usage: bun run eval -- [--real] [--set ${Object.keys(SETS).join("|")}] [--cases all|id,id] [--profile general] [--modules security,api]
+const USAGE = `Usage: bun run eval -- [--real] [--set ${Object.keys(SETS).join("|")}] [--cases all|id,id] [--profile general] [--profile-version ${PROFILES_VERSION}] [--modules security,api]
   [--volume balanced] [--model opus] [--effort ${EFFORTS.join("|")}] [--repeat 2] [--out <folder>] [--keep] [--runner <command> <args...>]
 --real runs the claude CLI on PATH. --runner runs the given CLI instead and must come last. Without both, the plan prints and the exit code is 2.`;
 
@@ -60,6 +63,8 @@ export type Options = {
   set: EvalSet;
   cases: string;
   profile: string;
+  // The PROFILES_VERSION whose shipped profile values run. null: the current shipped profile.
+  profileVersion: number | null;
   modules: string[] | null;
   volume: Volume | null;
   // null: no flag, so the CLI default applies.
@@ -84,6 +89,7 @@ export function parseOptions(argv: string[]): Options | { error: string } {
         set: { type: "string", default: "v1" },
         cases: { type: "string", default: "all" },
         profile: { type: "string", default: "general" },
+        "profile-version": { type: "string" },
         modules: { type: "string" },
         volume: { type: "string" },
         model: { type: "string" },
@@ -104,6 +110,9 @@ export function parseOptions(argv: string[]): Options | { error: string } {
   if (!Object.hasOwn(SETS, set)) return { error: `--set must be one of ${Object.keys(SETS).join(", ")}.` };
   const repeat = Number(v.repeat);
   if (!Number.isInteger(repeat) || repeat < 1 || repeat > MAX_REPEAT) return { error: `--repeat must be 1 to ${MAX_REPEAT}.` };
+  const profileVersion = v["profile-version"] === undefined ? null : Number(v["profile-version"]);
+  if (profileVersion !== null && !(Number.isInteger(profileVersion) && profileVersion >= 1 && profileVersion <= PROFILES_VERSION))
+    return { error: `--profile-version must be 1 to ${PROFILES_VERSION}.` };
   const volume = v.volume ?? null;
   if (volume !== null && !(VOLUMES as readonly string[]).includes(volume))
     return { error: `--volume must be one of ${VOLUMES.join(", ")}.` };
@@ -118,6 +127,7 @@ export function parseOptions(argv: string[]): Options | { error: string } {
     set: set as EvalSet,
     cases: v.cases ?? "all",
     profile: v.profile ?? "general",
+    profileVersion,
     modules: v.modules === undefined ? null : v.modules.split(",").map((s) => s.trim()),
     volume: volume as Volume | null,
     model: model?.data ?? null,
@@ -131,7 +141,7 @@ export function parseOptions(argv: string[]): Options | { error: string } {
 // The profile of the run with the --modules, --volume, --model, and --effort values. A field that this app version does not know is an error, so a
 // result file never names a setup that did not run.
 function evalProfile(o: Options) {
-  const shipped = SHIPPED_PROFILES.find((p) => p.id === o.profile);
+  const shipped = SHIPPED_PROFILES.some((p) => p.id === o.profile) && shippedProfileAt(o.profile, o.profileVersion ?? PROFILES_VERSION);
   if (!shipped) return { error: `Unknown profile ${o.profile}. Shipped profiles: ${SHIPPED_PROFILES.map((p) => p.id).join(", ")}.` };
   const extra = {
     ...(o.modules && { modules: o.modules }),
@@ -139,7 +149,7 @@ function evalProfile(o: Options) {
     ...(o.model && { model: o.model }),
     ...(o.effort && { effort: o.effort }),
   };
-  const list = profileList.safeParse(SHIPPED_PROFILES.map((p) => (p.id === o.profile ? { ...p, ...extra } : p)));
+  const list = profileList.safeParse(SHIPPED_PROFILES.map((p) => (p.id === o.profile ? { ...shipped, ...extra } : p)));
   if (!list.success) return { error: `Invalid profile: ${list.error.issues.map((i) => i.message).join("; ")}` };
   const profile = profileOf(list.data, o.profile);
   const lost = Object.keys(extra).filter((k) => !(k in profile));
@@ -150,15 +160,16 @@ function evalProfile(o: Options) {
 
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-function plan(o: Options, cases: EvalCase[]) {
-  const lines = [`Eval plan: ${count(cases.length, "case")}, ${count(o.repeat, "repeat")}, profile ${o.profile}, set ${o.set}.`];
+const profileText = (o: Options) => `profile ${o.profile}${o.profileVersion === null ? "" : ` of profile version ${o.profileVersion}`}`;
+
+function plan(o: Options, cases: EvalCase[], profile: { model: string | null; effort: string | null }) {
+  const lines = [`Eval plan: ${count(cases.length, "case")}, ${count(o.repeat, "repeat")}, ${profileText(o)}, set ${o.set}.`];
   const w = Math.max(...cases.map((c) => c.id.length));
   for (const c of cases)
     lines.push(
       `  ${c.id.padEnd(w)}  ${c.language.padEnd(10)}  ${String(c.changedLines).padStart(4)} changed lines  ${count(c.bugs.length, "bug")}  ${count(c.traps.length, "trap")}`,
     );
-  if (!o.model && !o.effort) lines.push(DEFAULT_MODEL_WARNING);
-  lines.push(WARNING, "Add --real to run it.");
+  lines.push(runSetup(profile), WARNING, "Add --real to run it.");
   return lines.join("\n");
 }
 
@@ -392,7 +403,7 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
   if (!o.real && !o.runner) {
-    console.log(plan(o, cases));
+    console.log(plan(o, cases, p.profile));
     return 2;
   }
 
@@ -430,6 +441,7 @@ export async function main(argv: string[]): Promise<number> {
       commit,
       dirty,
       promptVersion: PROMPT_VERSION,
+      profileVersion: o.profileVersion ?? PROFILES_VERSION,
       cliVersion: checked.version,
       runner: o.real ? "real" : "fake",
       profile: { ...profile, revision: profileRevision(profile) },
@@ -455,9 +467,9 @@ export async function main(argv: string[]): Promise<number> {
       },
     };
     console.log(
-      `Eval: set ${o.set}, ${count(cases.length, "case")} x ${o.repeat}, profile ${profile.id}, model ${requested.model}, effort ${requested.effort}, prompt version ${PROMPT_VERSION}, CLI ${checked.version}.`,
+      `Eval: set ${o.set}, ${count(cases.length, "case")} x ${o.repeat}, ${profileText(o)}, model ${requested.model}, effort ${requested.effort}, prompt version ${PROMPT_VERSION}, CLI ${checked.version}.`,
     );
-    if (!o.model && !o.effort) console.log(DEFAULT_MODEL_WARNING);
+    console.log(runSetup(profile));
     if (o.real) console.log(WARNING);
     const total = cases.length * o.repeat;
     let n = 0;

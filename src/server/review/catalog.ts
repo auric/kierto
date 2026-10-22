@@ -262,6 +262,13 @@ const FORMER: Record<number, Record<string, Former>> = {
 const FORMER_VERSIONS = Object.keys(FORMER)
   .map(Number)
   .sort((a, b) => b - a);
+// The shipped values of a profile at a former PROFILES_VERSION, rebuilt from FORMER. A later version gives the current shipped profile.
+export function shippedProfileAt(id: string, version: number): Profile | undefined {
+  const shipped = SHIPPED_PROFILES.find((s) => s.id === id) ?? RETIRED_PROFILES[id];
+  if (!shipped) return undefined;
+  const former: Former = Object.assign({}, ...FORMER_VERSIONS.filter((v) => v >= version).map((v) => FORMER[v]?.[id]));
+  return { ...shipped, ...structuredClone(former) };
+}
 // version: the PROFILES_VERSION of the saved config. A field equal to its shipped value of that version was never edited,
 // so it gets the current shipped value. A field equal to an older shipped value was set back on purpose, so it stays.
 // The version 3 upgrade replaced only whole unedited profiles. A version 3 profile with its version 2 prompt kept all its version 2 fields.

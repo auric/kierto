@@ -11,7 +11,10 @@ import { buildRepo, type EvalCase, type EvalSet, FIXTURE_SUFFIX, INSTRUCTION_FIL
 import { compareText } from "../../scripts/eval/compare";
 import { DEFAULT_MODEL_WARNING, parseOptions, WARNING } from "../../scripts/eval/run";
 import { type EvalResult, score } from "../../scripts/eval/score";
+import { PROFILES_VERSION } from "../../src/server/config";
+import { profileRevision, SHIPPED_PROFILES, shippedProfileAt } from "../../src/server/review/catalog";
 import { git } from "../../src/server/review/git";
+import { DEFAULT_VERIFIER } from "../../src/shared/dto";
 import { readRecords } from "../support/fake-claude";
 import { claudeStream } from "../support/review-fixture";
 
@@ -64,9 +67,16 @@ describe("eval harness without --real (AC-M2)", () => {
     expect(r.stdout).toContain(`Eval plan: ${loadCases("all").length} cases, 2 repeats, profile general, set v1.`);
     expect(r.stdout).toContain(WARNING);
     expect(r.stdout).toContain(DEFAULT_MODEL_WARNING);
+    expect(r.stdout).toContain("Model: the default of your Claude Code settings. Effort: high.");
     const hard = await bun([RUN, "--set", "hard"], guard);
     expect(hard.code).toBe(2);
     expect(hard.stdout).toContain(`Eval plan: ${loadCases("all", SETS.hard).length} cases, 1 repeat, profile general, set hard.`);
+    const v4 = await bun([RUN, "--set", "hard", "--profile-version", "4"], guard);
+    expect(v4.code).toBe(2);
+    expect(v4.stdout).toContain("profile general of profile version 4, set hard.");
+    expect(v4.stdout).toContain(
+      "Model: the default of your Claude Code settings. Effort: the default of your Claude Code settings. The result depends on your Claude Code settings.",
+    );
   });
 
   test("--set picks the case folder, and --cases works within it", () => {
@@ -77,6 +87,17 @@ describe("eval harness without --real (AC-M2)", () => {
     if (!first) throw new Error("The hard set is empty.");
     expect(loadCases(first.id, SETS.hard).map((c) => c.id)).toEqual([first.id]);
     expect(() => loadCases(first.id)).toThrow("Unknown case");
+  });
+
+  test("--profile-version rebuilds the shipped general profile of the first baseline", () => {
+    expect(parseOptions([])).toMatchObject({ profileVersion: null });
+    expect(parseOptions(["--profile-version", "4"])).toMatchObject({ profileVersion: 4 });
+    for (const bad of ["0", "6", "4.5", "x"]) expect(parseOptions(["--profile-version", bad])).toHaveProperty("error");
+    const v4 = shippedProfileAt("general", 4);
+    expect(v4).toMatchObject({ name: "General", effort: null, modules: [], volume: "balanced", verifier: DEFAULT_VERIFIER });
+    // The revision of the first baseline file (commit 9391ec4, prompt version 1).
+    expect(profileRevision(v4 as NonNullable<typeof v4>)).toBe("3a4df4727d3b45ecb2b399e811d6bc1a9d379877122c4137d88e672f6c6789d8");
+    expect(shippedProfileAt("general", 5)).toEqual(SHIPPED_PROFILES[0] as NonNullable<typeof v4>);
   });
 
   test("parses --model and --effort with the profile rules of the app", () => {
@@ -258,6 +279,7 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       const result = JSON.parse(readFileSync(file, "utf8")) as EvalResult;
       expect(result).toMatchObject({ format: 1, promptVersion: "1", runner: "fake", repeat: 1, volume: "balanced" });
       expect(result.requested).toEqual({ model: "default", effort: "high" });
+      expect(result.profileVersion).toBe(PROFILES_VERSION);
       expect(r.stdout).toContain(DEFAULT_MODEL_WARNING);
       expect(result.cliVersion).toContain("2.1.295");
       expect(result.profile).toMatchObject({ id: "general" });
