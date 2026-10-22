@@ -1,6 +1,6 @@
 # Review v2 plan: tasks
 
-Status: decided, 2026-10-22. design.md gives the decisions; section 10 holds the user's answers of 2026-10-22. spec.md gives the behavior and the acceptance criteria (AC-…). The user approved Q1 to Q5 on 2026-10-22. Part 6 starts only after Gate WP-G0 passes, and write runs only after Gate B17 passes (Q1).
+Status: decided, 2026-10-22. design.md gives the decisions; section 10 holds the user's answers of 2026-10-22. spec.md gives the behavior and the acceptance criteria (AC-…). The user approved Q1 to Q5 on 2026-10-22. Part 6 starts only after Gate WP-G0 passes, and write runs only after Gate B17 passes (Q1). Part 7 (Autopilot replies, section 5) was added on 2026-10-22 after the user's decisions Q25 to Q27. Post mode ships only after Gate G-EVAL-A and the user smoke UA1.
 
 ## 0. Rules for every work package
 
@@ -35,7 +35,22 @@ Status: decided, 2026-10-22. design.md gives the decisions; section 10 holds the
 | UM | User smoke part M (medium task) | W10 |
 | W11 | WP-B8, then WP-B9 ∥ WP-B10 | UM |
 | UL | User smoke part L (large task with a stack) | W11 |
-| W12 | WP-CLOSE | UL |
+| W12 | WP-CLOSE | UL, UA3 |
+
+Part 7 waves (parallel worktrees next to part 6; section 5):
+
+| Wave | Packages | Needs |
+|---|---|---|
+| WA0 | WP-DA ∥ WP-GA | the user's decisions Q25 to Q27 (2026-10-22); WP-D2 merged (part 2 reply work) |
+| WA1 | WP-A1 | WP-B0 merged (migration 031 and the review_run rebuild); WP-D2 |
+| WA2 | WP-A2 ∥ WP-A4 | WP-A1; Gate G9 recorded (else context/open-prs.md stays absent) |
+| WA3 | WP-A3 | WP-A2 |
+| UA1 | User smoke docs/smoke-autopilot.md part 1 (draft mode on a test PR) | WA3 |
+| WA4 | WP-A5, then WP-A7 | UA1; Gate G8 recorded (delete) |
+| UA2 | User gate G-EVAL-A (reply eval, post mode) | WP-A5, WP-A4 |
+| WA5 | WP-A6 | UA2 passed, WP-A7 |
+| UA3 | User smoke part 2 (post mode, cancel, delete, the delete-with-reply refusal) | WA5 |
+| WA6 | WP-A8 (level 3) | WP-B8 (W11), WP-A7 |
 
 What each task size needs:
 
@@ -59,7 +74,12 @@ Shared-file ownership (merge order):
 | migration 031, src/shared/task.ts | WP-B0 |
 | src/server/tasks/* | WP-B2 → WP-B3 → WP-B4 → WP-B6 → WP-B8 |
 | src/web/tasks/* | WP-B5 → WP-B7 → WP-B9 → WP-B10 |
-| tests/e2e/serve.ts, control.ts, tests/support/fake-claude.ts, fake-bitbucket.ts | WP-R1 → WP-B1 (the later owner adds only) |
+| tests/e2e/serve.ts, control.ts, tests/support/fake-claude.ts, fake-bitbucket.ts | WP-R1 → WP-B1 → WP-A1 (the later owner adds only) |
+| migration 032, src/shared/autopilot.ts | WP-A1 → WP-A5 (additive only after WP-A1) |
+| src/server/autopilot/* | WP-A2 → WP-A5 → WP-A7 → WP-A8 |
+| src/web/autopilot/* | WP-A3 → WP-A6 |
+| src/server/review/jobs.ts, catalog.ts, prompt.ts, src/server/publish/outbox.ts, src/server/sync/engine.ts (part 7 additions) | WP-A2 → WP-A5 → WP-A7, additive only. The later merger of part 6 and part 7 rebases. |
+| scripts/gate/bitbucket-write.ts | WP-G0 → WP-GA (adds only) |
 
 ## 2. Work packages: parts 1 to 4
 
@@ -253,7 +273,7 @@ Shared-file ownership (merge order):
 
 ### WP-CLOSE (implementer, W12)
 
-- Files: docs/smoke-v2.md and docs/smoke-task.md (final), scripts/demo.ts (a review v2 run with folds, a discuss turn, an Explain page with a diagram, a small task in each state), docs/screenshots (`bun run screenshots`), README.md, CHANGELOG.md, CLAUDE.md status.
+- Files: docs/smoke-v2.md, docs/smoke-task.md, and docs/smoke-autopilot.md (final), scripts/demo.ts (a review v2 run with folds, a discuss turn, an Explain page with a diagram, a small task in each state, a PR in draft mode with one Autopilot draft and one activity row), docs/screenshots (`bun run screenshots`), README.md, CHANGELOG.md, CLAUDE.md status.
 - Run the full e2e suite twice. Report one control mutation per safety check of the plan, each with its "imported from" proof.
 
 ## 4. User-run gates and smoke steps
@@ -266,5 +286,84 @@ Shared-file ownership (merge order):
 | G1 to G7 | `bun scripts/gate/bitbucket-write.ts --only G1,…` on the test repository | before WP-B1 (G1 to G3), before WP-B8 (G4 to G6) | spec of WP-G0. |
 | Smoke v2 | docs/smoke-v2.md: A review with folds on a real PR; B discuss with all three verdicts; C Explain with a diagram and a link; D stats after a week of use | after W6 | Every step as written. Record the time and usage per phase. |
 | Smoke task | docs/smoke-task.md parts S, M, L | after W9, W10, W11 | Every step as written. Nothing pushes without a click. |
+| G8 to G11 | `bun scripts/gate/bitbucket-write.ts --only G8,G9,G10,G11` on the test repository | before WP-A2 (G9, G10) and WP-A5 (G8) | spec of WP-GA. |
+| UA1 | docs/smoke-autopilot.md part 1 | after WA3 | A draft for each scripted comment, one notification per burst, "Post this reply" posts once, nothing posts by itself. |
+| G-EVAL-A | `bun run eval -- --replies --real --repeat 3` | after WP-A5, before WP-A6 | 0 wrong auto-posts over 3 repeats (spec.md section 11.15). |
+| UA3 | docs/smoke-autopilot.md part 2 | after WA5 | Every step as written. Each auto post carries the mark. A decision stays a draft. Delete works without a reply and is refused with one. |
 
-Unverified facts that the gates record in integration-check.md: Opus 5.5 recall under "report everything" (S2 was stated for Opus 5); Edit and Write confinement under `--restricted` (B17); usage and cost fields on a subscription (B19); the Data Center 9.x shape of create PR, update PR, build stats, and repository links (G1 to G4); the effect of a deleted target branch on a stacked PR (G5); the Mermaid version and its CSP behavior in the browser (WP-X2).
+Unverified facts that the gates record in integration-check.md: Opus 5.5 recall under "report everything" (S2 was stated for Opus 5); Edit and Write confinement under `--restricted` (B17); usage and cost fields on a subscription (B19); the Data Center 9.x shape of create PR, update PR, build stats, and repository links (G1 to G4); the effect of a deleted target branch on a stacked PR (G5); the Mermaid version and its CSP behavior in the browser (WP-X2); the delete refusal for a comment with replies (G8); the open-PR list shape (G9); the user type on comment authors (G10); a re-request review call (G11); the real CLI behavior on autopilotResult and guardResult (U-rows of WP-DA).
+
+## 5. Work packages: part 7
+
+Rules of section 0 apply. Each package names the spec.md section 11 parts that it builds.
+
+### WP-DA. Docs for part 7 (implementer, WA0)
+
+- Files: BRIEF.md (spec.md section 10, row "part 7": principle 1, principle 4, 3.6, 7 Plan, the hard rule text, the safeguards list), CLAUDE.md (Hard rules: "Nothing goes to Bitbucket without an explicit user action, unless the user turned on Autopilot for that PR."; status line; layout src/server/autopilot/ and src/web/autopilot/), integration-check.md (rows G8 to G11 and U-rows for autopilotResult and guardResult, "not run").
+- Tests: none.
+
+### WP-GA. Gate checks G8 to G11 (implementer, WA0)
+
+- Files: scripts/gate/bitbucket-write.ts (adds G8 to G11), docs/gate-v2.md (rows).
+- G8: on the designated test PR, post a comment and delete it with the current version (PASS: 204). Post a comment, reply to it from the same token, and delete the parent (record the status and the error text). Clean up the reply first, then the parent.
+- G9: GET the open PRs of the test repository with limit 50 (record the shape: id, title, author, fromRef, toRef, updatedDate, isLastPage).
+- G10 INFO: record the author type field of comments, and of a service account when the user has one.
+- G11 INFO: record whether any documented call re-requests a review, and whether a push resets the approvals of the test repository.
+- Each check has `--dry-run`. Output sanitizing as B1 to B16. Separate authorization as G1 to G7.
+- Tests: argument parsing and dry-run output only.
+
+### WP-A1. Contracts for Autopilot (implementer-xhigh, WA1)
+
+- Files: src/shared/autopilot.ts (new: constants, classes, schemas, autopilotSettings); src/shared/review.ts (reply payload origin autopilot and the autopilot field, with defaults); src/shared/dto.ts (AutopilotDto, TurnDto, NoteDto, DependencyDto, route inputs of spec.md section 11.12, RunKind adds autopilot, ClaimedEvent kinds, PrRow autopilot fields, settings input); src/server/storage/migrations/032_autopilot.sql; src/server/storage/db.ts; src/server/settings.ts (autopilot in localFields, with the prefix rule); src/web/review/model.ts (RUN_TEXT and KIND_LABEL for autopilot); tests/support/fake-claude.ts (autopilot and guard echo by schema); tests/support/fake-bitbucket.ts (DELETE comment with the reply refusal, open-PR list, user type).
+- Behavior: spec.md sections 11.6, 11.11, the settings part of 11.12.
+- Tests: db.test.ts for 032 (spec.md section 8 rules: child rows kept, foreign_key_check empty, CHECKs refuse a bogus kind, a second open changes nothing); autopilot.test.ts (draft-07 schemas, defaults, old configs parse, the prefix rule refuses "", " ", and "--"); settings test (markAi off keeps the Autopilot prefix).
+- Control mutation: accept an empty prefix. AC-A15 must fail.
+
+### WP-A2. Level 1 server: trigger, queue, run, drafts (implementer-xhigh, WA2)
+
+- Files: src/server/sync/engine.ts (trigger rules, queue upsert, no comment_new for trigger comments); src/server/autopilot/{queue.ts, context.ts, judge.ts, routes.ts} (new); src/server/review/{jobs.ts (kind autopilot, slot, restart), catalog.ts (autopilotAgent), prompt.ts (buildAutopilotPrompt), context-files.ts}; src/server/review/drafts.ts (origin autopilot rank 4); src/server/bitbucket/provider.ts (listOpenPullRequests, author type); src/server/publish/routes.ts (post-now); src/server/inbox/queries.ts (PrRow fields); tests/autopilot/{trigger.test.ts, queue.test.ts, run.test.ts, judge.test.ts} (new).
+- Behavior: spec.md sections 11.2 (draft mode), 11.3, 11.4 (without the guard phase), 11.5 (level 1 column, validation, secrets), 11.7 (autopilot agent), 11.8 (all but post guards), 11.12 (autopilot GET and PUT with off and draft, pause, activity, notes, post-now), 11.13 (autopilot_draft and the comment_new fallback), 11.14. AC-A1 to AC-A5, AC-A12 (run caps), AC-A13, AC-A16, AC-A18, AC-A19.
+- Tests (fake CLI, fake Bitbucket, temp repos, a fake clock): the quiet window coalesces three comments; quiet hours hold and release; each excluded trigger kind never queues; the canary never reaches stdin; argv has no Agent tool and the autopilot schema; draft items per class; a touched user draft gets a revision; one event per run; a schema failure adds comment_new per trigger comment; a restart re-queues; the usage limit pauses.
+- Control mutations: let a comment that starts with "🤖" queue (AC-A3 fails); put the note text into stdin (the canary test fails).
+
+### WP-A3. Level 1 UI (frontend-implementer, WA3, ports 7617/7618/7619)
+
+- Files: src/web/autopilot/{Switch.tsx, TurnOnDialog.tsx, Panel.tsx, Activity.tsx, Notes.tsx, model.ts (status sentence table), data.ts} (new); src/web/pr/PrDetail.tsx (header switch and sentence); src/web/review/ReplyDraft.tsx (writer label Autopilot, class line, "Post this reply"); src/web/settings/Autopilot.tsx (new); src/web/inbox PrRow (icon, "1 reply draft waits"); src/web/notify.ts (texts); docs/smoke-autopilot.md part 1 (new); tests/web/autopilot-model.test.ts (one test per status row); tests/e2e/autopilot.e2e.ts (new).
+- Behavior: spec.md sections 11.1 (draft rows), 11.13 (UI). AC-A20 (draft part), AC-UX1 to AC-UX3, AC-UX7, AC-UX10.
+- Gates: screenshots (switch with sentence, dialog, draft card, panel, Settings section), README section "Autopilot", web-design-guidelines, axe.
+
+### WP-A4. Reply eval (implementer, WA2)
+
+- Files: fixtures/eval/replies/<12 cases>/ (new); fixtures/eval/README.md (reply cases); scripts/eval/{run.ts, score.ts} (`--replies`); tests/eval/replies.test.ts (new).
+- Behavior: spec.md section 11.15. Until WP-A5 lands, the harness scores the class and the level 1 action only. WP-A5 adds the guard path to the harness.
+- Tests: the scorer with a fixed result file (a wrong auto-post counts once per case and repeat); `--replies` without `--real` exits 2; one case with the fake CLI gives the result file shape.
+- Control mutation: count a drafted answer as a wrong auto-post. The scorer test must fail.
+
+### WP-A5. Level 2 server: guard, posts, cancel, delete (implementer-xhigh, WA4)
+
+- Files: src/server/autopilot/judge.ts (class table post column, evidence check, guard agreement, post caps, age rule); src/server/review/{jobs.ts (guard phase, phase "checking"), catalog.ts (guardAgent), context-files.ts (proposed.md)}; src/server/publish/outbox.ts (auto rows, not_before, auto checks with the fresh read, the Autopilot mark, cancel); src/server/bitbucket/provider.ts (deleteComment); src/server/autopilot/routes.ts (mode post with understood, cancel, delete); scripts/eval (guard path); tests/autopilot/{post.test.ts, guard.test.ts, delete.test.ts, no-write.test.ts} (new); tests/publish/outbox.test.ts.
+- Behavior: spec.md sections 11.2 (post mode), 11.4 (guard phase), 11.5 (level 2 column, evidence), 11.7 (guard agent), 11.8, 11.9, 11.13 (autopilot_posted). AC-A6 to AC-A11, AC-A12 (post caps), AC-A14, AC-A15.
+- Tests: a post after the delay with the mark; each auto check failure (new message, resolve, merge, touched draft, pause, mode off) sends no POST; guard disagreement, a bad quote, commits true, a secret, and an old comment each give a draft or a drop; cancel before and after the send; delete without a reply sends one DELETE with the version; delete with a reply gets 409 and no DELETE; a spy provider over every part 7 test sees no approve, needs work, merge, decline, resolve, or reopen call.
+- Control mutations: skip the guard agreement (a guard-disagree test fails); skip the newest-message check in the drain (AC-A11 fails); skip the reply check before DELETE (AC-A10 fails).
+- Depends: Gate G8 recorded.
+
+### WP-A7. Dependency watch server (implementer, WA4 after WP-A5)
+
+- Files: src/server/autopilot/deps.ts (new); src/server/autopilot/judge.ts (blockedBy rows); src/server/sync/engine.ts (one GET per active dependency per cycle, dependency_merged); src/server/bitbucket/provider.ts (GET one PR by project, repo, and ID, if absent); src/server/autopilot/routes.ts (dependencies); tests/autopilot/deps.test.ts (new).
+- Behavior: spec.md section 11.10 (levels 1 and 2). AC-A17.
+- Control mutation: accept a blockedBy number outside open-prs.md. AC-A17 must fail.
+
+### WP-A6. Level 2 UI (frontend-implementer, WA5, ports 7627/7628/7629)
+
+- Files: src/web/autopilot/{TurnOnDialog.tsx (mode radios), Activity.tsx (posting countdown, Cancel, Delete with its confirm), Panel.tsx (dependency line and proposal), model.ts (post rows)}; docs/smoke-autopilot.md part 2; tests/e2e/autopilot-post.e2e.ts (new).
+- Behavior: spec.md section 11.1 (post rows, dependency line). AC-A20 (post part).
+- Gates: screenshots (post mode sentence, activity with Cancel, dependency proposal), README update, web-design-guidelines.
+- Depends: Gate G-EVAL-A passed.
+
+### WP-A8. Level 3 for task PRs (implementer-xhigh, WA6)
+
+- Files: src/server/tasks/{loop.ts (update step), stack.ts (merge of the target into a part branch)}; src/server/autopilot/{judge.ts (change_request to the task loop), deps.ts (update step start)}; tests/tasks/update.test.ts (new).
+- Behavior: spec.md sections 11.2 (level 3), 11.10 (level 3). The push uses the part 6 lease rules. The reviewer comment follows the Gate G11 result (Q37).
+- Tests: a merged dependency on a task PR in post mode runs merge, checks, and one lease push; a conflict that the fix step cannot solve blocks with "Needs you"; draft mode never starts the update step.
+- Control mutation: start the update step in draft mode. Its test must fail.
+- Depends: WP-B8, WP-A7, Gate G11 recorded.

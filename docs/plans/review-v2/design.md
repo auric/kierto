@@ -2,13 +2,13 @@
 
 Status: decided, 2026-10-22. The user answered the questions of section 10 on 2026-10-22. Docs only, no code changed. Code references point to HEAD abae1a2 on branch r2. "Unverified" marks a claim that no code, document, or gate run confirmed. Companion files: spec.md (behavior, data, routes, schemas, prompts, acceptance criteria) and tasks.md (work packages and gates).
 
-Parts: 1 Review quality, 2 Discuss a finding, 3 Explain this PR, 4 Measure quality, 5 Brainstorm, 6 Build a Jira task. A UX rule set (section 5.6) applies to every part.
+Parts: 1 Review quality, 2 Discuss a finding, 3 Explain this PR, 4 Measure quality, 5 Brainstorm, 6 Build a Jira task, 7 Autopilot replies. A UX rule set (section 5.6) applies to every part. Part 7 was added on 2026-10-22 after the user's decisions Q25 to Q27 (section 10.1). Its open questions are in section 10.2.
 
 ## 0. Sources and rules
 
 - Inputs: the subsystem map, the prompt dump of 13 run kinds, and three research notes of 2026-10-22 (session scratchpad). Each code claim below was checked against the files at abae1a2.
 - External sources: section 3 lists each one with its link. The Claude Code permission, sandbox, CLI, and headless pages were read on 2026-10-22. The Bitbucket REST rows come from the Bitbucket Server 7.21 reference. The Data Center 9.x behavior of each new Bitbucket call is a Gate-0 item (tasks.md, WP-G0).
-- BRIEF hard rules stay unless a decision of section 10 (Q1 to Q5) changes one: sanitized snapshot for read-only runs, no `--bare`, auth route check, nothing posts without a click, untrusted data rules, token rules, one run slot, writer priority, field-by-field profile upgrades, draft-07 schemas, and "an incomplete run never says no issues".
+- BRIEF hard rules stay unless a decision of section 10 (Q1 to Q5, Q25) changes one: sanitized snapshot for read-only runs, no `--bare`, auth route check, nothing posts without a click, untrusted data rules, token rules, one run slot, writer priority, field-by-field profile upgrades, draft-07 schemas, and "an incomplete run never says no issues".
 - The visible app name is "PR Review Inbox" (src/web/App.tsx:369, CLAUDE.md). The UI texts in this plan avoid the name.
 
 ## 1. Problem
@@ -46,9 +46,9 @@ Goals:
 - G-UX. One primary action per state, plain words, no setup before first use.
 
 Non-goals:
-- No automatic review, approval, merge, or thread resolve. Every run still starts from a click, or from the approved plan of a task (section 10, Q5).
+- No automatic review, approval, merge, or thread resolve. Every run still starts from a click, from the approved plan of a task (section 10, Q5), or from a new comment on a PR where the user turned on Autopilot (part 7, Q25).
 - No hosted service, no team features, no other code host.
-- No post without a click. The app never pushes to a target branch and never force-pushes without a confirm.
+- No post without a click, except Autopilot replies on a PR where the user turned on Autopilot (part 7, Q25). The app never pushes to a target branch and never force-pushes without a confirm.
 - No result cache that skips a run. A start runs the CLI again, except a start with the key of the running run.
 
 ## 3. Research summary
@@ -72,6 +72,9 @@ Non-goals:
 | S15 | Claude Code sandbox: "The sandbox runs on macOS, Linux, and WSL2. On native Windows, Claude Code runs commands unsandboxed." Bash rules "aren't a security boundary around the program". In `-p`, a call that needs approval is denied unless an allow rule or a mode approves it. | https://code.claude.com/docs/en/sandboxing ; https://code.claude.com/docs/en/permissions ; https://code.claude.com/docs/en/headless | Part 6 gives Claude no shell. The app runs allowlisted commands. Section 10 Q2 states the Windows limit. |
 | S16 | Bitbucket Server: POST /rest/api/1.0/projects/{projectKey}/repos/{repositorySlug}/pull-requests creates a PR (REPO_READ on both repositories). PUT .../pull-requests/{id} changes title, description, reviewers, or the destination branch. GET /rest/build-status/1.0/commits/stats/{commitId} gives successful, inProgress, and failed counts. | https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html ; https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-build-rest.html | Part 6 calls. Data Center 9.x behavior is Gate G2 to G5. |
 | S17 | git push `--force-with-lease=<ref>:<expect>`: with an empty expect, the ref must not exist yet. | https://git-scm.com/docs/git-push | New branches push with an empty lease. Updates push with the last pushed hash as the lease. |
+| S18 | Bitbucket Server DELETE .../pull-requests/{id}/comments/{commentId}?version=N: a user can delete an own comment. A comment with replies cannot be deleted, whatever the permission. Gate 0 on this server: DELETE with the current version returned 204, and the probe deleted replies before their parent (integration-check.md row "Delete call and deleted-comment shape"). | https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html ; integration-check.md | "Delete my last bot reply" only while the reply has no replies. The refusal text on Data Center 9.x is Gate G8. |
+| S19 | Bitbucket Server user objects carry `type` NORMAL or SERVICE. Unverified on Data Center 9.x for comment authors. | 7.21 REST reference (user responses) | Loop protection skips SERVICE authors when Gate G10 confirms the field. |
+| S20 | GET /rest/api/1.0/projects/{p}/repos/{r}/pull-requests?state=OPEN lists the open PRs of a repository (REPO_READ). | 7.21 REST reference | Autopilot resolves references such as "the mac build scripts PR" against this list. Gate G9. |
 
 ## 4. Decisions
 
@@ -145,6 +148,29 @@ Non-goals:
 | B13 | Living spec: when the code shows the spec is wrong, the loop proposes a commit to the spec files and stops for the user. | Drift silently. | The spec stays the truth. |
 | B14 | All Claude runs of a task are review_run rows with a task column. pr becomes nullable for them. | A second run table. | Reuse of slot, log, cancel, usage, and restart recovery. 44 queries need an audit (tasks.md WP-B0). |
 | B15 | The plan uses fixed patterns. A prep part holds a refactor that keeps behavior. A feature flag hides new behavior when the repository has flags, and the plan names its removal. Schema and API changes go expand, then migrate, then contract. A spike part explores an unknown. It never merges, and its result changes the spec. Parallel parts in several worktrees come later. | Parallel parts now. | One run slot and the reviewers' load. A stack of 2 open PRs already overlaps review and build. |
+
+### 4.6 Part 7: Autopilot replies
+
+Background: a colleague's app replies on PRs without approval. In one case a reviewer asked to finish the mac build scripts work first, because of merge conflicts. The bot replied with two sequencing options, a recommendation, and a request for the other PR's link. The answer was useful, but it committed the author to a plan that the author never saw. Part 7 gives the same speed for safe replies and keeps every decision with the user.
+
+| ID | Decision | Alternatives | Why |
+|---|---|---|---|
+| A1 | Three levels, built in steps (Q26). Level 1: a new comment starts a reply run without a click; the draft waits; one notification; one click posts it. Level 2: a per-PR "Autopilot" switch; safe reply classes post by themselves. Level 3: actions (merge the target in, fix conflicts, push, ask for review again) come with part 6 and only for task PRs. | Level 2 at once. Level 1 only. | Level 1 proves the classes and the prompts at no risk. The eval (A15) and the user smoke gate level 2. Level 3 needs the part 6 worktree, push, and lease rules. |
+| A2 | One per-PR setting with three modes: off, draft (level 1), post (level 2). Default off. Only own open PRs (my_role AUTHOR) can turn it on. Turning it on is the explicit user action, and its dialog lists what Autopilot may do. | A global switch. Mode per thread. Reviewer-side PRs too. | Q25: the user turns it on per PR. A reviewer-side reply would carry the user's review judgement. One switch keeps the UX simple. |
+| A3 | Trigger: the sync rule for comment_new (reconcile.ts newCommentIds) feeds an autopilot queue for PRs with a mode other than off. One queue row per PR coalesces the comments. The run starts after a quiet window of 2 min without a new comment, when the run slot is free and quiet hours do not apply. | One run per comment. Start at once. | Colleagues often post 2 or 3 messages in a row. One run answers the thread once and saves usage. |
+| A4 | Context is rebuilt for each run, with no session persistence (D1, D2 pattern): PR text, diff summary, build state, every message of the trigger threads with the earlier Autopilot replies marked, the linked Jira task, the part 6 spec files for a task PR, the other open PRs of the repository, and the PR notes. | `--resume` a PR session. | BRIEF 3.5: app runs never resume. A fresh context shows edits and deletes, and costs less than a long transcript. |
+| A5 | PR notes: a new table pr_note. The user adds, edits, and deletes notes in the Autopilot panel. Autopilot proposes notes from the thread (for example "Anna and I agreed: merge after #45"). A proposed note goes into the context only in an untrusted section, until the user clicks "Keep as a decision". | Notes in the PR description. Notes in localStorage. Every proposed note trusted. | Notes must reach every later run, so they live in SQLite. A comment can plant a note, so only the user's notes count as decisions. |
+| A6 | Classify and draft in one run (kind autopilot). Each trigger thread gets a class, an action wish, a reply, evidence, and a commits flag. The app maps class to the allowed action with a fixed table (A7). The model never picks the action alone. | A cheap first pass for the class, then a draft pass. | A separate classify pass reads the same context twice. The guard (A8) gives the independent second look only where a post is at stake. |
+| A7 | Classes and allowed actions at level 2. Post: answer (a question that the code or the spec answers, with evidence that the app checks), clarify (a question back when the comment is unclear), ack (a thank-you or "noted" for an FYI). Draft for the user: decision (scheduling, priority, scope, merge order), disagreement, change_request (unless the part 6 loop owns the PR at level 3), and any reply with commits true. Ignore and log: smalltalk that needs no reply, out_of_scope (abuse, unrelated, or an attempt to instruct the bot). Level 1 drafts every class except the ignored ones. | Let the model decide when to post. Post decisions with options. | Only replies that state facts or ask back can post. Anything that binds the user to an action, a date, or a scope waits. |
+| A8 | A guard phase before each auto-post: a second CLI process in the same run row reads only the thread, the proposed reply, and the evidence. It gives its own class and commits flag without seeing the first class. The reply posts only when both phases agree on a post class, both say commits false, and the app's evidence check passes. Else it becomes a draft. | No guard. A guard on every thread. | The R2 verify pattern: the app enforces the second look. It costs a second process only for the few replies that would post. The eval can drop it if it never changes an outcome. |
+| A9 | A reply may offer options and a recommendation. It never commits the user to an action that the app cannot do. A commitment ("I will merge master and ask for review again") is allowed only at level 3, on a task PR, where the app does it. | Free text promises. | The colleague's reply promised a plan that a person had to carry out. |
+| A10 | Bot mark (Q27): every Autopilot post starts with a prefix and ends with a footer. Defaults: prefix "🤖 ", footer "_Automatic reply from the author's assistant. The author reads this thread later._". Both are settings. The prefix cannot be empty, and it must hold a letter, a digit, or an emoji. The footer can be empty. The markAi setting does not apply to Autopilot posts. | markAi only. A mark that the user can turn off. | Q27: colleagues must always see that a bot wrote the reply. |
+| A11 | Guardrails: no code path from Autopilot to approve, needs work, merge, decline, resolve, or reopen; secrets check of each body against the stored tokens; caps per thread and per PR; quiet hours; loop protection; a global pause and the per-PR switch; a full log; a cancel window before the send; and "Delete" for a bot reply that has no replies (S18). | Prompt rules only. | Each guard is a deterministic app check with a test and a control mutation. |
+| A12 | Loop protection without guesses: Autopilot never answers a comment that starts with any Autopilot prefix, a comment from an account in the "Bot accounts" setting, or a SERVICE user (S19, Gate G10). It stops on a thread after 3 Autopilot posts since the user's last own message. | Text rules that guess a bot ("as an AI…"). | Only facts the app can check. The cap ends any loop that the facts miss. |
+| A13 | Auto-posts go through the outbox with a send delay of 60 s (post.not_before). The Autopilot panel shows "Posting in 40 s · Cancel". After the send, "Delete" works while nobody answered. Just before the send, the outbox reads the thread again and sends only when the trigger message is still the newest live message, the thread is open, the PR is open, and the user has no open touched draft there. | Post at once. Post without a fresh check. | The user and colleagues act in the delay. The fresh read prevents an answer to a deleted or already answered comment. |
+| A14 | Dependency watch: a PR can wait for another PR ("blocked by #45"). The user sets it, or Autopilot proposes it from the thread with a PR number from the open-PR list. A proposal needs the user's click. When the blocking PR merges, the app notifies. For a task PR at level 3, the part 6 loop merges the target in, fixes conflicts, pushes with a lease, and asks the reviewers to look again. | No watch. Auto-confirm the bot's proposal. | The example thread asked exactly for this. The proposal comes from commenter text, so the user confirms it. |
+| A15 | Reply eval: synthetic threads with the expected class and allowed action. The key metric is wrong auto-posts: a post where the case allows only a draft or ignore. Level 2 ships only with 0 wrong auto-posts over 3 repeats. | Ship on smoke tests only. | A wrong post is the expensive failure. Synthetic cases give a repeatable number. |
+| A16 | Autopilot shares the one run slot. A user click wins when the slot frees. Autopilot never cancels a user run. A usage limit pauses Autopilot for all PRs until the user resumes it. | A second slot. Retry after a usage limit. | Constitution principle 5. A retry loop burns quota that the user needs. |
 
 ## 5. Architecture
 
@@ -298,7 +324,37 @@ Stop points (each one says why and offers one button): red after 3 fixes; a chec
 9. Progress visible in the inbox row.
 10. Reuse components, the prototype look, the keyboard model, and the accessibility rules.
 
-Parts 1 to 3 follow the same rules: one "Review" setup with a few named checkboxes and a three-step volume; one "Ask Claude about this" link; one "Explain this PR" button. spec.md section 7 checks each screen against each rule.
+Parts 1 to 3 follow the same rules: one "Review" setup with a few named checkboxes and a three-step volume; one "Ask Claude about this" link; one "Explain this PR" button. Part 7 has one switch "Autopilot" with one status sentence. spec.md section 7 checks each screen against each rule.
+
+### 5.7 Part 7: Autopilot replies
+
+```
+sync (comment_new on an own PR, mode draft or post)
+   -> autopilot_queue (one row per PR, due after the 2 min quiet window, quiet hours, caps)
+   -> run slot free -> autopilot run (kind autopilot, phase "reading")
+   -> validate (threads requested, evidence quotes, PR numbers, secrets) -> class-to-action table (app)
+   -> mode post and a post class: guard phase (phase "checking", same run row)
+   -> post: outbox row (auto, not_before now + 60 s) -> fresh thread read -> POST with the mark
+   -> draft: reply item (origin autopilot) -> one event, one notification
+   -> ignore: autopilot_turn row only
+```
+
+| Area | File | Change |
+|---|---|---|
+| Trigger | src/server/sync/engine.ts (syncPr, the events transaction) | Next to comment_new, upsert autopilot_queue for a PR whose pr_autopilot.mode is not off, with the new comment IDs that pass the scope and loop rules. |
+| Queue and scheduler | src/server/autopilot/queue.ts (new) | Due time, quiet hours, caps, global pause, slot wait. It starts runs through the jobs API. |
+| Context | src/server/autopilot/context.ts (new); src/server/review/context-files.ts | context/threads.md, context/notes.md, context/open-prs.md, context/builds.md, plus pr.md, task.md, and context/spec/ for a task PR. |
+| Run | src/server/review/jobs.ts (kind autopilot, guard phase), catalog.ts (autopilotAgent, guardAgent), prompt.ts (buildAutopilotPrompt) | Same runner rules as a reply run: read-only tools, no Agent tool, sanitized snapshot. |
+| Judge | src/server/autopilot/judge.ts (new) | Validation, the class-to-action table, items, turns, outbox rows, events. Writer priority and revisions as for a reply run. |
+| Outbox | src/server/publish/outbox.ts | Rows with auto 1 and not_before. Fresh thread read before the send. Mark from the Autopilot settings. Cancel and delete. |
+| Bitbucket | src/server/bitbucket/provider.ts | deleteComment (S18), listOpenPullRequests (S20), user type on comment authors (S19). |
+| Dependencies | src/server/autopilot/deps.ts (new); sync | A cheap GET of each blocking PR per cycle. Event dependency_merged. Level 3 hands the merge to the part 6 loop. |
+| Storage | migration 032 | pr_autopilot, autopilot_queue, autopilot_turn, pr_note, pr_dependency; review_run kind autopilot; post auto, not_before, deleted_at; event kinds. |
+| UI | src/web/autopilot/ (new), PR header, src/web/settings/, inbox PrRow, src/web/notify.ts | Switch, status sentence, activity list, notes, dependency line, Settings section, row badge. |
+
+Run state: the queue row, the run row, and the turn rows hold all state. A restart keeps the queue and marks a running autopilot run failed (kind restart). The next scheduler pass runs it again when the comments are still unanswered.
+
+Cost: one autopilot run per burst of comments, about one reply-run cost. A guard phase adds a short run only for replies that would post. The caps bound the worst case (spec.md section 11.8).
 
 ## 6. Migration
 
@@ -307,7 +363,8 @@ Parts 1 to 3 follow the same rules: one "Review" setup with a few named checkbox
 - Retire: a shipped security or over profile whose every field equals its version 4 value leaves the list. An edited one stays as the user's own profile and gets no later upgrades. pr_brief.profile with a removed ID falls back to the default (profileOf, catalog.ts:141). Old runs keep profile_name.
 - Explain: the explain profile stays as the setup of "Explain this PR". Its prompt and effort upgrade field by field. Old explain runs (kind review, explain 1) keep their old run line.
 - Results: new keys of finding, verify, and summary parse with defaults. A finding without verify shows as "Not checked", in the main list as today.
-- Database: 030 rebuilds review_run for kinds explain and discuss and adds prompt_version, item, and discuss_json. 031 rebuilds review_run again for kinds interview, spec, and implement, makes pr nullable, adds task, and adds the task tables (spec.md section 8).
+- Database: 030 rebuilds review_run for kinds explain and discuss and adds prompt_version, item, and discuss_json. 031 rebuilds review_run again for kinds interview, spec, and implement, makes pr nullable, adds task, and adds the task tables (spec.md section 8). 032 rebuilds review_run for kind autopilot, rebuilds event for the new kinds, adds the post columns, and adds the part 7 tables (spec.md section 11.11).
+- Autopilot: every existing PR reads as mode off. No old data changes meaning. The AI mark setting keeps its meaning for manual confirms.
 
 ## 7. Risks
 
@@ -324,6 +381,11 @@ Parts 1 to 3 follow the same rules: one "Review" setup with a few named checkbox
 | Bitbucket declines a stacked PR when its target branch is deleted. | Gate G5. PR text asks to keep the branch. "Open the PR again". |
 | A loop holds the slot for long. | Per-step time caps (20 min default) and "Pause building after this step". |
 | Terms: many runs after one click. | Each part waits for colleagues anyway. Per-part budgets. Section 10 Q5. |
+| Autopilot posts a wrong answer or a commitment. | Class table, commits flag, guard phase, evidence check, 60 s cancel window, Delete, eval gate with 0 wrong auto-posts. |
+| A comment injects instructions into Autopilot. | Comment text only in untrusted context files, numeric IDs in stdin, read-only tools, no write calls in the Autopilot code path, proposed notes untrusted until the user keeps them. |
+| Two bots answer each other without end. | Prefix check, Bot accounts setting, SERVICE users (Gate G10), 3 posts per thread since the user's last message, per-PR daily cap. |
+| Colleagues dislike bot replies. | Off by default, per PR, the mark cannot be turned off, quiet hours, Delete. |
+| Autopilot uses quota without a click. | Only on PRs where the user turned it on. Daily run caps. A usage limit pauses Autopilot. Re-read the usage terms before a release (as Q5). |
 
 ## 8. Brainstorm (part 5)
 
@@ -361,6 +423,7 @@ Fill this in when the sources arrive. Compare each row on the same eval cases wh
 | Safety | Read-only runs, sandbox, token handling, post gate. |
 | Build a task | Interview, spec review, tests first, PR size, stack handling. |
 | UX | Steps to a posted review, keyboard, plain words. |
+| Replies without approval | Which classes post, what marks a bot reply, loop and rate limits, how it resolves references to other PRs, what it promises. Part 7 answers each one for this app. |
 
 ## 10. Decisions (2026-10-22)
 
@@ -390,3 +453,24 @@ The user answered every question on 2026-10-22. Q1 to Q5 change BRIEF hard rules
 22. Q22 Attachments of tasks started outside a PR: later. v1 lists them by name only.
 23. Q23 Retarget after a merge: one click with one confirm, because it changes a colleague's view.
 24. Q24 Nullable review_run.pr for task runs (B14): yes, with the query audit.
+
+### 10.1 Part 7 decisions (2026-10-22)
+
+The user decided Q25 to Q27 on 2026-10-22. Q25 changes a BRIEF hard rule and constitution principles 1 and 4. WP-DA writes them into BRIEF.md and CLAUDE.md.
+
+25. Q25 Human gate: "Nothing goes to Bitbucket without an explicit user action" becomes "Nothing goes to Bitbucket without an explicit user action, unless the user turned on Autopilot for that PR." Turning on Autopilot post mode for one PR is the explicit action. Safeguards that come with the change: off by default; own open PRs only; reply comments only, never approve, needs work, merge, decline, resolve, or reopen; the bot mark that cannot be turned off; the class table with the commits flag; the guard phase; the evidence check; the secrets check; caps per thread and per PR; quiet hours; loop protection; the global pause and the per-PR switch; the 60 s cancel window; Delete; the full log; the eval gate before level 2. Principle 4 ("polling never calls an LLM") gets the same exception for draft and post modes.
+26. Q26 Levels: level 2 built in steps. Level 1 (auto-draft and notify) ships first. Level 2 (Autopilot per PR for safe reply classes) follows after the eval gate and the user smoke. Level 3 actions come with part 6.
+27. Q27 Bot mark: configurable prefix and footer. The default prefix is the robot emoji "🤖 ". The mark can never be fully turned off: the prefix is required.
+
+### 10.2 Part 7 open questions (recommended defaults, not answered yet)
+
+28. Q28 Task PRs (part 6): start in draft mode when the task opens the PR? Recommended: yes, draft mode only. Post mode always needs the user's switch.
+29. Q29 Notify on each auto-post? Recommended: yes, one note per PR and sync ("Autopilot answered Anna on PR 12."), with a setting "Tell me when Autopilot posts" (on).
+30. Q30 Quiet hours default. Recommended: on, 19:00 to 09:00 local time, plus Saturday and Sunday. Comments wait in the queue and run at the end.
+31. Q31 Cancel window. Recommended: 60 s.
+32. Q32 Guard phase on every auto-post. Recommended: yes, until the eval shows that it never changes an outcome.
+33. Q33 Thread scope on own PRs. Recommended: every thread on the PR. The setting "Only threads that I started or replied in" exists, off.
+34. Q34 Old comments (the app was closed). Recommended: a comment older than 24 h at run time is drafted, never posted.
+35. Q35 SERVICE users. Recommended: skip them when Gate G10 shows the field. Else rely on the Bot accounts setting.
+36. Q36 Footer text. Recommended: "_Automatic reply from the author's assistant. The author reads this thread later._"
+37. Q37 Level 3 "ask for review again": Bitbucket 7.21 has no re-request call (unverified for 9.x, Gate G11 INFO). Recommended: a marked comment that names the reviewers, posted only by the level 3 loop.
