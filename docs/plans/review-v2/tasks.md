@@ -238,7 +238,7 @@ Shared-file ownership (merge order):
 
 - Files: src/server/bitbucket/{provider.ts (createPullRequest, updatePullRequest, repoRemote; buildStats comes from WP-PN), schemas, errors}; src/server/tasks/push.ts (new: refspec guard, lease rules, GIT_CONFIG env token); src/server/review/git.ts (push env helper, if needed); tests/support/fake-bitbucket.ts (the four endpoints, a git smart-HTTP push target or a local bare repo stand-in); tests/bitbucket/write.test.ts (new); tests/tasks/push.test.ts (new).
 - Behavior: spec.md sections 6.8 (push), 6.9. AC-B16, AC-B17, AC-B22 (push part), AC-B23.
-- Tests: request bodies match spec.md 6.9; error mapping; a first push with an empty lease to a bare remote; a second push with the pushed lease; a lease failure; a refspec to the target branch refused before git runs (spy); the token absent from argv and logs.
+- Tests: request bodies match spec.md 6.9; error mapping; a first push with an empty lease to a bare remote; a second push with the pushed lease; a lease failure; no `+` refspec in any argv; a non-fast-forward normal push returns needs force; a confirmed force push still fails on a stale lease; a refspec to the target branch refused before git runs (spy); the token absent from argv and logs.
 - Control mutation: remove the target-branch guard. AC-B16 must fail.
 
 ### WP-B2. Task core: create, interview, plan, sizing (implementer-xhigh, W8)
