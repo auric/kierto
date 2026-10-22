@@ -233,6 +233,7 @@ Shared-file ownership (merge order):
 - Tests (temp remote and fake Bitbucket): part 2 branches from part 1; part 3 waits at 2 open PRs; merge commit then retarget with one PUT; squash then rebase and a force push with a lease after confirm; a rebase conflict blocks with "Let Claude fix it"; a declined part PR offers "Open the PR again"; a replan with changed parts needs approval.
 - Control mutation: retarget without the confirm flag. Its test must fail.
 - Depends: Gates G4, G5, G6 recorded.
+- Gate G5 (2026-10-22, integration-check.md "Review v2"): a deleted target branch declines the stacked PR, and its toRef stays on the deleted branch. Retarget the upper PR before the lower branch goes away. Never delete a lower branch that an upper PR targets. Detect a declined upper PR and offer to open it again (spec.md section 6.8).
 
 ### WP-B9. Large task UI (frontend-implementer, W11 after WP-B8, ports 7597/7598/7599)
 

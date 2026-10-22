@@ -71,6 +71,11 @@ describe("bitbucket-write.ts G1 to G7", () => {
     for (const id of ["G1", "G2", "G3", "G4", "G5", "G6"]) expect(r.out).toContain(`PASS    ${id} `);
     expect(r.out).toContain("INFO    G7 ");
     expect(r.out).toContain("(stale info)");
+    const g3 = r.out.split("\n").find((l) => l.startsWith("PASS    G3 ")) ?? "";
+    expect(g3).toContain("of the new gate commit: HTTP 200 keys=failed,inProgress,successful counts=0/0/0");
+    expect(g3).toContain("POST build status: HTTP 204 keys=none");
+    expect(g3).toContain("stats after the POST: HTTP 200 keys=failed,inProgress,successful counts=1/0/0");
+    expect(g3).toContain("INFO --build-commit: HTTP 200");
     expect(r.out).toContain("dry run: PASS");
     expect(r.out).not.toContain("127.0.0.1");
     expect(r.out).not.toContain(tmpdir());
@@ -91,6 +96,7 @@ describe("bitbucket-write.ts G1 to G7", () => {
     [["--repo", REPO, "--authorize-writes", "G1"], "--target is required"],
     [["--repo", REPO, "--target", "rl-gate-x", "--authorize-writes"], "--target is not a usable branch name"],
     [["--repo", "https://example.invalid/browse", "--target", "main", "--authorize-writes"], "--repo is not a repository URL"],
+    [["--repo", REPO, "--target", "main", "--authorize-writes", "G3", "--build-commit", "xyz"], "--build-commit needs a commit ID"],
     [["--dry-run", "G9"], "unknown check: G9"],
     [["--dry-run", "--bogus"], "unknown argument: --bogus"],
   ])("refuses %j before any request", (args, message) => {

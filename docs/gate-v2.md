@@ -64,18 +64,20 @@ These checks write to the server. Run them only on a test repository that you ma
 2. Give the script a token with Repository write on the test repository. Use one of these:
    - `bun scripts/gate0/set-token.ts`. The script sends this token only to the stored URL origin.
    - The environment variable `GATE_BITBUCKET_TOKEN`. Set it in your own terminal only.
-3. For G2, pick one reviewer user slug. For G3, pick a commit with build statuses. For G7, pick a Jira key that the app links.
+3. For G2, pick the user slug of another user. Bitbucket drops the PR author (the token owner) from the reviewers without an error. For G7, pick a Jira key that the app links. G3 needs no CI. Optional: if CI builds the test repository, pick a commit with build statuses for `--build-commit`.
 4. Optional, for G1: put a read-only token into an environment variable, for example `GATE_READONLY_TOKEN`.
 5. Run the dry run: `bun scripts/gate/bitbucket-write.ts --dry-run`. It runs all steps against a loopback fake server and a local bare repository. It reads no secret, and nothing leaves the machine. It must print `dry run: PASS`.
 6. If every request fails on TLS, set `NODE_EXTRA_CA_CERTS` to your CA PEM file.
 
 ### Run
 
-- Before WP-B1: `bun scripts/gate/bitbucket-write.ts --repo <URL> --target main --authorize-writes --only G1,G2,G3 --reviewer <slug> --build-commit <commit> [--readonly-token-env GATE_READONLY_TOKEN]`
+- Before WP-B1: `bun scripts/gate/bitbucket-write.ts --repo <URL> --target main --authorize-writes --only G1,G2,G3 --reviewer <slug> [--build-commit <commit>] [--readonly-token-env GATE_READONLY_TOKEN]`
 - Before WP-B8: `bun scripts/gate/bitbucket-write.ts --repo <URL> --target main --authorize-writes --only G4,G5,G6`
 - G7: `bun scripts/gate/bitbucket-write.ts --repo <URL> --target main --authorize-writes --only G7 --jira-key <KEY-123>`. Then sync the app, open the PR that the script names, and record whether the PR row and the PR view show the task chip.
 - Remove what G7 left, or what a stopped run left: `bun scripts/gate/bitbucket-write.ts --repo <URL> --authorize-writes --cleanup`.
 - `--keep` leaves all gate branches and PRs in place for a look on Bitbucket. Remove them with `--cleanup`.
+- G3 posts its build status with the repository-scoped API: `POST /rest/api/1.0/projects/{p}/repos/{r}/commits/{id}/builds` (Bitbucket 7.4 and later, REPO_READ; `latest` is the same as `1.0`). Fallback for older servers: the legacy `POST /rest/build-status/1.0/commits/{id}` (LICENSED). The script does not use the fallback.
+- The synthetic build status stays on the gate commit. Not all Bitbucket versions can delete a build status, and the DELETE needs REPO_ADMIN. The cleanup deletes the gate branch only. The status touches no other branch or repository.
 
 ### Safety rules of the script
 
@@ -92,7 +94,7 @@ These checks write to the server. Run them only on a test repository that you ma
 |---|---|---|
 | G1 | Reads the repository clone links. Pushes a new branch with an empty lease. With `--readonly-token-env`, pushes one more new branch with the read-only token. | An http clone link with the server origin, the push exits 0, and the remote branch is at the pushed commit. The read-only push line is INFO: record its exit code, markers, and HTTP status. |
 | G2 | Creates a PR from the G1 branch to the target with one reviewer. | HTTP 201 with an ID, a version, and 1 reviewer. |
-| G3 | Reads the build stats of the new commit (no builds) and of `--build-commit`. | Both HTTP 200 with the numbers `successful`, `inProgress`, and `failed`, and the build commit has at least one build. Without `--build-commit`, the result is INFO. |
+| G3 | Reads the build stats of the new G1 commit (expect 0 builds). Posts one synthetic build status to that commit: key `rl-gate`, state `SUCCESSFUL`, a placeholder `https://example.invalid/...` URL. Reads the stats again. With `--build-commit`, also reads the stats of that commit. | Both reads of the gate commit give HTTP 200 with the numbers `successful`, `inProgress`, and `failed`, and the second read shows `successful` 1 or more. Record the POST status code (204 expected) and its response keys. The `--build-commit` read is INFO only. |
 | G4 | Creates a stacked PR (upper branch to lower branch). Sends a PUT with the version and a new `toRef` (the target), then a PUT back. | The PUT gives HTTP 200 and the PR targets the target branch. Record "title unchanged" and the reviewer counts: they show whether a PUT without these fields keeps them. |
 | G5 | Deletes the lower branch, which is the target of the stacked PR. Reads the PR for up to 30 s. | The delete exits 0 and the PR read gives HTTP 200. Record the outcome: the state (DECLINED or OPEN) and the toRef (lower branch, target branch, or other). |
 | G6 | Moves the remote upper branch, then pushes another commit with the old lease. | The move exits 0, the second push fails with `(stale info)`, and the remote keeps the moved commit. |

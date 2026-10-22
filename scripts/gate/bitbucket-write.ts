@@ -347,6 +347,7 @@ function session(ctx: Ctx) {
 
   return {
     ctx,
+    repoPath,
     stamp,
     name,
     call,
@@ -414,29 +415,30 @@ async function g3(s: Session): Promise<Result> {
     const r = await s.call("GET", `/rest/build-status/1.0/commits/stats/${sha}`);
     const b = (r.body ?? {}) as Record<string, unknown>;
     const nums = ["successful", "inProgress", "failed"].every((k) => typeof b[k] === "number");
-    const total = nums ? (b.successful as number) + (b.inProgress as number) + (b.failed as number) : null;
     return {
       r,
       b,
       nums,
-      total,
       line: `HTTP ${r.status} keys=${keysOf(r.body).join(",") || "none"} counts=${nums ? `${b.successful}/${b.inProgress}/${b.failed}` : "n/a"}`,
     };
   };
-  const none = await stats((await s.lower()).sha);
-  const withBuilds = s.ctx.buildCommit ? await stats(s.ctx.buildCommit) : null;
-  const noneOk = none.r.status === 200 && none.nums;
-  const status: Status = !noneOk
-    ? "FAIL"
-    : !withBuilds
-      ? "INFO"
-      : withBuilds.r.status === 200 && withBuilds.nums && (withBuilds.total ?? 0) > 0
-        ? "PASS"
-        : "FAIL";
+  const sha = (await s.lower()).sha;
+  const before = await stats(sha);
+  // Repository-scoped build status API (Bitbucket 7.4+, REPO_READ). The status stays on the gate commit: not all versions can delete it.
+  const post = await s.call("POST", `${s.repoPath}/commits/${sha}/builds`, {
+    key: "rl-gate",
+    name: "PR Review Inbox gate",
+    state: "SUCCESSFUL",
+    url: `https://example.invalid/rl-gate/${s.stamp}`,
+    description: "Synthetic build status of the review gate.",
+  });
+  const after = await stats(sha);
+  const extra = s.ctx.buildCommit ? await stats(s.ctx.buildCommit) : null;
+  const pass = before.r.status === 200 && before.nums && after.r.status === 200 && after.nums && (after.b.successful as number) >= 1;
   return {
     check: "G3",
-    status,
-    evidence: `build stats (successful/inProgress/failed) of a new commit: ${none.line}; of --build-commit: ${withBuilds ? withBuilds.line : "not given"}`,
+    status: pass ? "PASS" : "FAIL",
+    evidence: `build stats (successful/inProgress/failed) of the new gate commit: ${before.line}; POST build status: HTTP ${post.status}${exceptionNames(post.body).length ? ` ${exceptionNames(post.body).join(",")}` : ""} keys=${keysOf(post.body).join(",") || "none"}; stats after the POST: ${after.line}; INFO --build-commit: ${extra ? extra.line : "not given"}`,
   };
 }
 
@@ -554,6 +556,8 @@ function fakeServer(token: string, origin: string, buildCommit: string) {
     Record<string, unknown> & { version: number; state: string; fromRef: { id: string }; toRef: { id: string } }
   >();
   const json = (status: number, body: unknown) => Response.json(body, { status });
+  // Successful build keys per commit. The --build-commit of the dry run starts with one build.
+  const builds = new Map<string, Set<string>>([[buildCommit, new Set(["dry-ci"])]]);
   const repoPath = "/ctx/rest/api/1.0/projects/DRY/repos/dry-repo";
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -562,9 +566,15 @@ function fakeServer(token: string, origin: string, buildCommit: string) {
       if (req.headers.get("authorization") !== `Bearer ${token}`) return json(401, { errors: [{ message: "Authentication failed." }] });
       const url = new URL(req.url);
       const p = url.pathname;
-      if (p.startsWith("/ctx/rest/build-status/1.0/commits/stats/")) {
-        const n = p.endsWith(`/${buildCommit}`) ? 1 : 0;
-        return json(200, { successful: n, inProgress: 0, failed: 0 });
+      if (req.method === "GET" && p.startsWith("/ctx/rest/build-status/1.0/commits/stats/"))
+        return json(200, { successful: builds.get(p.slice(p.lastIndexOf("/") + 1))?.size ?? 0, inProgress: 0, failed: 0 });
+      const bm = p.match(/\/commits\/([0-9a-f]{40})\/builds$/);
+      if (req.method === "POST" && bm?.[1] && p.startsWith(`${repoPath}/`)) {
+        const b = (await req.json()) as { key?: unknown; state?: unknown; url?: unknown };
+        if (typeof b.key !== "string" || b.state !== "SUCCESSFUL" || typeof b.url !== "string" || !b.url.startsWith("https://"))
+          return json(400, { errors: [{ exceptionName: "dry.InvalidBuildStatus" }] });
+        builds.set(bm[1], (builds.get(bm[1]) ?? new Set()).add(b.key));
+        return new Response(null, { status: 204 });
       }
       if (req.method === "GET" && p === repoPath)
         return json(200, {
