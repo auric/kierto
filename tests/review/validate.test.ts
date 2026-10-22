@@ -8,7 +8,9 @@ import { dirname, join } from "node:path";
 import { type DiffFile, parseDiff } from "../../src/server/review/diffmap";
 import {
   type AskedThread,
+  anchorer,
   MAX_FILE_CHARS,
+  overlapGroups,
   repoPath,
   type ValidateInput,
   validate,
@@ -26,6 +28,8 @@ import {
   reviewJsonSchema,
   reviewResult,
 } from "../../src/shared/review";
+
+console.log(`validate.test.ts imported from ${Bun.resolveSync("../../src/server/review/validate", import.meta.dir)}`);
 
 const range = <T>(n: number, f: (i: number) => T) => Array.from({ length: n }, (_, i) => f(i + 1));
 const text = (lines: string[], eol = "\n") => lines.map((l) => l + eol).join("");
@@ -207,10 +211,9 @@ const run = (findings: Finding[], extra: Partial<ValidateInput> = {}) =>
     agents: [],
     ...extra,
   });
-const one = (f: Partial<Finding>, extra?: Partial<ValidateInput>) => {
-  const r = run([F(f)], extra);
-  return r.findings[0]?.anchor ?? r.dropped[0]?.reason;
-};
+// The anchor alone, without the changed-line and rule checks of validate().
+const one = (f: Partial<Finding>, extra?: Partial<ValidateInput>) =>
+  anchorer({ diff, newFiles: new Map(Object.entries(HEAD)), oldFiles: new Map(Object.entries(BASE)), ...extra }).anchor(F(f));
 const at = (f: Partial<Finding>) => {
   const a = one(f);
   return typeof a === "object" ? [a.state, a.line, a.lineEnd] : a;
@@ -377,23 +380,22 @@ describe("anchor", () => {
     ]);
     const n = MAX_FILE_CHARS / 2;
     const t0 = performance.now();
-    // Every line matches "x". One validation prepares the file once for all its findings.
-    const r = run(
-      [
-        F({ path: "over.txt", line: 1, anchorText: "x" }),
-        F({ path: "big.txt", line: 1_000_000, anchorText: "x" }),
-        F({ path: "big.txt", line: 1_000_000, anchorText: "x x" }),
-        F({ path: "big.txt", line: 3_000_000, anchorText: "x" }),
-        F({ path: "big.txt", line: 1, anchorText: "x x y" }),
-      ],
-      { newFiles },
-    );
+    // Every line matches "x". One anchorer prepares the file once for all its findings.
+    const { anchor } = anchorer({ diff, newFiles, oldFiles: new Map() });
+    const got = [
+      F({ path: "over.txt", line: 1, anchorText: "x" }),
+      F({ path: "big.txt", line: 1_000_000, anchorText: "x" }),
+      F({ path: "big.txt", line: 1_000_000, anchorText: "x x" }),
+      F({ path: "big.txt", line: 3_000_000, anchorText: "x" }),
+      F({ path: "big.txt", line: 1, anchorText: "x x y" }),
+    ].map(anchor);
     expect(performance.now() - t0).toBeLessThan(10_000);
-    expect(r.dropped.map((f) => f.reason)).toEqual(["size", "match"]);
-    expect(r.findings.map((f) => [f.anchor.state, f.anchor.line, f.anchor.lineEnd])).toEqual([
+    expect(got.map((a) => (typeof a === "string" ? a : [a.state, a.line, a.lineEnd]))).toEqual([
+      "size",
       ["outside", 1_000_000, 1_000_000],
       ["outside", 1_000_000, 1_000_001],
       ["outside", n, n],
+      "match",
     ]);
     // A quote of more than 100 lines is above the range limit. A range of 100 lines is not.
     const tall = (lineEnd: number, anchorText: string) => one({ path: "tall.txt", line: 1, lineEnd, anchorText }, { newFiles });
@@ -425,10 +427,117 @@ describe("anchor", () => {
       F({ path: "../x" }),
       F({ line: 10, anchorText: "const a10 = 100;" }),
       F({ path: "src/none.ts" }),
-      F({ line: 12, anchorText: "const a11 = 11;" }),
+      F({ line: 11, anchorText: "const a10b = 101;" }),
     ]);
     expect(r.kept).toEqual([null, 0, null, 1]);
     expect(r.findings).toHaveLength(2);
+  });
+});
+
+// docs/plans/review-v2/spec.md section 1.7 (WP-R3).
+describe("changed lines, causes, and rules", () => {
+  const ctx = { line: 14, anchorText: "const a13 = 13;" };
+  const added = { path: "src/a.ts", side: "new" as const, line: 10, lineEnd: null, anchorText: "const a10 = 100;" };
+  const drops = (r: ReturnType<typeof run>) => r.dropped.map((d) => d.reason);
+
+  test("AC-R7: an anchor on a context line without a cause drops as unchanged; a cause on an added line keeps it with its anchor", () => {
+    expect(drops(run([F(ctx)]))).toEqual(["unchanged"]);
+    const r = run([F({ ...ctx, cause: added })]);
+    expect(drops(r)).toEqual([]);
+    expect(r.findings[0]?.anchor).toMatchObject({ state: "exact", line: 14 });
+    expect(r.findings[0]?.cause).toEqual({ ...added, anchor: expect.objectContaining({ state: "exact", line: 10, lineEnd: 10 }) });
+  });
+
+  test("a cause on a context line, a cause without a match, and an unchanged file with no cause drop as unchanged", () => {
+    const r = run([
+      F({ ...ctx, cause: { ...added, line: 12, anchorText: "const a11 = 11;" } }),
+      F({ ...ctx, cause: { ...added, anchorText: "nowhere();" } }),
+      F({ path: "src/same.ts", line: 2, anchorText: "two();" }),
+    ]);
+    expect(drops(r)).toEqual(["unchanged", "unchanged", "unchanged"]);
+    expect(r.kept).toEqual([null, null, null]);
+  });
+
+  test("a removed line counts on side old; a cause in another changed file keeps a finding on an unchanged file", () => {
+    expect(drops(run([F({ side: "old", line: 10, anchorText: "const a10 = 10;" })]))).toEqual([]);
+    expect(drops(run([F({ side: "old", line: 11, anchorText: "const a11 = 11;" })]))).toEqual(["unchanged"]);
+    const r = run([
+      F({
+        path: "src/same.ts",
+        line: 2,
+        anchorText: "two();",
+        cause: { ...added, path: "src/new-name.ts", line: 5, anchorText: "const r5 = 50;" },
+      }),
+    ]);
+    expect(r.findings[0]?.cause?.anchor).toMatchObject({ path: "src/new-name.ts", oldPath: "src/old-name.ts", line: 5 });
+    // A finding on a changed line keeps its cause as the finder gave it.
+    const own = run([F({ ...added, cause: { ...added, line: 14, anchorText: "const a13 = 13;" } })]);
+    expect(own.findings[0]?.cause).toEqual({ ...added, line: 14, anchorText: "const a13 = 13;" });
+  });
+
+  test("AC-R8: a rule finding needs its quote in an instruction file whose scope covers the path; whitespace collapses", () => {
+    const rules = [
+      { scope: null, text: "## Root\n\nLog   no\ntokens." },
+      { scope: "src", text: "Name each lock after the data it guards." },
+      { scope: "db", text: "Every query has a limit." },
+    ];
+    const rule = (o: Partial<Finding>) => F({ ...added, module: "rules", ...o });
+    const r = run(
+      [
+        rule({ rule: "Log no tokens." }),
+        rule({ rule: "  Name each lock\nafter the data it guards. " }),
+        rule({ rule: "Every query has a limit." }),
+        rule({ rule: "Never use tabs." }),
+        rule({ path: "db/schema.sql", line: 1, anchorText: "++ new", rule: "Every query has a limit." }),
+        // Only module rules is checked, and only with a rule text.
+        F({ ...added, module: "core", rule: "Never use tabs." }),
+        rule({ rule: "  " }),
+      ],
+      { rules },
+    );
+    expect(r.dropped.map((d) => [d.rule, d.reason])).toEqual([
+      ["Every query has a limit.", "rule"],
+      ["Never use tabs.", "rule"],
+    ]);
+    expect(r.kept).toEqual([0, 1, null, null, 2, 3, 4]);
+    // No instructions: every rule finding drops.
+    expect(drops(run([rule({ rule: "Log no tokens." })]))).toEqual(["rule"]);
+  });
+
+  test("a scope covers only the paths below its folder, also for a removed line of a renamed file", () => {
+    const rules = [{ scope: "src/old-name.ts", text: "Keep r5." }];
+    const r = run(
+      [
+        F({ path: "src/old-name.ts", side: "old", line: 5, anchorText: "const r5 = 5;", module: "rules", rule: "Keep r5." }),
+        F({ path: "src/new-name.ts", line: 5, anchorText: "const r5 = 50;", module: "rules", rule: "Keep r5." }),
+      ],
+      { rules: [{ scope: "src/old", text: "Keep r5." }, ...rules] },
+    );
+    expect(drops(r)).toEqual(["rule", "rule"]);
+    const base = run(
+      [F({ path: "src/old-name.ts", side: "old", line: 5, anchorText: "const r5 = 5;", module: "rules", rule: "Keep r5." })],
+      {
+        rules: [{ scope: "src", text: "Keep r5." }],
+      },
+    );
+    expect(drops(base)).toEqual([]);
+  });
+
+  test("dedupe: overlapping ranges on one path and side form groups by transitivity, numbered by their first finding", () => {
+    const at = (path: string, line: number, lineEnd: number, side: "new" | "old" = "new") => ({ side, anchor: { path, line, lineEnd } });
+    expect(
+      overlapGroups([
+        at("b.ts", 1, 1),
+        at("a.ts", 1, 3),
+        at("a.ts", 5, 7),
+        at("a.ts", 3, 5),
+        at("a.ts", 4, 4, "old"),
+        at("c.ts", 8, 9),
+        at("b.ts", 1, 2),
+        at("a.ts", 8, 8),
+      ]),
+    ).toEqual([1, 2, 2, 2, null, null, 1, null]);
+    expect(overlapGroups([])).toEqual([]);
   });
 });
 

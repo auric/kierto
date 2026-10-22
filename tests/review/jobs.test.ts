@@ -30,6 +30,7 @@ import type {
   RunDetail,
   RunDto,
 } from "../../src/shared/dto";
+import { REVIEW_PROMPT_VERSION } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER, type FakeBitbucket, key, startFakeBitbucket } from "../support/fake-bitbucket";
 import { type FakeScenario, readRecords } from "../support/fake-claude";
 
@@ -328,6 +329,8 @@ async function setup(
 }
 
 const flag = (argv: string[], name: string) => argv[argv.indexOf(name) + 1];
+// A finder process of a run. A review run also starts the verify process (docs/plans/review-v2/spec.md section 1.6).
+const finderCall = (c: Call) => !!c.argv?.includes("-p") && !flag(c.argv, "--json-schema")?.includes('"verdicts"');
 // The text of one "# " section of stdin, with its heading, up to the next "# " heading. null: no such section.
 const stdinSection = (stdin: string, name: string) => {
   const at = stdin.indexOf(`# ${name}\n`);
@@ -383,7 +386,9 @@ describe("run pipeline", () => {
       expect(d.events.every((e) => e.status !== "running")).toBe(true);
 
       // AC-R15: the row stores the prompt version at the start.
-      expect(h.db.query("SELECT prompt_version FROM review_run WHERE id = $id").get({ id: d.run.id })).toEqual({ prompt_version: "2.0" });
+      expect(h.db.query("SELECT prompt_version FROM review_run WHERE id = $id").get({ id: d.run.id })).toEqual({
+        prompt_version: REVIEW_PROMPT_VERSION,
+      });
       const argv = h.runCall()?.argv ?? [];
       expect(flag(argv, "--max-turns")).toBe("100");
       expect(flag(argv, "--tools")).toBe("Read,Grep,Glob,Agent");
@@ -499,8 +504,8 @@ describe("documentation servers", () => {
       // The workspace holds agents.json only while the run is active.
       h.scenario({ fixture: subagentRun(), hang: true });
       const { body } = await h.start();
-      expect(await waitFor(() => h.calls().filter((c) => c.argv?.includes("-p")).length === 2)).toBe(true);
-      const c = h.calls().filter((c) => c.argv?.includes("-p"))[1] as Call;
+      expect(await waitFor(() => h.calls().filter(finderCall).length === 2)).toBe(true);
+      const c = h.calls().filter(finderCall)[1] as Call;
       expect(asked.sort()).toEqual(Object.values(DOC_SERVERS).sort());
       expect(flag(c.argv, "--allowedTools")).toBe("Read,Grep,Glob,mcp__rl-git,mcp__learn,mcp__deepwiki");
       // The agent prompt owns the docs rule. The stdin prompt does not repeat it.
@@ -1267,10 +1272,7 @@ describe("editable profiles (M4)", () => {
       h.scenario({ fixture: derive(join(REAL, "b6-hostile-repo.jsonl"), { tools: EXPLAIN_TOOLS, structured: RESULT }) });
       const d = await h.finish((await h.start()).body.id);
       // A hang run also records a line without argv.
-      const last = h
-        .calls()
-        .filter((x) => x.argv?.includes("-p"))
-        .at(-1);
+      const last = h.calls().filter(finderCall).at(-1);
       const argv = last?.argv ?? [];
       expect(flag(argv, "--tools")).toBe("Read,Grep,Glob");
       expect(argv).not.toContain("--model");
@@ -1534,7 +1536,7 @@ describe("language checks", () => {
       expect(explain.agents["rl-main"]?.prompt).not.toContain("Set severity by what the merge must wait for.");
       // AC-R15: every run row of these kinds stores the prompt version.
       expect(h.db.query("SELECT kind, prompt_version FROM review_run ORDER BY id").all()).toEqual(
-        ["ask", "reply", "fix", "review", "review"].map((kind) => ({ kind, prompt_version: "2.0" })),
+        ["ask", "reply", "fix", "review", "review"].map((kind) => ({ kind, prompt_version: REVIEW_PROMPT_VERSION })),
       );
 
       const ts = await setup();

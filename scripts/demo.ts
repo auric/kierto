@@ -102,7 +102,13 @@ const ANSWERED = [
     finding: null,
   },
 ];
-runner.write({ fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT), fix: FIX, answered: ANSWERED });
+// The verify phase of a review run gets one tool call and no subagent (docs/plans/review-v2/spec.md section 1.6).
+runner.write({
+  fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT),
+  fix: FIX,
+  answered: ANSWERED,
+  bySchema: { verify: { fixture: claudeStream(claudeDir, "check", "claude/b6-hostile-repo.jsonl") } },
+});
 const SOURCE_PRS = [1001, 1002, 31, 210, 212, 77, 74, 33, 215, 9, 5, 2, 1004];
 const remote = await reviewRemote(claudeDir, { ...Object.fromEntries(SOURCE_PRS.map((id) => [id, "source" as const])), 81: "next" });
 

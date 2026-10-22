@@ -421,8 +421,11 @@ export type ProfileDto = {
 };
 
 export type RunUsage = { costUsd: number; turns: number; durationMs: number; tokens: Record<string, unknown> };
-// docs/plans/review-v2/spec.md section 1.8: the verdict counts of a run with a verify phase.
-export type VerifySummary = Record<"candidates" | "confirmed" | "refuted" | "unsure" | "questions" | "duplicates" | "unchecked", number>;
+// docs/plans/review-v2/spec.md section 1.8: the verdict counts of a review run. unchecked: the candidates without a verdict, because
+// the verify phase is off, failed, or gave none. failed: the verify phase ended without a result. A run with no candidates has zeros.
+export type VerifySummary = Record<"candidates" | "confirmed" | "refuted" | "unsure" | "questions" | "duplicates" | "unchecked", number> & {
+  failed?: { kind: RunErrorKind | null; text: string | null };
+};
 export type RunPhase = { name: "find" | "check"; startedAt: number; endedAt: number | null; usage: RunUsage | null };
 // dropped: findings that the validator could not anchor. They show as coverage only.
 // volume, verify, phases: absent in summaries stored before review v2. The display uses the volume of the run, not of the profile.
@@ -481,10 +484,13 @@ export type RunDto = {
   instructions?: { files: InstructionFileDto[]; bytes: number; notLoaded?: string[] };
   // The skills that the run got. always: the profile marks the skill Always use. Absent for runs made before it was stored.
   skills?: { id: string; always: boolean }[];
-  // The finding items of the run that a re-review did not find fixed or outdated. 0 for other run kinds.
+  // The finding items of the run that a re-review did not find fixed or outdated and the verify phase did not discard. 0 for other kinds.
   findings: number;
-  // A running run before the CLI starts: indexing builds the codegraph index of the snapshot.
-  phase?: "indexing";
+  // A running run: indexing builds the codegraph index of the snapshot before the CLI starts. A review run: finding is the first CLI
+  // process, checking the verify phase (docs/plans/review-v2/spec.md section 1.9).
+  phase?: "indexing" | "finding" | "checking";
+  // Phase checking only: the number of candidates that the verify phase checks.
+  candidates?: number;
   // A session run only: the transcript that it forked and the text that it got, with no transcript text. tokens: sessionTokens(bytes).
   // mode: consult.ts sessionModes, absent for runs made before part D. run: on a fix run that an import made from the proposal of a
   // session run (session-consult.md part D), that session run.

@@ -32,6 +32,7 @@ export const RUNNER = {
 };
 export const GIT_SERVER = "rl-git";
 export const REVIEWER = "rl-reviewer";
+export const VERIFIER = "rl-verifier";
 // Plan v3 D10: remote documentation servers. They get no credentials.
 export const DOC_SERVERS: Record<string, string> = {
   learn: "https://learn.microsoft.com/api/mcp",
@@ -790,6 +791,78 @@ export function reviewerAgent(p: Profile, c: ReviewContext = NO_CONTEXT): AgentS
       ...docsRule(p),
       "Report each finding with its place: path, side, line, lineEnd, anchorText, and cause.",
       "Also report title, trigger, severity, category, module, rule, body, evidence, evidenceStatus, and confidence.",
+    ].join("\n"),
+  };
+}
+
+// docs/plans/review-v2/spec.md section 0 and design.md R3: above VERIFY_SPLIT candidates, the verify phase gets rl-verifier, and each
+// call checks at most VERIFY_BATCH candidates.
+export const VERIFY_SPLIT = 12;
+export const VERIFY_BATCH = 6;
+
+const VERIFY_OPENING = [
+  "You check findings that another reviewer reported on one change. You cannot change files, and you post nothing.",
+  './context/candidates.md lists the findings. The heading "## Candidate N" holds candidate N.',
+];
+
+// spec.md section 1.6: the rules of rl-verify and rl-verifier. One rubric and one do-not-flag list for both phases.
+export function verifyRules(p: Pick<Profile, "volume" | "verifier">, c: ReviewContext): string[] {
+  return [
+    "For each candidate, read the code at its anchor and its cause. Then follow its trigger through the code.",
+    "Give one entry in verdicts for each candidate.",
+    "confirmed: the code shows the trigger and the wrong result.",
+    "refuted: the code prevents the trigger, the problem is not in the change, or it is on the do-not-flag list.",
+    "In reason, name the guard or the list item with path:line.",
+    "unsure: the code that you can read neither confirms nor refutes it. In reason, name what is missing.",
+    "question: the candidate depends on what the author intends. Write the question for the author in question.",
+    "duplicate: another candidate of the same group describes the same problem at the same place.",
+    "Set duplicateOf to the clearer candidate.",
+    ...(c.history
+      ? ['A candidate with the state "discarded by the user" in ./context/history.md is refuted, unless the code at that place changed.']
+      : []),
+    "Set severity by the rubric below. Lower it for a rare trigger or a small impact.",
+    "Raise it only when the code shows a worse result than the candidate says.",
+    ...rubric(p),
+    "The do-not-flag list:",
+    ...DO_NOT_FLAG.map((l) => `- ${l}`),
+    "Look for no new problems. A finder already ran.",
+  ];
+}
+
+export const VERIFY_DELEGATE = [
+  `Give the candidates to the ${VERIFIER} agent in calls of at most ${VERIFY_BATCH} candidates. Give each candidate to one call.`,
+  "Copy each verdict into verdicts.",
+];
+
+// The main agent of the verify process (spec.md section 1.6). The caller adds skills, MCP tools, and the delegation lines.
+export function verifyAgent(p: Profile, c: ReviewContext = NO_CONTEXT): AgentSpec {
+  return {
+    description: "Read-only check of the findings of one review.",
+    prompt: [...VERIFY_OPENING, ...contextBlock(c), ...verifyRules(p, c), COVERAGE_RULE, ...docsRule(p)].join("\n"),
+  };
+}
+
+// The delegation lines come last, as for the finder.
+export const withVerifyDelegation = (a: AgentSpec, on: boolean): AgentSpec =>
+  on ? { ...a, prompt: [a.prompt, ...VERIFY_DELEGATE].join("\n") } : a;
+
+// spec.md sections 1.2 and 1.6: the verifier effort null means medium. A null model leaves the agent field out.
+export const verifierEffort = (p: Pick<Profile, "verifier">) => p.verifier.effort ?? "medium";
+
+// The caller adds skills, MCP tools, and the project instructions.
+export function verifierAgent(p: Profile, c: ReviewContext = NO_CONTEXT): AgentSpec {
+  return {
+    ...(p.verifier.model !== null && { model: p.verifier.model }),
+    effort: verifierEffort(p),
+    description: "Read-only check of some findings of one review.",
+    prompt: [
+      ...VERIFY_OPENING,
+      "You check the candidates that the request names.",
+      ...contextBlock(c),
+      ...verifyRules(p, c),
+      COVERAGE_RULE,
+      ...docsRule(p),
+      "Report each verdict with candidate, verdict, severity, reason, evidence, duplicateOf, and question.",
     ].join("\n"),
   };
 }

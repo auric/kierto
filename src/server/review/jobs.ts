@@ -21,7 +21,7 @@ import {
   type RunDto,
   type RunKind,
   type RunnerCheckDto,
-  type RunUsage,
+  type RunPhase,
 } from "../../shared/dto";
 import { isMe } from "../../shared/me";
 import {
@@ -37,8 +37,9 @@ import {
   replyJsonSchema,
   rereviewJsonSchema,
   reviewJsonSchema,
+  verifyJsonSchema,
 } from "../../shared/review";
-import type { RunEvent } from "../../shared/run-log";
+import { CHECK_EVENT, type RunEvent } from "../../shared/run-log";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
 import type { PrRef } from "../../shared/types";
 import { dataDir as defaultDataDir } from "../config";
@@ -64,15 +65,21 @@ import {
   type ReviewContext,
   replyAgent,
   reviewerAgent,
+  VERIFIER,
+  VERIFY_SPLIT,
+  verifierAgent,
+  verifierEffort,
+  verifyAgent,
   withDelegation,
   withInstructions,
   withMcp,
   withSkills,
+  withVerifyDelegation,
 } from "./catalog";
 import { createClaudeRunner, RUN_TIMEOUT_MS, type RunnerCheck } from "./claude";
 import { type FixCommitRow, toFixCommitDto } from "./clone";
 import { codegraphEntry, codegraphIndex, indexCodegraph } from "./codegraph";
-import { earlierItem, findingsFile, fixStateFile, historyFile, questionsFile } from "./context-files";
+import { candidatesFile, earlierItem, findingsFile, fixStateFile, historyFile, questionsFile } from "./context-files";
 import { runEffort } from "./defaults";
 import { parseDiff } from "./diffmap";
 import { currentDrafts, placeReplies, replyOutcome, revisions, touched, withRevision } from "./drafts";
@@ -80,9 +87,34 @@ import { gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
 import { createImprover } from "./improve";
 import { projectInstructions } from "./instructions";
-import { cancelledEnding, type Ending, failure, judge, judgeAsk, judgeFix, judgeReplies, judgeSession, unreadAlways } from "./judge";
+import {
+  type CandidateLink,
+  type CheckRun,
+  cancelledCheck,
+  cancelledEnding,
+  type Ending,
+  failure,
+  judge,
+  judgeAsk,
+  judgeFix,
+  judgeReplies,
+  judgeSession,
+  markCopy,
+  settle,
+  settleExplain,
+  unreadAlways,
+  usageOf,
+} from "./judge";
 import { languagesOf, withLanguages } from "./languages";
-import { buildAskPrompt, buildFixPrompt, buildPrompt, buildReplyPrompt, buildRereviewPrompt, type ReplyThread } from "./prompt";
+import {
+  buildAskPrompt,
+  buildFixPrompt,
+  buildPrompt,
+  buildReplyPrompt,
+  buildRereviewPrompt,
+  buildVerifyPrompt,
+  type ReplyThread,
+} from "./prompt";
 import { type Carry, carryOver, current, type PostedFinding, resolveProposals } from "./rereview";
 import {
   commentsOf,
@@ -118,6 +150,12 @@ const NOTIFY_MS = 500;
 const SESSION_TIMEOUT_MS = 20 * 60_000;
 // The git MCP server runs `bun <main.ts> --git-mcp`. Bun.main is another file under bun test and in serve.ts.
 const MAIN_ENTRY = join(import.meta.dir, "..", "main.ts");
+
+// docs/plans/review-v2/spec.md section 0, VERIFY_MAX_TURNS: min(profile.maxTurns, 10 + 3 × candidates), at least 12.
+export const verifyMaxTurns = (p: Pick<Profile, "maxTurns">, candidates: number) => Math.max(12, Math.min(p.maxTurns, 10 + 3 * candidates));
+
+// The source item ID of a carried copy (rereview.ts carryOver).
+const carriedFrom = (it: NewItem) => (JSON.parse(it.payload_json) as { carried?: Carried }).carried?.from;
 
 export type ReviewJobsOptions = {
   settings: Settings;
@@ -158,8 +196,9 @@ type Job = {
   session: SessionStart | null;
   cancelled: boolean;
   done: Promise<void>;
-  // The step before the CLI starts. RunDto.phase shows it.
+  // The step of the run. RunDto.phase shows it. candidates: the candidates of phase checking.
   phase?: RunDto["phase"];
+  candidates?: number;
   // Stops the step before the CLI starts.
   abort?: AbortController;
 };
@@ -253,7 +292,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   function end(j: Job, e: Ending): boolean {
     const o = e.outcome;
     const r = o?.result;
-    const usage: RunUsage | null = r ? { costUsd: r.total_cost_usd, turns: r.num_turns, durationMs: r.duration_ms, tokens: r.usage } : null;
+    const usage = e.usage !== undefined ? e.usage : o ? usageOf(o) : null;
     // A session run has no --effort flag.
     const flagged = j.session ? null : j.profile.effort;
     const ok = j.db.transaction(() => {
@@ -297,21 +336,49 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         });
       const items = placeReplies(j.db, j.pr, e.result?.items ?? [], replies);
       const q = j.db.query(SQL.item);
+      // docs/plans/review-v2/spec.md section 1.8: payload.verify.duplicateOf holds an item ID, known only after the insert.
+      const links = e.result?.links ?? new Map<NewItem, CandidateLink>();
+      const placed = new Map<number, number>();
+      const dups: [number, number][] = [];
       const add = (list: NewItem[]) => {
-        for (const it of list) q.run({ run: j.id, ...it });
+        for (const it of list) {
+          const id = Number(q.run({ run: j.id, ...it }).lastInsertRowid);
+          const l = links.get(it);
+          if (!l) continue;
+          placed.set(l.n, id);
+          if (l.duplicateOf !== null) dups.push([id, l.duplicateOf]);
+        }
+      };
+      const linkDuplicates = () => {
+        const dup = j.db.query(SQL.duplicateOf);
+        for (const [id, n] of dups) {
+          const target = placed.get(n);
+          if (target !== undefined) dup.run({ id, target });
+        }
       };
       if (!j.carry || !e.result) {
         add(items);
+        linkDuplicates();
         return true;
       }
       const c = carryOver(j.db, j.carry, e.result.checked ?? []);
+      const marks = e.result.carried;
+      const open = c.open.map((it) => {
+        const from = carriedFrom(it);
+        const m = from === undefined ? undefined : marks?.get(from);
+        if (!m) return it;
+        const next = markCopy(it, m);
+        links.set(next, m);
+        return next;
+      });
       add(items.filter((it) => it.kind === "finding"));
-      add(c.open);
+      add(open);
       add(items.filter((it) => it.kind !== "finding"));
       add(c.questions);
       add(c.closed);
       const me = settings.config()?.userSlug ?? null;
       add(resolveProposals(j.db, j.pr, j.carry, e.result.checked ?? [], me, turnThreads(j.db, { id: j.pr })));
+      linkDuplicates();
       return true;
     })();
     notify(j.id, j.pr);
@@ -544,6 +611,13 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
                 main: mainAgent(profile, context),
               }
             : { prompt: buildPrompt(input), schema: reviewJsonSchema(profile.explain), main: mainAgent(profile, context) };
+    // docs/plans/review-v2/spec.md section 1.9: a review run shows phase finding, then checking.
+    const finder = j.kind === "review" && !profile.explain;
+    if (finder) {
+      j.phase = "finding";
+      notify(j.id);
+    }
+    const findStart = now();
     const o = await runner.run(
       {
         cwd: ws.work,
@@ -569,6 +643,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         notify(j.id);
       },
     );
+    const find: RunPhase = { name: "find", startedAt: findStart, endedAt: now(), usage: usageOf(o) };
     // The runner ignores a cancel that comes after the process ended.
     if (j.cancelled) return cancelled(o);
     const servers = Object.keys(mcpServers);
@@ -590,7 +665,56 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (fix) return noted(await judgeFix(o, ws, fix, j.findings, servers, gaps));
     if (question !== null) return noted(judgeAsk(o, servers, gaps));
     const rereview = carry && { carry, items: [...current(j.db, earlier), ...carry.posted].map(earlierItem) };
-    return noted(await judge(o, ws, profile, servers, gaps, rereview, j.asked));
+    const found = await judge(o, ws, profile, servers, gaps, rereview, j.asked, instructions.sources);
+    if (!("candidates" in found)) return noted(found);
+    if (!finder) return noted(settleExplain(found));
+
+    // docs/plans/review-v2/spec.md section 1.6: the verify phase in the same workspace, run row, and run slot.
+    const verify = profile.verifier.mode === "on";
+    const file = verify && found.candidates.length ? candidatesFile(found.candidates) : null;
+    const written = file?.written ?? 0;
+    let verified: CheckRun | null = null;
+    if (file && written > 0) {
+      writeFileSync(join(ws.context, file.file.name), file.file.text);
+      const split = written > VERIFY_SPLIT;
+      log(`Review run ${j.id}: checks ${written} of ${found.candidates.length} candidates, ${VERIFIER} ${split ? "on" : "off"}.`);
+      j.phase = "checking";
+      j.candidates = written;
+      notify(j.id);
+      const offset = o.events.reduce((m, e) => Math.max(m, e.seq), -1) + 1;
+      const tag = (e: RunEvent): RunEvent => ({
+        ...e,
+        id: CHECK_EVENT + e.id,
+        parent: e.parent === null ? null : CHECK_EVENT + e.parent,
+        seq: e.seq + offset,
+      });
+      const verifier = withInstructions(withMcp(withSkills(verifierAgent(profile, context), folders, always), used), instructions.text);
+      // No await between this check and run(), so a later Cancel reaches the new process.
+      if (j.cancelled) return cancelled(o);
+      const startedAt = now();
+      const o2 = await runner.run(
+        {
+          cwd: ws.work,
+          appDir: ws.app,
+          prompt: buildVerifyPrompt({ ...input, count: written, rereview: !!carry }),
+          schema: verifyJsonSchema(),
+          main: withVerifyDelegation(withMcp(withSkills(verifyAgent(profile, context), folders, always), used), split),
+          maxTurns: verifyMaxTurns(profile, written),
+          model: profile.verifier.model ?? profile.model,
+          effort: verifierEffort(profile),
+          agents: split ? { [VERIFIER]: verifier } : {},
+          mcpServers,
+        },
+        (events) => {
+          j.db.transaction(() => upsertEvents(j.db, j.id, events.map(tag)))();
+          notify(j.id);
+        },
+      );
+      j.db.transaction(() => upsertEvents(j.db, j.id, o2.events.map(tag)))();
+      if (j.cancelled) return cancelledCheck(o, o2);
+      verified = { o: o2, startedAt, endedAt: now(), written };
+    }
+    return noted(settle(found, { volume: profile.volume, find, check: verified, verify, written, servers }));
   }
 
   // docs/plans/session-consult.md part C: a fork of the user's session in a fresh sanitized snapshot of the PR head, never in the
@@ -679,7 +803,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   }
 
   const withPhase = (db: Database, r: RunDto): RunDto =>
-    job?.phase && job.id === r.id && job.db === db && r.status === "running" ? { ...r, phase: job.phase } : r;
+    job?.phase && job.id === r.id && job.db === db && r.status === "running"
+      ? { ...r, phase: job.phase, ...(job.phase === "checking" && job.candidates !== undefined && { candidates: job.candidates }) }
+      : r;
 
   function cancelActive() {
     if (!job) return false;

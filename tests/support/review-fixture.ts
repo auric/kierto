@@ -85,6 +85,7 @@ export async function reviewRemote(root: string, prs: Record<number, "source" | 
 export const stubListTools = async (url: string): Promise<string[]> => [url === DOC_SERVERS.learn ? "docs_search" : "ask_question"];
 
 // The structured result of a review: an exact, a moved, and an outside finding, one dropped finding, and one question.
+// The outside finding names a cause on an added line, so the changed-line check keeps it (docs/plans/review-v2/spec.md section 1.7).
 const finding = (o: Record<string, unknown>) => ({
   path: "src/cache/flush.ts",
   side: "new",
@@ -116,6 +117,7 @@ export const REVIEW_RESULT = {
       body: "The lock now covers one entry at a time. Another writer can run between two entries. Take the lock once, before the loop.",
       evidence: "`write()` reads `cache.version` without the lock.",
       agent: "rl-reviewer",
+      trigger: "Two writers flush at once. The second writer runs between two entries and sees a partial batch.",
     }),
     finding({
       line: 6,
@@ -124,6 +126,7 @@ export const REVIEW_RESULT = {
       category: "Error handling",
       body: "`lock.release()` does not run when `write()` throws. Release the lock in a `finally` block.",
       confidence: "medium",
+      trigger: "`write()` throws on a full disk. The lock stays taken, and the next flush waits forever.",
     }),
     finding({
       path: "README.md",
@@ -132,6 +135,8 @@ export const REVIEW_RESULT = {
       severity: "nit",
       category: "Documentation",
       body: "The README does not name the flush order.",
+      trigger: "A reader of the README expects one lock per flush and adds a reader that needs the whole batch.",
+      cause: { path: "src/cache/flush.ts", side: "new", line: 3, lineEnd: null, anchorText: "const lock = cache.lock();" },
     }),
     finding({
       path: "src/cache/gone.ts",

@@ -16,6 +16,12 @@
 
 ### Reviews
 
+- A review now checks each finding in a second step of the same run. The check runs at medium effort. The verifier setting of the review profile sets its model and effort, or turns it off.
+- A finding that the check refutes, or that repeats another finding at the same place, arrives discarded. Restore brings it back.
+- A finding that the check cannot confirm is at most minor. A finding without a concrete case becomes a question for the author.
+- A finding on code that the change does not touch is dropped, unless it names the changed line that causes it. A rule finding is dropped when the quoted rule is not in the project instructions for its path. The dropped list says why.
+- When the check does not finish, for example at a usage limit, the run is incomplete, and its findings stay unchecked.
+- "Review changes since" also checks the open findings that it carries over. A finding that you accepted or edited keeps its state.
 - After you discard a finding, its card offers the optional reasons "Not a bug", "Not worth fixing", "Duplicate", "Intended", and "Wrong place".
 - Settings has a new "Review quality" table for the last 30 days. Each row shows one profile and prompt version: runs, shown findings per run, check results, accepted, discarded by reason, posted, addressed, outdated, median time, and cost per run.
 - The "General" profile is now named "Review". It has a new prompt and runs at high effort. Its reviewer agents also run at high effort.

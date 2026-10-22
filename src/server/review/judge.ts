@@ -2,11 +2,14 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // The run end (jobs.ts): turns a runner outcome into the stored status, summary, items, answer, or fix notes and edits.
+// A review run ends in two steps: judge() validates the finder result, and settle() merges the verdicts of the verify phase.
 import { acceptedTargets, consultOutput } from "../../shared/consult";
-import { MAX_NOTE, type RunSummary } from "../../shared/dto";
+import { MAX_NOTE, type RunPhase, type RunSummary, type RunUsage, type VerifySummary, type Volume } from "../../shared/dto";
 import {
   type AnchoredFinding,
   askResult,
+  type Check,
+  type FindingPayload,
   type FixNote,
   type FixWhy,
   fixResult,
@@ -16,11 +19,17 @@ import {
   replyResult,
   rereviewResult,
   reviewResult,
+  type Severity,
   type StoredFinding,
+  type VerifyMark,
+  type VerifyVerdict,
+  type VerifyVerdictName,
+  verifyResult,
 } from "../../shared/review";
 import type { RunErrorKind, RunStatus } from "../../shared/run-log";
 import type { Profile } from "./catalog";
 import type { RunOutcome } from "./claude";
+import type { Candidate } from "./context-files";
 import { type DiffFile, parseDiff } from "./diffmap";
 import { type FixFile, type ValidEdit, validateFix } from "./fix";
 import { git, gitEnv } from "./git";
@@ -33,6 +42,8 @@ import {
   type EarlierItem,
   earlierCases,
   MAX_FILE_CHARS,
+  overlapGroups,
+  type RuleSource,
   repoPath,
   type ValidatedReply,
   validate,
@@ -44,19 +55,29 @@ import type { Workspace } from "./workspace";
 
 const RAW_MAX = 2 * 1024 * 1024;
 
-// checked: the earlier findings of a re-review. fix: the notes and edits of a fix run.
+// The verify phase of a review run (docs/plans/review-v2/spec.md section 1.7). n: the candidate number. duplicateOf: the candidate
+// that a valid duplicate verdict names. jobs.ts end() turns both into item IDs after the insert.
+export type CandidateLink = { n: number; duplicateOf: number | null };
+// What the verify phase gave a carried finding of a re-review. end() applies it to the copy. verify absent: no verdict, so no change.
+export type CarriedMark = CandidateLink & { verify?: VerifyMark; severity: Severity; discard: boolean };
+
+// checked: the earlier findings of a re-review. fix: the notes and edits of a fix run. links, carried: the verify phase of a review run.
+// usage: the sum of both phases of a review run. Absent: the usage of outcome.
 export type Ending = {
   status: Exclude<RunStatus, "running">;
   kind: RunErrorKind | null;
   text: string | null;
   raw: string;
   outcome?: RunOutcome;
+  usage?: RunUsage | null;
   result?: {
     summary: RunSummary;
     items: NewItem[];
     checked?: CheckedEarlier[];
     answer?: string;
     fix?: { threads: FixNote[]; edits: ValidEdit[] };
+    links?: Map<NewItem, CandidateLink>;
+    carried?: Map<number, CarriedMark>;
   };
 };
 
@@ -88,7 +109,7 @@ function rawOutput(o: RunOutcome): string {
 
 export const failure = (kind: RunErrorKind, text: string): Ending => ({ status: "failed", kind, text, raw: `${kind}: ${text}` });
 
-const findingItem = (f: AnchoredFinding): NewItem => ({
+const findingItem = (f: AnchoredFinding, status: "new" | "discarded" = "new"): NewItem => ({
   kind: "finding",
   payload_json: JSON.stringify(f),
   body: f.body,
@@ -98,7 +119,7 @@ const findingItem = (f: AnchoredFinding): NewItem => ({
   line_end: f.anchor.lineEnd,
   anchor_state: f.anchor.state,
   excerpt_json: JSON.stringify(f.anchor.excerpt),
-  status: "new",
+  status,
   thread: null,
   edited: 0,
 });
@@ -197,8 +218,21 @@ async function readBlobs(ws: Workspace, findings: StoredFinding[]) {
   return { newFiles, oldFiles, oversized };
 }
 
-// Turns a runner outcome into the run end. servers: the MCP servers of the spec. gaps: the servers and skills left out of the spec.
+// The finder result of a review run after validation and dedupe, before the verify phase (spec.md sections 1.6 and 1.7).
+// candidates: the kept findings in finder order, then the open carried findings of a re-review. replies: the answered questions.
+export type Found = {
+  raw: string;
+  outcome: RunOutcome;
+  summary: RunSummary;
+  candidates: Candidate[];
+  questions: Question[];
+  replies: ValidatedReply[];
+  checked?: CheckedEarlier[];
+};
+
+// Validates the finder result of a review run. servers: the MCP servers of the spec. gaps: the servers and skills left out of the spec.
 // rereview: the earlier findings of a re-review at their current lines. asked: the threads of context/questions.md.
+// rules: the project instruction files of the run. An Ending: the finder failed.
 export async function judge(
   o: RunOutcome,
   ws: Workspace,
@@ -207,7 +241,8 @@ export async function judge(
   gaps: string[],
   rereview: { carry: Carry; items: EarlierItem[] } | null,
   asked: AskedThread[],
-): Promise<Ending> {
+  rules: readonly RuleSource[] = [],
+): Promise<Ending | Found> {
   const raw = rawOutput(o);
   if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
   const parsed = rereview ? rereviewResult.safeParse(o.result?.structured_output) : reviewResult.safeParse(o.result?.structured_output);
@@ -216,8 +251,9 @@ export async function judge(
   const items = rereview?.items ?? [];
   // Only a finished Agent call returned a report.
   const agents = o.events.filter((e) => e.tool === "Agent" && e.agent !== null && e.status === "ok").map((e) => e.agent as string);
-  const blobs = await readBlobs(ws, [...parsed.data.findings, ...earlierCases(earlier, items).cases.map((c) => c.finding)]);
-  const v = validate({ result: parsed.data, diff: ws.diff, ...blobs, agents, explain: profile.explain });
+  const causes = parsed.data.findings.flatMap((f) => (f.cause ? [{ ...f, ...f.cause }] : []));
+  const blobs = await readBlobs(ws, [...parsed.data.findings, ...causes, ...earlierCases(earlier, items).cases.map((c) => c.finding)]);
+  const v = validate({ result: parsed.data, diff: ws.diff, ...blobs, agents, explain: profile.explain, rules });
   const e = rereview ? validateEarlier({ earlier, items, diff: ws.diff, ...blobs }) : null;
   const a = profile.explain ? null : validateAnswered(parsed.data.answered, asked, v.kept);
   const dropped = v.dropped.map((d) => (d.reason === "file" && blobs.oversized(d) ? { ...d, reason: "size" as const } : d));
@@ -228,11 +264,262 @@ export async function judge(
     unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)],
     notChecked: [...v.coverage.notChecked, ...base],
   };
-  return ended(raw, o, {
+  // spec.md section 1.9: the open carried findings of the base run with code at the head join after the new ones. A posted finding
+  // has its thread, so it gets no verdict.
+  const own = new Set(rereview?.carry.items.filter((r) => r.kind === "finding").map((r) => r.id));
+  const list = [
+    ...v.findings.map((finding) => ({ finding, from: null })),
+    ...(e?.checked ?? []).flatMap((c) =>
+      c.verdict === "open" && c.anchor !== null && own.has(c.id) ? [{ finding: { ...c.finding, anchor: c.anchor }, from: c.id }] : [],
+    ),
+  ];
+  const groups = overlapGroups(list.map((x) => ({ side: x.finding.side, anchor: x.finding.anchor })));
+  return {
+    raw,
+    outcome: o,
     summary: { summary: v.summary, risks: v.risks, coverage, dropped },
-    items: [...v.findings.map(findingItem), ...v.questions.map(questionItem), ...(a?.replies ?? []).map(replyItem)],
+    candidates: list.map((x, i) => ({ ...x, n: i + 1, group: groups[i] ?? null })),
+    questions: v.questions,
+    replies: a?.replies ?? [],
     ...(e && { checked: e.checked }),
+  };
+}
+
+export const usageOf = (o: RunOutcome): RunUsage | null => {
+  const r = o.result;
+  return r ? { costUsd: r.total_cost_usd, turns: r.num_turns, durationMs: r.duration_ms, tokens: r.usage } : null;
+};
+
+// The usage of both phases. tokens: the sum of each number key. The token count of the UI reads only those keys.
+export function addUsage(a: RunUsage | null, b: RunUsage | null): RunUsage | null {
+  if (!a || !b) return a ?? b;
+  const tokens: Record<string, unknown> = {};
+  for (const k of new Set([...Object.keys(a.tokens ?? {}), ...Object.keys(b.tokens ?? {})])) {
+    const x = a.tokens?.[k];
+    const y = b.tokens?.[k];
+    if (typeof x === "number" || typeof y === "number") tokens[k] = (typeof x === "number" ? x : 0) + (typeof y === "number" ? y : 0);
+  }
+  return { costUsd: a.costUsd + b.costUsd, turns: a.turns + b.turns, durationMs: a.durationMs + b.durationMs, tokens };
+}
+
+// The verify process of a review run (spec.md section 1.6). written: the candidates in candidates.md, from candidate 1.
+export type CheckRun = { o: RunOutcome; startedAt: number; endedAt: number; written: number };
+
+// One verdict per candidate in candidates.md. An unknown or a second verdict goes to skipped. A candidate without a verdict stays
+// unchecked, and its line in skipped makes the run incomplete (spec.md section 1.9).
+export function verdictsOf(list: readonly VerifyVerdict[], written: number) {
+  const verdicts = new Map<number, VerifyVerdict>();
+  const skipped: string[] = [];
+  for (const v of list) {
+    if (v.candidate > written) skipped.push(`Verdict for candidate ${v.candidate} dropped: ./context/candidates.md has no such candidate.`);
+    else if (verdicts.has(v.candidate)) skipped.push(`Verdict for candidate ${v.candidate} dropped: a second verdict for the candidate.`);
+    else verdicts.set(v.candidate, v);
+  }
+  for (let n = 1; n <= written; n++) if (!verdicts.has(n)) skipped.push(`Candidate ${n} has no verdict. It stays unchecked.`);
+  return { verdicts, skipped };
+}
+
+// spec.md section 1.9: a duplicate names another candidate of its group, else it reads as unsure. The named candidate must not be a
+// duplicate itself, so a chain or a loop of duplicates never discards every copy of one problem.
+export function effectiveVerdicts(candidates: readonly Candidate[], verdicts: ReadonlyMap<number, VerifyVerdict>) {
+  const group = new Map(candidates.map((c) => [c.n, c.group]));
+  const out = new Map<number, VerifyVerdict>();
+  for (const [n, v] of verdicts) {
+    const to = v.duplicateOf;
+    const ok =
+      v.verdict !== "duplicate" ||
+      (to !== null &&
+        to !== n &&
+        (group.get(n) ?? null) !== null &&
+        group.get(to) === group.get(n) &&
+        verdicts.get(to)?.verdict !== "duplicate");
+    out.set(n, ok ? v : { ...v, verdict: "unsure", duplicateOf: null });
+  }
+  return out;
+}
+
+const atMostMinor = (s: Severity): Severity => (s === "blocker" || s === "major" ? "minor" : s);
+
+export type Capped =
+  | { kind: "question"; question: Question }
+  | { kind: "finding"; status: "new" | "discarded"; severity: Severity; check: Check };
+
+// spec.md section 1.7, the caps: structured fields only, never the text. v undefined: the phase is off, failed, or skipped the
+// candidate. carried: a carried finding keeps its kind, so a question verdict reads as unsure and an empty trigger makes no question.
+export function capOf(
+  c: Pick<StoredFinding, "severity" | "trigger" | "evidenceStatus" | "title" | "body">,
+  v: Pick<VerifyVerdict, "verdict" | "severity" | "reason" | "question"> | undefined,
+  carried = false,
+): Capped {
+  if (v?.verdict === "refuted" || v?.verdict === "duplicate")
+    return { kind: "finding", status: "discarded", severity: c.severity, check: "unchecked" };
+  if (!carried && v?.verdict === "question")
+    return { kind: "question", question: { text: v.question.trim() || c.title?.trim() || c.body, why: v.reason } };
+  if (!carried && !c.trigger?.trim() && v?.verdict !== "confirmed")
+    return { kind: "question", question: { text: c.title?.trim() || c.body, why: "No concrete case was named." } };
+  const check: Check =
+    v?.verdict === "confirmed" ? "checked" : v?.verdict === "unsure" || v?.verdict === "question" ? "unsure" : "unchecked";
+  let severity = v ? v.severity : c.severity;
+  if (check !== "checked" && c.evidenceStatus === "unverified") severity = atMostMinor(severity);
+  if (check === "unsure") severity = atMostMinor(severity);
+  return { kind: "finding", status: "new", severity, check };
+}
+
+const COUNT: Record<VerifyVerdictName, Exclude<keyof VerifySummary, "failed" | "candidates" | "unchecked">> = {
+  confirmed: "confirmed",
+  refuted: "refuted",
+  unsure: "unsure",
+  question: "questions",
+  duplicate: "duplicates",
+};
+const findings = (n: number) => `${n} ${n === 1 ? "finding is" : "findings are"}`;
+// The merge of the verifier coverage. Its gaps do not make the run incomplete: a missing verdict does.
+const union = (a: string[], b: string[]) => [...a, ...b.filter((x) => !a.includes(x))];
+
+// volume: the volume of the profile at the start. find: the finder phase. check: the verify process, or null when it did not start.
+// verify: the verify phase is on. written: the candidates in candidates.md, 0 without the file.
+export type SettleInput = {
+  volume: Volume;
+  find: RunPhase;
+  check: CheckRun | null;
+  verify: boolean;
+  written: number;
+  servers: string[];
+};
+
+// The run end of a review run: the verdicts and the caps of each candidate, the items, and the summary (spec.md sections 1.7 and 1.8).
+export function settle(f: Found, s: SettleInput): Ending {
+  const coverage = {
+    read: [...f.summary.coverage.read],
+    skipped: [...f.summary.coverage.skipped],
+    unavailable: [...f.summary.coverage.unavailable],
+    notChecked: [...f.summary.coverage.notChecked],
+  };
+  const phases: RunPhase[] = [s.find];
+  let usage = s.find.usage;
+  let raw = f.raw;
+  let got = new Map<number, VerifyVerdict>();
+  let failed: VerifySummary["failed"];
+  if (s.check) {
+    const o = s.check.o;
+    raw = cap(`${raw}\n# Check phase\n\n${rawOutput(o)}`);
+    phases.push({ name: "check", startedAt: s.check.startedAt, endedAt: s.check.endedAt, usage: usageOf(o) });
+    usage = addUsage(usage, usageOf(o));
+    const parsed = o.status === "completed" ? verifyResult.safeParse(o.result?.structured_output) : null;
+    if (!parsed) failed = { kind: o.kind, text: o.text };
+    else if (!parsed.success)
+      failed = { kind: "schema", text: `The result does not match the verify schema. ${issuesText(parsed.error.issues)}` };
+    else {
+      const v = verdictsOf(parsed.data.verdicts, s.check.written);
+      got = effectiveVerdicts(f.candidates.slice(0, s.check.written), v.verdicts);
+      const c = parsed.data.coverage;
+      coverage.skipped.push(...v.skipped);
+      coverage.read = union(coverage.read, c.read);
+      coverage.notChecked.push(...[...c.skipped, ...c.notChecked].map((x) => `Check: ${x}`));
+      coverage.unavailable = union(coverage.unavailable, c.unavailable);
+    }
+    coverage.unavailable = union(coverage.unavailable, unavailable(o, s.servers, []));
+  }
+  const verify: VerifySummary = {
+    candidates: f.candidates.length,
+    confirmed: 0,
+    refuted: 0,
+    unsure: 0,
+    questions: 0,
+    duplicates: 0,
+    unchecked: 0,
+  };
+  const left = s.verify ? f.candidates.length - s.written : 0;
+  if (left > 0)
+    coverage.notChecked.push(
+      `${left} candidates were left out of ./context/candidates.md: it reached its size limit. They are not checked.`,
+    );
+  const items: NewItem[] = [];
+  const asked: Question[] = [];
+  const links = new Map<NewItem, CandidateLink>();
+  const carried = new Map<number, CarriedMark>();
+  const mark = (v: VerifyVerdict): VerifyMark => ({
+    verdict: v.verdict,
+    severity: v.severity,
+    reason: v.reason,
+    evidence: v.evidence,
+    duplicateOf: null,
+    by: "rl-verify",
   });
+  for (const c of f.candidates) {
+    const v = got.get(c.n);
+    if (v) verify[COUNT[v.verdict]]++;
+    else verify.unchecked++;
+    const out = capOf(c.finding, v, c.from !== null);
+    const link = { n: c.n, duplicateOf: v?.verdict === "duplicate" ? v.duplicateOf : null };
+    if (out.kind === "question") {
+      asked.push(out.question);
+      continue;
+    }
+    if (c.from !== null) {
+      carried.set(c.from, { ...link, ...(v && { verify: mark(v) }), severity: out.severity, discard: out.status === "discarded" });
+      continue;
+    }
+    const payload: FindingPayload = {
+      ...c.finding,
+      severity: out.severity,
+      ...(v && { verify: mark(v) }),
+      ...(out.severity !== c.finding.severity && { finderSeverity: c.finding.severity }),
+      ...(out.status === "discarded" && { discardedBy: "verify" as const }),
+    };
+    const item = findingItem(payload, out.status);
+    links.set(item, link);
+    items.push(item);
+  }
+  if (failed) {
+    verify.failed = failed;
+    coverage.skipped.push(`The check did not finish: ${findings(verify.unchecked)} not checked.${failed.text ? ` ${failed.text}` : ""}`);
+  }
+  const ending = ended(raw, f.outcome, {
+    summary: { ...f.summary, coverage, volume: s.volume, verify, phases },
+    items: [...items, ...f.questions.map(questionItem), ...asked.map(questionItem), ...f.replies.map(replyItem)],
+    ...(f.checked && { checked: f.checked }),
+    links,
+    carried,
+  });
+  return { ...ending, usage };
+}
+
+// spec.md section 1.9: the verdict of a carried finding on its copy. The user's triage stays: a copy that the user accepted, edited, or
+// restored after a refutation gets the mark only.
+export function markCopy(it: NewItem, m: CarriedMark): NewItem {
+  if (!m.verify) return it;
+  const p = JSON.parse(it.payload_json) as FindingPayload;
+  const restored = (p.verify?.verdict === "refuted" || p.verify?.verdict === "duplicate") && p.discardedBy === undefined;
+  if (it.status !== "new" || it.edited === 1 || restored) return { ...it, payload_json: JSON.stringify({ ...p, verify: m.verify }) };
+  const { finderSeverity, ...rest } = p;
+  const finder = finderSeverity ?? p.severity;
+  const next: FindingPayload = {
+    ...rest,
+    severity: m.severity,
+    verify: m.verify,
+    ...(m.severity !== finder && { finderSeverity: finder }),
+    ...(m.discard && { discardedBy: "verify" as const }),
+  };
+  return { ...it, payload_json: JSON.stringify(next), status: m.discard ? "discarded" : "new" };
+}
+
+// An Explain run gives no candidates and has no verify phase.
+export function settleExplain(f: Found): Ending {
+  return ended(f.raw, f.outcome, {
+    summary: f.summary,
+    items: [...f.questions.map(questionItem), ...f.replies.map(replyItem)],
+    ...(f.checked && { checked: f.checked }),
+  });
+}
+
+// A cancel during the verify phase. The run keeps the log and the usage of both processes, and no item.
+export function cancelledCheck(o: RunOutcome, check: RunOutcome): Ending {
+  return {
+    ...cancelledEnding(o),
+    raw: cap(`${rawOutput(o)}\n# Check phase\n\n${rawOutput(check)}`),
+    usage: addUsage(usageOf(o), usageOf(check)),
+  };
 }
 
 export function judgeReplies(o: RunOutcome, threads: ReplyThread[], servers: string[], gaps: string[]): Ending {

@@ -130,6 +130,9 @@ const STREAMS: Record<ClaudeScenario["stream"], string> = {
   // A session fork (docs/plans/session-consult.md part C): the read tools only, one Read, and the structured answer.
   session: resolve(import.meta.dir, "../../fixtures/claude-synthetic/session-resume.jsonl"),
 };
+// The verify phase of a review run (docs/plans/review-v2/spec.md section 1.6): one tool call and no subagent, so the run log keeps the
+// subagents of the finder. The fake CLI gives a confirmed verdict per candidate. A scenario bySchema replaces it.
+const CHECK_STREAM = claudeStream(claudeDir, "check", "claude/b6-hostile-repo.jsonl");
 function setClaude(c: ClaudeScenario) {
   runner.write({
     fixture: STREAMS[c.stream],
@@ -145,7 +148,7 @@ function setClaude(c: ClaudeScenario) {
     verify: c.verify,
     explain: c.explain,
     discuss: c.discuss,
-    bySchema: c.bySchema,
+    bySchema: c.bySchema ?? { verify: { fixture: CHECK_STREAM } },
     authMethod: c.login,
   });
 }

@@ -45,6 +45,7 @@ const FLUSH = [
   "lock.release();",
   "}",
 ];
+// The cause on added line 3 keeps a finding on a context line (docs/plans/review-v2/spec.md section 1.7).
 const finding = (line: number, body: string) => ({
   path: "src/cache/flush.ts",
   side: "new",
@@ -58,6 +59,8 @@ const finding = (line: number, body: string) => ({
   evidenceStatus: "code",
   confidence: "high",
   agent: null,
+  trigger: `A flush reaches line ${line}.`,
+  cause: { path: "src/cache/flush.ts", side: "new", line: 3, lineEnd: null, anchorText: FLUSH[2] },
 });
 const NONE = { read: [], skipped: [], unavailable: [], notChecked: [] };
 // The base review: one finding per line of FLUSH and two questions.
@@ -135,7 +138,9 @@ async function setup() {
     return (await json<RunDetail>(`/api/runs/${started.body.id}`)).body;
   };
   const record = join(root, "calls.jsonl");
-  const runCalls = (): Call[] => readRecords<Call>(record).filter((c) => c.argv?.includes("-p"));
+  // The finder processes. A review run also starts the verify process (docs/plans/review-v2/spec.md section 1.6).
+  const runCalls = (): Call[] =>
+    readRecords<Call>(record).filter((c) => c.argv?.includes("-p") && !flag(c.argv, "--json-schema").includes('"verdicts"'));
   // A posted item set: the items become posted, a confirmed post holds them, and its root comment starts the thread.
   const post = (run: number, kind: "general" | "inline", root: number, items: ReviewItemDto[]) => {
     for (const it of items) db.query("UPDATE review_item SET status = 'posted' WHERE id = $id").run({ id: it.id });

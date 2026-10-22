@@ -160,7 +160,8 @@ export const SQL = {
       p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer, r.fix_json, r.tasks_json, r.instructions_json, r.skills_json,
       r.consult_json,
       (SELECT COUNT(*) FROM review_item i WHERE i.run = r.id AND i.kind = 'finding'
-        AND COALESCE(json_extract(i.payload_json, '$.carried.verdict'), 'open') = 'open') AS findings
+        AND COALESCE(json_extract(i.payload_json, '$.carried.verdict'), 'open') = 'open'
+        AND COALESCE(json_extract(i.payload_json, '$.discardedBy'), '') <> 'verify') AS findings
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
   workspace: "UPDATE review_run SET merge_base = $base, range_base = $range, fetch_via = $via WHERE id = $id",
   instructions: "UPDATE review_run SET instructions_json = $json WHERE id = $id",
@@ -188,6 +189,8 @@ export const SQL = {
     FROM run_event WHERE run = $run ORDER BY seq`,
   item: `INSERT INTO review_item (run, kind, payload_json, body, path, side, line, line_end, anchor_state, excerpt_json, status, thread, edited)
     VALUES ($run, $kind, $payload_json, $body, $path, $side, $line, $line_end, $anchor_state, $excerpt_json, $status, $thread, $edited)`,
+  // docs/plans/review-v2/spec.md section 1.8: the item that a duplicate verdict names.
+  duplicateOf: "UPDATE review_item SET payload_json = json_set(payload_json, '$.verify.duplicateOf', $target) WHERE id = $id",
   items: `SELECT i.*, ${RUN_COLS} FROM review_item i JOIN review_run r ON r.id = i.run WHERE i.run = $run ORDER BY i.id`,
   itemById: "SELECT * FROM review_item WHERE id = $id",
   // Plan r2 S-RR. An Explain run has no findings. A run from before M4 has no explain value.

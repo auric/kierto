@@ -122,11 +122,20 @@ export function triage(db: Database, id: number, input: ItemActionInput, at = Da
       // session-consult.md part C: a session reject discards only open findings, so its mark is newer than a fixed mark. The restore
       // returns its status and removes it.
       // A "Don't fix" decline (fix-routes.ts) is newer than a fixed mark: a declined proposal has no commit.
-      const p = JSON.parse(row.payload_json) as { fixed?: FixedMark; session?: SessionMark; declined?: { was: ReviewItemDto["status"] } };
+      // docs/plans/review-v2/spec.md section 1.8: a restore of a refuted or duplicate finding removes discardedBy and keeps verify.
+      const p = JSON.parse(row.payload_json) as {
+        fixed?: FixedMark;
+        session?: SessionMark;
+        declined?: { was: ReviewItemDto["status"] };
+        discardedBy?: string;
+      };
       const rejected = row.status === "discarded" && p.session?.verdict === "reject" ? p.session : null;
       next.status = row.status === "discarded" ? (rejected?.was ?? p.declined?.was ?? p.fixed?.was ?? "new") : "new";
       if (rejected) {
         const { session: _, ...rest } = p;
+        next.payload_json = JSON.stringify(rest);
+      } else if (row.kind === "finding" && p.discardedBy === "verify") {
+        const { discardedBy: _, ...rest } = p;
         next.payload_json = JSON.stringify(rest);
       }
       break;

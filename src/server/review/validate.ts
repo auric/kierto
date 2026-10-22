@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Anchor validator (plan v3 WP9), earlier-finding validator (r2 S-RR), reply validator (replies.md WP17), and answer validator
-// (thread-outcome.md section 9).
+// Anchor validator (plan v3 WP9) with the changed-line, cause, and rule checks and the overlap groups (docs/plans/review-v2/spec.md
+// section 1.7), earlier-finding validator (r2 S-RR), reply validator (replies.md WP17), and answer validator (thread-outcome.md section 9).
 // Pure: the caller passes the file contents, the diff, and the run's agent names.
 import { MAX_NOTE } from "../../shared/dto";
 import type {
   Anchor,
+  AnchoredFinding,
   AnsweredQuestion,
   Coverage,
   DropReason,
@@ -30,6 +31,10 @@ export const MAX_FILE_CHARS = 4 * 1024 * 1024;
 export const MAX_RANGE_LINES = 100;
 export const MAX_LINE_CHARS = 1000;
 
+// One loaded project instruction file as the prompt shows it (instructions.ts). scope: the folder that it applies to, or null for
+// all files.
+export type RuleSource = { scope: string | null; text: string };
+
 export type ValidateInput = {
   result: ReviewResult;
   // Output of `git diff -M -U3 <base> <head>`.
@@ -41,6 +46,8 @@ export type ValidateInput = {
   // Subagent names of the run's Agent events.
   agents: readonly string[];
   explain?: boolean;
+  // The project instructions of the run. Absent: none, so every rule finding drops.
+  rules?: readonly RuleSource[];
 };
 
 export const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -143,8 +150,12 @@ function excerpt(t: Text, file: DiffFile | undefined, side: Side, s: number, e: 
   return out;
 }
 
-// The anchor of one finding against the diff and the file contents, or the reason to drop it.
-function anchorer(input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles">): (f: StoredFinding) => Anchor | DropReason {
+// The place fields of a finding or of its cause.
+type Placed = Pick<StoredFinding, "path" | "side" | "line" | "lineEnd" | "anchorText">;
+
+// anchor: the anchor of one place against the diff and the file contents, or the reason to drop it.
+// changed: spec.md section 1.7 step 2, the anchor range holds an added line (side new) or a removed line (side old).
+export function anchorer(input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles">) {
   const files = parseDiff(input.diff);
   const byNew = new Map<string, DiffFile>();
   const byOld = new Map<string, DiffFile>();
@@ -158,8 +169,15 @@ function anchorer(input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles">):
     texts.set(key, t);
     return t;
   };
+  const changed = (a: Anchor, side: Side): boolean => {
+    const file = byNew.get(a.path) ?? byOld.get(a.path);
+    const lines = side === "new" ? file?.newLines : file?.oldLines;
+    const kind = side === "new" ? "add" : "del";
+    for (let k = a.line; k <= a.lineEnd; k++) if (lines?.get(k) === kind) return true;
+    return false;
+  };
 
-  return (f: StoredFinding): Anchor | DropReason => {
+  const anchor = (f: Placed): Anchor | DropReason => {
     const p = repoPath(f.path);
     if (p === null) return "path";
     const file = byNew.get(p) ?? byOld.get(p);
@@ -192,24 +210,83 @@ function anchorer(input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles">):
     for (let k = s; k <= e; k++) if (!lines?.has(k)) state = "outside";
     return { state, path, oldPath, line: s, lineEnd: e, excerpt: excerpt(t, file, f.side, s, e) };
   };
+  return { anchor, changed };
+}
+
+// The file of an anchored line: the new path on side new, the base path on side old.
+const sidePath = (a: Anchor, side: Side) => (side === "old" ? (a.oldPath ?? a.path) : a.path);
+
+// spec.md section 1.7 step 5: the rule quote, whitespace collapsed, is in a loaded file whose scope covers the path.
+function ruleCheck(sources: readonly RuleSource[]) {
+  const flat = sources.map((s) => ({ scope: s.scope, text: collapse(s.text) }));
+  return (rule: string, path: string) => {
+    const q = collapse(rule);
+    return flat.some((s) => (s.scope === null || path.startsWith(`${s.scope}/`)) && s.text.includes(q));
+  };
 }
 
 // kept: for each finding of the result, its index in findings, or null when the validator dropped it.
 export function validate(input: ValidateInput): ValidatedResult & { kept: (number | null)[] } {
   const { findings, ...rest } = input.result;
   if (input.explain) return { ...rest, findings: [], dropped: [], kept: findings.map(() => null) };
-  const anchor = anchorer(input);
+  const { anchor, changed } = anchorer(input);
+  const holds = ruleCheck(input.rules ?? []);
   const agents = new Set(input.agents);
   const out: ValidatedResult & { kept: (number | null)[] } = { ...rest, findings: [], dropped: [], kept: [] };
+  const drop = (f: Finding, reason: DropReason) => {
+    out.dropped.push({ ...f, reason });
+    out.kept.push(null);
+  };
   for (const raw of findings) {
     const f: Finding = { ...raw, agent: raw.agent !== null && agents.has(raw.agent) ? raw.agent : null };
     const a = anchor(f);
     if (typeof a === "string") {
-      out.dropped.push({ ...f, reason: a });
-      out.kept.push(null);
-    } else out.kept.push(out.findings.push({ ...f, anchor: a }) - 1);
+      drop(f, a);
+      continue;
+    }
+    // spec.md section 1.7 steps 2 to 4: a finding is in the change by its anchor, else by its cause.
+    let cause: AnchoredFinding["cause"] = f.cause;
+    if (!changed(a, f.side)) {
+      const c = f.cause ? anchor(f.cause) : null;
+      if (!f.cause || c === null || typeof c === "string" || !changed(c, f.cause.side)) {
+        drop(f, "unchanged");
+        continue;
+      }
+      cause = { ...f.cause, anchor: c };
+    }
+    if (f.module === "rules" && f.rule.trim() && !holds(f.rule, sidePath(a, f.side))) {
+      drop(f, "rule");
+      continue;
+    }
+    out.kept.push(out.findings.push({ ...f, cause, anchor: a }) - 1);
   }
   return out;
+}
+
+// spec.md section 1.7, dedupe: two findings with the same path, the same side, and overlapping anchor ranges share a group. Groups join
+// by transitivity. The groups count from 1 in the order of their first finding. A finding without a partner gets null.
+export function overlapGroups(list: readonly { side: Side; anchor: Pick<Anchor, "path" | "line" | "lineEnd"> }[]): (number | null)[] {
+  const root = list.map((_, i) => i);
+  const find = (i: number): number => {
+    while (root[i] !== i) i = root[i] as number;
+    return i;
+  };
+  list.forEach((a, i) => {
+    for (let j = 0; j < i; j++) {
+      const b = list[j] as (typeof list)[number];
+      if (a.side === b.side && a.anchor.path === b.anchor.path && a.anchor.line <= b.anchor.lineEnd && b.anchor.line <= a.anchor.lineEnd)
+        root[find(i)] = find(j);
+    }
+  });
+  const size = new Map<number, number>();
+  for (let i = 0; i < list.length; i++) size.set(find(i), (size.get(find(i)) ?? 0) + 1);
+  const number = new Map<number, number>();
+  return list.map((_, i) => {
+    const r = find(i);
+    if ((size.get(r) ?? 0) < 2) return null;
+    if (!number.has(r)) number.set(r, number.size + 1);
+    return number.get(r) as number;
+  });
 }
 
 // ---------- Earlier findings of a re-review (plan r2 S-RR) ----------
@@ -251,7 +328,7 @@ export function earlierCases(earlier: readonly EarlierVerdict[], items: readonly
 export function validateEarlier(
   input: Pick<ValidateInput, "diff" | "newFiles" | "oldFiles"> & { earlier: readonly EarlierVerdict[]; items: readonly EarlierItem[] },
 ): { checked: CheckedEarlier[]; skipped: string[] } {
-  const anchor = anchorer(input);
+  const { anchor } = anchorer(input);
   const { cases, skipped } = earlierCases(input.earlier, input.items);
   const checked = cases.map((c): CheckedEarlier => {
     const a = anchor(c.finding);

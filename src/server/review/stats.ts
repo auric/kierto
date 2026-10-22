@@ -5,7 +5,7 @@
 // from the existing rows. No table of its own.
 import type { Database } from "bun:sqlite";
 import { DISCARD_REASONS, type ReviewStatsDto, type RunSummary, type RunUsage, type Volume } from "../../shared/dto";
-import type { Carried, FindingPayload, SessionMark } from "../../shared/review";
+import { type Carried, displayGroup, type FindingPayload, type SessionMark } from "../../shared/review";
 
 const DAY_MS = 86_400_000;
 
@@ -56,14 +56,6 @@ export type StatsPayload = FindingPayload & {
   revises?: number;
   discardReason?: { code: string };
 };
-
-// spec.md section 1.4. A run without a volume is from before review v2, which showed every finding.
-export function inMainList(p: StatsPayload, volume: Volume | undefined): boolean {
-  if (p.discardedBy === "verify") return false;
-  if (volume === "quiet") return p.severity === "blocker" || p.severity === "major";
-  if (volume === "balanced") return p.severity !== "nit" && p.verify?.verdict !== "unsure";
-  return true;
-}
 
 // A discard by the check, a fix commit, a closing re-review, or a session reject is not a triage by the user.
 // A reason chip comes only from the user. hasCopy: a re-review carried the item, which discarded the source.
@@ -152,7 +144,7 @@ export function reviewStats(db: Database, days: number, now = Date.now()): Revie
     const d = run.group;
     // A run from before the check phase has no candidate count: each stored finding was a candidate.
     if (!run.checked) d.candidates++;
-    if (inMainList(i.p, run.volume)) d.shown++;
+    if (displayGroup(i.p, run.volume) === "main") d.shown++;
     const end = last(i);
     if (end.status === "accepted" || end.status === "posted") {
       d.accepted++;

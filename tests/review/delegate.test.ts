@@ -19,6 +19,7 @@ import type { GitRemote } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import type { ProfileInput, RunDto } from "../../src/shared/dto";
+import { REVIEW_PROMPT_VERSION } from "../../src/shared/review";
 import { FAKE_TOKEN } from "../support/fake-bitbucket";
 import { readRecords } from "../support/fake-claude";
 import { claudeStream, fakeRunner, REVIEW_RESULT, stubListTools } from "../support/review-fixture";
@@ -256,7 +257,7 @@ describe("delegation in a run", () => {
   );
 
   test(
-    "AC-R15 and spec.md section 1.3: the row stores prompt version 2.0; rules and intent with no input add a coverage line",
+    "AC-R15 and spec.md section 1.3: the row stores the prompt version; rules and intent with no input add a coverage line",
     async () => {
       const h = await setup();
       // No project instructions, no PR description, and no task.md.
@@ -268,7 +269,9 @@ describe("delegation in a run", () => {
       expect(run?.summary?.coverage.notChecked).toEqual(
         expect.arrayContaining(["Project rules: no instructions loaded.", "Matches the task: no description or task."]),
       );
-      expect(h.db.query("SELECT prompt_version FROM review_run WHERE id = $id").get({ id })).toEqual({ prompt_version: "2.0" });
+      expect(h.db.query("SELECT prompt_version FROM review_run WHERE id = $id").get({ id })).toEqual({
+        prompt_version: REVIEW_PROMPT_VERSION,
+      });
       // A profile without these modules gets no such line.
       h.runner.write({ fixture: h.fixture });
       const other = h.start(1, "bare");

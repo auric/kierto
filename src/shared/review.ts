@@ -3,6 +3,7 @@
 
 // Review and reply results (plan v3 WP9, replies.md WP17). zod parses the CLI output. reviewJsonSchema() and replyJsonSchema() feed --json-schema.
 import { z } from "zod";
+import type { Volume } from "./dto";
 
 export const severities = ["blocker", "major", "minor", "nit"] as const;
 export const evidenceStatuses = ["code", "reproduced", "unverified"] as const;
@@ -12,7 +13,8 @@ export const MAX_FINDINGS = 100;
 const lineNo = z.number().int().min(1);
 
 // Raise it with each change of the review agent prompts. A run row with prompt_version NULL reads as "1".
-export const REVIEW_PROMPT_VERSION = "2.0";
+// "2.0": the finder prompts of review v2 without the verify phase. "2.1": with the verify phase.
+export const REVIEW_PROMPT_VERSION = "2.1";
 
 const place = {
   path: z.string().describe("File path relative to the repository root, with / separators."),
@@ -144,7 +146,29 @@ export type Check = "checked" | "unsure" | "unchecked";
 // payload.verify of a finding item with a verdict. duplicateOf: an item ID. by: the agent that gave the verdict.
 export type VerifyMark = Omit<VerifyVerdict, "candidate" | "question" | "duplicateOf"> & { duplicateOf: number | null; by: string };
 // A finding item payload. finderSeverity: set when the verdict changed the severity. discardedBy "verify": a refuted or duplicate item.
+// A restore removes discardedBy and keeps verify (spec.md section 1.8).
 export type FindingPayload = AnchoredFinding & { verify?: VerifyMark; finderSeverity?: Severity; discardedBy?: "verify" };
+
+// spec.md section 1.7. A carried finding keeps its kind, so a question verdict on it reads as unsure.
+export const checkOf = (p: { verify?: Pick<VerifyMark, "verdict"> }): Check =>
+  p.verify?.verdict === "confirmed"
+    ? "checked"
+    : p.verify?.verdict === "unsure" || p.verify?.verdict === "question"
+      ? "unsure"
+      : "unchecked";
+
+// main: the Drafts list. fold: "More" (quiet) or "Low confidence" (balanced). hidden: refuted and duplicates, in the run record only.
+export type DisplayGroup = "main" | "fold" | "hidden";
+
+// spec.md section 1.4: the place of a finding from its check, its severity, and the volume of its run. A run without a volume is from
+// before review v2, which showed every finding.
+export function displayGroup(p: Pick<FindingPayload, "severity" | "verify" | "discardedBy">, volume: Volume | undefined): DisplayGroup {
+  if (p.discardedBy === "verify") return "hidden";
+  const check = checkOf(p);
+  if (volume === "quiet") return check !== "unsure" && (p.severity === "blocker" || p.severity === "major") ? "main" : "fold";
+  if (volume === "balanced") return check !== "unsure" && p.severity !== "nit" ? "main" : "fold";
+  return "main";
+}
 
 // ---------- Discuss a finding (docs/plans/review-v2/spec.md section 2) ----------
 
@@ -486,11 +510,14 @@ export type Anchor = {
 type V2Keys = "title" | "trigger" | "cause" | "rule" | "module";
 export type StoredFinding = Omit<Finding, V2Keys> & Partial<Pick<Finding, V2Keys>>;
 
-export type AnchoredFinding = StoredFinding & { anchor: Anchor };
+// cause.anchor: set when the anchor holds no changed line and the cause range does (spec.md section 1.7).
+export type Cause = NonNullable<Finding["cause"]>;
+export type AnchoredFinding = Omit<StoredFinding, "cause"> & { cause?: (Cause & { anchor?: Anchor }) | null; anchor: Anchor };
 
 // path: absolute, "..", or outside the snapshot. file: no such file on that side. match: the quote is not in the file.
-// size: the file or the range is above the scan limits.
-export type DropReason = "path" | "file" | "match" | "size";
+// size: the file or the range is above the scan limits. unchanged: neither the anchor nor the cause holds a changed line.
+// rule: no loaded instruction file whose scope covers the path holds the quoted rule.
+export type DropReason = "path" | "file" | "match" | "size" | "unchanged" | "rule";
 export type DroppedFinding = StoredFinding & { reason: DropReason };
 
 export type ValidatedResult = Omit<ReviewResult, "findings"> & { findings: AnchoredFinding[]; dropped: DroppedFinding[] };

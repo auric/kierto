@@ -514,6 +514,8 @@ export const DROP_REASON: Record<DropReason, string> = {
   file: "The snapshot has no such file on that side.",
   match: "The snapshot of that file does not have this code.",
   size: "The file or the range is above the scan limits.",
+  unchanged: "Not part of this change.",
+  rule: "The quoted rule is not in the project instructions for this path.",
 };
 
 export const drafts = (items: ReviewItemDto[]) => items.filter((i) => i.kind === "finding" && i.status !== "posted");

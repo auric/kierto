@@ -12,6 +12,7 @@ import { CLONE_INSTRUCTION_FILES, type InstructionFileDto, type InstructionsInpu
 import { blobBytes } from "./clone";
 import { GitError, git } from "./git";
 import { inside } from "./paths";
+import type { RuleSource } from "./validate";
 
 export const FILE_CAP = 64 * 1024;
 // The text goes into each prompt, so the total is capped below the CLI's own warning floor for all instruction files: 120,000 characters (CLI 2.1.296).
@@ -200,7 +201,8 @@ export function scan(text: string): { text: string; imports: string[] } {
   return { text: text.replace(AT, (t: string, i: number) => (inCode(i) ? t : `\`${t}\``)), imports };
 }
 
-export type Built = { text: string; files: InstructionFileDto[]; bytes: number; notLoaded: string[] };
+// sources: the text of each loaded file as the prompt shows it, with its scope. The rule check of validate.ts reads it.
+export type Built = { text: string; files: InstructionFileDto[]; bytes: number; notLoaded: string[]; sources: RuleSource[] };
 const FROM = { global: "your global Claude Code settings", target: "the target branch", clone: "your clone" } as const;
 const ALL = "(applies to all files)";
 
@@ -245,6 +247,7 @@ export async function buildInstructions(o: {
 }): Promise<Built> {
   const parts: string[] = [];
   const files: InstructionFileDto[] = [];
+  const sources: RuleSource[] = [];
   const notLoaded: string[] = [];
   let total = 0;
   const gap = (what: string, why: string) => notLoaded.push(`${what} (${why})`);
@@ -284,6 +287,7 @@ export async function buildInstructions(o: {
       if (!fits(f.bytes.length, what)) return;
       const s = scan(text);
       files.push({ source: kind, path: f.path, bytes: f.bytes.length, ...(scope !== undefined && { scope }) });
+      sources.push({ scope: scope ?? null, text: s.text });
       const head = `## From ${FROM[kind]}: ${f.path}${from ? ` (imported by ${from.path})` : ""}`;
       parts.push(`${head} ${scope === undefined ? ALL : `(applies to ${scope}/**)`}\n\n${s.text.trimEnd()}\n`);
       for (const i of s.imports) await visit(f, i, [...chain, f.key]);
@@ -304,8 +308,10 @@ export async function buildInstructions(o: {
   if (o.extra.trim()) {
     const bytes = Buffer.byteLength(o.extra);
     if (fits(bytes, "the text from PR Review Inbox settings")) {
+      const text = scan(o.extra).text;
       files.push({ source: "settings", path: "", bytes });
-      parts.push(`## From PR Review Inbox settings ${ALL}\n\n${scan(o.extra).text.trimEnd()}\n`);
+      sources.push({ scope: null, text });
+      parts.push(`## From PR Review Inbox settings ${ALL}\n\n${text.trimEnd()}\n`);
     }
   }
   return {
@@ -313,6 +319,7 @@ export async function buildInstructions(o: {
     files,
     bytes: total,
     notLoaded,
+    sources,
   };
 }
 

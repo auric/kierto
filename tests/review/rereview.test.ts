@@ -406,7 +406,9 @@ async function setup() {
     db.query("UPDATE pull_request SET source_head = $head WHERE id = $pr").run({ head, pr });
   };
   const record = join(root, "calls.jsonl");
-  const runCalls = (): Call[] => readRecords<Call>(record).filter((c) => c.argv?.includes("-p"));
+  // The finder processes. A review run also starts the verify process (docs/plans/review-v2/spec.md section 1.6).
+  const runCalls = (): Call[] =>
+    readRecords<Call>(record).filter((c) => c.argv?.includes("-p") && !flag(c.argv, "--json-schema").includes('"verdicts"'));
   const reviewed = async () => {
     const cache = cachePath(realpathSync.native(dir), { project: "PROJ", repo: "repo", id: 2 });
     return (
