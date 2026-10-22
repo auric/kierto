@@ -78,7 +78,7 @@ const STATUS_ID = "profiles-status";
 const FIELD_ORDER: Field[] = ["name", "note", "prompt", "maxTurns", "model", "reviewerModel"];
 const EFFORT_NAME: Record<Effort, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
 const MODES: [ReviewerMode, string, (runner: string) => string][] = [
-  ["auto", "Auto", (r) => `${r} gives parts of a large change to reviewer agents when it sees fit.`],
+  ["auto", "Auto", (r) => `${r} uses reviewer agents only for a change of 1,200+ changed lines or 30+ files.`],
   ["always", "Always", (r) => `${r} splits the changed files across reviewer agents, then checks and merges their findings.`],
   ["off", "Off", () => "One agent reviews the whole change."],
 ];

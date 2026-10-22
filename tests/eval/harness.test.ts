@@ -15,6 +15,7 @@ import { PROFILES_VERSION } from "../../src/server/config";
 import { profileRevision, SHIPPED_PROFILES, shippedProfileAt } from "../../src/server/review/catalog";
 import { git } from "../../src/server/review/git";
 import { DEFAULT_VERIFIER } from "../../src/shared/dto";
+import { REVIEW_PROMPT_VERSION } from "../../src/shared/review";
 import { readRecords } from "../support/fake-claude";
 import { claudeStream } from "../support/review-fixture";
 
@@ -247,7 +248,8 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       const findings = [
         ...(await Promise.all(c.bugs.map((b) => at(b.path, b.lines, b.severityMin)))),
         await at(trap.path, [trap.lines[0], trap.lines[0]], "minor"),
-        await at("src/users/cache.ts", [1, 1], "nit"),
+        // Not a nit: volume balanced folds an unchecked nit, and then noise counts nothing.
+        await at("src/users/cache.ts", [1, 1], "minor"),
       ];
       const structured = {
         summary: "Fake review.",
@@ -277,7 +279,7 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       expect(files).toHaveLength(1);
       const file = join(out, files[0] as string);
       const result = JSON.parse(readFileSync(file, "utf8")) as EvalResult;
-      expect(result).toMatchObject({ format: 1, promptVersion: "1", runner: "fake", repeat: 1, volume: "balanced" });
+      expect(result).toMatchObject({ format: 1, promptVersion: REVIEW_PROMPT_VERSION, runner: "fake", repeat: 1, volume: "balanced" });
       expect(result.requested).toEqual({ model: "default", effort: "high" });
       expect(result.profileVersion).toBe(PROFILES_VERSION);
       expect(r.stdout).toContain(DEFAULT_MODEL_WARNING);
@@ -287,7 +289,7 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       const [run] = result.runs;
       expect(run).toMatchObject({ case: c.id, repeat: 1, status: "completed", error: null, questions: 0 });
       expect(run?.items.map((i) => [i.path, i.line, i.anchorState, i.check, i.group])).toEqual(
-        findings.map((f) => [f.path, f.line, "exact", null, "main"]),
+        findings.map((f) => [f.path, f.line, "exact", "unchecked", "main"]),
       );
       const s = score(result).suite;
       expect(s.recall?.mean).toBe(1);
@@ -365,7 +367,11 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       const files = readdirSync(out).filter((f) => f.endsWith(".json"));
       const result = JSON.parse(readFileSync(join(out, files[0] as string), "utf8")) as EvalResult;
       expect(result.set).toBe("v1");
-      expect(result.runs[0]).toMatchObject({ status: "incomplete", coverage });
+      // The case has no project rules, so the app adds the spec 1.3 line to notChecked.
+      expect(result.runs[0]).toMatchObject({
+        status: "incomplete",
+        coverage: { ...coverage, notChecked: [...coverage.notChecked, "Project rules: no instructions loaded."] },
+      });
     },
     SLOW,
   );
