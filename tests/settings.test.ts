@@ -80,6 +80,7 @@ describe("settings API", () => {
       profiles: SHIPPED_PROFILES,
       jira: { baseUrl: null, caFile: null, tokenStored: false },
       sessions: false,
+      askAttachments: true,
     });
     expect(existsSync(dir)).toBe(false);
   });
@@ -105,6 +106,7 @@ describe("settings API", () => {
       profiles: SHIPPED_PROFILES,
       jira: { baseUrl: null, caFile: null, tokenStored: false },
       sessions: false,
+      askAttachments: true,
     };
     expect(await res.json()).toEqual(expected);
     expect(await s.get()).toEqual(expected);
@@ -212,6 +214,33 @@ describe("settings API", () => {
     // Off removes the key, as for the other default-off switches.
     expect(await (await s.put({ baseUrl: fake.url, sessions: false })).json()).toMatchObject({ sessions: false });
     expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).sessions).toBeUndefined();
+  });
+
+  test("the attachment policy question starts on, an old config asks, and off is stored until the user turns it on", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
+    const file = join(dir, "config.json");
+    // A config from before the switch has no key, so the first include after the upgrade still asks.
+    expect(JSON.parse(readFileSync(file, "utf8")).askAttachments).toBeUndefined();
+    expect((await s.get()).askAttachments).toBe(true);
+    const before = fake.requests.length;
+    expect(await (await s.put({ baseUrl: fake.url, askAttachments: false })).json()).toMatchObject({ askAttachments: false });
+    expect(fake.requests.length).toBe(before);
+    expect(JSON.parse(readFileSync(file, "utf8")).askAttachments).toBe(false);
+    // A PUT without the key keeps the acknowledgement.
+    expect((await s.put({ baseUrl: fake.url, markAi: false })).status).toBe(200);
+    expect(JSON.parse(readFileSync(file, "utf8")).askAttachments).toBe(false);
+    expect((await s.put({ baseUrl: fake.url, askAttachments: "no" })).status).toBe(400);
+    s.settings.close();
+    expect((await setup().get()).askAttachments).toBe(false);
+    // On removes the key, so the default applies again.
+    const again = setup();
+    expect(await (await again.put({ baseUrl: fake.url, askAttachments: true })).json()).toMatchObject({ askAttachments: true });
+    expect(JSON.parse(readFileSync(file, "utf8")).askAttachments).toBeUndefined();
+    // A broken value reads as absent and asks.
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), askAttachments: "off" }));
+    again.settings.close();
+    expect((await setup().get()).askAttachments).toBe(true);
   });
 
   test("GET gives the four shipped profiles with their full prompts", async () => {

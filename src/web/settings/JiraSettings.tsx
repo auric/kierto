@@ -6,22 +6,23 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import type { JiraSettingsInput, SettingsDto } from "../../shared/dto";
 import { api } from "../api";
 import { useMeta } from "../meta";
 import { type Tracker, trackerOf } from "../review/tasks";
-import { read } from "../shell/data";
+import { read, useSaveSettings } from "../shell/data";
 
 // No tracker in meta: no section.
 export function JiraSettings({ settings }: { settings: SettingsDto }) {
   const meta = useMeta().data;
   const tracker = meta && trackerOf(meta);
-  return tracker ? <TrackerSettings tracker={tracker} settings={settings} /> : null;
+  return tracker ? <TrackerSettings tracker={tracker} runner={meta.runner.short} settings={settings} /> : null;
 }
 
-function TrackerSettings({ tracker, settings }: { tracker: Tracker; settings: SettingsDto }) {
+function TrackerSettings({ tracker, runner, settings }: { tracker: Tracker; runner: string; settings: SettingsDto }) {
   const qc = useQueryClient();
   const { name } = tracker;
   const { baseUrl, caFile, tokenStored } = settings[tracker.id];
@@ -160,7 +161,36 @@ function TrackerSettings({ tracker, settings }: { tracker: Tracker; settings: Se
       {confirm && (
         <DisconnectConfirm name={name} pending={save.isPending} onDisconnect={() => save.mutate({ baseUrl: "" })} onCancel={cancel} />
       )}
+      <AskSwitch name={name} runner={runner} settings={settings} />
     </section>
+  );
+}
+
+// Off records the company AI policy acknowledgement. On brings the question of "Include in runs" back. It saves at once.
+function AskSwitch({ name, runner, settings }: { name: string; runner: string; settings: SettingsDto }) {
+  const save = useSaveSettings();
+  return (
+    <Field orientation="horizontal" className="border-t pt-3">
+      <Switch
+        id="ask-attachments"
+        aria-describedby="ask-attachments-help"
+        checked={settings.askAttachments}
+        disabled={save.isPending}
+        onCheckedChange={(askAttachments) =>
+          save.mutate({ baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", askAttachments })
+        }
+      />
+      <FieldContent>
+        <FieldLabel htmlFor="ask-attachments">
+          Ask before {runner} reads a {name} attachment
+        </FieldLabel>
+        <FieldDescription id="ask-attachments-help">
+          When on, “Include in runs” asks you to confirm that your company AI policy allows sending task attachments to an AI service. Your
+          first confirmation turns it off. Saves at once.
+        </FieldDescription>
+        {save.error && !(save.error instanceof TypeError) && <FieldError>{save.error.message}</FieldError>}
+      </FieldContent>
+    </Field>
   );
 }
 

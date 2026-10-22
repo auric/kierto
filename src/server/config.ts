@@ -38,6 +38,8 @@ const config = z.object({
   globalInstructions: z.boolean().optional().catch(undefined),
   // Absent: off. On: "Ask your session" lists the transcripts of the Claude config folder (src/server/review/sessions.ts).
   sessions: z.boolean().optional().catch(undefined),
+  // Absent: on. Off: the user acknowledged the company AI policy for task attachments, so "Include in runs" does not ask.
+  askAttachments: z.boolean().optional().catch(undefined),
 });
 
 export type Config = z.infer<typeof config>;

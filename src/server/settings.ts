@@ -127,6 +127,7 @@ export function createSettings(
         tokenStored: c?.jira !== undefined && (await jiraSecrets.get()) !== null,
       },
       sessions: c?.sessions === true,
+      askAttachments: c?.askAttachments !== false,
     };
   }
 
@@ -302,6 +303,7 @@ export function createSettings(
             jira: prev?.jira,
             globalInstructions: prev?.globalInstructions,
             sessions: input.sessions === undefined ? prev?.sessions : input.sessions || undefined,
+            askAttachments: input.askAttachments === undefined ? prev?.askAttachments : input.askAttachments ? undefined : false,
           };
           const caFile = input.caFile || undefined;
           const notifications = input.notifications ?? prev?.notifications ?? false;

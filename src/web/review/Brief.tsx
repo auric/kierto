@@ -58,7 +58,7 @@ import { api } from "../api";
 import { dialogKeys } from "../fix/CloneDialog";
 import { formatRoute } from "../lib/route";
 import { useSkills } from "../meta";
-import { read } from "../shell/data";
+import { read, useSaveSettings, useSettings } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { failText } from "../shell/model";
 import { loadLastProfile, putBrief } from "./data";
@@ -173,7 +173,7 @@ function TaskFold(props: { pr: number; t: TaskContextDto; source: string; now: n
         </p>
         <TaskText t={t} text={t.description?.trim() || "No description."} images={images} />
         {/* The tracker shows the files after the description, before the comments. */}
-        <Attachments pr={pr} t={t} runner={props.runner} announce={props.announce} />
+        <Attachments pr={pr} t={t} source={source} runner={props.runner} announce={props.announce} />
         {t.comments.map((c, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: the comments of one fetch keep their order.
           <div key={i} className="grid gap-0.5">
@@ -228,7 +228,8 @@ const DONE: Record<FileAct, (name: string) => string> = {
 const KIND_ICON = { image: FileImage, text: FileText, file: File } as const;
 
 // The files of one fetched task: Download, Download all, Save, Include in runs, Delete, and Open folder.
-function Attachments({ pr, t, runner, announce }: { pr: number; t: TaskContextDto; runner: string; announce: (text: string) => void }) {
+function Attachments(props: { pr: number; t: TaskContextDto; source: string; runner: string; announce: (text: string) => void }) {
+  const { pr, t, runner, announce } = props;
   const qc = useQueryClient();
   const rows = attachmentRows(t);
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
@@ -240,9 +241,11 @@ function Attachments({ pr, t, runner, announce }: { pr: number; t: TaskContextDt
   // The last asked file stays while the dialog plays its close transition.
   const asked = useRef<AttachmentRow | null>(null);
   if (asking) asked.current = asking;
-  // The user ticks the policy box each time. The dialog opens with focus on it.
+  // The policy box asks until the user ticks it once. Settings, askAttachments, keeps the answer. The dialog opens with focus on it.
   const [allowed, setAllowed] = useState(false);
   const allow = useRef<HTMLInputElement>(null);
+  const settings = useSettings().data;
+  const save = useSaveSettings();
   const base = `att-${t.key}`;
   if (!rows.length) return null;
 
@@ -323,7 +326,13 @@ function Attachments({ pr, t, runner, announce }: { pr: number; t: TaskContextDt
   const confirm = () => {
     const r = asking;
     setAsking(null);
-    if (r && allowed) void act(r, "include");
+    if (!r || !allowed) return;
+    void act(r, "include");
+    if (settings?.askAttachments)
+      save.mutate(
+        { baseUrl: settings.baseUrl ?? "", caFile: settings.caFile ?? "", askAttachments: false },
+        { onError: (e) => toast.add({ title: `The policy answer was not saved: ${e.message}` }) },
+      );
   };
 
   const todo = rows.filter(canDownload).length;
@@ -429,6 +438,8 @@ function Attachments({ pr, t, runner, announce }: { pr: number; t: TaskContextDt
                           disabled={wait}
                           onCheckedChange={(on) => {
                             if (!on) return void act(r, "exclude");
+                            // Unknown settings ask.
+                            if (settings?.askAttachments === false) return void act(r, "include");
                             setAllowed(false);
                             setAsking(r);
                           }}
@@ -516,8 +527,11 @@ function Attachments({ pr, t, runner, announce }: { pr: number; t: TaskContextDt
                   checked={allowed}
                   onChange={(e) => setAllowed(e.target.checked)}
                 />
-                <span>My company AI policy allows sending this file to an AI service.</span>
+                <span>My company AI policy allows sending task attachments to an AI service.</span>
               </label>
+              <p className="m-0 text-xs text-muted-foreground">
+                PR Review Inbox asks this only once. The {props.source} section in Settings turns the question back on.
+              </p>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setAsking(null)}>
                   Cancel

@@ -258,6 +258,15 @@ const askChips = (page: Page) => page.locator("[data-task-chips='tk-ask']");
 const runTasks = (page: Page, ids: string, kind = "review") => runRow(page, kind).getByTitle(`Task text that this run read: ${ids}`);
 const downloads = async () => (await jiraRequests()).filter((r) => r.includes("/secure/attachment/"));
 
+const POLICY = "My company AI policy allows sending task attachments to an AI service.";
+const askSwitch = (page: Page) => page.getByRole("switch", { name: /^Ask before .+ reads a Jira attachment$/ });
+
+// The brief after a fetch. The fetched key then shows twice, so openBrief does not fit.
+async function reopen(page: Page) {
+  await page.keyboard.press("Shift+R");
+  await expect(page.getByLabel("Your note")).toBeFocused();
+}
+
 async function connectJira(page: Page) {
   await openSettings(page);
   await page.getByLabel("Jira URL").fill(JIRA_URL);
@@ -372,7 +381,7 @@ test("attachments: download all, the inline image, save, include after the polic
   await include.click();
   const dialog = page.getByRole("dialog", { name: "Include screenshot.png in runs?" });
   await expect(dialog).toContainText("Company AI policy");
-  const policy = dialog.getByRole("checkbox", { name: "My company AI policy allows sending this file to an AI service." });
+  const policy = dialog.getByRole("checkbox", { name: POLICY });
   await expect(policy).toBeFocused();
   await expect(dialog.getByRole("button", { name: "Include in runs" })).toBeDisabled();
   await page.keyboard.press("Escape");
@@ -422,4 +431,57 @@ test("attachments: download all, the inline image, save, include after the polic
   await expect(task.locator("img")).toHaveCount(0);
   await expect(task.getByText("image 10100", { exact: true })).toBeVisible();
   expect(await downloads()).toHaveLength(2);
+});
+
+test("the attachment policy question shows once, and the Jira settings switch brings it back", async ({ page }) => {
+  await open(page);
+  await connectJira(page);
+  await openSettings(page);
+  await expect(askSwitch(page)).toBeChecked();
+  await closeSettings(page);
+  await openBrief(page);
+  await fetchBtn(page, JIRA_ISSUE).click();
+  const task = fold(page, JIRA_ISSUE);
+  await task.locator("summary").click();
+  const files = task.getByRole("region", { name: "Attachments (2)" });
+  await files.getByRole("button", { name: "Download all (2)" }).click();
+  const png = files.locator("li[data-att='10100']");
+  const log = files.locator("li[data-att='10101']");
+  await expect(log).toContainText("Downloaded.");
+
+  // The first include asks.
+  const incPng = png.getByRole("switch", { name: "Include screenshot.png in runs" });
+  await incPng.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("asks this only once");
+  await dialog.getByRole("checkbox", { name: POLICY }).check();
+  await dialog.getByRole("button", { name: "Include in runs" }).click();
+  await expect(incPng).toBeChecked();
+
+  // The next include goes straight through, also after a reload.
+  await page.reload();
+  await page.locator("[data-row]", { hasText: TITLE }).first().click();
+  await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(TITLE);
+  await reopen(page);
+  await task.locator("summary").click();
+  const incLog = log.getByRole("switch", { name: "Include sync-worker.log in runs" });
+  await incLog.click();
+  await expect(incLog).toBeChecked();
+  await expect(dialog).toHaveCount(0);
+  await incLog.click();
+  await expect(incLog).not.toBeChecked();
+
+  // The confirmation turned the switch off. On brings the question back.
+  await page.keyboard.press("Escape");
+  await openSettings(page);
+  await expect(askSwitch(page)).not.toBeChecked();
+  await askSwitch(page).click();
+  await expect(askSwitch(page)).toBeChecked();
+  await closeSettings(page);
+  await reopen(page);
+  await task.locator("summary").click();
+  await incLog.click();
+  await expect(page.getByRole("dialog", { name: "Include sync-worker.log in runs?" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(incLog).not.toBeChecked();
 });

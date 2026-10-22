@@ -68,7 +68,7 @@ To try PR Review Inbox without a Bitbucket server, run `bun run demo` from sourc
 
 1. Open http://127.0.0.1:7317.
 2. Enter your Bitbucket URL and access token, then click Save. PR Review Inbox tests the connection first.
-3. Optional: in Settings, Jira, connect Jira. The review brief can then fetch the task text.
+3. Optional: in Settings, Jira, connect Jira. The review brief can then fetch the task text. The first "Include in runs" on a task attachment asks you to confirm your company AI policy. "Ask before Claude reads a Jira attachment" in the same section asks again.
 4. The inbox lists the pull requests on your Bitbucket dashboard. To follow another one, paste its URL into the filter.
 5. Open a pull request and press `r` to open the review brief. Add a note and pick a profile.
 6. Click Start review, or press `Ctrl+Enter`.

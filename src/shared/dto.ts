@@ -180,6 +180,8 @@ export const settingsInput = z.object({
   profiles: profileList.nullable().optional(),
   // Absent keeps the stored value. docs/plans/session-consult.md part C: while it is off, the app reads no transcript.
   sessions: z.boolean().optional(),
+  // Absent keeps the stored value. Off records the company AI policy acknowledgement for task attachments.
+  askAttachments: z.boolean().optional(),
 });
 
 export type SettingsInput = z.infer<typeof settingsInput>;
@@ -205,6 +207,8 @@ export type SettingsDto = {
   jira: { baseUrl: string | null; caFile: string | null; tokenStored: boolean };
   // The opt-in of "Ask your session" (docs/plans/session-consult.md part C). Default off.
   sessions: boolean;
+  // Ask the company AI policy question before a task attachment is included in runs. Default on.
+  askAttachments: boolean;
 };
 
 export type ApiError = { error: string };
