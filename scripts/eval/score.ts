@@ -52,6 +52,8 @@ export type CaseRun = {
   model: string | null;
   effort: string | null;
   effortDefault: string | null;
+  // The init model and the subagent models of the run. Absent in files made before this field existed.
+  models?: string[];
   startedAt: number | null;
   finishedAt: number | null;
   minutes: number | null;
@@ -82,6 +84,8 @@ export type EvalResult = {
   runner: "real" | "fake";
   profile: Record<string, unknown> & { id: string; name: string; revision: string };
   volume: Volume | null;
+  // The --model and --effort values of the run, or "default" for no flag. Absent in files made before this field existed: no flags.
+  requested?: { model: string; effort: string };
   repeat: number;
   cases: EvalCaseInfo[];
   runs: CaseRun[];

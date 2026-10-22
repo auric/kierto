@@ -8,7 +8,8 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildRepo, FIXTURE_SUFFIX, INSTRUCTION_FILE, loadCases } from "../../scripts/eval/cases";
-import { WARNING } from "../../scripts/eval/run";
+import { compareText } from "../../scripts/eval/compare";
+import { DEFAULT_MODEL_WARNING, parseOptions, WARNING } from "../../scripts/eval/run";
 import { type EvalResult, score } from "../../scripts/eval/score";
 import { SHIPPED_PROFILES } from "../../src/server/review/catalog";
 import { git } from "../../src/server/review/git";
@@ -62,6 +63,28 @@ describe("eval harness without --real (AC-M2)", () => {
     expect(r.code).toBe(2);
     expect(r.stdout).toContain(`Eval plan: ${loadCases("all").length} cases, 2 repeats, profile general.`);
     expect(r.stdout).toContain(WARNING);
+    expect(r.stdout).toContain(DEFAULT_MODEL_WARNING);
+  });
+
+  test("parses --model and --effort with the profile rules of the app", () => {
+    expect(parseOptions([])).toMatchObject({ model: null, effort: null });
+    expect(parseOptions(["--model", "haiku", "--effort", "xhigh"])).toMatchObject({ model: "haiku", effort: "xhigh" });
+    expect(parseOptions(["--model", "claude-opus-5-5"])).toMatchObject({ model: "claude-opus-5-5", effort: null });
+    expect(parseOptions(["--model", "opus[1m]", "--effort", "max"])).toMatchObject({ model: "opus[1m]", effort: "max" });
+    expect(parseOptions(["--model", "bad name"])).toHaveProperty("error");
+    expect(parseOptions(["--effort", "ultracode"])).toHaveProperty("error");
+  });
+
+  test("an invalid --model or --effort exits 2 with the usage text", async () => {
+    for (const [flag, value, message] of [
+      ["--effort", "huge", "--effort must be one of"],
+      ["--model", "bad name", "--model must be a model alias"],
+    ] as const) {
+      const r = await bun([RUN, flag, value, "--runner", process.execPath, FAKE, "none.json"]);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain(message);
+      expect(r.stderr).toContain("Usage: bun run eval");
+    }
   });
 
   test("refuses --real together with --runner", async () => {
@@ -197,6 +220,8 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       const file = join(out, files[0] as string);
       const result = JSON.parse(readFileSync(file, "utf8")) as EvalResult;
       expect(result).toMatchObject({ format: 1, promptVersion: "1", runner: "fake", repeat: 1, volume: null });
+      expect(result.requested).toEqual({ model: "default", effort: "default" });
+      expect(r.stdout).toContain(DEFAULT_MODEL_WARNING);
       expect(result.cliVersion).toContain("2.1.295");
       expect(result.profile).toMatchObject({ id: "general" });
       expect(result.cases.map((x) => [x.id, x.head])).toEqual([[c.id, repo.head]]);
@@ -226,6 +251,7 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       const cmp = await bun([COMPARE, file, file]);
       expect(cmp.code).toBe(0);
       expect(cmp.stdout).toMatch(/all cases\s+100\.0%\s+100\.0%\s+\+0\.0 pts/);
+      expect(cmp.stdout).not.toContain("used different");
     },
     SLOW,
   );
@@ -260,6 +286,64 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       const stdin = readRecords<{ argv: string[]; stdin: string }>(record).find((x) => x.argv.includes("-p"))?.stdin ?? "";
       expect(stdin).toContain("## From the target branch: CLAUDE.md");
       for (const l of rules.split("\n").filter(Boolean)) expect(stdin).toContain(l);
+    },
+    SLOW,
+  );
+
+  test(
+    "--model and --effort reach the CLI, the result file records them, and compare warns on a mismatch",
+    async () => {
+      const [c] = loadCases("ts-cache-race");
+      if (!c) throw new Error("The case ts-cache-race is missing.");
+      const dir = temp("flags");
+      const record = join(dir, "calls.jsonl");
+      const scenario = join(dir, "scenario.json");
+      const empty = {
+        summary: "No findings.",
+        risks: [],
+        questions: [],
+        coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+        findings: [],
+      };
+      writeFileSync(
+        scenario,
+        JSON.stringify({
+          record,
+          auth: { loggedIn: true, authMethod: "claude.ai", projectsDirectory: join(dir, "projects") },
+          fixture: claudeStream(dir, "eval", "claude/b9-wp8-flags.jsonl", empty),
+          delayMs: 1,
+        }),
+      );
+      const out = join(dir, "out");
+      const args = ["--cases", c.id, "--model", "haiku", "--effort", "low", "--out", out];
+      const r = await bun([RUN, ...args, "--runner", process.execPath, FAKE, scenario]);
+      expect(r.stderr).toBe("");
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("model haiku, effort low");
+      expect(r.stdout).not.toContain(DEFAULT_MODEL_WARNING);
+      const argv = readRecords<{ argv: string[] }>(record).find((x) => x.argv.includes("-p"))?.argv ?? [];
+      expect(argv[argv.indexOf("--model") + 1]).toBe("haiku");
+      expect(argv[argv.indexOf("--effort") + 1]).toBe("low");
+
+      const files = readdirSync(out).filter((f) => f.endsWith(".json"));
+      const a = JSON.parse(readFileSync(join(out, files[0] as string), "utf8")) as EvalResult;
+      expect(a.requested).toEqual({ model: "haiku", effort: "low" });
+      expect(a.profile).toMatchObject({ model: "haiku", effort: "low" });
+      const [run] = a.runs;
+      expect(run).toMatchObject({ status: "completed", effort: "low" });
+      expect(run?.models?.length).toBeGreaterThan(0);
+      expect(run?.models).toContain(run?.model as string);
+
+      expect(compareText(a, a)).not.toContain("used different");
+      const b: EvalResult = {
+        ...a,
+        requested: { model: "opus", effort: "low" },
+        runs: a.runs.map((x) => ({ ...x, model: "claude-opus-5-5", models: ["claude-opus-5-5"] })),
+      };
+      const text = compareText(a, b);
+      expect(text).toContain("A and B used different models.");
+      expect(text).not.toContain("used different efforts");
+      expect(compareText(a, { ...a, requested: { model: "haiku", effort: "high" } })).toContain("A and B used different efforts.");
     },
     SLOW,
   );

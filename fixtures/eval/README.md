@@ -2,16 +2,26 @@
 
 These cases measure how well a review finds real bugs and how much noise it adds. docs/plans/review-v2/spec.md section 4.3 is the spec. The code is in `scripts/eval/`. All code in the cases is synthetic. It holds no real names, hosts, or paths.
 
+## Smoke test
+
+Run this first to check the harness end to end with a cheap model. Its scores do not count:
+
+```
+bun run eval -- --real --cases ts-cache-race --repeat 1 --model haiku
+```
+
 ## Baseline run (gate G-EVAL-0)
 
 Run this once on the current prompts (prompt version 1), before any review v2 prompt change lands:
 
 ```
-bun run eval -- --real --cases all --repeat 2
+bun run eval -- --real --cases all --repeat 2 --model opus
 ```
 
-- Profile: the shipped `general` profile, unedited. The harness never reads your own config or profiles. Model and effort stay unset, so your CLI default applies. The result file records the model and the effort of each run.
-- Runs: 12 cases x 2 repeats = 24 review runs, one after the other in the one run slot.
+- Profile: the shipped `general` profile, unedited, with `--model opus`. The effort stays unset, so the default effort of your Claude Code settings applies. The harness never reads your own config or profiles.
+- Later runs must use the same `--model` and `--effort` values, or the numbers do not compare. Without both flags, the result depends on your Claude Code default model, and the harness prints a warning.
+- The result file records the requested model and effort (`requested`, or `default` for no flag). Each run records the model that ran (`model`, `models` with the subagent models) and its effort (`effort`, `effortDefault`).
+- Runs: 12 cases x 2 repeats = 24 review runs, one after the other in the one run slot. `--repeat 1` halves the quota, but the numbers get more noise.
 - Time and cost: not measured yet. This run measures them. design.md section 5.1 estimates 5 to 12 minutes for one finder pass on a 500-line change. Plan for 2 to 4 hours and a large part of a daily plan quota.
 - Before the run: `claude` is on PATH (the native `claude.exe` on Windows), and `claude auth status` shows `authMethod` `claude.ai`. The harness checks this and stops on a mismatch.
 - Ctrl+C stops after the current case. A second Ctrl+C quits at once and stops the CLI. The result file gets each case as it ends, so a stopped run keeps its finished cases.
@@ -27,7 +37,7 @@ Run the same command on the new head, then compare the two files:
 bun run eval:compare eval-results/<baseline>.json eval-results/<new>.json
 ```
 
-It prints one table per metric with the delta, for all cases and for each case. It warns when a case changed between the two files; the numbers of such a case do not compare. Use the same CLI default model for both runs.
+It prints one table per metric with the delta, for all cases and for each case. It warns when a case changed between the two files; the numbers of such a case do not compare. It also warns when the two files used different models or efforts.
 
 ## Options
 
@@ -35,6 +45,8 @@ It prints one table per metric with the delta, for all cases and for each case. 
 - `--cases all` or `--cases id,id`: the cases to run. Default: all.
 - `--profile <id>`: a shipped review profile. Default: `general`.
 - `--modules a,b` and `--volume quiet|balanced|thorough`: profile fields of prompt version 2. Prompt version 1 refuses them.
+- `--model <name>`: the model of the runs, for this eval only. A model alias such as `haiku`, `sonnet`, or `opus`, or a full model ID such as `claude-opus-5-5`. Default: no flag, so your Claude Code default applies.
+- `--effort low|medium|high|xhigh|max`: the effort of the runs, for this eval only. Default: no flag, so your Claude Code default applies.
 - `--repeat N`: runs of each case, 1 to 10. Default: 1.
 - `--out <folder>`: the folder for the result file. Default: `eval-results/` in the repository, which git ignores.
 - `--keep`: keep the temp folders of each case for a look at the run.

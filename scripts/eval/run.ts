@@ -19,7 +19,7 @@ import { createReviewJobs, type ReviewJobs } from "../../src/server/review/jobs"
 import type { GitRemote } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
-import { type IssueContext, profileList, type RunDetail } from "../../src/shared/dto";
+import { EFFORTS, type Effort, type IssueContext, modelName, profileList, type RunDetail } from "../../src/shared/dto";
 import type { AnchoredFinding } from "../../src/shared/review";
 import * as review from "../../src/shared/review";
 import { stubListTools } from "../../tests/support/review-fixture";
@@ -39,6 +39,8 @@ import {
 
 const REPO = resolve(import.meta.dir, "../..");
 export const WARNING = "Each case runs your Claude CLI and uses your plan quota.";
+export const DEFAULT_MODEL_WARNING =
+  "No --model or --effort: the runs use the default model and effort of your Claude Code settings. The result depends on them.";
 const VOLUMES = ["quiet", "balanced", "thorough"] as const;
 const MAX_REPEAT = 10;
 // No request goes to this origin: the gitRemote option serves the repository.
@@ -49,7 +51,7 @@ const TASK_KEY = "EVAL-1";
 const PROMPT_VERSION = String((review as unknown as Record<string, unknown>).REVIEW_PROMPT_VERSION ?? "1");
 
 const USAGE = `Usage: bun run eval -- [--real] [--cases all|id,id] [--profile general] [--modules security,api] [--volume balanced]
-  [--repeat 2] [--out <folder>] [--keep] [--runner <command> <args...>]
+  [--model opus] [--effort ${EFFORTS.join("|")}] [--repeat 2] [--out <folder>] [--keep] [--runner <command> <args...>]
 --real runs the claude CLI on PATH. --runner runs the given CLI instead and must come last. Without both, the plan prints and the exit code is 2.`;
 
 export type Options = {
@@ -59,6 +61,9 @@ export type Options = {
   profile: string;
   modules: string[] | null;
   volume: Volume | null;
+  // null: no flag, so the CLI default applies.
+  model: string | null;
+  effort: Effort | null;
   repeat: number;
   out: string;
   keep: boolean;
@@ -79,6 +84,8 @@ export function parseOptions(argv: string[]): Options | { error: string } {
         profile: { type: "string", default: "general" },
         modules: { type: "string" },
         volume: { type: "string" },
+        model: { type: "string" },
+        effort: { type: "string" },
         repeat: { type: "string", default: "1" },
         out: { type: "string" },
         keep: { type: "boolean", default: false },
@@ -96,6 +103,11 @@ export function parseOptions(argv: string[]): Options | { error: string } {
   const volume = v.volume ?? null;
   if (volume !== null && !(VOLUMES as readonly string[]).includes(volume))
     return { error: `--volume must be one of ${VOLUMES.join(", ")}.` };
+  const model = v.model === undefined ? null : modelName.safeParse(v.model);
+  if (model && !model.success) return { error: "--model must be a model alias such as opus, or a full model ID such as claude-opus-5-5." };
+  const effort = v.effort ?? null;
+  if (effort !== null && !(EFFORTS as readonly string[]).includes(effort))
+    return { error: `--effort must be one of ${EFFORTS.join(", ")}.` };
   return {
     real: v.real ?? false,
     runner,
@@ -103,18 +115,25 @@ export function parseOptions(argv: string[]): Options | { error: string } {
     profile: v.profile ?? "general",
     modules: v.modules === undefined ? null : v.modules.split(",").map((s) => s.trim()),
     volume: volume as Volume | null,
+    model: model?.data ?? null,
+    effort: effort as Effort | null,
     repeat,
     out: resolve(v.out ?? join(REPO, "eval-results")),
     keep: v.keep ?? false,
   };
 }
 
-// The profile of the run with the --modules and --volume values. A field that this app version does not know is an error, so a
+// The profile of the run with the --modules, --volume, --model, and --effort values. A field that this app version does not know is an error, so a
 // result file never names a setup that did not run.
 function evalProfile(o: Options) {
   const shipped = SHIPPED_PROFILES.find((p) => p.id === o.profile);
   if (!shipped) return { error: `Unknown profile ${o.profile}. Shipped profiles: ${SHIPPED_PROFILES.map((p) => p.id).join(", ")}.` };
-  const extra = { ...(o.modules && { modules: o.modules }), ...(o.volume && { volume: o.volume }) };
+  const extra = {
+    ...(o.modules && { modules: o.modules }),
+    ...(o.volume && { volume: o.volume }),
+    ...(o.model && { model: o.model }),
+    ...(o.effort && { effort: o.effort }),
+  };
   const list = profileList.safeParse(SHIPPED_PROFILES.map((p) => (p.id === o.profile ? { ...p, ...extra } : p)));
   if (!list.success) return { error: `Invalid profile: ${list.error.issues.map((i) => i.message).join("; ")}` };
   const profile = profileOf(list.data, o.profile);
@@ -133,6 +152,7 @@ function plan(o: Options, cases: EvalCase[]) {
     lines.push(
       `  ${c.id.padEnd(w)}  ${c.language.padEnd(10)}  ${String(c.changedLines).padStart(3)} changed lines  ${count(c.bugs.length, "bug")}  ${count(c.traps.length, "trap")}`,
     );
+  if (!o.model && !o.effort) lines.push(DEFAULT_MODEL_WARNING);
   lines.push(WARNING, "Add --real to run it.");
   return lines.join("\n");
 }
@@ -199,6 +219,7 @@ const errorRun = (c: EvalCase, repeat: number, error: string): CaseRun => ({
   model: null,
   effort: null,
   effortDefault: null,
+  models: [],
   startedAt: null,
   finishedAt: null,
   minutes: null,
@@ -309,6 +330,7 @@ async function runCase(c: EvalCase, repeat: number, ctx: Context): Promise<{ run
           model: r.model,
           effort: r.effort,
           effortDefault: r.effortDefault,
+          models: [...new Set([r.model, ...d.events.map((e) => e.model)].filter((m): m is string => m !== null))],
           startedAt: r.startedAt,
           finishedAt: r.finishedAt,
           minutes: r.finishedAt === null ? null : (r.finishedAt - r.startedAt) / 60_000,
@@ -394,6 +416,7 @@ export async function main(argv: string[]): Promise<number> {
     const file = join(o.out, `${new Date().toISOString().replace(/[:.]/g, "-")}-${commit}.json`);
     const profile = p.profile;
     const volume = ((profile as { volume?: Volume }).volume ?? null) as Volume | null;
+    const requested = { model: profile.model ?? "default", effort: profile.effort ?? "default" };
     const result: EvalResult = {
       format: 1,
       createdAt: new Date().toISOString(),
@@ -404,6 +427,7 @@ export async function main(argv: string[]): Promise<number> {
       runner: o.real ? "real" : "fake",
       profile: { ...profile, revision: profileRevision(profile) },
       volume,
+      requested,
       repeat: o.repeat,
       cases: [],
       runs: [],
@@ -423,8 +447,9 @@ export async function main(argv: string[]): Promise<number> {
       },
     };
     console.log(
-      `Eval: ${count(cases.length, "case")} x ${o.repeat}, profile ${profile.id}, prompt version ${PROMPT_VERSION}, CLI ${checked.version}.`,
+      `Eval: ${count(cases.length, "case")} x ${o.repeat}, profile ${profile.id}, model ${requested.model}, effort ${requested.effort}, prompt version ${PROMPT_VERSION}, CLI ${checked.version}.`,
     );
+    if (!o.model && !o.effort) console.log(DEFAULT_MODEL_WARNING);
     if (o.real) console.log(WARNING);
     const total = cases.length * o.repeat;
     let n = 0;

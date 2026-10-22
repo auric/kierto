@@ -51,10 +51,19 @@ function table(rows: string[][]) {
     .join("\n");
 }
 
+// A file made before "requested" existed ran without --model and --effort.
+const requested = (r: EvalResult) => r.requested ?? { model: "default", effort: "default" };
+const list = (s: Set<string>) => (s.size ? [...s].sort().join(", ") : "unknown");
+// The models that ran: the init model and the subagent models of each run.
+const usedModels = (r: EvalResult) => new Set(r.runs.flatMap((x) => x.models ?? (x.model ? [x.model] : [])));
+// The effort that ran: the --effort value, else the default effort that the user settings gave.
+const usedEfforts = (r: EvalResult) =>
+  new Set(r.runs.flatMap((x) => (x.effort === null ? [] : [x.effort === "default" ? (x.effortDefault ?? "default") : x.effort])));
+
 const header = (r: EvalResult) => {
-  const model = r.runs.find((x) => x.model)?.model ?? "unknown model";
+  const q = requested(r);
   const runs = `${r.cases.length} case${r.cases.length === 1 ? "" : "s"} x ${r.repeat}`;
-  return `commit ${r.commit}${r.dirty ? " (uncommitted changes)" : ""}, prompt version ${r.promptVersion}, profile ${r.profile.id} (revision ${r.profile.revision.slice(0, 8)}), volume ${r.volume ?? "none"}, CLI ${r.cliVersion}, ${model}, ${r.runner} CLI, ${runs}`;
+  return `commit ${r.commit}${r.dirty ? " (uncommitted changes)" : ""}, prompt version ${r.promptVersion}, profile ${r.profile.id} (revision ${r.profile.revision.slice(0, 8)}), volume ${r.volume ?? "none"}, CLI ${r.cliVersion}, model ${q.model} (ran ${list(usedModels(r))}), effort ${q.effort} (ran ${list(usedEfforts(r))}), ${r.runner} CLI, ${runs}`;
 };
 
 export function summaryText(r: EvalResult, s: Score = score(r)): string {
@@ -83,6 +92,12 @@ export function compareText(a: EvalResult, b: EvalResult): string {
   if (only.length) out.push(`Cases in one file only: ${only.join(", ")}. The "all cases" rows do not compare.`);
   const changed = [...ta.keys()].filter((id) => tb.has(id) && ta.get(id) !== tb.get(id));
   if (changed.length) out.push(`Cases whose fixture changed between A and B: ${changed.join(", ")}. Their numbers do not compare.`);
+  const qa = requested(a);
+  const qb = requested(b);
+  const same = (x: Set<string>, y: Set<string>) => list(x) === list(y);
+  if (qa.model !== qb.model || !same(usedModels(a), usedModels(b))) out.push("A and B used different models. The numbers do not compare.");
+  if (qa.effort !== qb.effort || !same(usedEfforts(a), usedEfforts(b)))
+    out.push("A and B used different efforts. The numbers do not compare.");
   const ids = [...ta.keys()].filter((id) => tb.has(id)).sort();
   for (const m of METRICS) {
     const rows = [
