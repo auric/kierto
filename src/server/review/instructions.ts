@@ -202,12 +202,43 @@ export function scan(text: string): { text: string; imports: string[] } {
 
 export type Built = { text: string; files: InstructionFileDto[]; bytes: number; notLoaded: string[] };
 const FROM = { global: "your global Claude Code settings", target: "the target branch", clone: "your clone" } as const;
+const ALL = "(applies to all files)";
+
+// docs/plans/review-v2/spec.md section 1.3: the folders of the changed paths that hold a CLAUDE.md at the commit, root first.
+// The root file is a TARGET_FILES entry. One ls-tree call lists the commit, so a large change costs no call per folder.
+export async function changedFolders(cache: string, env: Record<string, string>, commit: string, paths: readonly string[]) {
+  const dirs = new Set(
+    paths.flatMap((p) =>
+      p
+        .split("/")
+        .slice(0, -1)
+        .map((_, i, a) => a.slice(0, i + 1).join("/")),
+    ),
+  );
+  if (!dirs.size) return [];
+  try {
+    const out = await git(["--literal-pathspecs", `--git-dir=${cache}`, "ls-tree", "-r", "-z", "--name-only", "--full-tree", commit], {
+      env,
+    });
+    const tail = "/CLAUDE.md";
+    return out
+      .split("\0")
+      .filter((n) => n.endsWith(tail) && dirs.has(n.slice(0, -tail.length)))
+      .map((n) => n.slice(0, -tail.length))
+      .sort();
+  } catch (e) {
+    // The target root load reports an unreadable commit.
+    if (e instanceof GitError) return [];
+    throw e;
+  }
+}
 
 // Order: the global file, the target branch, the clone files in the ticked order, the settings text. An import follows its file.
-// global: null when the global switch is off.
+// global: null when the global switch is off. scoped: folders whose <folder>/CLAUDE.md the target reader loads after the root files.
 export async function buildInstructions(o: {
   global?: Reader | null;
   target: Reader | null;
+  scoped?: readonly string[];
   clone: Reader | null;
   local: readonly string[];
   extra: string;
@@ -226,8 +257,17 @@ export async function buildInstructions(o: {
     return true;
   };
 
-  async function source(kind: keyof typeof FROM, r: Reader, roots: readonly string[], optional: boolean) {
-    const seen = new Set<string>();
+  // scope: the folder that the roots and their imports apply to. Absent: all files.
+  // shortcut: seen spans the target roots and folders, so an import that two folders share keeps only the scope of the first folder.
+  // Record a scope list per file when two sibling folders import one file.
+  async function source(
+    kind: keyof typeof FROM,
+    r: Reader,
+    roots: readonly string[],
+    optional: boolean,
+    seen = new Set<string>(),
+    scope?: string,
+  ) {
     const visit = async (from: { key: string; path: string } | null, raw: string, chain: string[]) => {
       const what = from ? `@${raw}, imported by ${from.path} from ${FROM[kind]}` : `${raw} from ${FROM[kind]}`;
       if (chain.length > MAX_HOPS) return gap(what, `more than ${MAX_HOPS} import levels`);
@@ -243,15 +283,20 @@ export async function buildInstructions(o: {
       if (text === null) return gap(what, "the file is not UTF-8 text");
       if (!fits(f.bytes.length, what)) return;
       const s = scan(text);
-      files.push({ source: kind, path: f.path, bytes: f.bytes.length });
-      parts.push(`## From ${FROM[kind]}: ${f.path}${from ? ` (imported by ${from.path})` : ""}\n\n${s.text.trimEnd()}\n`);
+      files.push({ source: kind, path: f.path, bytes: f.bytes.length, ...(scope !== undefined && { scope }) });
+      const head = `## From ${FROM[kind]}: ${f.path}${from ? ` (imported by ${from.path})` : ""}`;
+      parts.push(`${head} ${scope === undefined ? ALL : `(applies to ${scope}/**)`}\n\n${s.text.trimEnd()}\n`);
       for (const i of s.imports) await visit(f, i, [...chain, f.key]);
     };
     for (const name of roots) await visit(null, name, []);
   }
 
   if (o.global) await source("global", o.global, [GLOBAL_FILE], false);
-  if (o.target) await source("target", o.target, TARGET_FILES, true);
+  if (o.target) {
+    const seen = new Set<string>();
+    await source("target", o.target, TARGET_FILES, true, seen);
+    for (const dir of o.scoped ?? []) await source("target", o.target, [`${dir}/CLAUDE.md`], true, seen, dir);
+  }
   if (o.local.length) {
     if (o.clone) await source("clone", o.clone, o.local, false);
     else gap(o.local.join(", "), "no clone folder is set");
@@ -260,7 +305,7 @@ export async function buildInstructions(o: {
     const bytes = Buffer.byteLength(o.extra);
     if (fits(bytes, "the text from PR Review Inbox settings")) {
       files.push({ source: "settings", path: "", bytes });
-      parts.push(`## From PR Review Inbox settings\n\n${scan(o.extra).text.trimEnd()}\n`);
+      parts.push(`## From PR Review Inbox settings ${ALL}\n\n${scan(o.extra).text.trimEnd()}\n`);
     }
   }
   return {
@@ -297,19 +342,21 @@ export function saveInstructionSettings(db: Database, k: RepoKey, s: Instruction
 export const clonePathOf = (db: Database, k: RepoKey) =>
   (db.query(SQL.clone).get({ project: k.project, repo: k.repo }) as { path: string } | null)?.path ?? null;
 
-// target: the cache clone and the target head, or null when no cache has the commit. global: the config folder, or null when the switch is off.
-// Reads every source again.
+// target: the cache clone and the target head, or null when no cache has the commit. paths: the changed files of a run, whose folders
+// can add a CLAUDE.md. global: the config folder, or null when the switch is off. Reads every source again.
 export async function projectInstructions(
   db: Database,
   k: RepoKey,
-  target: { cache: string; env: Record<string, string>; commit: string } | null,
+  target: { cache: string; env: Record<string, string>; commit: string; paths?: readonly string[] } | null,
   global: string | null = null,
 ): Promise<Built & { settings: InstructionsInput; clone: string | null }> {
   const settings = instructionSettings(db, k);
   const clone = clonePathOf(db, k);
+  const tree = settings.target && target;
   const built = await buildInstructions({
     global: global === null ? null : configReader(global),
-    target: settings.target && target ? treeReader(target.cache, target.env, target.commit) : null,
+    target: tree ? treeReader(tree.cache, tree.env, tree.commit) : null,
+    scoped: tree ? await changedFolders(tree.cache, tree.env, tree.commit, tree.paths ?? []) : [],
     clone: clone ? cloneReader(clone) : null,
     local: settings.local,
     extra: settings.extra,

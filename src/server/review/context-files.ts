@@ -74,6 +74,14 @@ function capped(blocks: string[][], max: number, left: (n: number) => string): s
   return out;
 }
 
+// docs/plans/review-v2/spec.md section 1.8: the state of a finding with its writer. The finder rule blocks only "discarded by the user".
+// withdrawn: the mark of a discuss run (spec.md section 2.2).
+function findingState(r: ItemRow): string {
+  if (r.status !== "discarded") return r.status;
+  const p = JSON.parse(r.payload_json) as { discardedBy?: string; withdrawn?: unknown };
+  return p.discardedBy === "verify" ? "refuted by the check" : p.withdrawn ? "withdrawn in a talk" : "discarded by the user";
+}
+
 // context/history.md of an ask, reply, fix, or plain review run: the newest finished review with its findings, and the earlier answers.
 // head: the current source head. null when no earlier result exists. review: null also when no earlier review exists.
 export function historyFile(db: Database, pr: number, head: string, review = false): ContextFile | null {
@@ -97,7 +105,7 @@ export function historyFile(db: Database, pr: number, head: string, review = fal
         `- Lines: ${f.line}${end} at ${at}`,
         `- Severity: ${f.severity}`,
         `- Category: ${oneLine(f.category)}`,
-        `- State: ${r.status}`,
+        `- State: ${findingState(r)}`,
         "",
         "Text:",
         "",

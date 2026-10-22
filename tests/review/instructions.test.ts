@@ -9,15 +9,19 @@ import { dirname, join } from "node:path";
 import { git, gitEnv } from "../../src/server/review/git";
 import {
   buildInstructions,
+  changedFolders,
   cloneReader,
   codeRanges,
   configReader,
   FILE_CAP,
   INSTRUCTIONS_TRUST,
+  projectInstructions,
+  saveInstructionSettings,
   scan,
   TOTAL_CAP,
   treeReader,
 } from "../../src/server/review/instructions";
+import { openDb } from "../../src/server/storage/db";
 
 const root = mkdtempSync(join(tmpdir(), "rl-instr-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -216,6 +220,102 @@ describe("target branch", () => {
   });
 });
 
+// docs/plans/review-v2/spec.md section 1.3: the CLAUDE.md files of the changed folders, with a scope header.
+describe("changed folders", () => {
+  // A bare repository with one commit. A { link } entry is a symbolic link.
+  async function tree(name: string, files: Record<string, string | { link: string }>) {
+    const dir = join(root, name);
+    mkdirSync(dir);
+    const empty = join(dir, "empty.gitconfig");
+    writeFileSync(empty, "");
+    const bare = join(dir, "repo.git");
+    const env = {
+      ...gitEnv(empty),
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.invalid",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.invalid",
+      GIT_INDEX_FILE: join(dir, "index"),
+    };
+    const g = async (args: string[], stdin?: string) => (await git(["--git-dir", bare, ...args], { env, stdin })).trim();
+    await git(["init", "-q", "--bare", "--template=", bare], { env });
+    const entries: string[] = [];
+    for (const [path, v] of Object.entries(files)) {
+      const sha = await g(["hash-object", "-w", "--stdin"], typeof v === "string" ? v : v.link);
+      entries.push(`${typeof v === "string" ? "100644" : "120000"} ${sha}\t${path}`);
+    }
+    await g(["update-index", "--add", "--index-info"], `${entries.join("\n")}\n`);
+    return { bare, env, commit: await g(["commit-tree", await g(["write-tree"]), "-m", "target"]) };
+  }
+
+  test("a change in src/server/ loads src/server/CLAUDE.md of the target head and not web/CLAUDE.md, root first, with scopes", async () => {
+    const t = await tree("scoped", {
+      "CLAUDE.md": "ROOT-RULES\n",
+      "src/CLAUDE.md": "SRC-RULES. @../docs/locks.md\n",
+      "src/server/CLAUDE.md": "SERVER-RULES\n",
+      "src/server/review/jobs.ts": "x\n",
+      "src/other/CLAUDE.md": "OTHER-RULES\n",
+      "web/CLAUDE.md": "WEB-RULES\n",
+      "docs/locks.md": "LOCK-RULES\n",
+      "srcx/CLAUDE.md": "PREFIX-RULES\n",
+    });
+    const scoped = await changedFolders(t.bare, t.env, t.commit, ["src/server/review/jobs.ts", "src/server/gone.ts", "README.md"]);
+    expect(scoped).toEqual(["src", "src/server"]);
+    const db = openDb(":memory:");
+    const k = { project: "P", repo: "r" };
+    const b = await projectInstructions(db, k, { cache: t.bare, env: t.env, commit: t.commit, paths: ["src/server/review/jobs.ts"] });
+    expect(b.files).toEqual([
+      { source: "target", path: "CLAUDE.md", bytes: 11 },
+      { source: "target", path: "src/CLAUDE.md", bytes: 29, scope: "src" },
+      { source: "target", path: "docs/locks.md", bytes: 11, scope: "src" },
+      { source: "target", path: "src/server/CLAUDE.md", bytes: 13, scope: "src/server" },
+    ]);
+    const heads = b.text.split("\n").filter((l) => l.startsWith("## "));
+    expect(heads).toEqual([
+      "## From the target branch: CLAUDE.md (applies to all files)",
+      "## From the target branch: src/CLAUDE.md (applies to src/**)",
+      "## From the target branch: docs/locks.md (imported by src/CLAUDE.md) (applies to src/**)",
+      "## From the target branch: src/server/CLAUDE.md (applies to src/server/**)",
+    ]);
+    for (const gone of ["WEB-RULES", "OTHER-RULES", "PREFIX-RULES"]) expect(b.text).not.toContain(gone);
+    expect(b.notLoaded).toEqual([]);
+    // No changed path, the target switch off, or a preview without paths: no scoped file.
+    expect((await projectInstructions(db, k, { cache: t.bare, env: t.env, commit: t.commit })).files.map((f) => f.path)).toEqual([
+      "CLAUDE.md",
+    ]);
+    saveInstructionSettings(db, k, { target: false, local: [], extra: "" });
+    expect((await projectInstructions(db, k, { cache: t.bare, env: t.env, commit: t.commit, paths: ["src/server/a.ts"] })).files).toEqual(
+      [],
+    );
+    db.close();
+  });
+
+  test("a linked or oversized folder file is a gap; the caps and the shared imports hold; a bad commit gives no folder", async () => {
+    const t = await tree("scoped-gaps", {
+      "a/CLAUDE.md": { link: "../CLAUDE.md" },
+      "b/CLAUDE.md": "x".repeat(FILE_CAP + 1),
+      "c/CLAUDE.md": "C-RULES. @../shared.md\n",
+      "d/CLAUDE.md": "D-RULES. @../shared.md\n",
+      "shared.md": "SHARED\n",
+    });
+    const scoped = await changedFolders(t.bare, t.env, t.commit, ["a/1.ts", "b/1.ts", "c/1.ts", "d/1.ts"]);
+    expect(scoped).toEqual(["a", "b", "c", "d"]);
+    const b = await buildInstructions({ target: treeReader(t.bare, t.env, t.commit), scoped, clone: null, local: [], extra: "" });
+    expect(b.notLoaded).toEqual([
+      "a/CLAUDE.md from the target branch (the path is a link)",
+      "b/CLAUDE.md from the target branch (the file is over 64 KB)",
+    ]);
+    // shortcut in source(): the shared import keeps the scope of the first folder.
+    expect(b.files.map((f) => [f.path, f.scope])).toEqual([
+      ["c/CLAUDE.md", "c"],
+      ["shared.md", "c"],
+      ["d/CLAUDE.md", "d"],
+    ]);
+    expect(await changedFolders(t.bare, t.env, "0".repeat(40), ["c/1.ts"])).toEqual([]);
+    expect(await changedFolders(t.bare, t.env, t.commit, [])).toEqual([]);
+  });
+});
+
 describe("global file", () => {
   const config = (files: Record<string, string>) => clone(files);
 
@@ -242,7 +342,9 @@ describe("global file", () => {
       ["settings", ""],
     ]);
     expect(
-      b.text.startsWith(`# Project instructions\n\n${INSTRUCTIONS_TRUST}\n\n## From your global Claude Code settings: CLAUDE.md\n`),
+      b.text.startsWith(
+        `# Project instructions\n\n${INSTRUCTIONS_TRUST}\n\n## From your global Claude Code settings: CLAUDE.md (applies to all files)\n`,
+      ),
     ).toBe(true);
     expect(b.text).toContain("## From your global Claude Code settings: rules/b.md (imported by rules/a.md)");
     expect(b.text.indexOf("RULE-B")).toBeLessThan(b.text.indexOf("## From your clone: CLAUDE.md"));

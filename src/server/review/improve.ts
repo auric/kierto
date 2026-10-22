@@ -7,10 +7,10 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { type ImproveDto, type ImproveInput, MAX_NOTE, profilePrompt } from "../../shared/dto";
+import { DEFAULT_VERIFIER, type ImproveDto, type ImproveInput, MAX_NOTE, MODULE_IDS, profilePrompt } from "../../shared/dto";
 import { improveResult } from "../../shared/review";
 import { log } from "../log";
-import { sharedRules } from "./catalog";
+import { MODULES, sharedRules } from "./catalog";
 import { type AgentSpec, createClaudeRunner, type RunOutcome } from "./claude";
 import { issuesText } from "./judge";
 import { CHECKLISTS, LANGUAGES } from "./languages";
@@ -79,7 +79,17 @@ export function buildImprovePrompt(i: ImproveInput): string {
     "",
     "Each run of this profile adds these lines after the profile prompt. Never repeat them in the new prompt.",
     "",
-    ...sharedRules(i).map((l) => `- ${l}`),
+    // The input has no volume and no verify phase setting, so the lines show the shipped values.
+    ...sharedRules({ ...i, volume: "balanced", verifier: DEFAULT_VERIFIER }).map((l) => `- ${l}`),
+    "",
+    "# Check sections",
+    "",
+    ...(i.explain
+      ? ["Explain runs get no check sections."]
+      : [
+          "Review runs add the check sections that the profile turns on. Never repeat their checks in the new prompt.",
+          ...MODULE_IDS.map((id) => `- ${id}: ${MODULES[id].label}`),
+        ]),
     "",
     "# Language checks",
     "",
@@ -90,7 +100,7 @@ export function buildImprovePrompt(i: ImproveInput): string {
     "- Write the new prompt in ASD-STE100 Simple Technical English: sentences of 20 words or fewer, active voice, and one instruction per sentence.",
     "- For each check, state what to check and when a problem is a finding.",
     "- Ask for defects, not for style. Never ask for a finding about style, naming, or formatting.",
-    "- Never repeat a shared rule or a language check. The app adds them to every run.",
+    "- Never repeat a shared rule, a check section, or a language check. The app adds them to the runs.",
     "- Keep the purpose of the profile. The name, the note, and the current prompt show it.",
     i.explain
       ? "- This is an Explain profile. Keep the new prompt explain-only: a summary, risks, and questions. Never ask for findings or severities."

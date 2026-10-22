@@ -32,6 +32,7 @@ import {
   MAX_EARLIER,
   MAX_REPLY_THREADS,
   parseFixNotes,
+  REVIEW_PROMPT_VERSION,
   type ReplyPayload,
   replyJsonSchema,
   rereviewJsonSchema,
@@ -49,18 +50,21 @@ import {
   askAgent,
   createDocServers,
   DEFAULT_PROFILE,
+  delegation,
   fixAgent,
   GIT_SERVER,
   type ListTools,
   MIN_EDIT_TURNS,
   mainAgent,
+  moduleNotes,
   type Profile,
   profileOf,
   profileRevision,
   REVIEWER,
+  type ReviewContext,
   replyAgent,
   reviewerAgent,
-  usesReviewer,
+  withDelegation,
   withInstructions,
   withMcp,
   withSkills,
@@ -393,11 +397,17 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     notify(j.id);
     if (j.cancelled) return cancelled();
 
+    const changed = parseDiff(ws.diff);
     // The run reads every source again. The text goes to the prompts and the run folder. SQLite and the log get the paths and sizes only.
     const instructions = await projectInstructions(
       j.db,
       { project: pr.project, repo: pr.repo },
-      { cache: ws.cache, env: gitEnv("/dev/null"), commit: ws.targetHead },
+      {
+        cache: ws.cache,
+        env: gitEnv("/dev/null"),
+        commit: ws.targetHead,
+        paths: changed.flatMap((f) => [f.path, f.oldPath].filter((p): p is string => p !== null)),
+      },
       settings.globalInstructions() ? (opts.claudeConfigDir ?? claudeConfigDir()) : null,
     );
     if (instructions.text) writeFileSync(join(ws.work, "CLAUDE.md"), instructions.text);
@@ -478,8 +488,21 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const folders = skills.copied.map((s) => s.folder);
     const always = skills.copied.filter((s) => isAlways(s.id)).map((s) => s.folder);
     // Review and re-review runs only. Explain gives no findings.
-    const langs = j.kind === "review" && profile.languageChecks && !profile.explain ? languagesOf(parseDiff(ws.diff)) : [];
+    const langs = j.kind === "review" && profile.languageChecks && !profile.explain ? languagesOf(changed) : [];
     if (langs.length) log(`Review run ${j.id} language checks: ${langs.join(", ")}.`);
+    // docs/plans/review-v2/design.md R8: the app gives the Agent tool by the size of the change, not the model.
+    const delegate = j.kind === "review" ? delegation(profile, changed) : null;
+    if (j.kind === "review" && !profile.explain)
+      log(`Review run ${j.id}: ${changed.length} changed files, rl-reviewer ${delegate ? `on (${delegate})` : "off"}.`);
+    const context: ReviewContext = {
+      taskFile: files.length > 0,
+      attachments: attachments.length > 0,
+      history: history !== null,
+      questions: j.asked.length > 0,
+      rereview: !!carry,
+      instructions: instructions.text !== "",
+      goal: !!pr.description?.trim() || files.length > 0,
+    };
     const gaps = [...docs.unavailable, ...user.gaps, ...skills.gaps];
     const input = {
       mergeBase: ws.mergeBase,
@@ -518,28 +541,27 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
                   posted: carry.posted.map((r) => r.id),
                 }),
                 schema: rereviewJsonSchema(),
-                main: mainAgent(profile, input.questions),
+                main: mainAgent(profile, context),
               }
-            : { prompt: buildPrompt(input), schema: reviewJsonSchema(profile.explain), main: mainAgent(profile, input.questions) };
+            : { prompt: buildPrompt(input), schema: reviewJsonSchema(profile.explain), main: mainAgent(profile, context) };
     const o = await runner.run(
       {
         cwd: ws.work,
         appDir: ws.app,
         ...spec,
-        main: withMcp(withSkills(withLanguages(spec.main, langs), folders, always), used),
+        main: withDelegation(withMcp(withSkills(withLanguages(spec.main, langs), folders, always), used), delegate),
         maxTurns: reply || fix ? Math.max(profile.maxTurns, MIN_EDIT_TURNS) : profile.maxTurns,
         model: profile.model,
         effort: profile.effort,
-        // Only a review gets subagents. With agents {}, the CLI gets no Agent tool.
-        agents:
-          j.kind === "review" && usesReviewer(profile)
-            ? {
-                [REVIEWER]: withInstructions(
-                  withMcp(withSkills(withLanguages(reviewerAgent(profile), langs), folders, always), used),
-                  instructions.text,
-                ),
-              }
-            : {},
+        // Only a delegating review gets subagents. With agents {}, the CLI gets no Agent tool.
+        agents: delegate
+          ? {
+              [REVIEWER]: withInstructions(
+                withMcp(withSkills(withLanguages(reviewerAgent(profile, context), langs), folders, always), used),
+                instructions.text,
+              ),
+            }
+          : {},
         mcpServers,
       },
       (events) => {
@@ -557,8 +579,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const left = questions?.left
       ? [`${questions.left} threads with your posted questions were left out of ./context/questions.md: it reached its size limit.`]
       : [];
+    const modules = j.kind === "review" && !profile.explain ? moduleNotes(profile, context) : [];
     const noted = (e: Ending): Ending => {
-      e.result?.summary.coverage.notChecked.push(...unread, ...left);
+      e.result?.summary.coverage.notChecked.push(...unread, ...left, ...modules);
       if (!unmarked) return e;
       e.result?.summary.coverage.notChecked.push(unmarked);
       return { ...e, raw: `${unmarked}\n\n${e.raw}` };
@@ -724,6 +747,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       model: profile.model,
       effort: profile.effort ?? "default",
       effort_default: profile.effort ? null : runEffort(profile.model),
+      prompt_version: REVIEW_PROMPT_VERSION,
     }) as { id: number };
     return begin(
       {

@@ -225,7 +225,10 @@ describe("ask runs", () => {
         expect(await waitFor(() => hung() > before)).toBe(true);
         const c = h.runCalls().at(-1) as Call;
         expect(c.stdin).toContain("- ./context/history.md holds the earlier review and the earlier answers");
-        expect(c.stdin.includes("Do not raise a discarded finding again")).toBe(kind === "review");
+        // docs/plans/review-v2/spec.md section 1.5: the history rule rides on the agents of a review run, never on stdin.
+        expect(c.stdin).not.toContain("Do not raise");
+        const main = (JSON.parse(readFileSync(flag(c.argv, "--agents"), "utf8")) as Record<string, { prompt: string }>)["rl-main"];
+        expect(main?.prompt.includes('Do not raise a finding with the state "discarded by the user" again')).toBe(kind === "review");
         const history = readFileSync(join(c.cwd, "context", "history.md"), "utf8");
         expect(history.startsWith(UNTRUSTED)).toBe(true);
         expect(history).toContain(`- Run: ${rev}

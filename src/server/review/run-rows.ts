@@ -149,9 +149,9 @@ export const SQL = {
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
   // model: the --model value until the init event gives the model that ran.
   insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, status, started_at,
-      since_head, question, tasks_json, model, effort, effort_default)
+      since_head, question, tasks_json, model, effort, effort_default, prompt_version)
     VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since, $question, $tasks,
-      $model, $effort, $effort_default)
+      $model, $effort, $effort_default, $prompt_version)
     RETURNING id`,
   // Plan r3 Feature C: the fetched tasks at the start of a run, in the order of task.md.
   fetched: "SELECT key, fetched_at AS fetchedAt FROM task_context WHERE pr = $pr ORDER BY key",

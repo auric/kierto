@@ -100,8 +100,8 @@ describe("finding v2 (AC-R14)", () => {
     expect(reviewResult.safeParse({ ...V1_RESULT, findings: [{ ...V1_FINDING, cause: { path: "a" } }] }).success).toBe(false);
   });
 
-  test("the prompt version stays 1 until the review v2 prompts ship", () => {
-    expect(REVIEW_PROMPT_VERSION).toBe("1");
+  test("the review v2 prompts ship as prompt version 2.0 (spec.md section 0)", () => {
+    expect(REVIEW_PROMPT_VERSION).toBe("2.0");
   });
 });
 

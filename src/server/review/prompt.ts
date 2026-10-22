@@ -100,12 +100,7 @@ export function buildPrompt(i: PromptInput): string {
       ? `Explain the change ${range} in ./repo. Give the summary, the risks, and your questions.`
       : `Review the change ${range} in ./repo. Give the findings, the risks, and your questions.`,
     "",
-    ...(i.history && !i.profile.explain
-      ? [
-          "history.md lists earlier review findings with their state. Do not raise a discarded finding again: the user judged it not valid. Do not repeat a posted finding: it is already on the pull request. Raise a new or accepted finding again only if it still applies at this head.",
-          "",
-        ]
-      : []),
+    // The history rule lives in the context block of each review agent (catalog.ts), so every agent of the run gets it.
     ...(i.questions && !i.profile.explain ? QUESTIONS_TASK : []),
     ...common(i),
   ].join("\n");

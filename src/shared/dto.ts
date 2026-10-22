@@ -99,7 +99,8 @@ export const modelName = z
   .string()
   .trim()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:/@[\]-]{0,199}$/);
-// auto: the main agent decides when to call rl-reviewer. always: it splits the changed files across rl-reviewer calls. off: no rl-reviewer.
+// auto: a review run gets rl-reviewer only for a large change (catalog.ts delegation). always: the main agent splits the changed files
+// across rl-reviewer calls. off: no rl-reviewer.
 export const REVIEWER_MODES = ["auto", "always", "off"] as const;
 export type ReviewerMode = (typeof REVIEWER_MODES)[number];
 // null model or effort: no flag and no agent field, so Claude Code uses its own default.
@@ -923,7 +924,8 @@ export type InstructionsInput = z.infer<typeof instructionsInput>;
 export type InstructionRepoDto = { project: string; repo: string; pr: number; clone: string | null; settings: InstructionsInput };
 // path: from the repository or clone root. Empty for the settings text.
 // path: from the config folder for the global source.
-export type InstructionFileDto = { source: "global" | "target" | "clone" | "settings"; path: string; bytes: number };
+// scope: the folder of a CLAUDE.md of a changed folder on the target branch. The file applies to <scope>/** only. Absent: all files.
+export type InstructionFileDto = { source: "global" | "target" | "clone" | "settings"; path: string; bytes: number; scope?: string };
 // GET and PUT /api/instructions/global: the switch for the global instruction file of the runner config folder. It applies to every repository.
 // path: the file that runs read when the switch is on.
 export const globalInstructionsInput = z.object({ on: z.boolean() });

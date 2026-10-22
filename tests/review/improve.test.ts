@@ -8,14 +8,14 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createApp } from "../../src/server/app";
 import { createLive } from "../../src/server/live";
-import { SEVERITY_RULES, sharedRules } from "../../src/server/review/catalog";
+import { contextBlock, DO_NOT_FLAG, finderRules, MODULES, NO_CONTEXT, rubric, sharedRules } from "../../src/server/review/catalog";
 import type { RunOutcome } from "../../src/server/review/claude";
 import { buildImprovePrompt, improveJsonSchema, judgeImprove } from "../../src/server/review/improve";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import { CHECKLISTS } from "../../src/server/review/languages";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
-import { type ImproveDto, type ImproveInput, MAX_NOTE } from "../../src/shared/dto";
+import { DEFAULT_VERIFIER, type ImproveDto, type ImproveInput, MAX_NOTE, MODULE_IDS } from "../../src/shared/dto";
 import { type FakeScenario, readRecords } from "../support/fake-claude";
 import { claudeStream, fakeRunner } from "../support/review-fixture";
 
@@ -71,12 +71,22 @@ const section = (text: string, heading: string) => {
 };
 
 describe("buildImprovePrompt", () => {
-  test("it lists every shared rule and the language lists, so the proposal does not repeat them", () => {
+  test("it lists every shared rule, the check sections, and the language lists, so the proposal does not repeat them", () => {
     const p = buildImprovePrompt(INPUT);
     const shared = section(p, "Shared rules");
-    for (const l of sharedRules(INPUT)) expect(shared).toContain(`- ${l}`);
-    for (const l of SEVERITY_RULES) expect(shared).toContain(l);
+    const balanced = { ...INPUT, volume: "balanced" as const, verifier: DEFAULT_VERIFIER };
+    for (const l of sharedRules(balanced)) expect(shared).toContain(`- ${l}`);
+    // docs/plans/review-v2/spec.md section 1.5: the context block with every context file, the finder rules, the list, and the rubric.
+    const full = { ...NO_CONTEXT, taskFile: true, attachments: true, history: true, questions: true };
+    for (const l of [...contextBlock(full), ...finderRules(balanced, true), ...DO_NOT_FLAG, ...rubric(balanced)])
+      expect(shared).toContain(l);
     expect(shared).toContain("learn and deepwiki tools");
+    const sections = section(p, "Check sections");
+    for (const id of MODULE_IDS) expect(sections).toContain(`\n- ${id}: ${MODULES[id].label}\n`);
+    expect(sections).toContain("Never repeat their checks in the new prompt.");
+    expect(section(buildImprovePrompt({ ...INPUT, explain: true }), "Check sections")).toBe(
+      "# Check sections\n\nExplain runs get no check sections.\n",
+    );
     const langs = section(p, "Language checks");
     expect(langs).toContain("- C++: lifetime, ownership, exceptions,");
     expect(langs).toContain("- Python: defaults, exceptions,");
@@ -110,7 +120,7 @@ describe("buildImprovePrompt", () => {
     );
     expect(rules).toContain("state what to check and when a problem is a finding");
     expect(rules).toContain("Ask for defects, not for style.");
-    expect(rules).toContain("Never repeat a shared rule or a language check.");
+    expect(rules).toContain("Never repeat a shared rule, a check section, or a language check.");
     expect(rules).toContain(`${MAX_NOTE.toLocaleString("en")} characters or fewer`);
     expect(rules).toContain(
       "Read, Grep, Glob, and the rl-git tools git_log, git_blame, git_show, and git_diff, and the learn and deepwiki",
@@ -123,7 +133,7 @@ describe("buildImprovePrompt", () => {
     const p = buildImprovePrompt({ ...INPUT, explain: true });
     expect(section(p, "Rules")).toContain("This is an Explain profile. Keep the new prompt explain-only");
     expect(section(p, "Profile")).toContain("Explain only.");
-    for (const l of SEVERITY_RULES) expect(p).not.toContain(l);
+    for (const l of rubric({ volume: "balanced", verifier: DEFAULT_VERIFIER })) expect(p).not.toContain(l);
     expect(section(p, "Language checks")).toBe("# Language checks\n\nExplain runs get no language checklist.\n");
   });
 });

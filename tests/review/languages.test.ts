@@ -2,9 +2,10 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 import { describe, expect, test } from "bun:test";
-import { RETIRED_PROFILES, SEVERITY_RULES } from "../../src/server/review/catalog";
+import { RETIRED_PROFILES, rubric } from "../../src/server/review/catalog";
 import { parseDiff } from "../../src/server/review/diffmap";
 import { CHECKLISTS, LANGUAGE_INTRO, LANGUAGES, languageLines, languagesOf, withLanguages } from "../../src/server/review/languages";
+import { DEFAULT_VERIFIER, VOLUMES } from "../../src/shared/dto";
 
 const file = (path: string | null, oldPath: string | null = path, binary = false) => ({
   path,
@@ -86,20 +87,15 @@ describe("checklist text", () => {
     }
   });
 
-  test("each sentence of the items, the intro, the severity rules, and the Over-engineering task has at most 20 words", () => {
+  test("each sentence of the items, the intro, the rubric, and the Over-engineering task has at most 20 words", () => {
     // The Over-engineering task stays in RETIRED_PROFILES for the simplify module (docs/plans/review-v2/spec.md section 1.3).
     const over = RETIRED_PROFILES.over?.prompt ?? "";
     expect(over).toContain("Set category to delete, reuse, stdlib, native, yagni, or shrink.");
     // The category before the colon and the level in brackets are tags, not words of the sentence.
     const prose = items.map((i) => i.replace(/^[a-z-]+: /, "").replace(/ \[\w+\]$/, ""));
-    const texts = [...prose, ...LANGUAGE_INTRO, ...SEVERITY_RULES, ...over.split("\n")];
+    const rubrics = VOLUMES.flatMap((volume) => rubric({ volume, verifier: DEFAULT_VERIFIER }));
+    const texts = [...prose, ...LANGUAGE_INTRO, ...rubrics, ...over.split("\n")];
     expect(texts.flatMap(longSentences)).toEqual([]);
-  });
-
-  test("the severity rules keep nit for the cases that ask for it", () => {
-    expect(SEVERITY_RULES).toContain(
-      "nit: optional polish. Give a nit only when the profile task, a chosen skill, or the user's note asks for it.",
-    );
   });
 });
 

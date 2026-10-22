@@ -6,9 +6,18 @@
 import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { DEFAULT_REVIEWER, DEFAULT_VERIFIER, type ModuleId, type ProfileId, type ProfileInput } from "../../shared/dto";
+import {
+  DEFAULT_REVIEWER,
+  DEFAULT_VERIFIER,
+  MODULE_IDS,
+  type ModuleId,
+  type ProfileId,
+  type ProfileInput,
+  type Volume,
+} from "../../shared/dto";
 import { FIX_EDIT_RULES, FIX_WHY_RULES } from "../../shared/review";
 import { type AgentSpec, type McpServerSpec, NAME } from "./claude";
+import type { DiffFile } from "./diffmap";
 import { SKILL_INDEX, SKILL_INDEX_AFTER } from "./skills";
 
 // login: `claude auth login --help` (CLI 2.1.295) names --claudeai for the subscription.
@@ -128,6 +137,18 @@ export const EXPLAIN_V2: Pick<Profile, "note" | "maxTurns" | "effort" | "prompt"
   prompt: EXPLAIN_LENS,
 };
 
+// The prompt of the shipped Over-engineering profile of PROFILES_VERSION 4. The simplify module reuses its lines.
+const OVER_PROMPT = [
+  "Find code that the change can delete or simplify.",
+  "Check each new function, class, dependency, and setting in this order. Is it needed? Does the repository have it? Does the standard library have it? Does the platform have it? Does an installed dependency have it?",
+  "Set category to delete, reuse, stdlib, native, yagni, or shrink.",
+  "In body, name what to cut and what replaces it: the function, the platform feature, or the repository path. For shrink, show the shorter form.",
+  "Use minor for a cut and nit for shrink. Use major when the cut removes a dependency or a layer.",
+  "Never propose to cut a security check or input validation at a trust boundary. Also keep error handling that prevents data loss, and small tests.",
+  "Put a defect that you notice into risks, not into findings.",
+  "In summary, give the number of lines that the cuts remove.",
+];
+
 // The shipped Over-engineering and Security profiles of PROFILES_VERSION 4. Version 5 retires each one that the user never edited
 // (settings.ts upgradeConfig), and general gets its module. An edited one stays as the user's own profile.
 const v4Profile = (p: Pick<Profile, "id" | "name" | "note" | "prompt" | "languageChecks">): Profile => ({
@@ -151,16 +172,7 @@ export const RETIRED_PROFILES: Partial<Record<string, Profile>> = {
     name: "Over-engineering",
     note: "What to delete or simplify",
     languageChecks: false,
-    prompt: [
-      "Find code that the change can delete or simplify.",
-      "Check each new function, class, dependency, and setting in this order. Is it needed? Does the repository have it? Does the standard library have it? Does the platform have it? Does an installed dependency have it?",
-      "Set category to delete, reuse, stdlib, native, yagni, or shrink.",
-      "In body, name what to cut and what replaces it: the function, the platform feature, or the repository path. For shrink, show the shorter form.",
-      "Use minor for a cut and nit for shrink. Use major when the cut removes a dependency or a layer.",
-      "Never propose to cut a security check or input validation at a trust boundary. Also keep error handling that prevents data loss, and small tests.",
-      "Put a defect that you notice into risks, not into findings.",
-      "In summary, give the number of lines that the cuts remove.",
-    ].join("\n"),
+    prompt: OVER_PROMPT.join("\n"),
   }),
   security: v4Profile({
     id: "security",
@@ -203,8 +215,16 @@ export const profileRevision = (p: Profile) =>
     .update(p.volume === "balanced" ? "" : `volume${p.volume}`)
     .update(sameValue(p.verifier, DEFAULT_VERIFIER) ? "" : `verifier${JSON.stringify(p.verifier, ["mode", "model", "effort"])}`)
     .digest("hex");
-// A review run of the profile gets the rl-reviewer agent. The caller checks the run kind.
-export const usesReviewer = (p: Profile) => !p.explain && p.reviewer.mode !== "off";
+// docs/plans/review-v2/spec.md section 0 and design.md R8: in mode auto, a smaller change gets no Agent tool.
+export const REVIEWER_MIN_LINES = 1200;
+export const REVIEWER_MIN_FILES = 30;
+// The delegation of a review run: the DELEGATE lines to add, or null for no rl-reviewer and no Agent tool. The caller checks the run kind.
+export function delegation(p: Profile, files: DiffFile[]): "auto" | "always" | null {
+  if (p.explain || p.reviewer.mode === "off") return null;
+  if (p.reviewer.mode === "always") return "always";
+  const lines = files.reduce((n, f) => n + f.rows.filter((r) => r.kind !== "ctx").length, 0);
+  return lines >= REVIEWER_MIN_LINES || files.length >= REVIEWER_MIN_FILES ? "auto" : null;
+}
 export const DEFAULT_PROFILE: ProfileId = "general";
 // Fix and reply runs get at least this turn cap, whatever the profile.
 export const MIN_EDIT_TURNS = 100;
@@ -321,49 +341,243 @@ const TASK_RULE = "Use ./context/task.md, when present, to judge whether a comme
 // The CLI Read tool refuses a file over 256 KB.
 export const LARGE_FILE_RULE = "Read fails on a file over 256 KB. For a large file, use Grep, or Read with offset and limit.";
 
-// Every agent of a review run gets these. An Explain run gives no findings.
-export const SEVERITY_RULES = [
-  "Set severity by what the merge must wait for.",
-  "blocker: the change must not merge as it is. Examples: data loss, a security hole, a crash on a normal path.",
-  "major: fix it before the merge. Examples: wrong behavior on a reachable path, a leak, a race, undefined behavior.",
-  "minor: a fix is good, but the merge can go on. Examples: a rare edge case, a small missing check, code to delete.",
-  "nit: optional polish. Give a nit only when the profile task, a chosen skill, or the user's note asks for it.",
-  "Give no finding for what a compiler, linter, or formatter reports. Give no finding for style or naming.",
-  "Report a problem in unchanged code only when the change makes it reachable or worse.",
-  "Give no finding to fill the list. An empty findings list is a valid result.",
-  "In body, give the trigger, the consequence, and a fix direction, in 3 sentences or fewer.",
-  "Set confidence to low when you did not trace the trigger.",
-];
-const severityRules = (p: Pick<Profile, "explain">) => (p.explain ? [] : SEVERITY_RULES);
+const COVERAGE_RULE = "In coverage, list what you read, what you skipped, and what was not available.";
 
-const RESULT_RULES = [
-  "Give each path from the repository root, for example src/app.ts, not repo/src/app.ts.",
-  'For side "new", give the line numbers of the file in ./repo. For side "old", a removed line, give its line number at the merge base. The hunk headers of git_diff from the merge base give it.',
-  "Copy anchorText verbatim from the lines line to lineEnd on that side.",
-  'Base each finding on code that you read. Set evidenceStatus to "unverified" when you did not check it.',
+// docs/plans/review-v2/spec.md section 1.5: the ./context files and inputs that the context block and the module sections depend on.
+// instructions: the run has project instructions. goal: pr.md has a description, or task.md exists.
+export type ReviewContext = {
+  taskFile: boolean;
+  attachments: boolean;
+  history: boolean;
+  questions: boolean;
+  rereview: boolean;
+  instructions: boolean;
+  goal: boolean;
+};
+export const NO_CONTEXT: ReviewContext = {
+  taskFile: false,
+  attachments: false,
+  history: false,
+  questions: false,
+  rereview: false,
+  instructions: false,
+  goal: false,
+};
+
+// design.md R12 and R14: the same facts for every agent of a review run, the subagents included.
+export function contextBlock(c: ReviewContext): string[] {
+  return [
+    c.taskFile
+      ? "Read ./context/pr.md and ./context/task.md first. They tell what the author wants the change to do."
+      : "Read ./context/pr.md first. It tells what the author wants the change to do.",
+    "A change that the pull request text or the task asks for is not a defect. A gap between that goal and the code is a finding.",
+    ...(c.attachments ? ["./context/attachments/ holds task attachments. task.md lists them. Read opens the images."] : []),
+    // spec.md section 1.8: history.md names the writer of each state. Only the user's discard blocks a finding.
+    ...(c.history
+      ? [
+          "./context/history.md lists earlier findings and their state.",
+          'Do not raise a finding with the state "discarded by the user" again, unless the code at that place changed.',
+          'Do not repeat a finding with the state "posted".',
+        ]
+      : []),
+    ...(c.questions ? ["./context/questions.md holds the questions and findings that the user posted, with the newer messages."] : []),
+    `./repo holds the source branch at the head commit. The rl-git tool git_diff shows the change from BASE, ${c.rereview ? "the base of the reviewed range" : "the merge base"}, to HEAD.`,
+    LARGE_FILE_RULE,
+    ...TRUST,
+  ];
+}
+
+type FinderProfile = Pick<Profile, "verifier" | "volume">;
+const checked = (p: FinderProfile) => p.verifier.mode === "on";
+
+// spec.md section 1.5. main: the lines about questions, which the rl-reviewer result has no field for.
+export function finderRules(p: FinderProfile, main: boolean): string[] {
+  return [
+    checked(p)
+      ? "Report every problem that you find. A second step checks each finding, so do not leave out a finding because you are not sure."
+      : "Report every problem that you find, with its severity and its confidence.",
+    "Report only problems that the change adds or makes reachable. BASE..HEAD is the change.",
+    "Anchor each finding on the changed line that it is about. For a problem in unchanged code, anchor it there. Set cause to the changed line that makes it reachable or worse.",
+    "Give each path from the repository root, for example src/app.ts, not repo/src/app.ts.",
+    'For side "new", give the line numbers of the file in ./repo. For side "old", a removed line, give its line number at the merge base. The hunk headers of git_diff from the merge base give it.',
+    "Copy anchorText exactly from the lines line to lineEnd on that side. The app compares it with the file.",
+    "In trigger, give a concrete case: the input or state, the path through the code, and the wrong result.",
+    ...(main ? ["When you cannot name a trigger, write a question for the author instead of a finding."] : []),
+    "In title, name the problem in one line of 12 words or fewer. In body, give the consequence and a fix direction in 3 sentences or fewer.",
+    "In evidence, give path:line for each line that shows the problem.",
+    "Set evidenceStatus to code when you read each line of the trigger path. Else set it to unverified.",
+    "Set confidence to high when you traced the trigger in the code. Set it to medium when you read the code but did not trace each step. Set it to low when you only suspect the problem.",
+    "Set module to core, or to the ID of the check section that found it.",
+    ...(main ? ["Put open points about the intent into questions. Say what you need to know and why it matters."] : []),
+  ];
+}
+
+export const DO_NOT_FLAG = [
+  "style, naming, formatting, or comment wording",
+  "what a compiler, type checker, linter, or formatter reports",
+  "a problem that the code already handles: read the guards and the callers first",
+  "a rule that the code turns off on purpose, such as a suppression with a reason",
+  "a risk with no trigger, such as 'this might break'",
+  "behavior that the pull request text or the task asks for",
+  "code that only moved or was renamed, with no change of logic",
+  "a choice between two correct designs",
+  "a missing test, unless the Tests check is on",
+];
+const doNotFlag = (p: FinderProfile) => [
+  checked(p)
+    ? "Do not report the points below. The check step refutes them, so they only cost time:"
+    : "Do not report the points below. They only cost the user time:",
+  ...DO_NOT_FLAG.map((l) => `- ${l}`),
 ];
 
-const DELEGATE: Record<Exclude<Profile["reviewer"]["mode"], "off">, string[]> = {
+// spec.md section 1.4: the nit rule of each volume. The display rule of the volume works at read time.
+export const VOLUME_NITS: Record<Volume, string> = {
+  quiet: "Give no nits.",
+  balanced: "Give no nits.",
+  thorough: "Give nits for small, clear improvements.",
+};
+export function rubric(p: FinderProfile): string[] {
+  return [
+    "Set severity by what the merge must wait for.",
+    "blocker: the change must not merge as it is. Examples: data loss, a security hole, a crash on a normal path.",
+    "major: fix it before the merge. Examples: wrong behavior on a reachable path, a leak, a race, undefined behavior.",
+    "minor: a fix is good, but the merge can go on. Examples: a rare edge case, a small missing check, code to delete.",
+    `nit: optional polish. ${VOLUME_NITS[p.volume]}`,
+    // spec.md section 1.7: the caps of the app.
+    checked(p)
+      ? "The app lowers a finding to minor at most when the check step cannot confirm it."
+      : "The app lowers a finding to minor at most when you set evidenceStatus to unverified.",
+  ];
+}
+
+// spec.md section 1.3: the check sections of the finder prompt and of rl-reviewer.
+export const MODULES: Record<ModuleId, { label: string; lines: string[] }> = {
+  security: {
+    label: "Security",
+    lines: [
+      "Trace untrusted input from its source to each sink in the change: queries, commands, paths, templates, deserialization, and redirects.",
+      "Check authentication and authorization on each new entry point and each changed permission check.",
+      "Check that no secret, token, or personal data goes into code, logs, errors, or URLs.",
+      "Check unsafe defaults: disabled TLS checks, wide permissions, debug modes, and open bind addresses.",
+      "For memory-unsafe code, check bounds, lifetimes, and integer overflow on sizes that come from input.",
+    ],
+  },
+  concurrency: {
+    label: "Threads and races",
+    lines: [
+      "List each object that two threads, tasks, or processes can reach. Check that one lock or atomic rule guards each access.",
+      "Check lock order, callbacks under a lock, and waits without a loop on the condition.",
+      "Check async code for lost errors, missing awaits, cancellation that leaves state half done, and order across awaits.",
+      "Check shutdown: each thread or task ends, and no object ends while another user still holds it.",
+    ],
+  },
+  performance: {
+    label: "Performance",
+    lines: [
+      "Report a cost only when a real input size reaches it. Name the size in trigger.",
+      "Check loops that call the database, the network, or the disk once per item.",
+      "Check work that grows without a limit: caches, queues, lists, and retries.",
+      "Check blocking calls on an async path or a UI thread.",
+      "Check a scan inside a loop on a hot path.",
+    ],
+  },
+  tests: {
+    label: "Tests",
+    lines: [
+      "Check that each changed behavior has a test that fails without the change.",
+      "Check that each new test can fail. Look for asserts on a mock only, empty catch blocks, and tests that skip themselves.",
+      "Check sleeps, real clocks, and order between tests.",
+      "Report a missing negative case only for input that callers can send.",
+    ],
+  },
+  api: {
+    label: "Compatibility",
+    lines: [
+      "Find each public interface that the change touches. Examples: exported functions and types, headers, REST and RPC shapes, database schema, config keys, CLI flags, and file formats.",
+      "Grep the users of each one. A change that breaks a user that the change does not update is a finding.",
+      "Check that a schema or data change has a migration. Check that old data and old clients still work during a rollout.",
+    ],
+  },
+  docs: {
+    label: "Docs and comments",
+    lines: [
+      "Check that docs, comments, and the changelog that describe changed behavior still match the code.",
+      "Report a wrong doc only when a reader would act wrongly on it.",
+    ],
+  },
+  simplify: {
+    label: "Simplify (what to delete)",
+    lines: [...OVER_PROMPT.filter((l) => !l.startsWith("Put a defect") && !l.startsWith("In summary")), "Use module simplify."],
+  },
+  rules: {
+    label: "Project rules",
+    lines: [
+      "Check the changed files against the project instructions. Each instruction file names the paths that it applies to.",
+      "Use a rule only for files in its scope.",
+      "In rule, copy the exact sentence of the rule. The app checks the quote against the loaded instructions.",
+      "Report a rule finding only when the change breaks the rule, not when old code breaks it.",
+    ],
+  },
+  intent: {
+    label: "Matches the task",
+    lines: [
+      "Compare the change with the goal in ./context/pr.md and ./context/task.md.",
+      "Report a stated requirement that the change does not meet. Quote the requirement in evidence.",
+      "Report a change that the goal does not explain only when it changes behavior for users.",
+    ],
+  },
+};
+
+// spec.md section 1.3: rules needs project instructions, and intent needs a goal. Else the section adds nothing.
+const lacks = (id: ModuleId, c: ReviewContext) => (id === "rules" && !c.instructions) || (id === "intent" && !c.goal);
+
+// The sections in MODULE_IDS order, so the click order of the checkboxes does not change the prompt.
+export function moduleSections(p: Pick<Profile, "modules">, c: ReviewContext): string[] {
+  return MODULE_IDS.filter((id) => p.modules.includes(id) && !lacks(id, c)).flatMap((id) => [
+    `Check section ${id}:`,
+    ...MODULES[id].lines.map((l) => `- ${l}`),
+  ]);
+}
+
+// The coverage lines for a chosen section that adds nothing (spec.md section 1.3).
+export const moduleNotes = (p: Pick<Profile, "modules">, c: ReviewContext): string[] => [
+  ...(p.modules.includes("rules") && lacks("rules", c) ? ["Project rules: no instructions loaded."] : []),
+  ...(p.modules.includes("intent") && lacks("intent", c) ? ["Matches the task: no description or task."] : []),
+];
+
+// design.md R8: the app decides delegation, so the main agent gets these lines only with the Agent tool.
+const DELEGATE: Record<"auto" | "always", string[]> = {
   auto: [
-    `Give parts of a large change to the ${REVIEWER} agent. Give each call a list of paths and the git_diff range to review. In a re-review, also give the merge base.`,
-    `Merge its findings and set agent to "${REVIEWER}" on each of them.`,
+    `The change is large. Give parts of it to the ${REVIEWER} agent. Give each call a list of paths that no other call has, and the git_diff range. In a re-review, also give the merge base.`,
+    "Review each path that no call has. Start no other agent.",
+    `Copy the findings of each call into findings, and set agent to "${REVIEWER}" on each of them.`,
   ],
   always: [
     `Split the changed files by path across calls to the ${REVIEWER} agent. Make at least 2 calls when the change has 2 or more changed files.`,
     "Give each call its list of paths and the git_diff range to review. In a re-review, also give the merge base.",
-    `Merge the findings of all calls. Check each finding against the code in ./repo, and drop a finding that the code does not confirm. Set agent to "${REVIEWER}" on each finding from a call.`,
+    `Merge the findings of all calls. Set agent to "${REVIEWER}" on each finding from a call.`,
   ],
 };
 
-// The lines that every review run adds after the profile prompt of the main agent. Improve prompt shows them to the model.
-export const sharedRules = (p: Pick<Profile, "explain" | "docs">) => [
-  ...TRUST,
-  ...(p.explain ? [] : RESULT_RULES),
-  ...severityRules(p),
-  "Put open points into questions, not into findings.",
-  "In coverage, list what you read, what you skipped, and what was not available.",
-  ...docsRule(p),
-];
+// spec.md section 1.5: the delegation lines come after the language, skill, and MCP lines.
+export const withDelegation = (a: AgentSpec, mode: "auto" | "always" | null): AgentSpec =>
+  mode ? { ...a, prompt: [a.prompt, ...DELEGATE[mode]].join("\n") } : a;
+
+const EXPLAIN_RULES = [...TRUST, "Put open points into questions, not into findings.", COVERAGE_RULE];
+
+// The lines that every run of the profile adds after the profile prompt. Improve prompt shows them to the model with every context
+// file present. The module sections and the answer rules depend on the profile and the run.
+export const sharedRules = (p: Pick<Profile, "explain" | "docs"> & FinderProfile) =>
+  p.explain
+    ? [...EXPLAIN_RULES, ...docsRule(p)]
+    : [
+        ...contextBlock({ ...NO_CONTEXT, taskFile: true, attachments: true, history: true, questions: true }),
+        ...finderRules(p, true),
+        ...doNotFlag(p),
+        ...rubric(p),
+        COVERAGE_RULE,
+        ...docsRule(p),
+      ];
 
 // docs/plans/thread-outcome.md section 9: the answers to the questions that the user posted. The app makes one reply draft per thread
 // and proposes resolve only when every question of the thread is settled.
@@ -387,19 +601,27 @@ export const ANSWERED_RULES = [
   "Never put secrets, tokens, passwords, or credentials into a reply.",
 ];
 
-// questions: the run has ./context/questions.md. An Explain run judges no answer.
-export function mainAgent(p: Profile, questions = false): AgentSpec {
-  // The usesReviewer rule, written out so that the mode narrows.
-  const delegate = !p.explain && p.reviewer.mode !== "off" ? DELEGATE[p.reviewer.mode] : [];
+// spec.md section 1.5: the agent prompt order of rl-main. The caller adds languages, skills, MCP tools, and the delegation lines.
+// An Explain run gives no findings and judges no answer.
+export function mainAgent(p: Profile, c: ReviewContext = NO_CONTEXT): AgentSpec {
+  const opening = "You are a read-only code reviewer. You cannot change files, and you post nothing.";
   return {
     description: "Read-only review of one pull request.",
-    prompt: [
-      "You are a read-only code reviewer. You cannot change files, and you post nothing.",
-      p.prompt,
-      ...sharedRules(p),
-      ...delegate,
-      ...(questions && !p.explain ? ANSWERED_RULES : []),
-    ].join("\n"),
+    prompt: (p.explain
+      ? [opening, p.prompt, ...EXPLAIN_RULES, ...docsRule(p)]
+      : [
+          opening,
+          p.prompt,
+          ...contextBlock(c),
+          ...finderRules(p, true),
+          ...doNotFlag(p),
+          ...rubric(p),
+          ...moduleSections(p, c),
+          ...(c.questions ? ANSWERED_RULES : []),
+          COVERAGE_RULE,
+          ...docsRule(p),
+        ]
+    ).join("\n"),
   };
 }
 
@@ -544,21 +766,23 @@ export const withMcp = (a: AgentSpec, used: McpUse[]): AgentSpec =>
 
 // model and effort are agent definition fields (code.claude.com/docs/en/sub-agents). Gate B13 (2.1.301): the CLI accepts both, and
 // it refuses the whole --agents file for an unknown effort. prepare in claude.ts checks each effort first.
-export function reviewerAgent(p: Profile): AgentSpec {
+// spec.md section 1.5: the rl-reviewer prompt. The caller adds languages, skills, MCP tools, and the project instructions.
+export function reviewerAgent(p: Profile, c: ReviewContext = NO_CONTEXT): AgentSpec {
   return {
     ...(p.reviewer.model !== null && { model: p.reviewer.model }),
     ...(p.reviewer.effort !== null && { effort: p.reviewer.effort }),
     description: "Read-only reviewer for one part of a change.",
     prompt: [
       "You review one part of a change, read-only. The request names the paths and the git_diff range to review.",
-      "./repo holds the source branch at the head commit. Call the rl-git tool git_diff with a path to see the changes of one file.",
-      LARGE_FILE_RULE,
       p.prompt,
-      ...TRUST,
-      ...RESULT_RULES,
-      ...severityRules(p),
+      ...contextBlock(c),
+      ...finderRules(p, false),
+      ...doNotFlag(p),
+      ...rubric(p),
+      ...moduleSections(p, c),
       ...docsRule(p),
-      "Report each finding with path, side, line, lineEnd, anchorText, severity, category, body, evidence, evidenceStatus, and confidence.",
+      "Report each finding with its place: path, side, line, lineEnd, anchorText, and cause.",
+      "Also report title, trigger, severity, category, module, rule, body, evidence, evidenceStatus, and confidence.",
     ].join("\n"),
   };
 }

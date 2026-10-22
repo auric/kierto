@@ -543,7 +543,11 @@ describe("re-review runs", () => {
         "Verdict for finding 99999 dropped: the ID is not an earlier finding.",
         `Finding ${at(30).id} has no verdict. It stays open.`,
       ]);
-      expect(coverage?.notChecked).toEqual([`Run ${base.run.id}, the base of this re-review, was incomplete.`]);
+      // docs/plans/review-v2/spec.md section 1.3: the target branch has no CLAUDE.md, so the rules check of Review adds nothing.
+      expect(coverage?.notChecked).toEqual([
+        `Run ${base.run.id}, the base of this re-review, was incomplete.`,
+        "Project rules: no instructions loaded.",
+      ]);
       const stdin = h.runCalls()[1]?.stdin ?? "";
       expect(stdin).toContain(`Earlier findings: ${LINES.map((l) => at(l).id).join(", ")}\n`);
       for (const canary of ["FINDING-CANARY", "EDITED-CANARY", "QUESTION-CANARY"]) expect(stdin).not.toContain(canary);

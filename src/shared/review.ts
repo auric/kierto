@@ -12,7 +12,7 @@ export const MAX_FINDINGS = 100;
 const lineNo = z.number().int().min(1);
 
 // Raise it with each change of the review agent prompts. A run row with prompt_version NULL reads as "1".
-export const REVIEW_PROMPT_VERSION = "1";
+export const REVIEW_PROMPT_VERSION = "2.0";
 
 const place = {
   path: z.string().describe("File path relative to the repository root, with / separators."),

@@ -649,7 +649,7 @@ test("the run setup saves model, effort, and reviewer agents; the run row and th
 });
 
 // The native scenario moves the PR head to a commit with native/hash.h, native/hash.cpp, and tools/check.py.
-test("Language checks: on for Review and Security, saved at once, and a review run gives both agents the lists of the changed languages", async ({
+test("Language checks: on for Review and Security, saved at once, and a review run gives rl-main the lists of the changed languages", async ({
   page,
   request,
 }) => {
@@ -677,7 +677,8 @@ test("Language checks: on for Review and Security, saved at once, and a review r
     return prompts;
   };
   const on = await review();
-  expect(Object.keys(on).sort()).toEqual(["rl-main", "rl-reviewer"]);
+  // docs/plans/review-v2/design.md R8: the change is small, so the run gets no rl-reviewer. tests/review/jobs.test.ts covers its lists.
+  expect(Object.keys(on)).toEqual(["rl-main"]);
   for (const prompt of Object.values(on)) {
     expect(prompt).toContain("\nC++ list:\n- lifetime: ");
     expect(prompt).toContain("\nPython list:\n- defaults: ");

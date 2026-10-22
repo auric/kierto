@@ -55,9 +55,14 @@ function run(
   ).id;
 }
 
-function finding(db: Database, runId: number, o: { severity: string; body: string; line?: number; status?: string }) {
+function finding(
+  db: Database,
+  runId: number,
+  o: { severity: string; body: string; line?: number; status?: string; payload?: Record<string, unknown> },
+) {
   const line = o.line ?? 3;
   const payload = {
+    ...o.payload,
     path: "src/app.ts",
     side: "new",
     line,
@@ -151,24 +156,36 @@ describe("historyFile", () => {
     expect(historyFile(db, pr, HEAD)?.text).toContain("No findings.");
   });
 
-  test("a plain review gets the file only when an earlier review exists; each finding keeps its state", () => {
+  test("a plain review gets the file only when an earlier review exists; each finding keeps its state with its writer (AC-R16)", () => {
     const { db, pr } = setup();
     run(db, pr, { kind: "ask", question: "Q?", answer: "A" });
     run(db, pr, { profile: "explain", explain: 1, summary: "E" });
     expect(historyFile(db, pr, HEAD, true)).toBeNull();
     const r = run(db, pr, { summary: "S" });
-    const states = ["new", "accepted", "discarded", "posted"];
-    for (const [i, status] of states.entries()) finding(db, r, { severity: "major", body: `BODY-${status}`, line: i + 1, status });
+    // docs/plans/review-v2/spec.md section 1.8: discardedBy "verify" is a refuted or duplicate candidate; withdrawn is a discuss mark.
+    const states: [string, string, Record<string, unknown>?][] = [
+      ["new", "new"],
+      ["accepted", "accepted"],
+      ["discarded", "discarded by the user"],
+      ["posted", "posted"],
+      ["discarded", "refuted by the check", { discardedBy: "verify" }],
+      ["discarded", "withdrawn in a talk", { withdrawn: { run: 9, reason: "R", was: "new" } }],
+      // Restore after a talk keeps the mark, and the status names the state again.
+      ["new", "new", { withdrawn: { run: 9, reason: "R", was: "new" } }],
+    ];
+    for (const [i, [status, , payload]] of states.entries())
+      finding(db, r, { severity: "major", body: `BODY-${i}`, line: i + 1, status, ...(payload && { payload }) });
     const t = historyFile(db, pr, HEAD, true)?.text ?? "";
     expect(t).toContain(`- Run: ${r}
 `);
-    for (const status of states)
-      expect(t).toContain(`- State: ${status}
+    for (const [i, [, label]] of states.entries())
+      expect(t).toContain(`- State: ${label}
 
 Text:
 
-    BODY-${status}
+    BODY-${i}
 `);
+    expect(t.split("- State: discarded by the user")).toHaveLength(2);
     expect(t).toContain("## Ask run");
   });
 

@@ -53,6 +53,21 @@ async function runs(request: APIRequestContext) {
   return (await (await request.get(`${APP}/api/prs/${id}/runs`)).json()) as { id: number; profile: string; note: string; status: string }[];
 }
 
+// docs/plans/review-v2/design.md R8: the e2e change is small, so only reviewer mode always gives the run rl-reviewer.
+async function securityAlways(page: Page) {
+  const status = await page.evaluate(async () => {
+    const headers = {
+      "X-RL-Session": document.querySelector<HTMLMetaElement>('meta[name="rl-session"]')?.content ?? "",
+      "Content-Type": "application/json",
+    };
+    const s = (await (await fetch("/api/settings", { headers })).json()) as { baseUrl: string; profiles: { id: string }[] };
+    const profiles = s.profiles.map((p) => (p.id === "security" ? { ...p, reviewer: { model: null, effort: null, mode: "always" } } : p));
+    return (await fetch("/api/settings", { method: "PUT", headers, body: JSON.stringify({ baseUrl: s.baseUrl, profiles }) })).status;
+  });
+  expect(status).toBe(200);
+  await page.reload();
+}
+
 // Shift+R opens the brief with focus in the note. Ctrl+Enter saves the brief and starts the review.
 async function startWithBrief(page: Page, note = NOTE) {
   await page.keyboard.press("Shift+R");
@@ -69,6 +84,7 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await connect(page);
   // The profiles Review, Over-engineering, Security, and Explain. The reload keeps the list, so the row opens the PR again.
   await addOwnProfiles(page);
+  await securityAlways(page);
   await row(page).click();
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(TITLE);
   await page.keyboard.press("Shift+R");

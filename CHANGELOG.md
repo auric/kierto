@@ -16,6 +16,12 @@
 ### Reviews
 
 - The "General" profile is now named "Review". It has a new prompt and runs at high effort. Its reviewer agents also run at high effort.
+- A review now reports each problem with a title, a concrete case, a severity, and a confidence. It reports only what the change adds, and it skips style, linter output, and behavior that the pull request or the task asks for.
+- "Review" checks security, threads and races, compatibility, the project rules, and the task goal. Each finding names the check that found it.
+- Reviewer agents with "Auto" now join only a large change: 1,200 changed lines or 30 changed files. "Always" uses them on every change.
+- Reviewer agents now read the pull request text, the task, and the earlier findings, as the main review does. They do not raise a finding that you discarded again.
+- A CLAUDE.md in a folder of a changed file on the target branch now joins the project instructions. It applies only to the files in its folder.
+- Improve prompt now knows the review checks and the new review rules, so the proposal does not repeat them.
 - An update removes the shipped Security and Over-engineering profiles only when you never edited them. An edited one stays as your own profile.
 - A review and "Review changes since" now read the answers to the questions that you posted. Each answered question gets one outcome.
 - An answer that settles the question gets a reply draft, such as "Thanks, clear.", with "Resolve after posting" proposed. The box is ticked on threads that you started.
