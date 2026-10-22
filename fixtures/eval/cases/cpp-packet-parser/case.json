@@ -1,0 +1,45 @@
+{
+  "id": "cpp-packet-parser",
+  "title": "Parse version 2 telemetry packets",
+  "language": "cpp",
+  "pr": {
+    "title": "Parse telemetry packets of version 2",
+    "description": "Devices with firmware 4.x send version 2 packets: a 2-byte sample count, a label, and a CRC-16 at the end. This adds `parseV2`, the CRC, a protocol page, and tests. Version 1 parsing does not change."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/parser_v2.cpp",
+      "side": "new",
+      "lines": [36, 38],
+      "severityMin": "major",
+      "module": "security",
+      "note": "Off-by-one: a label of exactly 32 bytes passes the > check, and the NUL goes to label[32], one byte past the field. The length comes from the network."
+    },
+    {
+      "id": "B2",
+      "path": "src/parser_v2.cpp",
+      "side": "new",
+      "lines": [40, 42],
+      "severityMin": "minor",
+      "module": "core",
+      "note": "Unchecked error: the result of r.u16(crc) is ignored. A packet that ends before the checksum compares an uninitialized value."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/parser_v2.cpp",
+      "side": "new",
+      "lines": [16, 17],
+      "why": "size - 4 looks like it can wrap, but the kMinV2Size check on the line before makes size at least 12."
+    },
+    {
+      "id": "T2",
+      "path": "src/crc16.cpp",
+      "side": "new",
+      "lines": [8, 10],
+      "why": "Style only: the casts are noisy, but they keep the integer promotion of uint16_t explicit and the values are right."
+    }
+  ]
+}

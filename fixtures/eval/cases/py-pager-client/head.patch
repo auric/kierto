@@ -1,0 +1,239 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..fee25d9
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,9 @@
++# Changelog
++
++## 2.4.0
++
++- The client uses version 2 of the directory API. Version 1 goes offline at the end of the quarter.
++- `fetch_page` counts pages from 0, as version 2 does.
++- New `iter_users()` walks all pages.
++- The client honors the Retry-After header of a busy server.
++- The default retry count drops from 5 to 3. The API gateway now retries on its own, so 5 client retries made an outage take minutes to report.
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..8660448
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,16 @@
++# directory-sync
++
++Nightly jobs that read the people directory.
++
++| Job | What it does |
++|---|---|
++| `jobs/sync_users.py` | Copies the users into the local accounts table and disables accounts that the directory no longer lists. |
++| `jobs/count_users.py` | Reports the number of users to the license dashboard. |
++
++## Client
++
++`client.DirectoryClient` talks to version 2 of the directory API.
++
++- `fetch_page(page)` reads one page. Pages count from 0.
++- `iter_users()` reads all pages.
++- A busy server (429, 502, 503, 504) gets up to 3 attempts. The client waits as long as Retry-After says, at most 30 s.
+diff --git a/client/api.py b/client/api.py
+index 77f1010..d18ea90 100644
+--- a/client/api.py
++++ b/client/api.py
+@@ -1,12 +1,25 @@
+-"""Client of the people directory API."""
++"""Client of the people directory API, version 2."""
+ 
+ import json
++import math
+ import time
++from collections.abc import Iterator
+ from urllib.error import HTTPError, URLError
+ from urllib.parse import urlencode
+ from urllib.request import Request, urlopen
+ 
+ RETRY_STATUS = {429, 502, 503, 504}
++MAX_DELAY_S = 30.0
++FIELDS = ("id", "email", "name", "department")
++
++
++def _retry_after(e: HTTPError) -> float | None:
++    """The Retry-After header in seconds, when the server sent one as a number."""
++    value = e.headers.get("Retry-After") if e.headers else None
++    try:
++        return max(0, int(value)) if value is not None else None
++    except ValueError:
++        return None
+ 
+ 
+ class DirectoryClient:
+@@ -14,11 +27,13 @@ class DirectoryClient:
+         self,
+         base_url: str,
+         token: str,
+-        retries: int = 5,
++        retries: int = 3,
+         timeout: float = 10.0,
+         backoff: float = 0.5,
+         opener=urlopen,
+     ):
++        if retries < 1:
++            raise ValueError("retries must be at least 1")
+         self.base_url = base_url.rstrip("/")
+         self._headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+         self.retries = retries
+@@ -27,24 +42,32 @@ class DirectoryClient:
+         self._open = opener
+ 
+     def fetch_page(self, page: int, per_page: int = 100) -> dict:
+-        """One page of users. page counts from 1. Returns {"items": [...], "total_pages": n}."""
+-        if page < 1:
+-            raise ValueError("page counts from 1")
+-        body = self._get("/api/v1/users", {"page": page, "per_page": per_page})
+-        return {"items": body["users"], "total_pages": body["total_pages"]}
++        """One page of users. page counts from 0, as in API version 2. Returns {"items": [...], "total_pages": n}."""
++        if page < 0:
++            raise ValueError("page counts from 0")
++        body = self._get("/api/v2/users", {"page": page, "per_page": per_page})
++        items = [{k: u[k] for k in FIELDS if k in u} for u in body["users"]]
++        return {"items": items, "total_pages": math.ceil(body["total"] / per_page)}
++
++    def iter_users(self, per_page: int = 100) -> Iterator[dict]:
++        """Yields each user once, page by page."""
++        first = self.fetch_page(0, per_page)
++        yield from first["items"]
++        for page in range(1, first["total_pages"]):
++            yield from self.fetch_page(page, per_page)["items"]
+ 
+     def _get(self, path: str, params: dict) -> dict:
+         url = f"{self.base_url}{path}?{urlencode(params)}"
+-        last: Exception | None = None
+         for attempt in range(self.retries):
+             try:
+                 with self._open(Request(url, headers=self._headers), timeout=self.timeout) as r:
+                     return json.load(r)
+             except HTTPError as e:
+-                if e.code not in RETRY_STATUS:
++                if e.code not in RETRY_STATUS or attempt == self.retries:
++                    raise
++                delay = _retry_after(e) or self.backoff * 2**attempt
++            except URLError:
++                if attempt == self.retries:
+                     raise
+-                last = e
+-            except URLError as e:
+-                last = e
+-            time.sleep(self.backoff * 2**attempt)
+-        raise RuntimeError(f"GET {path} failed after {self.retries} attempts") from last
++                delay = self.backoff * 2**attempt
++            time.sleep(min(delay, MAX_DELAY_S))
+diff --git a/jobs/count_users.py b/jobs/count_users.py
+index 75f933c..b0a1dc2 100644
+--- a/jobs/count_users.py
++++ b/jobs/count_users.py
+@@ -4,13 +4,6 @@ from client import DirectoryClient
+ 
+ 
+ def run(client: DirectoryClient, dashboard) -> int:
+-    total = 0
+-    page = 1
+-    while True:
+-        data = client.fetch_page(page)
+-        total += len(data["items"])
+-        if page >= data["total_pages"]:
+-            break
+-        page += 1
++    total = sum(1 for _ in client.iter_users())
+     dashboard.report("directory_users", total)
+     return total
+diff --git a/tests/__init__.py b/tests/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/test_api.py b/tests/test_api.py
+new file mode 100644
+index 0000000..2aced3c
+--- /dev/null
++++ b/tests/test_api.py
+@@ -0,0 +1,59 @@
++import io
++import json
++from urllib.error import HTTPError
++from urllib.parse import parse_qs, urlparse
++
++import pytest
++
++from client.api import DirectoryClient
++
++
++class Server:
++    """A fake directory with total users, and scripted failures by request number."""
++
++    def __init__(self, total: int, failures: dict[int, int] | None = None):
++        self.total = total
++        self.failures = failures or {}
++        self.requests: list[dict] = []
++
++    def __call__(self, request, timeout):
++        n = len(self.requests)
++        query = {k: int(v[0]) for k, v in parse_qs(urlparse(request.full_url).query).items()}
++        self.requests.append(query)
++        if n in self.failures:
++            raise HTTPError(request.full_url, self.failures[n], "failure", {}, None)
++        start = query["page"] * query["per_page"]
++        users = [{"id": f"u{i}", "email": f"u{i}@example.test", "name": f"User {i}", "secret": "x"} for i in range(start, min(start + query["per_page"], self.total))]
++        return io.BytesIO(json.dumps({"users": users, "total": self.total}).encode())
++
++
++def client(server: Server) -> DirectoryClient:
++    return DirectoryClient("https://directory.example.test", "token", backoff=0, opener=server)
++
++
++def test_fetch_page_counts_from_zero():
++    server = Server(total=250)
++    page = client(server).fetch_page(0)
++    assert [u["id"] for u in page["items"]][:2] == ["u0", "u1"]
++    assert page["total_pages"] == 3
++
++
++def test_fetch_page_keeps_only_known_fields():
++    page = client(Server(total=1)).fetch_page(0)
++    assert page["items"] == [{"id": "u0", "email": "u0@example.test", "name": "User 0"}]
++
++
++def test_iter_users_yields_each_user_once():
++    ids = [u["id"] for u in client(Server(total=250)).iter_users(per_page=100)]
++    assert ids == [f"u{i}" for i in range(250)]
++
++
++def test_retries_a_busy_server():
++    server = Server(total=5, failures={0: 503})
++    assert len(client(server).fetch_page(0)["items"]) == 5
++    assert len(server.requests) == 2
++
++
++def test_does_not_retry_a_client_error():
++    with pytest.raises(HTTPError):
++        client(Server(total=5, failures={0: 404})).fetch_page(0)
+diff --git a/tests/test_count_users.py b/tests/test_count_users.py
+new file mode 100644
+index 0000000..cf7d0e8
+--- /dev/null
++++ b/tests/test_count_users.py
+@@ -0,0 +1,18 @@
++from client.api import DirectoryClient
++from jobs import count_users
++from tests.test_api import Server
++
++
++class Dashboard:
++    def __init__(self):
++        self.values: dict[str, int] = {}
++
++    def report(self, name: str, value: int) -> None:
++        self.values[name] = value
++
++
++def test_reports_every_user():
++    dashboard = Dashboard()
++    client = DirectoryClient("https://directory.example.test", "token", backoff=0, opener=Server(total=230))
++    assert count_users.run(client, dashboard) == 230
++    assert dashboard.values == {"directory_users": 230}

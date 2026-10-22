@@ -1,0 +1,5 @@
+# engine
+
+- C++17 for the implementation, C99 for the public headers and the plugins.
+- Run the tests with `ctest` before each commit.
+- Keep the public headers free of C++ types.

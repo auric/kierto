@@ -1,0 +1,47 @@
+{
+  "id": "ts-cache-race",
+  "title": "Add a cache for user lookups",
+  "language": "typescript",
+  "pr": {
+    "title": "Cache user lookups",
+    "description": "Adds an in-memory cache for `UserService.getUser` with a 60 s TTL and a limit of 10,000 entries. A hit on an entry older than 45 s refreshes it in the background.\n\nOther service instances do not share the cache, so a lookup can return data up to 60 s old after another instance changes the user. That is accepted for the team pages. An update through this instance removes the entry at once, so the next lookup reads the new row."
+  },
+  "task": "The team pages load the user profiles on each view, and the database is the bottleneck. Cache the user lookups for 60 s.\n\nA lookup may lag behind the other service instances. A change through this instance must show at the next lookup.",
+  "instructions": "Log through the Logger that the constructor gets. Do not call console directly.",
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/users/service.ts",
+      "side": "new",
+      "lines": [37, 38],
+      "severityMin": "major",
+      "module": "concurrency",
+      "note": "Race: a missed lookup writes the row it read after an await. An update that deletes the key in between leaves the old row cached for 60 s, against the PR promise."
+    },
+    {
+      "id": "B2",
+      "path": "src/users/cache.ts",
+      "side": "new",
+      "lines": [55, 55],
+      "severityMin": "minor",
+      "module": "core",
+      "note": "Off-by-one: the size check runs before the insert with >, so the cache holds maxEntries + 1 entries."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/users/service.ts",
+      "side": "new",
+      "lines": [58, 72],
+      "why": "The refresh looks like a floating promise, but catch logs the error, the set stops a second refresh, and setIfCurrent skips a write after a delete."
+    },
+    {
+      "id": "T2",
+      "path": "src/users/service.ts",
+      "side": "new",
+      "lines": [32, 35],
+      "why": "A hit can return data up to 60 s old after another instance changes the user. The PR text names this as intended."
+    }
+  ]
+}

@@ -1,0 +1,200 @@
+diff --git a/app/cli.py b/app/cli.py
+index d529b5b..8a408f0 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -1,27 +1,20 @@
+ import argparse
+-import csv
+ import sys
+ 
+-from app.db import query
+-
+-
+-def export(out_path: str) -> int:
+-    rows = query("SELECT id, email FROM accounts WHERE deleted_at IS NULL ORDER BY id")
+-    with open(out_path, "w", newline="", encoding="utf-8") as f:
+-        writer = csv.writer(f)
+-        writer.writerow(["id", "email"])
+-        writer.writerows((r["id"], r["email"]) for r in rows)
+-    return len(rows)
++from app.exporter import fetch_accounts, write_export
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+     parser = argparse.ArgumentParser(prog="accounts")
+     sub = parser.add_subparsers(dest="command", required=True)
+-    export_cmd = sub.add_parser("export", help="write the active accounts to a CSV file")
+-    export_cmd.add_argument("--out", required=True, help="the CSV file to write")
++    export_cmd = sub.add_parser("export", help="write the accounts to a file")
++    export_cmd.add_argument("--target", required=True, help="the file to write")
++    export_cmd.add_argument("--format", choices=["csv", "jsonl"], default="csv")
+     args = parser.parse_args(argv)
+     if args.command == "export":
+-        print(f"exported {export(args.out)} accounts")
++        rows = fetch_accounts()
++        write_export(rows, args.target, args.format)
++        print(f"exported {len(rows)} accounts to {args.target}")
+     return 0
+ 
+ 
+diff --git a/app/exporter.py b/app/exporter.py
+new file mode 100644
+index 0000000..e2208af
+--- /dev/null
++++ b/app/exporter.py
+@@ -0,0 +1,47 @@
++"""The account export as CSV or JSON Lines. The CLI and the HTTP handler share it."""
++
++import csv
++import io
++import json
++from collections.abc import Iterable, Iterator
++
++from app.db import query
++
++COLUMNS = ("id", "email", "name", "created_at")
++
++
++def fetch_accounts(limit: int | None = None) -> list[dict]:
++    sql = "SELECT id, email, name, created_at FROM accounts ORDER BY id"
++    if limit is not None:
++        return query(sql + " LIMIT ?", (limit,))
++    return query(sql)
++
++
++def _take(buf: io.StringIO) -> str:
++    value = buf.getvalue()
++    buf.seek(0)
++    buf.truncate()
++    return value
++
++
++def csv_lines(rows: Iterable[dict]) -> Iterator[str]:
++    """The header line, then one CSV line per row."""
++    buf = io.StringIO()
++    writer = csv.writer(buf)
++    writer.writerow(COLUMNS)
++    yield _take(buf)
++    for row in rows:
++        writer.writerow([row[c] for c in COLUMNS])
++        yield _take(buf)
++
++
++def jsonl_lines(rows: Iterable[dict]) -> Iterator[str]:
++    """One JSON object per row and line."""
++    for row in rows:
++        yield json.dumps({c: row[c] for c in COLUMNS}, ensure_ascii=False) + "\n"
++
++
++def write_export(rows: list[dict], path: str, fmt: str) -> None:
++    lines = csv_lines(rows) if fmt == "csv" else jsonl_lines(rows)
++    with open(path, "w", newline="", encoding="utf-8") as f:
++        f.writelines(lines)
+diff --git a/app/handlers/export.py b/app/handlers/export.py
+new file mode 100644
+index 0000000..1dff064
+--- /dev/null
++++ b/app/handlers/export.py
+@@ -0,0 +1,19 @@
++import os
++
++from app.exporter import csv_lines, fetch_accounts, jsonl_lines
++
++FORMATS = {
++    "csv": ("text/csv; charset=utf-8", csv_lines),
++    "jsonl": ("application/x-ndjson", jsonl_lines),
++}
++
++
++def export_accounts(params: dict[str, str]) -> tuple[int, dict]:
++    """GET /accounts/export?format=csv for the finance team."""
++    fmt = params.get("format", "csv")
++    if fmt not in FORMATS:
++        return 400, {"error": "format must be csv or jsonl"}
++    max_rows = int(os.environ.get("EXPORT_MAX_ROWS", "100000"))
++    rows = fetch_accounts(limit=max_rows)
++    content_type, lines = FORMATS[fmt]
++    return 200, {"content_type": content_type, "body": "".join(lines(rows)), "rows": len(rows)}
+diff --git a/docs/export.md b/docs/export.md
+new file mode 100644
+index 0000000..b9cc166
+--- /dev/null
++++ b/docs/export.md
+@@ -0,0 +1,8 @@
++# Account export
++
++The finance team imports the accounts each night.
++
++- CLI: `python -m app.cli export --target accounts.csv [--format csv|jsonl]`
++- HTTP: `GET /accounts/export?format=csv`. The answer has at most `EXPORT_MAX_ROWS` rows (default 100,000).
++
++Columns: `id`, `email`, `name`, `created_at`. The name and the creation date are new in 5.3; the finance team needs them for the invoice address check.
+diff --git a/tests/test_export.py b/tests/test_export.py
+new file mode 100644
+index 0000000..a8e96ec
+--- /dev/null
++++ b/tests/test_export.py
+@@ -0,0 +1,63 @@
++import csv
++import io
++import json
++import sqlite3
++
++import pytest
++
++from app import config
++from app.exporter import csv_lines, jsonl_lines, write_export
++from app.handlers.export import export_accounts
++
++
++@pytest.fixture
++def accounts_db(tmp_path):
++    path = tmp_path / "accounts.db"
++    conn = sqlite3.connect(path)
++    conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, email TEXT, name TEXT, created_at TEXT, deleted_at TEXT)")
++    conn.executemany(
++        "INSERT INTO accounts (id, email, name, created_at) VALUES (?, ?, ?, ?)",
++        [(1, "ana@example.test", "Ana, Jr.", "2026-01-02"), (2, "bo@example.test", 'Bo "B" Lee', "2026-02-03")],
++    )
++    conn.commit()
++    conn.close()
++    config.set_tenant("test", {"DB_PATH": str(path)})
++    yield path
++    config.set_tenant("default")
++
++
++ROWS = [{"id": 1, "email": "ana@example.test", "name": "Ana, Jr.", "created_at": "2026-01-02"}]
++
++
++def test_csv_quotes_commas_and_quotes():
++    text = "".join(csv_lines(ROWS + [{"id": 2, "email": "b@example.test", "name": 'Bo "B"', "created_at": "x"}]))
++    assert list(csv.reader(io.StringIO(text)))[1:] == [
++        ["1", "ana@example.test", "Ana, Jr.", "2026-01-02"],
++        ["2", "b@example.test", 'Bo "B"', "x"],
++    ]
++
++
++def test_csv_of_no_rows_has_the_header():
++    assert "".join(csv_lines([])).strip() == "id,email,name,created_at"
++
++
++def test_jsonl_has_one_object_per_line():
++    lines = list(jsonl_lines(ROWS))
++    assert [json.loads(line)["name"] for line in lines] == ["Ana, Jr."]
++
++
++def test_handler_refuses_an_unknown_format(accounts_db):
++    assert export_accounts({"format": "xml"})[0] == 400
++
++
++def test_handler_exports_csv(accounts_db):
++    status, body = export_accounts({})
++    assert status == 200
++    assert body["rows"] == 2
++    assert body["content_type"].startswith("text/csv")
++
++
++def test_write_export_writes_a_file(accounts_db, tmp_path):
++    out = tmp_path / "out.jsonl"
++    write_export([dict(ROWS[0])], str(out), "jsonl")
++    assert json.loads(out.read_text(encoding="utf-8"))["id"] == 1

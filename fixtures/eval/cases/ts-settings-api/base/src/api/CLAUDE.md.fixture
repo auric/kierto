@@ -1,0 +1,7 @@
+# API handlers
+
+These rules apply to the files in src/api/.
+
+- Validate each request body with a schema from src/api/schemas.ts and parseBody(). Do not read fields of req.body by hand.
+- Check req.user?.admin before any change to settings. Return 403 otherwise.
+- Keep the response shape of /v1 stable. Add fields, but never rename or remove a field.

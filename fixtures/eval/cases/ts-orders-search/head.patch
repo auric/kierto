@@ -1,0 +1,246 @@
+diff --git a/src/http/orders.ts b/src/http/orders.ts
+index 4c01ef5..15d2f85 100644
+--- a/src/http/orders.ts
++++ b/src/http/orders.ts
+@@ -1,22 +1,62 @@
+ import type { Db } from "../db";
+-import { getOrder, listOrders } from "../orders/repo";
++import { getOrder, listOrders, MAX_PAGE_SIZE } from "../orders/repo";
++import { searchOrders } from "../orders/search";
+ 
+ export type Request = { query: Record<string, string | undefined>; params: Record<string, string> };
+ export type Response = { status: number; body: unknown };
+ 
++// fallback: the value of an absent parameter. null: the parameter is not an integer.
++function intParam(value: string | undefined, fallback: number): number | null {
++  if (value === undefined || value === "") return fallback;
++  const n = Number(value);
++  return Number.isInteger(n) ? n : null;
++}
++
++const badRequest = (error: string): Response => ({ status: 400, body: { error } });
++
+ export function orderRoutes(db: Db) {
+   return {
+-    // GET /orders?page=2
++    // GET /orders?offset=100&limit=50
+     async list(req: Request): Promise<Response> {
+-      const page = Number(req.query.page ?? "1");
+-      if (!Number.isInteger(page) || page < 1) return { status: 400, body: { error: "page must be a positive integer" } };
+-      return { status: 200, body: await listOrders(db, page) };
++      const offset = intParam(req.query.offset, 0);
++      const limit = intParam(req.query.limit, 50);
++      if (offset === null || offset < 0) return badRequest("offset must be a non-negative integer");
++      if (limit === null || limit < 1 || limit > MAX_PAGE_SIZE) return badRequest(`limit must be 1 to ${MAX_PAGE_SIZE}`);
++      return { status: 200, body: await listOrders(db, offset, limit) };
++    },
++
++    // GET /orders/search?q=smith&status=paid,shipped&from=2026-01-01&sort=total&order=asc
++    async search(req: Request): Promise<Response> {
++      const offset = intParam(req.query.offset, 0);
++      const limit = intParam(req.query.limit, 50);
++      const minTotal = req.query.minTotal === undefined ? undefined : intParam(req.query.minTotal, 0);
++      if (offset === null || limit === null || minTotal === null) return badRequest("offset, limit, and minTotal must be integers");
++      try {
++        const result = await searchOrders(db, {
++          text: req.query.q,
++          statuses: req.query.status
++            ?.split(",")
++            .map((s) => s.trim())
++            .filter(Boolean),
++          from: req.query.from,
++          to: req.query.to,
++          minTotalCents: minTotal,
++          sort: req.query.sort,
++          order: req.query.order,
++          offset,
++          limit,
++        });
++        return { status: 200, body: result };
++      } catch (e) {
++        if (e instanceof RangeError) return badRequest(e.message);
++        throw e;
++      }
+     },
+ 
+     // GET /orders/:id
+     async get(req: Request): Promise<Response> {
+       const id = Number(req.params.id);
+-      if (!Number.isInteger(id)) return { status: 400, body: { error: "invalid id" } };
++      if (!Number.isInteger(id)) return badRequest("invalid id");
+       const order = await getOrder(db, id);
+       return order ? { status: 200, body: order } : { status: 404, body: { error: "not found" } };
+     },
+diff --git a/src/orders/repo.ts b/src/orders/repo.ts
+index 8dc643a..855dde4 100644
+--- a/src/orders/repo.ts
++++ b/src/orders/repo.ts
+@@ -4,10 +4,13 @@ import type { Order } from "./types";
+ export const ORDER_COLUMNS =
+   "id, customer_name AS \"customerName\", status, total_cents AS \"totalCents\", created_at AS \"createdAt\"";
+ 
+-// page counts from 1.
+-export async function listOrders(db: Db, page: number, pageSize = 50): Promise<Order[]> {
+-  if (!Number.isInteger(page) || page < 1) throw new RangeError("page must be a positive integer");
+-  return db.query<Order>(`SELECT ${ORDER_COLUMNS} FROM orders ORDER BY id LIMIT $1 OFFSET $2`, [pageSize, (page - 1) * pageSize]);
++export const MAX_PAGE_SIZE = 200;
++
++// offset counts rows from 0, so a client can ask for the rows after the ones it already shows.
++export async function listOrders(db: Db, offset: number, limit = 50): Promise<Order[]> {
++  if (!Number.isInteger(offset) || offset < 0) throw new RangeError("offset must be a non-negative integer");
++  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PAGE_SIZE) throw new RangeError(`limit must be 1 to ${MAX_PAGE_SIZE}`);
++  return db.query<Order>(`SELECT ${ORDER_COLUMNS} FROM orders ORDER BY id LIMIT $1 OFFSET $2`, [limit, offset]);
+ }
+ 
+ export async function getOrder(db: Db, id: number): Promise<Order | null> {
+diff --git a/src/orders/search.ts b/src/orders/search.ts
+new file mode 100644
+index 0000000..cb69190
+--- /dev/null
++++ b/src/orders/search.ts
+@@ -0,0 +1,82 @@
++import type { Db } from "../db";
++import { ORDER_COLUMNS } from "./repo";
++import { ORDER_STATUSES, type Order, type OrderStatus } from "./types";
++
++export type SearchQuery = {
++  text?: string;
++  statuses?: string[];
++  from?: string;
++  to?: string;
++  minTotalCents?: number;
++  sort?: string;
++  order?: string;
++  offset?: number;
++  limit?: number;
++};
++
++export type SearchResult = { rows: Order[]; total: number };
++
++export type BuiltSearch = { sql: string; params: unknown[]; countSql: string; countParams: unknown[] };
++
++const SORT_COLUMNS: Record<string, string> = {
++  created: "created_at",
++  total: "total_cents",
++  customer: "customer_name",
++};
++const DATE = /^\d{4}-\d{2}-\d{2}$/;
++const DEFAULT_LIMIT = 50;
++const MAX_LIMIT = 200;
++
++const isStatus = (s: string): s is OrderStatus => (ORDER_STATUSES as readonly string[]).includes(s);
++
++// Escapes the LIKE wildcards, so a search for "50%" matches that text and not every row.
++const likePattern = (text: string) => `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
++
++function checkInt(name: string, value: number | undefined, min: number) {
++  if (value !== undefined && (!Number.isInteger(value) || value < min)) throw new RangeError(`${name} must be an integer of at least ${min}`);
++}
++
++export function buildSearch(q: SearchQuery): BuiltSearch {
++  checkInt("offset", q.offset, 0);
++  checkInt("limit", q.limit, 1);
++  checkInt("minTotalCents", q.minTotalCents, 0);
++  const where: string[] = [];
++  const params: unknown[] = [];
++  const param = (v: unknown) => {
++    params.push(v);
++    return `$${params.length}`;
++  };
++
++  const text = q.text?.trim();
++  if (text) where.push(`customer_name ILIKE ${param(likePattern(text))}`);
++
++  if (q.statuses?.length) {
++    const statuses = q.statuses.filter(isStatus);
++    if (statuses.length) where.push(`status IN (${statuses.map((s) => `'${s}'`).join(", ")})`);
++  }
++
++  if (q.from !== undefined) {
++    if (!DATE.test(q.from)) throw new RangeError("from must be YYYY-MM-DD");
++    where.push(`created_at >= ${param(q.from)}`);
++  }
++  if (q.to !== undefined) {
++    if (!DATE.test(q.to)) throw new RangeError("to must be YYYY-MM-DD");
++    where.push(`created_at < (${param(q.to)}::date + 1)`);
++  }
++  if (q.minTotalCents !== undefined) where.push(`total_cents >= ${param(q.minTotalCents)}`);
++
++  const filter = where.length ? ` WHERE ${where.join(" AND ")}` : "";
++  const countSql = `SELECT count(*)::int AS total FROM orders${filter}`;
++  const countParams = [...params];
++  const column = SORT_COLUMNS[q.sort ?? "created"] ?? "created_at";
++  const direction = (q.order ?? "desc").toUpperCase();
++  const limit = Math.min(q.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
++  const sql = `SELECT ${ORDER_COLUMNS} FROM orders${filter} ORDER BY ${column} ${direction}, id LIMIT ${param(limit)} OFFSET ${param(q.offset ?? 0)}`;
++  return { sql, params, countSql, countParams };
++}
++
++export async function searchOrders(db: Db, q: SearchQuery): Promise<SearchResult> {
++  const s = buildSearch(q);
++  const [rows, count] = await Promise.all([db.query<Order>(s.sql, s.params), db.query<{ total: number }>(s.countSql, s.countParams)]);
++  return { rows, total: count[0]?.total ?? 0 };
++}
+diff --git a/tests/orders/search.test.ts b/tests/orders/search.test.ts
+new file mode 100644
+index 0000000..11b6e5d
+--- /dev/null
++++ b/tests/orders/search.test.ts
+@@ -0,0 +1,57 @@
++import { describe, expect, it } from "vitest";
++import { buildSearch, searchOrders } from "../../src/orders/search";
++
++describe("buildSearch", () => {
++  it("builds a query without filters", () => {
++    const s = buildSearch({});
++    expect(s.sql).toMatch(/FROM orders ORDER BY created_at DESC, id LIMIT \$1 OFFSET \$2$/);
++    expect(s.params).toEqual([50, 0]);
++    expect(s.countSql).toBe("SELECT count(*)::int AS total FROM orders");
++    expect(s.countParams).toEqual([]);
++  });
++
++  it("escapes LIKE wildcards in the search text", () => {
++    const s = buildSearch({ text: " 50%_off " });
++    expect(s.sql).toContain("customer_name ILIKE $1");
++    expect(s.params[0]).toBe("%50\\%\\_off%");
++  });
++
++  it("keeps only known statuses", () => {
++    expect(buildSearch({ statuses: ["paid", "lost"] }).sql).toContain("status IN ('paid')");
++    expect(buildSearch({ statuses: ["lost"] }).sql).not.toContain("status IN");
++  });
++
++  it("filters by date range and total", () => {
++    const s = buildSearch({ from: "2026-01-01", to: "2026-01-31", minTotalCents: 1000 });
++    expect(s.sql).toContain("created_at >= $1 AND created_at < ($2::date + 1) AND total_cents >= $3");
++    expect(s.countParams).toEqual(["2026-01-01", "2026-01-31", 1000]);
++  });
++
++  it("rejects a malformed date and a negative offset", () => {
++    expect(() => buildSearch({ from: "01/02/2026" })).toThrow(RangeError);
++    expect(() => buildSearch({ offset: -1 })).toThrow(RangeError);
++  });
++
++  it("sorts by a known column and falls back for an unknown one", () => {
++    expect(buildSearch({ sort: "total", order: "asc" }).sql).toContain("ORDER BY total_cents ASC, id");
++    expect(buildSearch({ sort: "password" }).sql).toContain("ORDER BY created_at DESC, id");
++  });
++
++  it("caps the limit", () => {
++    expect(buildSearch({ limit: 5000 }).params).toEqual([200, 0]);
++  });
++});
++
++describe("searchOrders", () => {
++  it("returns the rows and the total", async () => {
++    const calls: string[] = [];
++    const db = {
++      query: async <T>(sql: string): Promise<T[]> => {
++        calls.push(sql);
++        return (sql.startsWith("SELECT count") ? [{ total: 3 }] : [{ id: 1 }]) as T[];
++      },
++    };
++    expect(await searchOrders(db, { text: "smith" })).toEqual({ rows: [{ id: 1 }], total: 3 });
++    expect(calls).toHaveLength(2);
++  });
++});

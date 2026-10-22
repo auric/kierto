@@ -1,0 +1,45 @@
+{
+  "id": "py-report-sql",
+  "title": "Add a regional sales report",
+  "language": "python",
+  "pr": {
+    "title": "Regional sales report as JSON and PDF",
+    "description": "Adds `GET /reports/regional` and `GET /reports/regional.pdf`: the best-selling products of one region since a day. The PDF comes from `wkhtmltopdf`.\n\nThe totals are rounded to whole euros, as the finance team asked for these reports. The monthly report keeps its cents."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "app/reports/regional.py",
+      "side": "new",
+      "lines": [21, 21],
+      "severityMin": "major",
+      "module": "security",
+      "note": "Injection: the region from the query string goes into the SQL text in quotes. The query already uses a placeholder for the day."
+    },
+    {
+      "id": "B2",
+      "path": "app/reports/regional.py",
+      "side": "new",
+      "lines": [60, 61],
+      "severityMin": "minor",
+      "module": "core",
+      "note": "Unchecked error: subprocess.run has no check=True and the exit code is ignored, so a failed render answers 200 with an empty or partial PDF."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "app/reports/regional.py",
+      "side": "new",
+      "lines": [24, 24],
+      "why": "The limit goes into the SQL text, but int() and min() make it a bounded integer."
+    },
+    {
+      "id": "T2",
+      "path": "app/reports/regional.py",
+      "side": "new",
+      "lines": [29, 29],
+      "why": "Rounding to whole euros is intended. The PR text names it."
+    }
+  ]
+}

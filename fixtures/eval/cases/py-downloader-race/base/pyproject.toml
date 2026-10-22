@@ -1,0 +1,10 @@
+[project]
+name = "archive-fetcher"
+version = "0.7.0"
+requires-python = ">=3.11"
+
+[project.scripts]
+archive-fetch = "fetcher.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest==8.4.1"]

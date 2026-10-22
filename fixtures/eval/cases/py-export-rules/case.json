@@ -1,0 +1,48 @@
+{
+  "id": "py-export-rules",
+  "title": "Export accounts as CSV or JSON Lines",
+  "language": "python",
+  "pr": {
+    "title": "Account export over HTTP and as JSON Lines",
+    "description": "Adds `GET /accounts/export` and JSON Lines output. The CLI and the handler share `app/exporter.py`.\n\nThe export now has the name and the creation date, as the finance team asked for the invoice address check. The CLI flag is now `--target`, next to the new `--format`."
+  },
+  "task": "Finance needs a nightly account export with the name and the creation date, as CSV or JSON Lines, from the CLI and over HTTP for checks on demand.\n\nExport only active accounts: soft-deleted accounts (deleted_at set) must not leave the service.\n\nKeep the nightly job working.",
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "app/handlers/export.py",
+      "side": "new",
+      "lines": [16, 16],
+      "severityMin": "minor",
+      "module": "rules",
+      "note": "Wrong rule per the scoped app/handlers/CLAUDE.md: the handler reads os.environ instead of get_setting(), so tenant overrides do not apply, and a bad value raises."
+    },
+    {
+      "id": "B2",
+      "path": "app/exporter.py",
+      "side": "new",
+      "lines": [14, 14],
+      "severityMin": "major",
+      "module": "intent",
+      "note": "Task requirement missed: the query has no deleted_at IS NULL filter, so soft-deleted accounts leave the service. The old export had the filter."
+    },
+    {
+      "id": "B3",
+      "path": "app/cli.py",
+      "side": "new",
+      "lines": [11, 11],
+      "severityMin": "major",
+      "module": "api",
+      "note": "Broken API compatibility: the CLI flag --out becomes --target with no alias, and the unchanged ops/nightly.sh still passes --out, so the nightly export fails."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "app/exporter.py",
+      "side": "new",
+      "lines": [10, 10],
+      "why": "The new name and created_at columns are intended. The task, the PR text, and docs/export.md name them."
+    }
+  ]
+}

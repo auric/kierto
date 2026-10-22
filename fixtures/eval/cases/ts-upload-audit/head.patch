@@ -1,0 +1,239 @@
+diff --git a/src/routes.ts b/src/routes.ts
+index e25d969..58a3f79 100644
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -1,6 +1,8 @@
+ import type { AuditLog } from "./audit";
+ import type { Request, Response } from "./http";
+ import { type ProfileStore, profileRoutes } from "./profile/routes";
++import type { BlobStore } from "./storage";
++import { avatarRoutes } from "./uploads/avatar";
+ 
+ export type Route = {
+   method: "GET" | "POST" | "PUT";
+@@ -8,7 +10,11 @@ export type Route = {
+   handle: (req: Request) => Promise<Response>;
+ };
+ 
+-export function routes(deps: { profiles: ProfileStore; audit: AuditLog }): Route[] {
++export function routes(deps: { profiles: ProfileStore; audit: AuditLog; blobs: BlobStore }): Route[] {
+   const profile = profileRoutes(deps.profiles, deps.audit);
+-  return [{ method: "PUT", path: "/me/name", handle: profile.rename }];
++  const avatar = avatarRoutes(deps.blobs);
++  return [
++    { method: "PUT", path: "/me/name", handle: profile.rename },
++    { method: "PUT", path: "/me/avatar", handle: avatar.upload },
++  ];
+ }
+diff --git a/src/uploads/avatar.ts b/src/uploads/avatar.ts
+new file mode 100644
+index 0000000..a5b9971
+--- /dev/null
++++ b/src/uploads/avatar.ts
+@@ -0,0 +1,58 @@
++import { randomUUID } from "node:crypto";
++import { createWriteStream } from "node:fs";
++import { open, unlink } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { pipeline } from "node:stream/promises";
++import type { Request, Response } from "../http";
++import type { BlobStore } from "../storage";
++import { limitBytes, TooLarge } from "./limit";
++import { type ImageKind, sniffImage } from "./sniff";
++
++export const MAX_AVATAR_BYTES = 10 * 1024 * 1024;
++const SNIFF_BYTES = 16;
++const TOO_LARGE: Response = { status: 413, body: { error: "The image is larger than 10 MB." } };
++
++const CONTENT_TYPE: Record<ImageKind, string> = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" };
++
++async function readHead(path: string): Promise<Uint8Array> {
++  const file = await open(path, "r");
++  try {
++    const buf = Buffer.alloc(SNIFF_BYTES);
++    const { bytesRead } = await file.read(buf, 0, SNIFF_BYTES, 0);
++    return buf.subarray(0, bytesRead);
++  } finally {
++    await file.close();
++  }
++}
++
++export function avatarRoutes(blobs: BlobStore) {
++  return {
++    // PUT /me/avatar with the image as the raw body.
++    async upload(req: Request): Promise<Response> {
++      if (!req.user) return { status: 401 };
++      const declared = Number(req.headers["content-length"] ?? "0");
++      if (declared > MAX_AVATAR_BYTES) return TOO_LARGE;
++
++      const temp = join(tmpdir(), `avatar-${randomUUID()}`);
++      try {
++        await pipeline(req.body, limitBytes(MAX_AVATAR_BYTES), createWriteStream(temp, { flags: "wx" }));
++      } catch (e) {
++        await unlink(temp).catch(() => {});
++        if (e instanceof TooLarge) return TOO_LARGE;
++        throw e;
++      }
++
++      const kind = sniffImage(await readHead(temp));
++      if (kind === null) return { status: 415, body: { error: "Upload a PNG, JPEG, or WebP image." } };
++
++      const key = `avatars/${req.user.id}`;
++      try {
++        await blobs.putFile(key, temp, CONTENT_TYPE[kind]);
++      } finally {
++        await unlink(temp).catch(() => {});
++      }
++      return { status: 200, body: { url: blobs.url(key) } };
++    },
++  };
++}
+diff --git a/src/uploads/limit.ts b/src/uploads/limit.ts
+new file mode 100644
+index 0000000..8e57879
+--- /dev/null
++++ b/src/uploads/limit.ts
+@@ -0,0 +1,19 @@
++import { Transform, type TransformCallback } from "node:stream";
++
++export class TooLarge extends Error {
++  constructor(readonly limit: number) {
++    super(`The body is larger than ${limit} bytes.`);
++  }
++}
++
++// Passes the bytes through and fails the stream as soon as more than max bytes went by.
++export function limitBytes(max: number): Transform {
++  let seen = 0;
++  return new Transform({
++    transform(chunk: Buffer, _encoding: BufferEncoding, done: TransformCallback) {
++      seen += chunk.length;
++      if (seen > max) done(new TooLarge(max));
++      else done(null, chunk);
++    },
++  });
++}
+diff --git a/src/uploads/sniff.ts b/src/uploads/sniff.ts
+new file mode 100644
+index 0000000..73c690d
+--- /dev/null
++++ b/src/uploads/sniff.ts
+@@ -0,0 +1,15 @@
++export type ImageKind = "png" | "jpeg" | "webp";
++
++const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
++const JPG = [0xff, 0xd8, 0xff];
++
++const sw = (b: Uint8Array, s: number[]) => b.length >= s.length && s.every((x, i) => b[i] === x);
++const asc = (b: Uint8Array, f: number, t: number) => String.fromCharCode(...b.subarray(f, t));
++
++// The type from the magic bytes. The content type of the client is not trusted.
++export function sniffImage(b: Uint8Array): ImageKind | null {
++  if (sw(b, PNG)) return "png";
++  if (sw(b, JPG)) return "jpeg";
++  if (b.length >= 12 && asc(b, 0, 4) === "RIFF" && asc(b, 8, 12) === "WEBP") return "webp";
++  return null;
++}
+diff --git a/tests/uploads/avatar.test.ts b/tests/uploads/avatar.test.ts
+new file mode 100644
+index 0000000..d201173
+--- /dev/null
++++ b/tests/uploads/avatar.test.ts
+@@ -0,0 +1,62 @@
++import { readFile } from "node:fs/promises";
++import { Readable } from "node:stream";
++import { describe, expect, it } from "vitest";
++import type { Request } from "../../src/http";
++import type { BlobStore } from "../../src/storage";
++import { avatarRoutes, MAX_AVATAR_BYTES } from "../../src/uploads/avatar";
++
++const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
++
++function memoryBlobs() {
++  const stored = new Map<string, { data: Buffer; type: string }>();
++  const blobs: BlobStore = {
++    putFile: async (key, path, type) => {
++      stored.set(key, { data: await readFile(path), type });
++    },
++    delete: async (key) => {
++      stored.delete(key);
++    },
++    url: (key) => `https://cdn.example.test/${key}`,
++  };
++  return { blobs, stored };
++}
++
++const request = (body: Buffer, headers: Record<string, string> = {}): Request => ({
++  user: { id: "u7", name: "Sam" },
++  headers,
++  params: {},
++  body: Readable.from([body]),
++});
++
++describe("PUT /me/avatar", () => {
++  it("stores a PNG under the user ID", async () => {
++    const { blobs, stored } = memoryBlobs();
++    const res = await avatarRoutes(blobs).upload(request(PNG));
++    expect(res).toEqual({ status: 200, body: { url: "https://cdn.example.test/avatars/u7" } });
++    expect(stored.get("avatars/u7")).toEqual({ data: PNG, type: "image/png" });
++  });
++
++  it("refuses a body that is not an image", async () => {
++    const { blobs, stored } = memoryBlobs();
++    const res = await avatarRoutes(blobs).upload(request(Buffer.from("plain text")));
++    expect(res.status).toBe(415);
++    expect(stored.size).toBe(0);
++  });
++
++  it("refuses a declared size above the limit", async () => {
++    const { blobs } = memoryBlobs();
++    const res = await avatarRoutes(blobs).upload(request(PNG, { "content-length": String(MAX_AVATAR_BYTES + 1) }));
++    expect(res.status).toBe(413);
++  });
++
++  it("refuses a body above the limit without a declared size", async () => {
++    const { blobs } = memoryBlobs();
++    const res = await avatarRoutes(blobs).upload(request(Buffer.alloc(MAX_AVATAR_BYTES + 1)));
++    expect(res.status).toBe(413);
++  });
++
++  it("needs a signed-in user", async () => {
++    const { blobs } = memoryBlobs();
++    expect((await avatarRoutes(blobs).upload({ ...request(PNG), user: null })).status).toBe(401);
++  });
++});
+diff --git a/tests/uploads/sniff.test.ts b/tests/uploads/sniff.test.ts
+new file mode 100644
+index 0000000..0d9d293
+--- /dev/null
++++ b/tests/uploads/sniff.test.ts
+@@ -0,0 +1,28 @@
++import { describe, expect, it } from "vitest";
++import { sniffImage } from "../../src/uploads/sniff";
++
++const bytes = (...b: number[]) => Uint8Array.from(b);
++const text = (s: string) => new TextEncoder().encode(s);
++
++describe("sniffImage", () => {
++  it("knows PNG", () => {
++    expect(sniffImage(bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0))).toBe("png");
++  });
++
++  it("knows JPEG", () => {
++    expect(sniffImage(bytes(0xff, 0xd8, 0xff, 0xe0))).toBe("jpeg");
++  });
++
++  it("knows WebP", () => {
++    const head = new Uint8Array(12);
++    head.set(text("RIFF"), 0);
++    head.set(text("WEBP"), 8);
++    expect(sniffImage(head)).toBe("webp");
++  });
++
++  it("refuses text and short input", () => {
++    expect(sniffImage(text("<svg onload=alert(1)>"))).toBeNull();
++    expect(sniffImage(bytes(0x89, 0x50))).toBeNull();
++    expect(sniffImage(new Uint8Array(0))).toBeNull();
++  });
++});

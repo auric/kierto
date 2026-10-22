@@ -1,0 +1,289 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c66c893..a1e16f2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4,5 +4,11 @@ project(telemetry CXX)
+ set(CMAKE_CXX_STANDARD 17)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ 
+-add_library(telemetry src/reader.cpp src/parser.cpp)
++add_library(telemetry src/reader.cpp src/parser.cpp src/parser_v2.cpp src/crc16.cpp)
+ target_include_directories(telemetry PUBLIC include PRIVATE src)
++
++enable_testing()
++add_executable(parser_v2_test tests/parser_v2_test.cpp)
++target_include_directories(parser_v2_test PRIVATE src)
++target_link_libraries(parser_v2_test PRIVATE telemetry)
++add_test(NAME parser_v2_test COMMAND parser_v2_test)
+diff --git a/docs/protocol-v2.md b/docs/protocol-v2.md
+new file mode 100644
+index 0000000..9f80874
+--- /dev/null
++++ b/docs/protocol-v2.md
+@@ -0,0 +1,18 @@
++# Telemetry packet, version 2
++
++All numbers are little endian.
++
++| Offset | Size | Field |
++|---|---|---|
++| 0 | 2 | Magic `TL` |
++| 2 | 1 | Version, always 2 |
++| 3 | 4 | Device ID |
++| 7 | 2 | Sample count N, at most 1024 |
++| 9 | 6 N | Samples: 2 bytes sensor ID, 4 bytes signed value |
++| 9 + 6 N | 1 | Label length L, 0 to 31 |
++| 10 + 6 N | L | Label, ASCII, no NUL |
++| 10 + 6 N + L | 2 | CRC-16/CCITT-FALSE of bytes 2 to 9 + 6 N + L |
++
++The collector keeps the label NUL-terminated in a 32-byte field, so a label has at most 31 bytes.
++
++A packet that fails a check is dropped and counted. The device sends the next one after its interval.
+diff --git a/src/crc16.cpp b/src/crc16.cpp
+new file mode 100644
+index 0000000..5a69ce5
+--- /dev/null
++++ b/src/crc16.cpp
+@@ -0,0 +1,15 @@
++#include "crc16.h"
++
++namespace telemetry {
++
++std::uint16_t crc16(const std::uint8_t* data, std::size_t size) {
++  std::uint16_t crc = 0xFFFF;
++  for (std::size_t i = 0; i < size; ++i) {
++    crc = static_cast<std::uint16_t>(crc ^ (static_cast<std::uint16_t>(data[i]) << 8));
++    for (int bit = 0; bit < 8; ++bit)
++      crc = (crc & 0x8000) ? static_cast<std::uint16_t>((crc << 1) ^ 0x1021) : static_cast<std::uint16_t>(crc << 1);
++  }
++  return crc;
++}
++
++}  // namespace telemetry
+diff --git a/src/crc16.h b/src/crc16.h
+new file mode 100644
+index 0000000..069d827
+--- /dev/null
++++ b/src/crc16.h
+@@ -0,0 +1,11 @@
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++
++namespace telemetry {
++
++// CRC-16/CCITT-FALSE: polynomial 0x1021, initial value 0xFFFF, no reflection, no final XOR.
++std::uint16_t crc16(const std::uint8_t* data, std::size_t size);
++
++}  // namespace telemetry
+diff --git a/src/parser.cpp b/src/parser.cpp
+index 516d7d9..12bb21a 100644
+--- a/src/parser.cpp
++++ b/src/parser.cpp
+@@ -1,11 +1,10 @@
+ #include "telemetry/packet.h"
+ 
++#include "parsers.h"
+ #include "reader.h"
+ 
+ namespace telemetry {
+ 
+-namespace {
+-
+ // Version 1: magic "TL", version, 4 bytes device ID, 1 byte sample count, 6 bytes per sample. No label, no checksum.
+ ParseError parseV1(const std::uint8_t* data, std::size_t size, Packet& out) {
+   ByteReader r(data + 3, size - 3);
+@@ -22,13 +21,17 @@ ParseError parseV1(const std::uint8_t* data, std::size_t size, Packet& out) {
+   return ParseError::kNone;
+ }
+ 
+-}  // namespace
+-
+ ParseError parsePacket(const std::uint8_t* data, std::size_t size, Packet& out) {
+   if (size < 3) return ParseError::kTooShort;
+   if (data[0] != 'T' || data[1] != 'L') return ParseError::kBadMagic;
+-  if (data[2] != 1) return ParseError::kBadVersion;
+-  return parseV1(data, size, out);
++  switch (data[2]) {
++    case 1:
++      return parseV1(data, size, out);
++    case 2:
++      return parseV2(data, size, out);
++    default:
++      return ParseError::kBadVersion;
++  }
+ }
+ 
+ const char* describe(ParseError e) {
+diff --git a/src/parser_v2.cpp b/src/parser_v2.cpp
+new file mode 100644
+index 0000000..1040566
+--- /dev/null
++++ b/src/parser_v2.cpp
+@@ -0,0 +1,46 @@
++#include "crc16.h"
++#include "parsers.h"
++#include "reader.h"
++
++namespace telemetry {
++
++namespace {
++
++// Magic, version, device ID, sample count, label length, and checksum.
++constexpr std::size_t kMinV2Size = 2 + 1 + 4 + 2 + 1 + 2;
++
++}  // namespace
++
++// docs/protocol-v2.md gives the layout.
++ParseError parseV2(const std::uint8_t* data, std::size_t size, Packet& out) {
++  if (size < kMinV2Size) return ParseError::kTooShort;
++  const std::uint16_t expected = crc16(data + 2, size - 4);
++
++  ByteReader r(data + 2, size - 2);
++  std::uint8_t version = 0;
++  std::uint16_t count = 0;
++  if (!r.u8(version) || !r.u32(out.header.deviceId) || !r.u16(count)) return ParseError::kTruncated;
++  if (count > kMaxSamples) return ParseError::kTooManySamples;
++  out.header.version = version;
++
++  out.samples.clear();
++  out.samples.reserve(count);
++  for (std::uint16_t i = 0; i < count; ++i) {
++    Sample s{};
++    if (!r.u16(s.sensor) || !r.i32(s.value)) return ParseError::kTruncated;
++    out.samples.push_back(s);
++  }
++
++  std::uint8_t labelLen = 0;
++  if (!r.u8(labelLen)) return ParseError::kTruncated;
++  if (labelLen > kLabelSize) return ParseError::kLabelTooLong;
++  if (!r.bytes(labelLen, out.header.label)) return ParseError::kTruncated;
++  out.header.label[labelLen] = '\0';
++
++  std::uint16_t crc;
++  r.u16(crc);
++  if (crc != expected) return ParseError::kBadChecksum;
++  return ParseError::kNone;
++}
++
++}  // namespace telemetry
+diff --git a/src/parsers.h b/src/parsers.h
+new file mode 100644
+index 0000000..e188dd8
+--- /dev/null
++++ b/src/parsers.h
+@@ -0,0 +1,14 @@
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++
++#include "telemetry/packet.h"
++
++namespace telemetry {
++
++// The parser of each version. data starts at the magic. parsePacket checks the magic and the version byte first.
++ParseError parseV1(const std::uint8_t* data, std::size_t size, Packet& out);
++ParseError parseV2(const std::uint8_t* data, std::size_t size, Packet& out);
++
++}  // namespace telemetry
+diff --git a/tests/parser_v2_test.cpp b/tests/parser_v2_test.cpp
+new file mode 100644
+index 0000000..2b7a0a8
+--- /dev/null
++++ b/tests/parser_v2_test.cpp
+@@ -0,0 +1,93 @@
++#include <cassert>
++#include <cstdint>
++#include <cstring>
++#include <iostream>
++#include <string>
++#include <vector>
++
++#include "crc16.h"
++#include "telemetry/packet.h"
++
++namespace {
++
++using Bytes = std::vector<std::uint8_t>;
++
++void put16(Bytes& b, std::uint16_t v) {
++  b.push_back(static_cast<std::uint8_t>(v & 0xFF));
++  b.push_back(static_cast<std::uint8_t>(v >> 8));
++}
++
++void put32(Bytes& b, std::uint32_t v) {
++  for (int i = 0; i < 4; ++i) b.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
++}
++
++Bytes packet(std::uint16_t samples, const std::string& label) {
++  Bytes b = {'T', 'L', 2};
++  put32(b, 0xA1B2C3D4);
++  put16(b, samples);
++  for (std::uint16_t i = 0; i < samples; ++i) {
++    put16(b, i);
++    put32(b, static_cast<std::uint32_t>(-100 + i));
++  }
++  b.push_back(static_cast<std::uint8_t>(label.size()));
++  b.insert(b.end(), label.begin(), label.end());
++  put16(b, telemetry::crc16(b.data() + 2, b.size() - 2));
++  return b;
++}
++
++void checkValue() {
++  const char* text = "123456789";
++  assert(telemetry::crc16(reinterpret_cast<const std::uint8_t*>(text), 9) == 0x29B1);
++}
++
++void parsesAPacket() {
++  Bytes b = packet(3, "boiler-2");
++  telemetry::Packet p{};
++  assert(telemetry::parsePacket(b.data(), b.size(), p) == telemetry::ParseError::kNone);
++  assert(p.header.version == 2);
++  assert(p.header.deviceId == 0xA1B2C3D4);
++  assert(p.samples.size() == 3);
++  assert(p.samples[2].sensor == 2 && p.samples[2].value == -98);
++  assert(std::strcmp(p.header.label, "boiler-2") == 0);
++}
++
++void acceptsTheLongestLabel() {
++  Bytes b = packet(0, std::string(31, 'x'));
++  telemetry::Packet p{};
++  assert(telemetry::parsePacket(b.data(), b.size(), p) == telemetry::ParseError::kNone);
++  assert(std::strlen(p.header.label) == 31);
++}
++
++void rejectsABadChecksum() {
++  Bytes b = packet(1, "a");
++  b.back() ^= 0xFF;
++  telemetry::Packet p{};
++  assert(telemetry::parsePacket(b.data(), b.size(), p) == telemetry::ParseError::kBadChecksum);
++}
++
++void rejectsTooManySamples() {
++  Bytes b = packet(0, "");
++  b[7] = 0xFF;
++  b[8] = 0xFF;
++  telemetry::Packet p{};
++  assert(telemetry::parsePacket(b.data(), b.size(), p) == telemetry::ParseError::kTooManySamples);
++}
++
++void rejectsAShortPacket() {
++  Bytes b = {'T', 'L', 2, 0, 0};
++  telemetry::Packet p{};
++  assert(telemetry::parsePacket(b.data(), b.size(), p) == telemetry::ParseError::kTooShort);
++}
++
++}  // namespace
++
++int main() {
++  checkValue();
++  parsesAPacket();
++  acceptsTheLongestLabel();
++  rejectsABadChecksum();
++  rejectsTooManySamples();
++  rejectsAShortPacket();
++  std::cout << "parser_v2_test: ok\n";
++  return 0;
++}

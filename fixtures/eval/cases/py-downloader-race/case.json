@@ -1,0 +1,45 @@
+{
+  "id": "py-downloader-race",
+  "title": "Download the archive in parallel",
+  "language": "python",
+  "pr": {
+    "title": "Parallel archive downloads",
+    "description": "Replaces the sequential downloader with `ParallelDownloader`: 4 worker threads by default, `--workers` from 1 to 16. A full archive run drops from about 40 minutes to 12.\n\nThe archive team asked to keep only PDF and ZIP files. Other content types are now skipped with a warning; before, everything was saved. Duplicate URLs in the list download once."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "fetcher/parallel.py",
+      "side": "new",
+      "lines": [67, 69],
+      "severityMin": "major",
+      "module": "concurrency",
+      "note": "Race: the workers update self.completed outside the lock. A lost update keeps it below the total, so run() waits forever."
+    },
+    {
+      "id": "B2",
+      "path": "fetcher/parallel.py",
+      "side": "new",
+      "lines": [83, 85],
+      "severityMin": "minor",
+      "module": "core",
+      "note": "Resource leak on an early return: a skipped content type returns before the with block, so the response and its connection stay open."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "fetcher/parallel.py",
+      "side": "new",
+      "lines": [71, 78],
+      "why": "_record changes shared lists without a lock, but its contract says that the caller holds self._lock, and both callers do."
+    },
+    {
+      "id": "T2",
+      "path": "fetcher/parallel.py",
+      "side": "new",
+      "lines": [15, 15],
+      "why": "Keeping only PDF and ZIP files is intended. The PR text names the change and who asked for it."
+    }
+  ]
+}

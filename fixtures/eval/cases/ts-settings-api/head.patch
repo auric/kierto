@@ -1,0 +1,588 @@
+diff --git a/docs/api.md b/docs/api.md
+index 5cecf60..943f72c 100644
+--- a/docs/api.md
++++ b/docs/api.md
+@@ -1,13 +1,27 @@
+ # Settings API
+ 
+-## GET /v0/settings
+-
+-Deprecated in 2.0. Use `GET /v1/settings`.
++Each user can read the settings. Only admins can change them. A change returns all settings, as `GET /v1/settings` does.
+ 
+ ## GET /v1/settings
+ 
+-Returns all settings. Each user can read them.
++Returns all settings.
++
++## GET /v1/settings/:section
++
++Returns one section: `general`, `delivery`, `notifications`, or `limits`.
+ 
+ ## PUT /v1/settings/general
+ 
+-Changes the site name or the support address. Admins only.
++Changes the site name or the support address.
++
++## PUT /v1/settings/delivery
++
++Changes the retry count (0 to 10) or the timeout in milliseconds (1,000 to 600,000).
++
++## PUT /v1/settings/notifications
++
++Changes when and where failure messages go. `quietHours` is `{"from": "22:00", "to": "07:00"}` or `null`.
++
++## PUT /v1/settings/limits
++
++Changes the upload limit in MB or the number of projects.
+diff --git a/src/api/schemas.ts b/src/api/schemas.ts
+index b8db698..4ae773c 100644
+--- a/src/api/schemas.ts
++++ b/src/api/schemas.ts
+@@ -14,3 +14,17 @@ export const generalSchema = z
+     supportEmail: z.string().email().optional(),
+   })
+   .strict();
++
++export const deliverySchema = z
++  .object({
++    retries: z.number().int().min(0).max(10).optional(),
++    timeoutMs: z.number().int().min(1_000).max(600_000).optional(),
++  })
++  .strict();
++
++export const limitsSchema = z
++  .object({
++    maxUploadMb: z.number().int().min(1).max(1_024).optional(),
++    maxProjects: z.number().int().min(1).max(10_000).optional(),
++  })
++  .strict();
+diff --git a/src/api/settings.ts b/src/api/settings.ts
+index 88ac9cb..6bef8b8 100644
+--- a/src/api/settings.ts
++++ b/src/api/settings.ts
+@@ -1,40 +1,67 @@
+-import { loadSettings } from "../config";
+-import type { SettingsRows } from "../db";
+ import type { Request, Response } from "../http";
+-import { generalSchema, parseBody } from "./schemas";
++import { CHANNELS, type Channel, type NotificationSettings, type QuietHours, type Section } from "../settings/model";
++import { toV1 } from "../settings/serialize";
++import type { SettingsStore } from "../settings/store";
++import { deliverySchema, generalSchema, limitsSchema, parseBody } from "./schemas";
+ 
+-// v0 is deprecated since 2.0. Clients should move to /v1/settings.
+-export function getSettingsV0(rows: SettingsRows) {
+-  return async (_req: Request): Promise<Response> => {
+-    const s = await loadSettings(rows);
+-    return { status: 200, body: { site_name: s.siteName, retry_limit: s.retryLimit, timeout: s.timeoutMs / 1000 } };
+-  };
+-}
++const FORBIDDEN: Response = { status: 403, body: { error: "Only admins can change settings." } };
++const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+ 
+-export function getSettingsV1(rows: SettingsRows) {
+-  return async (_req: Request): Promise<Response> => {
+-    const s = await loadSettings(rows);
+-    return {
+-      status: 200,
+-      body: {
+-        siteName: s.siteName,
+-        supportEmail: s.supportEmail,
+-        retryLimit: s.retryLimit,
+-        timeoutMs: s.timeoutMs,
+-        notifications: { onFailure: s.notifyOnFailure, channel: s.notifyChannel },
+-        limits: { maxUploadMb: s.maxUploadMb, maxProjects: s.maxProjects },
+-      },
+-    };
+-  };
+-}
++const isQuietHours = (v: unknown): v is QuietHours =>
++  typeof v === "object" &&
++  v !== null &&
++  typeof (v as QuietHours).from === "string" &&
++  typeof (v as QuietHours).to === "string" &&
++  HHMM.test((v as QuietHours).from) &&
++  HHMM.test((v as QuietHours).to);
++
++export function settingsApi(store: SettingsStore) {
++  return {
++    // GET /v1/settings
++    async getAll(_req: Request): Promise<Response> {
++      return { status: 200, body: toV1(await store.get()) };
++    },
++
++    // GET /v1/settings/:section
++    async getSection(req: Request): Promise<Response> {
++      const settings = await store.get();
++      return { status: 200, body: settings[req.params.section as Section] };
++    },
++
++    // PUT /v1/settings/general
++    async putGeneral(req: Request): Promise<Response> {
++      if (!req.user?.admin) return FORBIDDEN;
++      const body = parseBody(generalSchema, req.body);
++      if (!body.ok) return { status: 400, body: { error: body.error } };
++      return { status: 200, body: toV1(await store.save("general", body.value)) };
++    },
++
++    // PUT /v1/settings/delivery
++    async putDelivery(req: Request): Promise<Response> {
++      if (!req.user?.admin) return FORBIDDEN;
++      const body = parseBody(deliverySchema, req.body);
++      if (!body.ok) return { status: 400, body: { error: body.error } };
++      return { status: 200, body: toV1(await store.save("delivery", body.value)) };
++    },
++
++    // PUT /v1/settings/notifications
++    async putNotifications(req: Request): Promise<Response> {
++      if (!req.user?.admin) return FORBIDDEN;
++      const b = (req.body ?? {}) as Record<string, unknown>;
++      const update: Partial<NotificationSettings> = {};
++      if (typeof b.onFailure === "boolean") update.onFailure = b.onFailure;
++      if (typeof b.channel === "string" && (CHANNELS as readonly string[]).includes(b.channel)) update.channel = b.channel as Channel;
++      if (b.quietHours === null) update.quietHours = null;
++      else if (isQuietHours(b.quietHours)) update.quietHours = { from: b.quietHours.from, to: b.quietHours.to };
++      return { status: 200, body: toV1(await store.save("notifications", update)) };
++    },
+ 
+-export function putGeneralV1(rows: SettingsRows) {
+-  return async (req: Request): Promise<Response> => {
+-    if (!req.user?.admin) return { status: 403, body: { error: "Only admins can change settings." } };
+-    const body = parseBody(generalSchema, req.body);
+-    if (!body.ok) return { status: 400, body: { error: body.error } };
+-    const saved = await rows.all();
+-    await rows.save("general", { ...saved.general, ...body.value });
+-    return { status: 204 };
++    // PUT /v1/settings/limits
++    async putLimits(req: Request): Promise<Response> {
++      if (!req.user?.admin) return FORBIDDEN;
++      const body = parseBody(limitsSchema, req.body);
++      if (!body.ok) return { status: 400, body: { error: body.error } };
++      return { status: 200, body: toV1(await store.save("limits", body.value)) };
++    },
+   };
+ }
+diff --git a/src/config.ts b/src/config.ts
+deleted file mode 100644
+index 89f8094..0000000
+--- a/src/config.ts
++++ /dev/null
+@@ -1,41 +0,0 @@
+-import { readFile } from "node:fs/promises";
+-import type { SettingsRows } from "./db";
+-
+-export type Settings = {
+-  siteName: string;
+-  supportEmail: string;
+-  retryLimit: number;
+-  timeoutMs: number;
+-  notifyOnFailure: boolean;
+-  notifyChannel: "email" | "chat" | "none";
+-  maxUploadMb: number;
+-  maxProjects: number;
+-};
+-
+-export const DEFAULTS: Settings = {
+-  siteName: "Build Board",
+-  supportEmail: "support@example.test",
+-  retryLimit: 3,
+-  timeoutMs: 30_000,
+-  notifyOnFailure: true,
+-  notifyChannel: "email",
+-  maxUploadMb: 20,
+-  maxProjects: 50,
+-};
+-
+-// config/overrides.json is optional. A missing file gives no overrides.
+-async function overrides(path: string): Promise<Partial<Settings>> {
+-  let text: string;
+-  try {
+-    text = await readFile(path, "utf8");
+-  } catch (e) {
+-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
+-    throw e;
+-  }
+-  return JSON.parse(text) as Partial<Settings>;
+-}
+-
+-export async function loadSettings(rows: SettingsRows, path = "config/overrides.json"): Promise<Settings> {
+-  const saved = await rows.all();
+-  return { ...DEFAULTS, ...(await overrides(path)), ...saved.general };
+-}
+diff --git a/src/main.ts b/src/main.ts
+index cec35b7..b25032c 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -1,8 +1,9 @@
+ import type { SettingsRows } from "./db";
+ import type { Route } from "./http";
+ import { routes } from "./routes";
++import { SettingsStore } from "./settings/store";
+ 
+ // The server package calls this once at startup.
+-export function createApp(rows: SettingsRows): Route[] {
+-  return routes(rows);
++export function createApp(rows: SettingsRows, overridesPath?: string): Route[] {
++  return routes(new SettingsStore(rows, { overridesPath }));
+ }
+diff --git a/src/routes.ts b/src/routes.ts
+index 6ca4a25..83085a0 100644
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -1,11 +1,15 @@
+-import { getSettingsV0, getSettingsV1, putGeneralV1 } from "./api/settings";
+-import type { SettingsRows } from "./db";
++import { settingsApi } from "./api/settings";
+ import type { Route } from "./http";
++import type { SettingsStore } from "./settings/store";
+ 
+-export function routes(rows: SettingsRows): Route[] {
++export function routes(store: SettingsStore): Route[] {
++  const api = settingsApi(store);
+   return [
+-    { method: "GET", path: "/v0/settings", handle: getSettingsV0(rows) },
+-    { method: "GET", path: "/v1/settings", handle: getSettingsV1(rows) },
+-    { method: "PUT", path: "/v1/settings/general", handle: putGeneralV1(rows) },
++    { method: "GET", path: "/v1/settings", handle: api.getAll },
++    { method: "GET", path: "/v1/settings/:section(general|delivery|notifications|limits)", handle: api.getSection },
++    { method: "PUT", path: "/v1/settings/general", handle: api.putGeneral },
++    { method: "PUT", path: "/v1/settings/delivery", handle: api.putDelivery },
++    { method: "PUT", path: "/v1/settings/notifications", handle: api.putNotifications },
++    { method: "PUT", path: "/v1/settings/limits", handle: api.putLimits },
+   ];
+ }
+diff --git a/src/settings/model.ts b/src/settings/model.ts
+new file mode 100644
+index 0000000..c228d6c
+--- /dev/null
++++ b/src/settings/model.ts
+@@ -0,0 +1,46 @@
++export const SECTIONS = ["general", "delivery", "notifications", "limits"] as const;
++export type Section = (typeof SECTIONS)[number];
++
++export const CHANNELS = ["email", "chat", "none"] as const;
++export type Channel = (typeof CHANNELS)[number];
++
++export type GeneralSettings = {
++  siteName: string;
++  supportEmail: string;
++};
++
++export type DeliverySettings = {
++  // Attempts after the first failed one.
++  retries: number;
++  timeoutMs: number;
++};
++
++export type QuietHours = { from: string; to: string };
++
++export type NotificationSettings = {
++  onFailure: boolean;
++  channel: Channel;
++  // Local time HH:MM. No message goes out between from and to.
++  quietHours: QuietHours | null;
++};
++
++export type LimitSettings = {
++  maxUploadMb: number;
++  maxProjects: number;
++};
++
++export type Settings = {
++  general: GeneralSettings;
++  delivery: DeliverySettings;
++  notifications: NotificationSettings;
++  limits: LimitSettings;
++};
++
++export const DEFAULTS: Settings = {
++  general: { siteName: "Build Board", supportEmail: "support@example.test" },
++  delivery: { retries: 3, timeoutMs: 30_000 },
++  notifications: { onFailure: true, channel: "email", quietHours: null },
++  limits: { maxUploadMb: 20, maxProjects: 50 },
++};
++
++export const isSection = (s: string): s is Section => (SECTIONS as readonly string[]).includes(s);
+diff --git a/src/settings/serialize.ts b/src/settings/serialize.ts
+new file mode 100644
+index 0000000..8195680
+--- /dev/null
++++ b/src/settings/serialize.ts
+@@ -0,0 +1,20 @@
++import type { Settings } from "./model";
++
++// The body of GET /v1/settings and of each PUT /v1/settings/... response.
++export function toV1(s: Settings) {
++  return {
++    siteName: s.general.siteName,
++    supportEmail: s.general.supportEmail,
++    retries: s.delivery.retries,
++    timeoutMs: s.delivery.timeoutMs,
++    notifications: {
++      onFailure: s.notifications.onFailure,
++      channel: s.notifications.channel,
++      quietHours: s.notifications.quietHours,
++    },
++    limits: {
++      maxUploadMb: s.limits.maxUploadMb,
++      maxProjects: s.limits.maxProjects,
++    },
++  };
++}
+diff --git a/src/settings/store.ts b/src/settings/store.ts
+new file mode 100644
+index 0000000..67d7970
+--- /dev/null
++++ b/src/settings/store.ts
+@@ -0,0 +1,81 @@
++import { readFile } from "node:fs/promises";
++import type { SettingsRows } from "../db";
++import { DEFAULTS, type Section, SECTIONS, type Settings } from "./model";
++
++type Layer = Partial<Record<Section, Record<string, unknown>>>;
++
++// config/overrides.json keeps the flat keys of the old config module. The settings table uses sections.
++const FLAT: Record<string, [Section, string]> = {
++  siteName: ["general", "siteName"],
++  supportEmail: ["general", "supportEmail"],
++  retryLimit: ["delivery", "retries"],
++  timeoutMs: ["delivery", "timeoutMs"],
++  notifyOnFailure: ["notifications", "onFailure"],
++  notifyChannel: ["notifications", "channel"],
++  maxUploadMb: ["limits", "maxUploadMb"],
++  maxProjects: ["limits", "maxProjects"],
++};
++
++export function fromFlat(flat: unknown): Layer {
++  const out: Layer = {};
++  if (typeof flat !== "object" || flat === null) return out;
++  for (const [key, value] of Object.entries(flat)) {
++    if (!Object.hasOwn(FLAT, key)) continue;
++    const [section, field] = FLAT[key] as [Section, string];
++    (out[section] ??= {})[field] = value;
++  }
++  return out;
++}
++
++// Copies only the known fields of each section, so a stale column in the table cannot add keys.
++function apply(base: Settings, layer: Layer): Settings {
++  for (const section of SECTIONS) {
++    const part = layer[section];
++    if (!part) continue;
++    const target = base[section] as Record<string, unknown>;
++    for (const key of Object.keys(target)) if (Object.hasOwn(part, key)) target[key] = part[key];
++  }
++  return base;
++}
++
++export type StoreOptions = {
++  overridesPath?: string;
++  // Reads within this time reuse the last result.
++  cacheMs?: number;
++  now?: () => number;
++};
++
++export class SettingsStore {
++  private cached: { value: Settings; at: number } | null = null;
++  private readonly overridesPath: string;
++  private readonly cacheMs: number;
++  private readonly now: () => number;
++
++  constructor(
++    private readonly rows: SettingsRows,
++    options: StoreOptions = {},
++  ) {
++    this.overridesPath = options.overridesPath ?? "config/overrides.json";
++    this.cacheMs = options.cacheMs ?? 5_000;
++    this.now = options.now ?? Date.now;
++  }
++
++  async get(): Promise<Settings> {
++    if (this.cached && this.now() - this.cached.at < this.cacheMs) return structuredClone(this.cached.value);
++    const value = apply(apply(structuredClone(DEFAULTS), await this.overrides()), (await this.rows.all()) as Layer);
++    this.cached = { value, at: this.now() };
++    return structuredClone(value);
++  }
++
++  async save<S extends Section>(section: S, update: Partial<Settings[S]>): Promise<Settings> {
++    const current = await this.get();
++    await this.rows.save(section, { ...current[section], ...update });
++    this.cached = null;
++    return this.get();
++  }
++
++  private async overrides(): Promise<Layer> {
++    const text = await readFile(this.overridesPath, "utf8");
++    return fromFlat(JSON.parse(text));
++  }
++}
+diff --git a/tests/api/settings.test.ts b/tests/api/settings.test.ts
+new file mode 100644
+index 0000000..a83be30
+--- /dev/null
++++ b/tests/api/settings.test.ts
+@@ -0,0 +1,68 @@
++import { describe, expect, it } from "vitest";
++import { settingsApi } from "../../src/api/settings";
++import type { Request } from "../../src/http";
++import { DEFAULTS, type Section, type Settings } from "../../src/settings/model";
++import type { SettingsStore } from "../../src/settings/store";
++
++function fakeStore() {
++  const s: Settings = structuredClone(DEFAULTS);
++  const store = {
++    get: async () => structuredClone(s),
++    save: async (section: Section, update: Record<string, unknown>) => {
++      Object.assign(s[section], update);
++      return structuredClone(s);
++    },
++  };
++  return { store: store as unknown as SettingsStore, s };
++}
++
++const admin = { id: "a1", admin: true };
++const req = (body: unknown, user: Request["user"] = admin, params: Record<string, string> = {}): Request => ({
++  params,
++  query: {},
++  body,
++  user,
++});
++
++describe("settings API", () => {
++  it("returns all settings", async () => {
++    const { store } = fakeStore();
++    const res = await settingsApi(store).getAll(req(undefined, null));
++    expect(res.status).toBe(200);
++    expect(res.body).toMatchObject({ siteName: "Build Board", timeoutMs: 30_000, limits: { maxProjects: 50 } });
++  });
++
++  it("returns one section", async () => {
++    const { store } = fakeStore();
++    const res = await settingsApi(store).getSection(req(undefined, null, { section: "limits" }));
++    expect(res.body).toEqual(DEFAULTS.limits);
++  });
++
++  it("refuses a change by a user who is not an admin", async () => {
++    const { store, s } = fakeStore();
++    const api = settingsApi(store);
++    for (const put of [api.putGeneral, api.putDelivery, api.putNotifications, api.putLimits]) {
++      expect((await put(req({}, { id: "u1", admin: false }))).status).toBe(403);
++    }
++    expect(s).toEqual(DEFAULTS);
++  });
++
++  it("validates the delivery values", async () => {
++    const { store } = fakeStore();
++    const res = await settingsApi(store).putDelivery(req({ retries: 50 }));
++    expect(res.status).toBe(400);
++  });
++
++  it("saves the limits", async () => {
++    const { store, s } = fakeStore();
++    const res = await settingsApi(store).putLimits(req({ maxProjects: 80 }));
++    expect(res.status).toBe(200);
++    expect(s.limits.maxProjects).toBe(80);
++  });
++
++  it("saves quiet hours and the channel", async () => {
++    const { store, s } = fakeStore();
++    await settingsApi(store).putNotifications(req({ channel: "chat", quietHours: { from: "22:00", to: "07:00" } }));
++    expect(s.notifications).toEqual({ onFailure: true, channel: "chat", quietHours: { from: "22:00", to: "07:00" } });
++  });
++});
+diff --git a/tests/settings/store.test.ts b/tests/settings/store.test.ts
+new file mode 100644
+index 0000000..e6d3bd0
+--- /dev/null
++++ b/tests/settings/store.test.ts
+@@ -0,0 +1,89 @@
++import { mkdtempSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { describe, expect, it } from "vitest";
++import type { SettingsRows } from "../../src/db";
++import { DEFAULTS } from "../../src/settings/model";
++import { fromFlat, SettingsStore } from "../../src/settings/store";
++
++function memoryRows(initial: Record<string, Record<string, unknown>> = {}) {
++  const data = structuredClone(initial);
++  let reads = 0;
++  const rows: SettingsRows = {
++    all: async () => {
++      reads++;
++      return structuredClone(data);
++    },
++    save: async (section, value) => {
++      data[section] = structuredClone(value);
++    },
++  };
++  return { rows, data, reads: () => reads };
++}
++
++function overridesFile(content: unknown) {
++  const dir = mkdtempSync(join(tmpdir(), "settings-"));
++  const path = join(dir, "overrides.json");
++  writeFileSync(path, JSON.stringify(content));
++  return path;
++}
++
++describe("fromFlat", () => {
++  it("maps the flat keys of the old config to sections", () => {
++    expect(fromFlat({ retryLimit: 5, notifyChannel: "chat", unknown: 1 })).toEqual({
++      delivery: { retries: 5 },
++      notifications: { channel: "chat" },
++    });
++  });
++
++  it("ignores inherited names and non-objects", () => {
++    expect(fromFlat(JSON.parse('{"__proto__": {"x": 1}, "toString": 2}'))).toEqual({});
++    expect(fromFlat(null)).toEqual({});
++    expect(fromFlat("text")).toEqual({});
++  });
++});
++
++describe("SettingsStore", () => {
++  it("layers the defaults, the overrides file, and the saved rows", async () => {
++    const { rows } = memoryRows({ general: { siteName: "Saved name" } });
++    const store = new SettingsStore(rows, { overridesPath: overridesFile({ siteName: "File name", maxProjects: 9 }) });
++    const s = await store.get();
++    expect(s.general.siteName).toBe("Saved name");
++    expect(s.limits.maxProjects).toBe(9);
++    expect(s.delivery).toEqual(DEFAULTS.delivery);
++  });
++
++  it("drops unknown columns of a saved row", async () => {
++    const { rows } = memoryRows({ limits: { maxProjects: 3, legacy: true } });
++    const store = new SettingsStore(rows, { overridesPath: overridesFile({}) });
++    expect(await store.get()).toMatchObject({ limits: { maxUploadMb: 20, maxProjects: 3 } });
++    expect((await store.get()).limits).not.toHaveProperty("legacy");
++  });
++
++  it("reuses a read within the cache time", async () => {
++    let t = 0;
++    const m = memoryRows();
++    const store = new SettingsStore(m.rows, { overridesPath: overridesFile({}), cacheMs: 100, now: () => t });
++    await store.get();
++    t = 99;
++    await store.get();
++    expect(m.reads()).toBe(1);
++    t = 100;
++    await store.get();
++    expect(m.reads()).toBe(2);
++  });
++
++  it("returns a copy, so a caller cannot change the cached value", async () => {
++    const store = new SettingsStore(memoryRows().rows, { overridesPath: overridesFile({}) });
++    (await store.get()).general.siteName = "changed";
++    expect((await store.get()).general.siteName).toBe(DEFAULTS.general.siteName);
++  });
++
++  it("saves a whole section and reads it back", async () => {
++    const m = memoryRows();
++    const store = new SettingsStore(m.rows, { overridesPath: overridesFile({ timeoutMs: 5_000 }) });
++    const s = await store.save("delivery", { retries: 7 });
++    expect(s.delivery).toEqual({ retries: 7, timeoutMs: 5_000 });
++    expect(m.data.delivery).toEqual({ retries: 7, timeoutMs: 5_000 });
++  });
++});

@@ -1,0 +1,269 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..c8904b2
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,13 @@
++# Changelog
++
++## 3.5.0
++
++- New option `flush_interval_ms`: the worker flushes the output after this interval instead of after each message. The default 0 keeps the old behavior.
++- New function `engine_set_option()` changes `log_level`, `queue_depth`, or `flush_interval_ms` of a running engine.
++- New function `engine_version()` returns the version string of the engine.
++- `engine_create()` refuses more than 64 worker threads.
++
++## 3.4.0
++
++- `engine_submit()` returns `ENGINE_ESTATE` when the queue is full.
++- Messages larger than 1 MiB are refused with `ENGINE_EINVAL`.
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e8f8682..aec7b59 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -12,3 +12,8 @@ target_compile_definitions(engine PRIVATE ENGINE_BUILD)
+ 
+ add_library(sample_plugin MODULE plugins/sample_plugin.c)
+ target_link_libraries(sample_plugin PRIVATE engine)
++
++enable_testing()
++add_executable(engine_test tests/engine_test.cpp)
++target_link_libraries(engine_test PRIVATE engine)
++add_test(NAME engine_test COMMAND engine_test)
+diff --git a/docs/options.md b/docs/options.md
+new file mode 100644
+index 0000000..928a025
+--- /dev/null
++++ b/docs/options.md
+@@ -0,0 +1,12 @@
++# Engine options
++
++| Field | Range | Default | Run time key |
++|---|---|---|---|
++| `worker_threads` | 1 to 64 | 1 | none |
++| `flush_interval_ms` | 0 or more | 0 (flush after each message) | `flush_interval_ms` |
++| `queue_depth` | 1 or more | 256 | `queue_depth` |
++| `log_level` | 0 to 3 | 1 | `log_level` |
++
++`engine_create()` refuses more than 64 worker threads, because the worker pool cannot use more.
++
++`engine_set_option()` changes a value of a running engine. The plugins pass the lines of their config file as they are.
+diff --git a/include/engine/engine.h b/include/engine/engine.h
+index c59d28c..dc669f5 100644
+--- a/include/engine/engine.h
++++ b/include/engine/engine.h
+@@ -27,7 +27,8 @@ typedef enum engine_status {
+ 
+ typedef struct engine_options {
+   uint32_t struct_size; /* Set to sizeof(engine_options). The engine reads only the first struct_size bytes. */
+-  uint32_t worker_threads;
++  uint32_t worker_threads; /* 1 to 64. */
++  uint32_t flush_interval_ms; /* 0: flush after each message. */
+   uint32_t queue_depth;
+   int32_t log_level; /* 0 errors, 1 warnings, 2 info, 3 debug. */
+ } engine_options;
+@@ -37,6 +38,13 @@ typedef struct engine engine;
+ ENGINE_API uint32_t engine_abi_version(void);
+ ENGINE_API engine_status engine_create(const engine_options* options, engine** out);
+ ENGINE_API engine_status engine_submit(engine* e, const void* data, size_t size);
++
++/* Changes one option at run time. key: "log_level", "queue_depth", or "flush_interval_ms". value: a decimal number. */
++ENGINE_API engine_status engine_set_option(engine* e, const char* key, const char* value);
++
++/* The version string of the engine, such as "3.5.0". The string stays valid until engine_destroy(e). */
++ENGINE_API const char* engine_version(const engine* e);
++
+ ENGINE_API void engine_destroy(engine* e);
+ 
+ #ifdef __cplusplus
+diff --git a/plugins/README.md b/plugins/README.md
+index 38ec5fc..d32a452 100644
+--- a/plugins/README.md
++++ b/plugins/README.md
+@@ -3,3 +3,9 @@
+ Plugins are shared objects that the host loads with `dlopen`. Third parties build them with their own compiler and release them on their own schedule, so a plugin often runs against a newer engine than the one it was built with.
+ 
+ A plugin checks `engine_abi_version() == ENGINE_ABI_VERSION` when it loads and refuses to run on a mismatch.
++
++## Configuration
++
++A plugin reads its config file line by line and passes each `key=value` line to `engine_set_option()`. See `docs/options.md` for the keys.
++
++`sample_plugin.c` shows the pattern in `plugin_configure()`.
+diff --git a/plugins/sample_plugin.c b/plugins/sample_plugin.c
+index 8c4cd32..70dc18b 100644
+--- a/plugins/sample_plugin.c
++++ b/plugins/sample_plugin.c
+@@ -11,7 +11,19 @@ int plugin_load(void) {
+     return -1;
+   }
+   engine_options opts = {.struct_size = sizeof opts, .worker_threads = 2, .queue_depth = 64, .log_level = 1};
+-  return engine_create(&opts, &g_engine) == ENGINE_OK ? 0 : -1;
++  if (engine_create(&opts, &g_engine) != ENGINE_OK) return -1;
++  fprintf(stderr, "sample plugin: engine %s\n", engine_version(g_engine));
++  return 0;
++}
++
++/* Applies one key=value line of the plugin config file. */
++int plugin_configure(const char* line) {
++  char key[64];
++  const char* eq = strchr(line, '=');
++  if (!eq || (size_t)(eq - line) >= sizeof key) return -1;
++  memcpy(key, line, (size_t)(eq - line));
++  key[eq - line] = '\0';
++  return engine_set_option(g_engine, key, eq + 1) == ENGINE_OK ? 0 : -1;
+ }
+ 
+ int plugin_send(const char* text) {
+diff --git a/src/engine.cpp b/src/engine.cpp
+index ba3d90d..65b1ae8 100644
+--- a/src/engine.cpp
++++ b/src/engine.cpp
+@@ -5,16 +5,22 @@
+ #include <deque>
+ #include <mutex>
+ #include <new>
++#include <stdexcept>
++#include <string>
+ #include <vector>
+ 
++#include "version.h"
++
+ namespace {
+ 
+ constexpr size_t kMaxMessage = 1 << 20;
++constexpr uint32_t kMaxWorkers = 64;
+ 
+ engine_options defaults() {
+   engine_options o{};
+   o.struct_size = sizeof o;
+   o.worker_threads = 1;
++  o.flush_interval_ms = 0;
+   o.queue_depth = 256;
+   o.log_level = 1;
+   return o;
+@@ -24,6 +30,7 @@ engine_options defaults() {
+ 
+ struct engine {
+   engine_options options;
++  std::string version = ENGINE_VERSION_STRING;
+   std::mutex mutex;
+   std::deque<std::vector<unsigned char>> queue;
+ };
+@@ -38,7 +45,7 @@ engine_status engine_create(const engine_options* options, engine** out) {
+   engine_options opts = defaults();
+   std::memcpy(&opts, options, std::min<size_t>(options->struct_size, sizeof opts));
+   opts.struct_size = sizeof opts;
+-  if (opts.worker_threads == 0 || opts.queue_depth == 0) return ENGINE_EINVAL;
++  if (opts.worker_threads == 0 || opts.worker_threads > kMaxWorkers || opts.queue_depth == 0) return ENGINE_EINVAL;
+   try {
+     engine* e = new engine();
+     e->options = opts;
+@@ -68,6 +75,26 @@ engine_status engine_submit(engine* e, const void* data, size_t size) {
+   }
+ }
+ 
++engine_status engine_set_option(engine* e, const char* key, const char* value) {
++  if (!e || !key || !value) return ENGINE_EINVAL;
++  const std::string k = key;
++  std::lock_guard<std::mutex> lock(e->mutex);
++  if (k == "log_level") {
++    e->options.log_level = std::stoi(value);
++  } else if (k == "queue_depth") {
++    const unsigned long depth = std::stoul(value);
++    if (depth == 0) return ENGINE_EINVAL;
++    e->options.queue_depth = static_cast<uint32_t>(depth);
++  } else if (k == "flush_interval_ms") {
++    e->options.flush_interval_ms = static_cast<uint32_t>(std::stoul(value));
++  } else {
++    throw std::invalid_argument("unknown engine option: " + k);
++  }
++  return ENGINE_OK;
++}
++
++const char* engine_version(const engine* e) { return e ? e->version.c_str() : nullptr; }
++
+ void engine_destroy(engine* e) { delete e; }
+ 
+ }  // extern "C"
+diff --git a/src/version.h b/src/version.h
+new file mode 100644
+index 0000000..e30cc67
+--- /dev/null
++++ b/src/version.h
+@@ -0,0 +1,4 @@
++#pragma once
++
++// The release script rewrites this line.
++#define ENGINE_VERSION_STRING "3.5.0"
+diff --git a/tests/engine_test.cpp b/tests/engine_test.cpp
+new file mode 100644
+index 0000000..e802931
+--- /dev/null
++++ b/tests/engine_test.cpp
+@@ -0,0 +1,65 @@
++#include <cassert>
++#include <cstring>
++#include <iostream>
++
++#include "engine/engine.h"
++
++namespace {
++
++engine* make(uint32_t workers = 2) {
++  engine_options o{};
++  o.struct_size = sizeof o;
++  o.worker_threads = workers;
++  o.queue_depth = 4;
++  engine* e = nullptr;
++  return engine_create(&o, &e) == ENGINE_OK ? e : nullptr;
++}
++
++void createsAndDestroys() {
++  engine* e = make();
++  assert(e != nullptr);
++  assert(std::strcmp(engine_version(e), "3.5.0") == 0);
++  engine_destroy(e);
++}
++
++void refusesTooManyWorkers() { assert(make(65) == nullptr); }
++
++void boundsTheQueue() {
++  engine* e = make();
++  for (int i = 0; i < 4; ++i) assert(engine_submit(e, "x", 1) == ENGINE_OK);
++  assert(engine_submit(e, "x", 1) == ENGINE_ESTATE);
++  engine_destroy(e);
++}
++
++void setsOptions() {
++  engine* e = make();
++  assert(engine_set_option(e, "queue_depth", "8") == ENGINE_OK);
++  assert(engine_set_option(e, "flush_interval_ms", "250") == ENGINE_OK);
++  assert(engine_set_option(e, "queue_depth", "0") == ENGINE_EINVAL);
++  for (int i = 0; i < 8; ++i) assert(engine_submit(e, "x", 1) == ENGINE_OK);
++  assert(engine_submit(e, "x", 1) == ENGINE_ESTATE);
++  engine_destroy(e);
++}
++
++void acceptsAnOlderStruct() {
++  // A caller built against the first release passes only struct_size and worker_threads.
++  struct {
++    uint32_t struct_size;
++    uint32_t worker_threads;
++  } old = {sizeof old, 2};
++  engine* e = nullptr;
++  assert(engine_create(reinterpret_cast<const engine_options*>(&old), &e) == ENGINE_OK);
++  engine_destroy(e);
++}
++
++}  // namespace
++
++int main() {
++  createsAndDestroys();
++  refusesTooManyWorkers();
++  boundsTheQueue();
++  setsOptions();
++  acceptsAnOlderStruct();
++  std::cout << "engine_test: ok\n";
++  return 0;
++}

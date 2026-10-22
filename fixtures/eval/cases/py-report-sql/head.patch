@@ -1,0 +1,195 @@
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..46e34c0
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,9 @@
++# Sales reports
++
++Reports for the regional managers.
++
++## Endpoints
++
++- `GET /reports/monthly?year=2026&month=2`: totals per region for one month.
++- `GET /reports/regional?region=north&since=2026-01-01&limit=50`: the best-selling products of one region, in whole euros.
++- `GET /reports/regional.pdf?...`: the same report as a PDF. The server needs `wkhtmltopdf` on PATH.
+diff --git a/app/reports/regional.py b/app/reports/regional.py
+new file mode 100644
+index 0000000..ce4d17a
+--- /dev/null
++++ b/app/reports/regional.py
+@@ -0,0 +1,61 @@
++"""Sales per product in one region, as JSON or as a PDF for the regional managers."""
++
++import html
++import subprocess
++import tempfile
++from datetime import date
++from pathlib import Path
++
++from app.db import query
++
++MAX_ROWS = 500
++PDF_TIMEOUT_S = 60
++
++
++def regional_sales(region: str, since: date, limit: int = 50) -> list[dict]:
++    """The best-selling products of one region since a day. Totals are in whole euros."""
++    rows = query(
++        f"""
++        SELECT p.name AS product, SUM(s.amount_cents) AS total_cents, COUNT(*) AS orders
++        FROM sales s JOIN products p ON p.id = s.product_id
++        WHERE s.region = '{region}' AND s.sold_on >= ?
++        GROUP BY p.name
++        ORDER BY total_cents DESC
++        LIMIT {min(int(limit), MAX_ROWS)}
++        """,
++        (since.isoformat(),),
++    )
++    return [
++        {"product": r["product"], "total_eur": round(r["total_cents"] / 100), "orders": r["orders"]}
++        for r in rows
++    ]
++
++
++def to_html(region: str, since: date, rows: list[dict]) -> str:
++    cells = "\n".join(
++        f"<tr><td>{html.escape(r['product'])}</td><td>{r['total_eur']}</td><td>{r['orders']}</td></tr>"
++        for r in rows
++    )
++    title = f"Sales in {html.escape(region)} since {since.isoformat()}"
++    return f"""<!doctype html>
++<html>
++<head><meta charset="utf-8"><title>{title}</title></head>
++<body>
++<h1>{title}</h1>
++<table>
++<tr><th>Product</th><th>Total (EUR)</th><th>Orders</th></tr>
++{cells}
++</table>
++</body>
++</html>
++"""
++
++
++def render_pdf(page: str) -> bytes:
++    """Renders an HTML page with wkhtmltopdf."""
++    with tempfile.TemporaryDirectory() as tmp:
++        source = Path(tmp) / "report.html"
++        target = Path(tmp) / "report.pdf"
++        source.write_text(page, encoding="utf-8")
++        subprocess.run(["wkhtmltopdf", "--quiet", str(source), str(target)], timeout=PDF_TIMEOUT_S)
++        return target.read_bytes() if target.exists() else b""
+diff --git a/app/web.py b/app/web.py
+index 128dcd6..99809fc 100644
+--- a/app/web.py
++++ b/app/web.py
+@@ -1,6 +1,9 @@
+-from flask import Flask, abort, jsonify, request
++from datetime import date
++
++from flask import Flask, Response, abort, jsonify, request
+ 
+ from app.reports.monthly import monthly_totals
++from app.reports.regional import regional_sales, render_pdf, to_html
+ 
+ app = Flask(__name__)
+ 
+@@ -15,3 +18,34 @@ def monthly():
+     if not 1 <= month <= 12:
+         abort(400, "month must be 1 to 12")
+     return jsonify(monthly_totals(year, month))
++
++
++def _regional_args() -> tuple[str, date, int]:
++    region = request.args.get("region", "").strip()
++    if not region:
++        abort(400, "region is required")
++    try:
++        since = date.fromisoformat(request.args.get("since", f"{date.today().year}-01-01"))
++        limit = int(request.args.get("limit", "50"))
++    except ValueError:
++        abort(400, "since must be YYYY-MM-DD and limit must be an integer")
++    if limit < 1:
++        abort(400, "limit must be positive")
++    return region, since, limit
++
++
++@app.get("/reports/regional")
++def regional():
++    region, since, limit = _regional_args()
++    return jsonify(regional_sales(region, since, limit))
++
++
++@app.get("/reports/regional.pdf")
++def regional_pdf():
++    region, since, limit = _regional_args()
++    pdf = render_pdf(to_html(region, since, regional_sales(region, since, limit)))
++    return Response(
++        pdf,
++        mimetype="application/pdf",
++        headers={"Content-Disposition": 'attachment; filename="regional-sales.pdf"'},
++    )
+diff --git a/tests/test_regional.py b/tests/test_regional.py
+new file mode 100644
+index 0000000..2efeac0
+--- /dev/null
++++ b/tests/test_regional.py
+@@ -0,0 +1,57 @@
++import sqlite3
++import subprocess
++from datetime import date
++from pathlib import Path
++
++import pytest
++
++from app.reports import regional
++
++SCHEMA = Path(__file__).resolve().parent.parent / "schema.sql"
++
++
++@pytest.fixture
++def sales_db(tmp_path, monkeypatch):
++    monkeypatch.chdir(tmp_path)
++    conn = sqlite3.connect("sales.db")
++    conn.executescript(SCHEMA.read_text())
++    conn.executemany("INSERT INTO products (id, name) VALUES (?, ?)", [(1, "Kettle"), (2, "Toaster"), (3, "Mug")])
++    conn.executemany(
++        "INSERT INTO sales (product_id, region, amount_cents, sold_on) VALUES (?, ?, ?, ?)",
++        [
++            (1, "north", 4999, "2026-02-01"),
++            (1, "north", 4999, "2026-02-03"),
++            (2, "north", 2950, "2026-02-04"),
++            (3, "north", 899, "2025-12-30"),
++            (2, "south", 2950, "2026-02-04"),
++        ],
++    )
++    conn.commit()
++    conn.close()
++
++
++def test_sums_the_products_of_one_region(sales_db):
++    rows = regional.regional_sales("north", date(2026, 1, 1))
++    assert rows == [
++        {"product": "Kettle", "total_eur": 100, "orders": 2},
++        {"product": "Toaster", "total_eur": 30, "orders": 1},
++    ]
++
++
++def test_limits_the_rows(sales_db):
++    assert len(regional.regional_sales("north", date(2025, 1, 1), limit=1)) == 1
++
++
++def test_escapes_the_html(sales_db):
++    page = regional.to_html("<north>", date(2026, 1, 1), [{"product": "A&B", "total_eur": 1, "orders": 1}])
++    assert "&lt;north&gt;" in page
++    assert "A&amp;B" in page
++
++
++def test_render_pdf_returns_the_file(monkeypatch):
++    def fake_run(args, timeout):
++        Path(args[-1]).write_bytes(b"%PDF-1.7 fake")
++        return subprocess.CompletedProcess(args, 0)
++
++    monkeypatch.setattr(subprocess, "run", fake_run)
++    assert regional.render_pdf("<p>hi</p>").startswith(b"%PDF")

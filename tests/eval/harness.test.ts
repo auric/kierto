@@ -1,0 +1,266 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
+// docs/plans/review-v2 AC-M2 and AC-M3: the eval harness refuses to run without --real, the fixture cases are valid, and one case runs
+// end to end with the fake CLI. Each child bun process preloads no-real-claude.ts, so a lookup of the real CLI ends it with exit 1.
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { buildRepo, FIXTURE_SUFFIX, INSTRUCTION_FILE, loadCases } from "../../scripts/eval/cases";
+import { WARNING } from "../../scripts/eval/run";
+import { type EvalResult, score } from "../../scripts/eval/score";
+import { SHIPPED_PROFILES } from "../../src/server/review/catalog";
+import { git } from "../../src/server/review/git";
+import { readRecords } from "../support/fake-claude";
+import { claudeStream } from "../support/review-fixture";
+
+const SLOW = 120_000;
+const ROOT = resolve(import.meta.dir, "../..");
+const RUN = join(ROOT, "scripts/eval/run.ts");
+const COMPARE = join(ROOT, "scripts/eval/compare.ts");
+const NO_REAL = join(ROOT, "tests/support/no-real-claude.ts");
+const FAKE = join(ROOT, "tests/support/fake-claude.ts");
+
+const TMP = mkdtempSync(join(tmpdir(), "rl-eval-test-"));
+afterAll(() => rmSync(TMP, { recursive: true, force: true, maxRetries: 3 }));
+let n = 0;
+const temp = (name: string) => {
+  const d = join(TMP, `${name}-${n++}`);
+  mkdirSync(d, { recursive: true });
+  return d;
+};
+
+// The child gets the preload guard and no data folder of the user.
+async function bun(args: string[], preload = NO_REAL) {
+  const p = Bun.spawn([process.execPath, "--preload", preload, ...args], {
+    cwd: ROOT,
+    env: { ...process.env, REVIEW_LOOP_DATA_DIR: temp("data") },
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: SLOW,
+  });
+  const [stdout, stderr] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
+  return { code: await p.exited, stdout, stderr };
+}
+
+describe("eval harness without --real (AC-M2)", () => {
+  test("prints the plan and the quota warning, exits 2, and starts no process", async () => {
+    // Any spawn ends the child with exit 3, any lookup of claude with exit 1.
+    const guard = join(temp("guard"), "guard.ts");
+    writeFileSync(
+      guard,
+      [
+        `import ${JSON.stringify(NO_REAL)};`,
+        "const stop = () => { console.error('guard: a process started'); process.exit(3); };",
+        "Bun.spawn = stop as never;",
+        "Bun.spawnSync = stop as never;",
+      ].join("\n"),
+    );
+    const r = await bun([RUN, "--cases", "all", "--repeat", "2"], guard);
+    expect(r.stderr).toBe("");
+    expect(r.code).toBe(2);
+    expect(r.stdout).toContain(`Eval plan: ${loadCases("all").length} cases, 2 repeats, profile general.`);
+    expect(r.stdout).toContain(WARNING);
+  });
+
+  test("refuses --real together with --runner", async () => {
+    const r = await bun([RUN, "--real", "--runner", process.execPath, FAKE, "none.json"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("Pass --real or --runner, not both.");
+  });
+
+  // Prompt version 1 profiles have no modules field. spec.md section 1.2 adds it, and then this case cannot occur.
+  test.if(!("modules" in (SHIPPED_PROFILES[0] ?? {})))("refuses a profile field that this app version does not have", async () => {
+    const r = await bun([RUN, "--modules", "security", "--runner", process.execPath, FAKE, "none.json"]);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("no profile field modules");
+  });
+});
+
+describe("eval cases", () => {
+  const cases = loadCases("all");
+  let instructionFiles = 0;
+
+  test(
+    "each case applies to its base, and its bug and trap lines hold text on their side",
+    async () => {
+      for (const c of cases) {
+        const repo = await buildRepo(c, temp(c.id));
+        const numstat = await git(["--git-dir", repo.url, "diff", "--numstat", repo.base, repo.head], { env: repo.env });
+        const counted = numstat
+          .trim()
+          .split("\n")
+          .reduce((s, l) => s + Number(l.split("\t")[0]) + Number(l.split("\t")[1]), 0);
+        expect({ id: c.id, lines: c.changedLines }).toEqual({ id: c.id, lines: counted });
+        expect(c.changedLines).toBeGreaterThanOrEqual(150);
+        expect(c.changedLines).toBeLessThanOrEqual(500);
+        for (const p of [...c.bugs, ...c.traps]) {
+          const text = (await repo.show(p.side === "new" ? repo.head : repo.base, p.path)).split("\n");
+          if (text.at(-1) === "") text.pop();
+          expect({ id: c.id, place: p.id, inside: p.lines[1] <= text.length }).toEqual({ id: c.id, place: p.id, inside: true });
+          expect(
+            text
+              .slice(p.lines[0] - 1, p.lines[1])
+              .join("")
+              .trim(),
+          ).not.toBe("");
+        }
+        // Each stored instruction file lands in the base commit under its real name, byte for byte.
+        for (const stored of new Bun.Glob(`**/*${FIXTURE_SUFFIX}`).scanSync(join(c.dir, "base"))) {
+          const path = stored.replaceAll("\\", "/").slice(0, -FIXTURE_SUFFIX.length);
+          const built = Buffer.from(await repo.show(repo.base, path));
+          expect({ id: c.id, path, same: built.equals(readFileSync(join(c.dir, "base", stored))) }).toEqual({ id: c.id, path, same: true });
+          instructionFiles++;
+        }
+      }
+      expect(instructionFiles).toBeGreaterThan(0);
+    },
+    SLOW,
+  );
+
+  test("no file under fixtures has a name that Claude Code loads as instructions", () => {
+    const loaded = [...new Bun.Glob("fixtures/**").scanSync({ cwd: ROOT, dot: true })].filter((p) =>
+      INSTRUCTION_FILE.test(p.replaceAll("\\", "/").split("/").at(-1) ?? ""),
+    );
+    expect(loaded).toEqual([]);
+  });
+
+  test("the set has 4 cases per language and one case of about 500 changed lines", () => {
+    const per = Object.groupBy(cases, (c) => c.language);
+    expect({ typescript: per.typescript?.length, cpp: per.cpp?.length, python: per.python?.length }).toEqual({
+      typescript: 4,
+      cpp: 4,
+      python: 4,
+    });
+    expect(Math.max(...cases.map((c) => c.changedLines))).toBeGreaterThanOrEqual(450);
+  });
+});
+
+describe("eval harness with the fake CLI (AC-M3)", () => {
+  test(
+    "one case runs end to end, scores, and compare reads the result file",
+    async () => {
+      const [c] = loadCases("ts-cache-race");
+      if (!c) throw new Error("The case ts-cache-race is missing.");
+      const dir = temp("fake");
+      const repo = await buildRepo(c, temp("repo"));
+      const line = async (path: string, n: number) => ((await repo.show(repo.head, path)).split("\n")[n - 1] ?? "").trim();
+      const at = async (path: string, lines: [number, number], severity: string) => ({
+        path,
+        side: "new",
+        line: lines[0],
+        lineEnd: lines[1],
+        anchorText: await line(path, lines[0]),
+        severity,
+        category: "logic",
+        body: "A finding of the fake CLI.",
+        evidence: `${path}:${lines[0]}`,
+        evidenceStatus: "code",
+        confidence: "high",
+        agent: null,
+      });
+      const trap = c.traps[0];
+      if (!trap) throw new Error("The case has no trap.");
+      // One finding per seeded bug, one on the first trap, and one on a changed line with neither.
+      const findings = [
+        ...(await Promise.all(c.bugs.map((b) => at(b.path, b.lines, b.severityMin)))),
+        await at(trap.path, [trap.lines[0], trap.lines[0]], "minor"),
+        await at("src/users/cache.ts", [1, 1], "nit"),
+      ];
+      const structured = {
+        summary: "Fake review.",
+        risks: [],
+        questions: [],
+        coverage: { read: ["src/users/service.ts"], skipped: [], unavailable: [], notChecked: [] },
+        findings,
+      };
+      const record = join(dir, "calls.jsonl");
+      const scenario = join(dir, "scenario.json");
+      writeFileSync(
+        scenario,
+        JSON.stringify({
+          record,
+          auth: { loggedIn: true, authMethod: "claude.ai", projectsDirectory: join(dir, "projects") },
+          fixture: claudeStream(dir, "eval", "claude/b9-wp8-flags.jsonl", structured),
+          delayMs: 1,
+        }),
+      );
+      const out = join(dir, "out");
+      const r = await bun([RUN, "--cases", c.id, "--out", out, "--runner", process.execPath, FAKE, scenario]);
+      expect(r.stderr).toBe("");
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain(`[1/1] ${c.id} #1: completed`);
+
+      const files = readdirSync(out).filter((f) => f.endsWith(".json"));
+      expect(files).toHaveLength(1);
+      const file = join(out, files[0] as string);
+      const result = JSON.parse(readFileSync(file, "utf8")) as EvalResult;
+      expect(result).toMatchObject({ format: 1, promptVersion: "1", runner: "fake", repeat: 1, volume: null });
+      expect(result.cliVersion).toContain("2.1.295");
+      expect(result.profile).toMatchObject({ id: "general" });
+      expect(result.cases.map((x) => [x.id, x.head])).toEqual([[c.id, repo.head]]);
+      const [run] = result.runs;
+      expect(run).toMatchObject({ case: c.id, repeat: 1, status: "completed", error: null, questions: 0 });
+      expect(run?.items.map((i) => [i.path, i.line, i.anchorState, i.check, i.group])).toEqual(
+        findings.map((f) => [f.path, f.line, "exact", null, "main"]),
+      );
+      const s = score(result).suite;
+      expect(s.recall?.mean).toBe(1);
+      expect(s.precision?.mean).toBe(c.bugs.length / findings.length);
+      expect(s.trapRate?.mean).toBe(1 / c.traps.length);
+      expect(s.noise?.mean).toBe(1);
+      expect(s.severityOk?.mean).toBe(1);
+
+      // The auth route check ran, and the review ran once with the fake CLI, the task file, and the project rules of the case.
+      const calls = readRecords<{ argv: string[]; stdin: string }>(record);
+      expect(calls.some((x) => x.argv[0] === "auth" && x.argv[1] === "status")).toBe(true);
+      const runs = calls.filter((x) => x.argv.includes("-p"));
+      expect(runs).toHaveLength(1);
+      expect(calls.some((x) => x.argv.includes("--bare"))).toBe(false);
+      const stdin = runs[0]?.stdin ?? "";
+      expect(stdin).toContain("- ./context/task.md holds the text of the linked tasks");
+      expect(stdin).toContain("- Task IDs from the pull request fields: EVAL-1 (branch)");
+      expect(stdin).toContain(c.instructions ?? "no instructions in the case");
+
+      const cmp = await bun([COMPARE, file, file]);
+      expect(cmp.code).toBe(0);
+      expect(cmp.stdout).toMatch(/all cases\s+100\.0%\s+100\.0%\s+\+0\.0 pts/);
+    },
+    SLOW,
+  );
+
+  test(
+    "a stored root CLAUDE.md reaches the run as a project instruction of the target branch",
+    async () => {
+      const [c] = loadCases("ts-settings-api");
+      if (!c) throw new Error("The case ts-settings-api is missing.");
+      const rules = readFileSync(join(c.dir, "base", `CLAUDE.md${FIXTURE_SUFFIX}`), "utf8");
+      const dir = temp("rules");
+      const record = join(dir, "calls.jsonl");
+      const scenario = join(dir, "scenario.json");
+      const empty = {
+        summary: "No findings.",
+        risks: [],
+        questions: [],
+        coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+        findings: [],
+      };
+      writeFileSync(
+        scenario,
+        JSON.stringify({
+          record,
+          auth: { loggedIn: true, authMethod: "claude.ai", projectsDirectory: join(dir, "projects") },
+          fixture: claudeStream(dir, "eval", "claude/b9-wp8-flags.jsonl", empty),
+          delayMs: 1,
+        }),
+      );
+      const r = await bun([RUN, "--cases", c.id, "--out", join(dir, "out"), "--runner", process.execPath, FAKE, scenario]);
+      expect(r.code).toBe(0);
+      const stdin = readRecords<{ argv: string[]; stdin: string }>(record).find((x) => x.argv.includes("-p"))?.stdin ?? "";
+      expect(stdin).toContain("## From the target branch: CLAUDE.md");
+      for (const l of rules.split("\n").filter(Boolean)) expect(stdin).toContain(l);
+    },
+    SLOW,
+  );
+});

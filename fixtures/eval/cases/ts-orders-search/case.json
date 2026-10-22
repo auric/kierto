@@ -1,0 +1,45 @@
+{
+  "id": "ts-orders-search",
+  "title": "Add an order search endpoint",
+  "language": "typescript",
+  "pr": {
+    "title": "Add order search and offset paging",
+    "description": "Adds `GET /orders/search` with a text filter on the customer name, a status filter, a date range, a minimum total, and a sort column and direction.\n\n`GET /orders` now takes `offset` and `limit` instead of `page`. The new web client in this release asks for the rows after the ones it shows. `listOrders` takes a row offset to match."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/orders/search.ts",
+      "side": "new",
+      "lines": [72, 74],
+      "severityMin": "major",
+      "module": "security",
+      "note": "Injection: the sort direction comes from the query string and goes into ORDER BY without an allowlist."
+    },
+    {
+      "id": "B2",
+      "path": "src/reports/daily.ts",
+      "side": "new",
+      "lines": [12, 13],
+      "severityMin": "major",
+      "module": "core",
+      "note": "Missed caller: listOrders now takes a row offset, but the unchanged daily report still passes page numbers 1, 2, 3, so it skips the first row and counts each order many times."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/orders/search.ts",
+      "side": "new",
+      "lines": [53, 56],
+      "why": "The status values go into the SQL text, but the filter keeps only the fixed ORDER_STATUSES values."
+    },
+    {
+      "id": "T2",
+      "path": "src/http/orders.ts",
+      "side": "new",
+      "lines": [20, 26],
+      "why": "GET /orders drops the page parameter. The PR text names the change and the client that uses the new parameters."
+    }
+  ]
+}

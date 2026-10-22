@@ -1,0 +1,305 @@
+diff --git a/src/users/cache.ts b/src/users/cache.ts
+new file mode 100644
+index 0000000..2304269
+--- /dev/null
++++ b/src/users/cache.ts
+@@ -0,0 +1,102 @@
++export type TtlCacheOptions = {
++  ttlMs: number;
++  maxEntries: number;
++  now?: () => number;
++};
++
++type Entry<V> = { value: V; storedAt: number };
++
++export type CacheStats = { size: number; hits: number; misses: number; evictions: number };
++
++// A map with a time to live and a size limit. When the cache is full, the oldest entry goes first.
++// Map iterates in insertion order and set() inserts the key again, so the first key is the oldest write.
++export class TtlCache<K, V> {
++  private readonly entries = new Map<K, Entry<V>>();
++  private readonly ttlMs: number;
++  private readonly maxEntries: number;
++  private readonly now: () => number;
++  private hits = 0;
++  private misses = 0;
++  private evictions = 0;
++
++  constructor(options: TtlCacheOptions) {
++    if (!(options.ttlMs > 0)) throw new RangeError("ttlMs must be positive");
++    if (!Number.isInteger(options.maxEntries) || options.maxEntries < 1) {
++      throw new RangeError("maxEntries must be a positive integer");
++    }
++    this.ttlMs = options.ttlMs;
++    this.maxEntries = options.maxEntries;
++    this.now = options.now ?? Date.now;
++  }
++
++  get(key: K): V | undefined {
++    const entry = this.live(key);
++    if (entry === undefined) {
++      this.misses++;
++      return undefined;
++    }
++    this.hits++;
++    return entry.value;
++  }
++
++  // The age of a live entry in milliseconds.
++  ageOf(key: K): number | undefined {
++    const entry = this.live(key);
++    return entry === undefined ? undefined : this.now() - entry.storedAt;
++  }
++
++  // An opaque token of the current entry. setIfCurrent() and deleteIfCurrent() act only while the entry is still this one.
++  stamp(key: K): object | undefined {
++    return this.live(key);
++  }
++
++  set(key: K, value: V): void {
++    this.entries.delete(key);
++    if (this.entries.size > this.maxEntries) this.evictOldest();
++    this.entries.set(key, { value, storedAt: this.now() });
++  }
++
++  setIfCurrent(key: K, value: V, stamp: object | undefined): boolean {
++    if (stamp === undefined || this.entries.get(key) !== stamp) return false;
++    this.set(key, value);
++    return true;
++  }
++
++  delete(key: K): boolean {
++    return this.entries.delete(key);
++  }
++
++  deleteIfCurrent(key: K, stamp: object | undefined): boolean {
++    if (stamp === undefined || this.entries.get(key) !== stamp) return false;
++    return this.entries.delete(key);
++  }
++
++  clear(): void {
++    this.entries.clear();
++  }
++
++  get size(): number {
++    return this.entries.size;
++  }
++
++  stats(): CacheStats {
++    return { size: this.entries.size, hits: this.hits, misses: this.misses, evictions: this.evictions };
++  }
++
++  private live(key: K): Entry<V> | undefined {
++    const entry = this.entries.get(key);
++    if (entry === undefined) return undefined;
++    if (this.now() - entry.storedAt >= this.ttlMs) {
++      this.entries.delete(key);
++      return undefined;
++    }
++    return entry;
++  }
++
++  private evictOldest(): void {
++    const oldest = this.entries.keys().next();
++    if (oldest.done) return;
++    this.entries.delete(oldest.value);
++    this.evictions++;
++  }
++}
+diff --git a/src/users/service.ts b/src/users/service.ts
+index 67ee967..42f43f2 100644
+--- a/src/users/service.ts
++++ b/src/users/service.ts
+@@ -1,19 +1,47 @@
+ import type { Logger } from "../log";
++import { type CacheStats, TtlCache } from "./cache";
+ import type { UserRepo } from "./repo";
+ import type { User, UserPatch } from "./types";
+ 
++// A hit on an entry older than this starts a refresh in the background.
++const REFRESH_AFTER_MS = 45_000;
++
++export type UserServiceOptions = {
++  ttlMs?: number;
++  maxEntries?: number;
++  now?: () => number;
++};
++
+ export class UserService {
++  private readonly cache: TtlCache<string, User>;
++  private readonly refreshing = new Set<string>();
++
+   constructor(
+     private readonly repo: UserRepo,
+     private readonly log: Logger,
+-  ) {}
++    options: UserServiceOptions = {},
++  ) {
++    this.cache = new TtlCache<string, User>({
++      ttlMs: options.ttlMs ?? 60_000,
++      maxEntries: options.maxEntries ?? 10_000,
++      now: options.now,
++    });
++  }
+ 
+   async getUser(id: string): Promise<User | null> {
+-    return this.repo.findById(id);
++    const cached = this.cache.get(id);
++    if (cached !== undefined) {
++      if ((this.cache.ageOf(id) ?? 0) > REFRESH_AFTER_MS) this.startRefresh(id);
++      return cached;
++    }
++    const user = await this.repo.findById(id);
++    if (user) this.cache.set(id, user);
++    return user;
+   }
+ 
+   async updateUser(id: string, patch: UserPatch): Promise<User | null> {
+     const user = await this.repo.update(id, patch);
++    this.cache.delete(id);
+     if (user) this.log.info("user updated", { id });
+     return user;
+   }
+@@ -22,4 +50,24 @@ export class UserService {
+     const user = await this.getUser(id);
+     return user ? this.repo.findByTeam(user.teamId) : [];
+   }
++
++  cacheStats(): CacheStats {
++    return this.cache.stats();
++  }
++
++  private startRefresh(id: string): void {
++    if (this.refreshing.has(id)) return;
++    this.refreshing.add(id);
++    void this.refresh(id)
++      .catch((e: unknown) => this.log.warn("user refresh failed", { id, error: String(e) }))
++      .finally(() => this.refreshing.delete(id));
++  }
++
++  // The write is skipped when a delete or another write replaced the entry during the read.
++  private async refresh(id: string): Promise<void> {
++    const stamp = this.cache.stamp(id);
++    const user = await this.repo.findById(id);
++    if (user) this.cache.setIfCurrent(id, user, stamp);
++    else this.cache.deleteIfCurrent(id, stamp);
++  }
+ }
+diff --git a/tests/users/cache.test.ts b/tests/users/cache.test.ts
+new file mode 100644
+index 0000000..7f81297
+--- /dev/null
++++ b/tests/users/cache.test.ts
+@@ -0,0 +1,62 @@
++import { describe, expect, it } from "vitest";
++import { TtlCache } from "../../src/users/cache";
++
++function clock(start = 1_000) {
++  let t = start;
++  return {
++    now: () => t,
++    advance: (ms: number) => {
++      t += ms;
++    },
++  };
++}
++
++describe("TtlCache", () => {
++  it("returns a stored value until the ttl ends", () => {
++    const c = clock();
++    const cache = new TtlCache<string, number>({ ttlMs: 100, maxEntries: 10, now: c.now });
++    cache.set("a", 1);
++    c.advance(99);
++    expect(cache.get("a")).toBe(1);
++    c.advance(1);
++    expect(cache.get("a")).toBeUndefined();
++  });
++
++  it("counts hits and misses", () => {
++    const cache = new TtlCache<string, number>({ ttlMs: 100, maxEntries: 10 });
++    cache.set("a", 1);
++    cache.get("a");
++    cache.get("b");
++    expect(cache.stats()).toMatchObject({ hits: 1, misses: 1, size: 1 });
++  });
++
++  it("reports the age of an entry", () => {
++    const c = clock();
++    const cache = new TtlCache<string, number>({ ttlMs: 100, maxEntries: 10, now: c.now });
++    cache.set("a", 1);
++    c.advance(40);
++    expect(cache.ageOf("a")).toBe(40);
++    expect(cache.ageOf("b")).toBeUndefined();
++  });
++
++  it("skips a conditional write after a delete", () => {
++    const cache = new TtlCache<string, number>({ ttlMs: 100, maxEntries: 10 });
++    cache.set("a", 1);
++    const stamp = cache.stamp("a");
++    cache.delete("a");
++    expect(cache.setIfCurrent("a", 2, stamp)).toBe(false);
++    expect(cache.get("a")).toBeUndefined();
++  });
++
++  it("applies a conditional write while the entry is unchanged", () => {
++    const cache = new TtlCache<string, number>({ ttlMs: 100, maxEntries: 10 });
++    cache.set("a", 1);
++    expect(cache.setIfCurrent("a", 2, cache.stamp("a"))).toBe(true);
++    expect(cache.get("a")).toBe(2);
++  });
++
++  it("rejects bad options", () => {
++    expect(() => new TtlCache({ ttlMs: 0, maxEntries: 1 })).toThrow(RangeError);
++    expect(() => new TtlCache({ ttlMs: 10, maxEntries: 0 })).toThrow(RangeError);
++  });
++});
+diff --git a/tests/users/service.test.ts b/tests/users/service.test.ts
+new file mode 100644
+index 0000000..f74cbb2
+--- /dev/null
++++ b/tests/users/service.test.ts
+@@ -0,0 +1,44 @@
++import { describe, expect, it, vi } from "vitest";
++import type { Logger } from "../../src/log";
++import type { UserRepo } from "../../src/users/repo";
++import { UserService } from "../../src/users/service";
++import type { User } from "../../src/users/types";
++
++const ada: User = { id: "u1", name: "Ada", email: "ada@example.test", teamId: "t1", updatedAt: 1 };
++const log: Logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
++
++function repoWith(user: User | null) {
++  return {
++    findById: vi.fn(async () => user),
++    findByTeam: vi.fn(async () => []),
++    update: vi.fn(async () => user),
++  } as unknown as UserRepo & { findById: ReturnType<typeof vi.fn> };
++}
++
++describe("UserService cache", () => {
++  it("reads the database once for two lookups", async () => {
++    const repo = repoWith(ada);
++    const service = new UserService(repo, log);
++    await service.getUser("u1");
++    await service.getUser("u1");
++    expect(repo.findById).toHaveBeenCalledTimes(1);
++    expect(service.cacheStats().hits).toBe(1);
++  });
++
++  it("reads the database again after an update", async () => {
++    const repo = repoWith(ada);
++    const service = new UserService(repo, log);
++    await service.getUser("u1");
++    await service.updateUser("u1", { name: "Ada L." });
++    await service.getUser("u1");
++    expect(repo.findById).toHaveBeenCalledTimes(2);
++  });
++
++  it("does not cache a missing user", async () => {
++    const repo = repoWith(null);
++    const service = new UserService(repo, log);
++    expect(await service.getUser("u2")).toBeNull();
++    expect(await service.getUser("u2")).toBeNull();
++    expect(repo.findById).toHaveBeenCalledTimes(2);
++  });
++});

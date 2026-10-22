@@ -1,0 +1,271 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 13bea7b..0b8a0d5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4,8 +4,16 @@ project(service CXX)
+ set(CMAKE_CXX_STANDARD 17)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ 
++find_package(ZLIB REQUIRED)
++
+ add_library(logging src/log_file.cpp src/rotate.cpp)
+ target_include_directories(logging PUBLIC src)
++target_link_libraries(logging PRIVATE ZLIB::ZLIB)
+ 
+ add_executable(service src/app/main.cpp src/app/config.cpp)
+ target_link_libraries(service PRIVATE logging)
++
++enable_testing()
++add_executable(rotate_test tests/rotate_test.cpp)
++target_link_libraries(rotate_test PRIVATE logging ZLIB::ZLIB)
++add_test(NAME rotate_test COMMAND rotate_test)
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..6b78ef8
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,10 @@
++# service
++
++A small job service that writes its own log file.
++
++## Log rotation
++
++- The log rotates when it reaches `max_log_bytes` (default 10 MiB).
++- The old log goes to `<log>.1.gz`. The older archives move up to `.2.gz` and so on.
++- The service keeps 5 archives. The oldest one is deleted.
++- When the new log cannot be opened, the service keeps the old log and tries again at the next check.
+diff --git a/src/log_file.cpp b/src/log_file.cpp
+index e93db53..082543f 100644
+--- a/src/log_file.cpp
++++ b/src/log_file.cpp
+@@ -1,9 +1,6 @@
+ #include "log_file.h"
+ 
+-#include <cerrno>
+-#include <cstring>
+ #include <ctime>
+-#include <stdexcept>
+ 
+ namespace logging {
+ 
+@@ -17,6 +14,7 @@ void LogFile::write(const std::string& message) {
+   std::tm utc{};
+   gmtime_r(&now, &utc);
+   std::strftime(stamp, sizeof stamp, "%Y-%m-%dT%H:%M:%SZ", &utc);
++  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): one fprintf call keeps the line in one write, also with two writers.
+   std::fprintf(file_, "%s %s\n", stamp, message.c_str());
+   std::fflush(file_);
+ }
+@@ -25,7 +23,7 @@ long LogFile::size() const { return std::ftell(file_); }
+ 
+ std::unique_ptr<LogFile> openLog(const std::string& path) {
+   std::FILE* f = std::fopen(path.c_str(), "a");
+-  if (!f) throw std::runtime_error("cannot open " + path + ": " + std::strerror(errno));
++  if (!f) return nullptr;
+   return std::make_unique<LogFile>(f, path);
+ }
+ 
+diff --git a/src/log_file.h b/src/log_file.h
+index 2de29b0..a2cf488 100644
+--- a/src/log_file.h
++++ b/src/log_file.h
+@@ -23,7 +23,7 @@ class LogFile {
+   std::string path_;
+ };
+ 
+-// Opens path for appending. Throws std::runtime_error when the file cannot be opened.
++// Opens path for appending. Returns nullptr when the file cannot be opened; errno tells why.
+ std::unique_ptr<LogFile> openLog(const std::string& path);
+ 
+ }  // namespace logging
+diff --git a/src/rotate.cpp b/src/rotate.cpp
+index ad71b86..96d27d9 100644
+--- a/src/rotate.cpp
++++ b/src/rotate.cpp
+@@ -1,26 +1,69 @@
+ #include "rotate.h"
+ 
++#include <zlib.h>
++
+ #include <cstdio>
++#include <ctime>
+ #include <string>
++#include <vector>
+ 
+ namespace logging {
+ 
+ namespace {
+ 
+-constexpr int kKeep = 10;
++constexpr int kKeepFiles = 5;
++constexpr std::size_t kChunk = 64 * 1024;
+ 
+-std::string numbered(const std::string& path, int n) { return path + "." + std::to_string(n); }
++std::string archive(const std::string& path, int n) { return path + "." + std::to_string(n) + ".gz"; }
+ 
+ }  // namespace
+ 
+-void rotateIfNeeded(std::unique_ptr<LogFile>& log, long maxBytes) {
+-  if (log->size() < maxBytes) return;
++bool compressFile(const std::string& src, const std::string& dst) {
++  std::FILE* in = std::fopen(src.c_str(), "rb");
++  if (!in) return false;
++  gzFile out = gzopen(dst.c_str(), "wb6");
++  if (!out) return false;
++
++  std::vector<char> buf(kChunk);
++  bool ok = true;
++  for (;;) {
++    const std::size_t n = std::fread(buf.data(), 1, buf.size(), in);
++    if (n > 0 && gzwrite(out, buf.data(), static_cast<unsigned>(n)) != static_cast<int>(n)) {
++      ok = false;
++      break;
++    }
++    if (n < buf.size()) {
++      ok = std::ferror(in) == 0;
++      break;
++    }
++  }
++  std::fclose(in);
++  if (gzclose(out) != Z_OK) ok = false;
++  if (!ok) std::remove(dst.c_str());
++  return ok;
++}
++
++bool rotateIfNeeded(std::unique_ptr<LogFile>& log, long maxBytes) {
++  if (log->size() < maxBytes) return false;
+   const std::string path = log->path();
+-  log.reset();
+-  std::remove(numbered(path, kKeep).c_str());
+-  for (int i = kKeep - 1; i >= 1; --i) std::rename(numbered(path, i).c_str(), numbered(path, i + 1).c_str());
+-  std::rename(path.c_str(), numbered(path, 1).c_str());
+-  log = openLog(path);
++  const std::string staged = path + ".rotating." + std::to_string(std::time(nullptr));
++  if (std::rename(path.c_str(), staged.c_str()) != 0) return false;
++
++  std::unique_ptr<LogFile> fresh = openLog(path);
++  if (!fresh) {
++    // The old file is still open. With its name back, no line goes to a file that nobody reads.
++    std::rename(staged.c_str(), path.c_str());
++    return false;
++  }
++  log = std::move(fresh);
++
++  std::remove(archive(path, kKeepFiles).c_str());
++  for (int i = kKeepFiles - 1; i >= 1; --i) {
++    // NOLINTNEXTLINE(cert-err33-c): an archive that does not exist yet is fine; the first rotations have fewer files.
++    std::rename(archive(path, i).c_str(), archive(path, i + 1).c_str());
++  }
++  if (compressFile(staged, archive(path, 1))) std::remove(staged.c_str());
++  return true;
+ }
+ 
+ }  // namespace logging
+diff --git a/src/rotate.h b/src/rotate.h
+index 63b3800..58334b1 100644
+--- a/src/rotate.h
++++ b/src/rotate.h
+@@ -1,12 +1,17 @@
+ #pragma once
+ 
+ #include <memory>
++#include <string>
+ 
+ #include "log_file.h"
+ 
+ namespace logging {
+ 
+-// Renames the log to <path>.1 when it reached maxBytes and opens a new one. The older files move up by one.
+-void rotateIfNeeded(std::unique_ptr<LogFile>& log, long maxBytes);
++// Compresses src into the gzip file dst. On failure dst is removed and src stays.
++bool compressFile(const std::string& src, const std::string& dst);
++
++// When the log reached maxBytes: opens a new log at the same path and compresses the old one to <path>.1.gz.
++// The older archives move up by one. Returns false when no rotation happened; the old log then stays in use.
++bool rotateIfNeeded(std::unique_ptr<LogFile>& log, long maxBytes);
+ 
+ }  // namespace logging
+diff --git a/tests/rotate_test.cpp b/tests/rotate_test.cpp
+new file mode 100644
+index 0000000..ef39487
+--- /dev/null
++++ b/tests/rotate_test.cpp
+@@ -0,0 +1,77 @@
++#include <zlib.h>
++
++#include <cassert>
++#include <filesystem>
++#include <fstream>
++#include <iostream>
++#include <string>
++
++#include "log_file.h"
++#include "rotate.h"
++
++namespace fs = std::filesystem;
++
++namespace {
++
++fs::path tempDir(const std::string& name) {
++  fs::path dir = fs::temp_directory_path() / ("rotate-test-" + name);
++  fs::remove_all(dir);
++  fs::create_directories(dir);
++  return dir;
++}
++
++std::string gunzip(const fs::path& file) {
++  gzFile in = gzopen(file.string().c_str(), "rb");
++  assert(in != nullptr);
++  std::string out;
++  char buf[4096];
++  for (int n; (n = gzread(in, buf, sizeof buf)) > 0;) out.append(buf, static_cast<std::size_t>(n));
++  gzclose(in);
++  return out;
++}
++
++void keepsASmallLog() {
++  const fs::path dir = tempDir("small");
++  auto log = logging::openLog((dir / "app.log").string());
++  log->write("one line");
++  assert(!logging::rotateIfNeeded(log, 1 << 20));
++  assert(!fs::exists(dir / "app.log.1.gz"));
++}
++
++void compressesAFullLog() {
++  const fs::path dir = tempDir("full");
++  const std::string path = (dir / "app.log").string();
++  auto log = logging::openLog(path);
++  log->write("first");
++  assert(logging::rotateIfNeeded(log, 1));
++  log->write("second");
++  assert(gunzip(dir / "app.log.1.gz").find("first") != std::string::npos);
++  std::ifstream current(path);
++  std::string line;
++  std::getline(current, line);
++  assert(line.find("second") != std::string::npos);
++}
++
++void keepsFiveArchives() {
++  const fs::path dir = tempDir("five");
++  auto log = logging::openLog((dir / "app.log").string());
++  for (int i = 0; i < 8; ++i) {
++    log->write("entry " + std::to_string(i));
++    assert(logging::rotateIfNeeded(log, 1));
++  }
++  assert(fs::exists(dir / "app.log.5.gz"));
++  assert(!fs::exists(dir / "app.log.6.gz"));
++}
++
++void reportsAMissingFolder() { assert(logging::openLog("/nonexistent-dir/app.log") == nullptr); }
++
++}  // namespace
++
++int main() {
++  keepsASmallLog();
++  compressesAFullLog();
++  keepsFiveArchives();
++  reportsAMissingFolder();
++  std::cout << "rotate_test: ok\n";
++  return 0;
++}

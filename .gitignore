@@ -6,3 +6,4 @@ dist/
 *.sqlite-*
 test-results/
 .bun-cache/
+eval-results/

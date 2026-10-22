@@ -27,6 +27,7 @@
     "scripts/notices.ts",
     "scripts/screenshots.ts",
     "scripts/gate",
+    "scripts/eval",
     "vite.config.ts",
     "playwright.config.ts"
   ]

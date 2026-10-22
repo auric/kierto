@@ -1,0 +1,54 @@
+{
+  "id": "ts-settings-api",
+  "title": "Split the settings into sections",
+  "language": "typescript",
+  "pr": {
+    "title": "Settings sections and new settings endpoints",
+    "description": "Moves the settings into four sections (general, delivery, notifications, limits) behind a `SettingsStore` with a short read cache. Adds `GET /v1/settings/:section` and PUT endpoints for delivery, notifications (with quiet hours), and limits.\n\nRemoves `GET /v0/settings`. It was deprecated in 2.0, and the access logs show no call in the last 90 days.\n\n`config/overrides.json` keeps its flat keys. The store maps them to the sections."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/settings/serialize.ts",
+      "side": "new",
+      "lines": [8, 8],
+      "severityMin": "major",
+      "module": "api",
+      "note": "Broken API compatibility: GET /v1/settings now returns retries instead of retryLimit, so existing v1 clients lose the field."
+    },
+    {
+      "id": "B2",
+      "path": "src/api/settings.ts",
+      "side": "new",
+      "lines": [50, 55],
+      "severityMin": "minor",
+      "module": "rules",
+      "note": "Wrong rule per the scoped src/api/CLAUDE.md: putNotifications reads req.body fields by hand instead of a schema with parseBody(), so a bad value passes with 200."
+    },
+    {
+      "id": "B3",
+      "path": "src/settings/store.ts",
+      "side": "new",
+      "lines": [78, 78],
+      "severityMin": "major",
+      "module": "core",
+      "note": "Unchecked error: the old loader treated a missing config/overrides.json as no overrides. The store reads it without the ENOENT check, so each settings read fails where the file is absent."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/routes.ts",
+      "side": "old",
+      "lines": [7, 7],
+      "why": "The removal of /v0/settings is intended. The PR text names it and the deprecation."
+    },
+    {
+      "id": "T2",
+      "path": "src/api/settings.ts",
+      "side": "new",
+      "lines": [26, 29],
+      "why": "The route parameter indexes the settings object, but the route pattern allows only the four section names."
+    }
+  ]
+}

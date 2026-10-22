@@ -1,0 +1,45 @@
+{
+  "id": "cpp-job-queue",
+  "title": "Run jobs on a thread pool",
+  "language": "cpp",
+  "pr": {
+    "title": "Run jobs on a thread pool",
+    "description": "Adds `jobs::ThreadPool` and moves `JobRunner` onto it, so the line counter reads the files in parallel. `drain()` now waits until the pool is idle.\n\n`stop()` drops the tasks that did not start. The runner only stops at exit, and a job that did not start at that point has no one to report to, so draining the queue is not wanted."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/thread_pool.cpp",
+      "side": "new",
+      "lines": [60, 62],
+      "severityMin": "major",
+      "module": "concurrency",
+      "note": "Race: the wait has no predicate loop. A spurious wakeup, or the notify_all of stop() after it clears the queue, makes the worker call front() on an empty deque."
+    },
+    {
+      "id": "B2",
+      "path": "src/thread_pool.cpp",
+      "side": "new",
+      "lines": [58, 58],
+      "severityMin": "major",
+      "module": "concurrency",
+      "note": "Race: workers read stopping_ without the mutex while stop() writes it under the mutex. That is a data race and undefined behavior."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/thread_pool.h",
+      "side": "new",
+      "lines": [35, 36],
+      "why": "pendingLocked() reads queue_ without a lock, but its contract says that the caller holds mutex_, and both callers do."
+    },
+    {
+      "id": "T2",
+      "path": "src/thread_pool.cpp",
+      "side": "new",
+      "lines": [43, 43],
+      "why": "stop() drops the queued tasks on purpose. The PR text names it and gives the reason."
+    }
+  ]
+}

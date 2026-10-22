@@ -1,0 +1,341 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a51762c..c84f967 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4,8 +4,16 @@ project(jobs CXX)
+ set(CMAKE_CXX_STANDARD 17)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ 
+-add_library(jobs src/runner.cpp)
++find_package(Threads REQUIRED)
++
++add_library(jobs src/runner.cpp src/thread_pool.cpp)
+ target_include_directories(jobs PUBLIC src)
++target_link_libraries(jobs PUBLIC Threads::Threads)
+ 
+ add_executable(jobs_cli src/main.cpp)
+ target_link_libraries(jobs_cli PRIVATE jobs)
++
++enable_testing()
++add_executable(thread_pool_test tests/thread_pool_test.cpp)
++target_link_libraries(thread_pool_test PRIVATE jobs)
++add_test(NAME thread_pool_test COMMAND thread_pool_test)
+diff --git a/src/main.cpp b/src/main.cpp
+index 27b1359..197400b 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1,5 +1,6 @@
+ #include <fstream>
+ #include <iostream>
++#include <mutex>
+ #include <stdexcept>
+ #include <string>
+ 
+@@ -17,12 +18,17 @@ std::size_t countLines(const std::string& path) {
+ 
+ }  // namespace
+ 
+-// Prints the line count of each file that the command line names.
++// Prints the line count of each file that the command line names. The files are read in parallel.
+ int main(int argc, char** argv) {
++  std::mutex out;
+   jobs::JobRunner runner;
+   for (int i = 1; i < argc; ++i) {
+     std::string path = argv[i];
+-    runner.submit([path] { std::cout << path << ": " << countLines(path) << " lines\n"; });
++    runner.submit([path, &out] {
++      std::string line = path + ": " + std::to_string(countLines(path)) + " lines\n";
++      std::lock_guard<std::mutex> lock(out);
++      std::cout << line;
++    });
+   }
+   return runner.drain() == 0 ? 0 : 1;
+ }
+diff --git a/src/runner.cpp b/src/runner.cpp
+index 878312f..8c30e47 100644
+--- a/src/runner.cpp
++++ b/src/runner.cpp
+@@ -2,27 +2,29 @@
+ 
+ #include <exception>
+ #include <iostream>
++#include <string>
+ 
+ namespace jobs {
+ 
+-void JobRunner::submit(Task task) { queue_.push_back(std::move(task)); }
++JobRunner::JobRunner(std::size_t workers) : pool_(workers) {}
+ 
+-std::size_t JobRunner::drain() {
+-  std::size_t failed = 0;
+-  while (!queue_.empty()) {
+-    Task task = std::move(queue_.front());
+-    queue_.pop_front();
++void JobRunner::submit(Task task) {
++  pool_.submit([this, task = std::move(task)] {
+     try {
+       task();
+     } catch (const std::exception& e) {
+-      std::cerr << "job failed: " << e.what() << '\n';
+-      ++failed;
++      std::cerr << std::string("job failed: ") + e.what() + "\n";
++      ++failed_;
+     } catch (...) {
+       std::cerr << "job failed with an unknown exception\n";
+-      ++failed;
++      ++failed_;
+     }
+-  }
+-  return failed;
++  });
++}
++
++std::size_t JobRunner::drain() {
++  pool_.waitIdle();
++  return failed_.exchange(0);
+ }
+ 
+ }  // namespace jobs
+diff --git a/src/runner.h b/src/runner.h
+index 911bb30..31bbc68 100644
+--- a/src/runner.h
++++ b/src/runner.h
+@@ -1,23 +1,26 @@
+ #pragma once
+ 
++#include <atomic>
+ #include <cstddef>
+-#include <deque>
+-#include <functional>
++#include <thread>
+ 
+-namespace jobs {
++#include "thread_pool.h"
+ 
+-using Task = std::function<void()>;
++namespace jobs {
+ 
+-// Runs the submitted jobs on the calling thread when drain() is called.
++// Runs the submitted jobs on a pool of worker threads.
+ class JobRunner {
+  public:
++  explicit JobRunner(std::size_t workers = std::thread::hardware_concurrency());
+   void submit(Task task);
+-  // Runs each queued job. Returns the number of jobs that threw.
++  // Waits until each submitted job ran. Returns the number of jobs that threw since the last drain().
+   std::size_t drain();
+-  std::size_t queued() const { return queue_.size(); }
++  std::size_t queued() const { return pool_.pending(); }
+ 
+  private:
+-  std::deque<Task> queue_;
++  std::atomic<std::size_t> failed_{0};
++  // Declared last, so it stops and joins its workers before failed_ goes away.
++  ThreadPool pool_;
+ };
+ 
+ }  // namespace jobs
+diff --git a/src/thread_pool.cpp b/src/thread_pool.cpp
+new file mode 100644
+index 0000000..d56179c
+--- /dev/null
++++ b/src/thread_pool.cpp
+@@ -0,0 +1,84 @@
++#include "thread_pool.h"
++
++#include <exception>
++#include <iostream>
++#include <string>
++
++namespace jobs {
++
++namespace {
++// A queue deeper than this gets a warning, once per crossing.
++constexpr std::size_t kWarnDepth = 10000;
++}  // namespace
++
++ThreadPool::ThreadPool(std::size_t workers) {
++  if (workers == 0) workers = 1;
++  workers_.reserve(workers);
++  for (std::size_t i = 0; i < workers; ++i) workers_.emplace_back([this] { workerLoop(); });
++}
++
++ThreadPool::~ThreadPool() { stop(); }
++
++bool ThreadPool::submit(Task task) {
++  {
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (stopping_) return false;
++    queue_.push_back(std::move(task));
++    if (pendingLocked() == kWarnDepth) std::cerr << "thread pool: " << kWarnDepth << " tasks wait\n";
++  }
++  ready_.notify_one();
++  return true;
++}
++
++void ThreadPool::waitIdle() {
++  std::unique_lock<std::mutex> lock(mutex_);
++  idle_.wait(lock, [this] { return queue_.empty() && active_ == 0; });
++}
++
++void ThreadPool::stop() {
++  {
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (stopping_) return;
++    stopping_ = true;
++    queue_.clear();
++  }
++  ready_.notify_all();
++  for (auto& t : workers_) {
++    if (t.joinable()) t.join();
++  }
++  idle_.notify_all();
++}
++
++std::size_t ThreadPool::pending() const {
++  std::lock_guard<std::mutex> lock(mutex_);
++  return pendingLocked();
++}
++
++void ThreadPool::workerLoop() {
++  while (!stopping_) {
++    std::unique_lock<std::mutex> lock(mutex_);
++    if (queue_.empty()) ready_.wait(lock);
++    Task task = std::move(queue_.front());
++    queue_.pop_front();
++    ++active_;
++    lock.unlock();
++
++    runTask(task);
++
++    lock.lock();
++    if (--active_ == 0 && queue_.empty()) idle_.notify_all();
++  }
++}
++
++// An exception that leaves a worker thread calls std::terminate, so each task runs inside a catch-all.
++void ThreadPool::runTask(Task& task) {
++  try {
++    task();
++  } catch (const std::exception& e) {
++    std::cerr << std::string("thread pool: task threw: ") + e.what() + "\n";
++  } catch (...) {
++    std::cerr << "thread pool: task threw an unknown exception\n";
++  }
++}
++
++}  // namespace jobs
+diff --git a/src/thread_pool.h b/src/thread_pool.h
+new file mode 100644
+index 0000000..6e16257
+--- /dev/null
++++ b/src/thread_pool.h
+@@ -0,0 +1,47 @@
++#pragma once
++
++#include <condition_variable>
++#include <cstddef>
++#include <deque>
++#include <functional>
++#include <mutex>
++#include <thread>
++#include <vector>
++
++namespace jobs {
++
++using Task = std::function<void()>;
++
++// A fixed set of worker threads that run tasks in submit order.
++class ThreadPool {
++ public:
++  explicit ThreadPool(std::size_t workers);
++  ~ThreadPool();
++
++  ThreadPool(const ThreadPool&) = delete;
++  ThreadPool& operator=(const ThreadPool&) = delete;
++
++  // Returns false after stop().
++  bool submit(Task task);
++  // Blocks until the queue is empty and no task runs.
++  void waitIdle();
++  // Ends the workers. Tasks that did not start are dropped.
++  void stop();
++  std::size_t pending() const;
++
++ private:
++  void workerLoop();
++  void runTask(Task& task);
++  // Requires mutex_ to be held.
++  std::size_t pendingLocked() const { return queue_.size(); }
++
++  mutable std::mutex mutex_;
++  std::condition_variable ready_;
++  std::condition_variable idle_;
++  std::deque<Task> queue_;
++  std::vector<std::thread> workers_;
++  std::size_t active_ = 0;
++  bool stopping_ = false;
++};
++
++}  // namespace jobs
+diff --git a/tests/thread_pool_test.cpp b/tests/thread_pool_test.cpp
+new file mode 100644
+index 0000000..bc42c88
+--- /dev/null
++++ b/tests/thread_pool_test.cpp
+@@ -0,0 +1,55 @@
++#include <atomic>
++#include <cassert>
++#include <iostream>
++#include <stdexcept>
++
++#include "runner.h"
++#include "thread_pool.h"
++
++namespace {
++
++void runsEveryTask() {
++  std::atomic<int> sum{0};
++  jobs::ThreadPool pool(4);
++  for (int i = 1; i <= 100; ++i) pool.submit([&sum, i] { sum += i; });
++  pool.waitIdle();
++  assert(sum == 5050);
++  assert(pool.pending() == 0);
++}
++
++void refusesTasksAfterStop() {
++  jobs::ThreadPool pool(2);
++  pool.stop();
++  assert(!pool.submit([] {}));
++}
++
++void countsFailedJobs() {
++  jobs::JobRunner runner(3);
++  for (int i = 0; i < 10; ++i) {
++    runner.submit([i] {
++      if (i % 2 == 0) throw std::runtime_error("even");
++    });
++  }
++  assert(runner.drain() == 5);
++  assert(runner.drain() == 0);
++}
++
++void survivesAnUnknownException() {
++  std::atomic<int> after{0};
++  jobs::ThreadPool pool(1);
++  pool.submit([] { throw 42; });
++  pool.submit([&after] { ++after; });
++  pool.waitIdle();
++  assert(after == 1);
++}
++
++}  // namespace
++
++int main() {
++  runsEveryTask();
++  refusesTasksAfterStop();
++  countsFailedJobs();
++  survivesAnUnknownException();
++  std::cout << "thread_pool_test: ok\n";
++  return 0;
++}

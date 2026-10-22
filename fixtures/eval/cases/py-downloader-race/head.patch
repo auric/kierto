@@ -1,0 +1,240 @@
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..6b193de
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,11 @@
++# archive-fetcher
++
++Downloads the document archive of the partner portals.
++
++```
++archive-fetch urls.txt --dest archive --workers 4
++```
++
++- Each URL downloads once, also when the list names it twice.
++- Only PDF and ZIP files are kept. Other content types are skipped with a warning.
++- The exit code is 1 when a download failed.
+diff --git a/fetcher/cli.py b/fetcher/cli.py
+index 8e1c651..f17ca58 100644
+--- a/fetcher/cli.py
++++ b/fetcher/cli.py
+@@ -3,7 +3,7 @@ import logging
+ import sys
+ from pathlib import Path
+ 
+-from fetcher.download import download_all
++from fetcher.parallel import ParallelDownloader
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+@@ -11,14 +11,19 @@ def main(argv: list[str] | None = None) -> int:
+     parser.add_argument("url_file", type=Path, help="a file with one URL per line")
+     parser.add_argument("--dest", type=Path, default=Path("archive"))
+     parser.add_argument("--timeout", type=float, default=30.0)
++    parser.add_argument("--workers", type=int, default=4, help="parallel downloads, 1 to 16")
+     args = parser.parse_args(argv)
++    if not 1 <= args.workers <= 16:
++        parser.error("--workers must be 1 to 16")
+ 
+-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+-    urls = [line.strip() for line in args.url_file.read_text().splitlines() if line.strip()]
++    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(threadName)s %(message)s")
++    urls = list(dict.fromkeys(line.strip() for line in args.url_file.read_text().splitlines() if line.strip()))
+     args.dest.mkdir(parents=True, exist_ok=True)
+-    saved = download_all(urls, args.dest, args.timeout)
+-    print(f"saved {len(saved)} of {len(urls)} files")
+-    return 0 if len(saved) == len(urls) else 1
++    report = ParallelDownloader(args.dest, args.workers, args.timeout).run(urls)
++    print(f"saved {len(report.saved)}, skipped {len(report.skipped)}, failed {len(report.failed)} of {len(urls)}")
++    for url, error in sorted(report.failed.items()):
++        print(f"  failed: {url}: {error}")
++    return 0 if not report.failed else 1
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/fetcher/download.py b/fetcher/download.py
+deleted file mode 100644
+index 9256634..0000000
+--- a/fetcher/download.py
++++ /dev/null
+@@ -1,24 +0,0 @@
+-import logging
+-import shutil
+-from pathlib import Path
+-from urllib.request import urlopen
+-
+-from fetcher.naming import safe_name
+-
+-log = logging.getLogger(__name__)
+-CHUNK = 64 * 1024
+-
+-
+-def download_all(urls: list[str], dest: Path, timeout: float = 30.0) -> list[Path]:
+-    """Downloads each URL into dest, one after the other. A failed URL is logged and skipped."""
+-    saved = []
+-    for url in urls:
+-        target = dest / safe_name(url)
+-        try:
+-            with urlopen(url, timeout=timeout) as response, open(target, "wb") as out:
+-                shutil.copyfileobj(response, out, CHUNK)
+-        except OSError as e:
+-            log.warning("download of %s failed: %s", url, e)
+-            continue
+-        saved.append(target)
+-    return saved
+diff --git a/fetcher/parallel.py b/fetcher/parallel.py
+new file mode 100644
+index 0000000..789146d
+--- /dev/null
++++ b/fetcher/parallel.py
+@@ -0,0 +1,89 @@
++"""Downloads a list of URLs with a few worker threads."""
++
++import logging
++import queue
++import shutil
++import threading
++from dataclasses import dataclass, field
++from pathlib import Path
++from urllib.request import urlopen
++
++from fetcher.naming import safe_name
++
++log = logging.getLogger(__name__)
++CHUNK = 64 * 1024
++ALLOWED_TYPES = {"application/pdf", "application/zip"}
++
++
++@dataclass
++class DownloadReport:
++    saved: list[Path] = field(default_factory=list)
++    skipped: list[str] = field(default_factory=list)
++    failed: dict[str, str] = field(default_factory=dict)
++
++
++class ParallelDownloader:
++    def __init__(self, dest: Path, workers: int = 4, timeout: float = 30.0, opener=urlopen):
++        if workers < 1:
++            raise ValueError("workers must be at least 1")
++        self.dest = dest
++        self.workers = workers
++        self.timeout = timeout
++        self._open = opener
++        self._lock = threading.Lock()
++        self._done = threading.Event()
++        self._report = DownloadReport()
++        self._total = 0
++        self.completed = 0
++
++    def run(self, urls: list[str]) -> DownloadReport:
++        """Downloads each URL and returns when every URL is done. Use one downloader per run."""
++        if not urls:
++            return DownloadReport()
++        self._total = len(urls)
++        jobs: queue.Queue[str] = queue.Queue()
++        for url in urls:
++            jobs.put(url)
++        for _ in range(min(self.workers, len(urls))):
++            threading.Thread(target=self._worker, args=(jobs,), daemon=True).start()
++        self._done.wait()
++        with self._lock:
++            return DownloadReport(list(self._report.saved), list(self._report.skipped), dict(self._report.failed))
++
++    def _worker(self, jobs: "queue.Queue[str]") -> None:
++        while True:
++            try:
++                url = jobs.get_nowait()
++            except queue.Empty:
++                return
++            try:
++                path = self._fetch(url)
++                with self._lock:
++                    self._record(url, path, None)
++            except Exception as e:
++                log.warning("download of %s failed: %s", url, e)
++                with self._lock:
++                    self._record(url, None, str(e))
++            self.completed += 1
++            if self.completed == self._total:
++                self._done.set()
++
++    def _record(self, url: str, path: Path | None, error: str | None) -> None:
++        """Adds one result to the report. Call with self._lock held."""
++        if error is not None:
++            self._report.failed[url] = error
++        elif path is None:
++            self._report.skipped.append(url)
++        else:
++            self._report.saved.append(path)
++
++    def _fetch(self, url: str) -> Path | None:
++        response = self._open(url, timeout=self.timeout)
++        kind = response.headers.get_content_type()
++        if kind not in ALLOWED_TYPES:
++            log.warning("skipped %s: content type %s", url, kind)
++            return None
++        target = self.dest / safe_name(url)
++        with response, open(target, "wb") as out:
++            shutil.copyfileobj(response, out, CHUNK)
++        return target
+diff --git a/tests/test_parallel.py b/tests/test_parallel.py
+new file mode 100644
+index 0000000..29f1fe5
+--- /dev/null
++++ b/tests/test_parallel.py
+@@ -0,0 +1,54 @@
++import io
++from email.message import Message
++
++import pytest
++
++from fetcher.parallel import ParallelDownloader
++
++
++class FakeResponse(io.BytesIO):
++    def __init__(self, body: bytes, content_type: str):
++        super().__init__(body)
++        self.headers = Message()
++        self.headers["Content-Type"] = content_type
++
++
++def opener(pages: dict[str, tuple[bytes, str]]):
++    def open_url(url, timeout):
++        if url not in pages:
++            raise OSError(f"404 for {url}")
++        body, kind = pages[url]
++        return FakeResponse(body, kind)
++
++    return open_url
++
++
++def test_saves_each_allowed_file(tmp_path):
++    pages = {f"https://files.example.test/doc{i}.pdf": (b"%PDF" + bytes([i]), "application/pdf") for i in range(20)}
++    report = ParallelDownloader(tmp_path, workers=4, opener=opener(pages)).run(list(pages))
++    assert len(report.saved) == 20
++    assert sorted(p.read_bytes() for p in report.saved) == sorted(b for b, _ in pages.values())
++
++
++def test_skips_other_content_types(tmp_path):
++    pages = {
++        "https://files.example.test/a.pdf": (b"%PDF", "application/pdf"),
++        "https://files.example.test/b.html": (b"<html>", "text/html; charset=utf-8"),
++    }
++    report = ParallelDownloader(tmp_path, workers=2, opener=opener(pages)).run(list(pages))
++    assert report.skipped == ["https://files.example.test/b.html"]
++    assert len(report.saved) == 1
++
++
++def test_reports_failed_urls(tmp_path):
++    report = ParallelDownloader(tmp_path, workers=2, opener=opener({})).run(["https://files.example.test/x.zip"])
++    assert list(report.failed) == ["https://files.example.test/x.zip"]
++
++
++def test_returns_at_once_for_no_urls(tmp_path):
++    assert ParallelDownloader(tmp_path).run([]).saved == []
++
++
++def test_refuses_zero_workers(tmp_path):
++    with pytest.raises(ValueError):
++        ParallelDownloader(tmp_path, workers=0)

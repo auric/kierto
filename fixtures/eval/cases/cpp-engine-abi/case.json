@@ -1,0 +1,48 @@
+{
+  "id": "cpp-engine-abi",
+  "title": "Add engine options at run time",
+  "language": "cpp",
+  "pr": {
+    "title": "Engine 3.5: flush interval, run time options, version query",
+    "description": "Adds `flush_interval_ms` to `engine_options`, `engine_set_option()` for changes at run time, and `engine_version()`. The worker uses the flush interval in a follow-up change.\n\n`engine_create()` now refuses more than 64 worker threads, because the worker pool cannot use more. No shipped plugin asks for more than 8."
+  },
+  "task": "Plugins need two additions to the engine API:\n\n1. A way to change log_level, queue_depth, and the new flush interval at run time: engine_set_option(engine, key, value), with the string values of the plugin config file.\n2. engine_version(), which returns the version string of the engine. Plugins call it before engine_create() to refuse an engine that is too old, so it must work without an engine instance.\n\nAlso add the flush interval to engine_options.",
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "include/engine/engine.h",
+      "side": "new",
+      "lines": [31, 31],
+      "severityMin": "major",
+      "module": "api",
+      "note": "Broken API compatibility: flush_interval_ms goes into the middle of engine_options and ENGINE_ABI_VERSION stays 3. A plugin built against the old header passes queue_depth where the engine now reads the flush interval."
+    },
+    {
+      "id": "B2",
+      "path": "src/engine.cpp",
+      "side": "new",
+      "lines": [80, 91],
+      "severityMin": "major",
+      "module": "rules",
+      "note": "Wrong rule per the scoped include/CLAUDE.md: engine_set_option lets std::stoi, std::stoul, and its own throw leave a C ABI function, which plugins in C cannot catch."
+    },
+    {
+      "id": "B3",
+      "path": "include/engine/engine.h",
+      "side": "new",
+      "lines": [45, 46],
+      "severityMin": "minor",
+      "module": "intent",
+      "note": "Task requirement missed: engine_version takes an engine and returns NULL without one, but the task asks for a call before engine_create()."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/engine.cpp",
+      "side": "new",
+      "lines": [48, 48],
+      "why": "Refusing more than 64 worker threads is intended. The PR text names the limit and its reason."
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "id": "cpp-log-rotate",
+  "title": "Compress rotated logs",
+  "language": "cpp",
+  "pr": {
+    "title": "Compress rotated logs and keep 5 archives",
+    "description": "Compresses each rotated log with gzip and keeps 5 archives instead of 10, as operations asked: the disks of the small hosts filled up.\n\n`openLog` no longer throws. A rotation runs while the service works, and a failed reopen must not end the service, so `rotateIfNeeded` keeps the old log open in that case."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/rotate.cpp",
+      "side": "new",
+      "lines": [24, 25],
+      "severityMin": "minor",
+      "module": "core",
+      "note": "Resource leak on an early return: when gzopen fails, compressFile returns false and never closes the input FILE*."
+    },
+    {
+      "id": "B2",
+      "path": "src/app/main.cpp",
+      "side": "new",
+      "lines": [7, 8],
+      "severityMin": "major",
+      "module": "core",
+      "note": "Missed caller: openLog now returns nullptr instead of throwing, but the unchanged main() calls log->write() without a check, so a log path that cannot be opened crashes the service."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/rotate.cpp",
+      "side": "new",
+      "lines": [14, 14],
+      "why": "Keeping 5 archives instead of 10 is intended. The PR text names it and the reason."
+    },
+    {
+      "id": "T2",
+      "path": "src/rotate.cpp",
+      "side": "new",
+      "lines": [62, 63],
+      "why": "The ignored rename result has a lint suppression with a reason: older archives do not exist during the first rotations."
+    }
+  ]
+}

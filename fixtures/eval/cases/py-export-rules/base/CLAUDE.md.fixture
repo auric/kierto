@@ -1,0 +1,5 @@
+# accounts-service
+
+- Python 3.11. Format with the project formatter before a commit.
+- Each table with personal data has a deleted_at column. A row with deleted_at set is soft-deleted.
+- Run `pytest` before each commit.

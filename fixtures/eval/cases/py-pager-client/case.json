@@ -1,0 +1,45 @@
+{
+  "id": "py-pager-client",
+  "title": "Move the directory client to API version 2",
+  "language": "python",
+  "pr": {
+    "title": "Directory client: API version 2",
+    "description": "Moves the client to version 2 of the directory API. Version 1 goes offline at the end of the quarter. Version 2 counts pages from 0 and returns the user count instead of the page count.\n\nAdds `iter_users()`, honors the Retry-After header, and lowers the default retries from 5 to 3, because the API gateway now retries on its own."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "client/api.py",
+      "side": "new",
+      "lines": [66, 70],
+      "severityMin": "minor",
+      "module": "core",
+      "note": "Off-by-one: attempt runs from 0 to retries - 1, so attempt == self.retries is never true. After the last failure _get sleeps once more and returns None instead of raising."
+    },
+    {
+      "id": "B2",
+      "path": "jobs/sync_users.py",
+      "side": "new",
+      "lines": [12, 14],
+      "severityMin": "major",
+      "module": "core",
+      "note": "Missed caller: fetch_page now counts from 0, but the unchanged sync job starts at page 1. It skips the first page and then disables those accounts."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "client/api.py",
+      "side": "new",
+      "lines": [30, 30],
+      "why": "The lower retry default is intended. The PR text and the changelog give the reason."
+    },
+    {
+      "id": "T2",
+      "path": "client/api.py",
+      "side": "new",
+      "lines": [49, 49],
+      "why": "Style only: the one-letter names in the comprehension are short, but the logic is right and a test covers it."
+    }
+  ]
+}

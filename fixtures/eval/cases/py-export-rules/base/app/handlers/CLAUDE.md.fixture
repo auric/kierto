@@ -1,0 +1,6 @@
+# Handlers
+
+These rules apply to the files in app/handlers/.
+
+- Read settings only through app.config.get_setting(). Never read os.environ in a handler: get_setting applies the tenant overrides.
+- Return errors as (status, {"error": text}). Do not raise to the framework.

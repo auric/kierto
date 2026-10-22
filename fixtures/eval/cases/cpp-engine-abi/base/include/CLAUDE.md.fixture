@@ -1,0 +1,6 @@
+# Public headers
+
+These rules apply to the files in include/.
+
+- Each function declared in include/engine/ is part of the C ABI. Plugins built with other compilers call it. It must not throw: it returns an engine_status, and its definition catches every exception.
+- Do not change the layout of a struct in include/engine/ without raising ENGINE_ABI_VERSION. Add a new field only at the end of a struct.

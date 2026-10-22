@@ -1,0 +1,14 @@
+{
+  "name": "member-profiles",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

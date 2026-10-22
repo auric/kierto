@@ -1,0 +1,120 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
+// Prints the scores of eval result files (docs/plans/review-v2/spec.md section 4.3).
+// Usage: bun run eval:compare <a.json> <b.json>. Exit codes: 0 done, 2 a usage error or an unreadable file.
+import { readFileSync } from "node:fs";
+import { type EvalResult, METRICS, type Metric, type Score, type Stat, score } from "./score";
+
+const LABEL: Record<Metric, string> = {
+  recall: "recall: seeded bugs with a shown finding",
+  precision: "precision: shown findings that match a bug",
+  trapRate: "trap rate: shown findings on a trap, per trap",
+  noise: "noise: shown findings on no bug and no trap, per case",
+  severityOk: "severity ok: found bugs at or above their minimum severity",
+  candidateRecall: "candidate recall: bugs that any finding matched, hidden ones included",
+  minutes: "minutes per case",
+  costUsd: "cost per case in USD, as the CLI reports it",
+  notCompleted: "runs that did not complete, per repeat",
+};
+const RATE = new Set<Metric>(["recall", "precision", "trapRate", "severityOk", "candidateRecall"]);
+const DIGITS: Record<Metric, number> = {
+  recall: 1,
+  precision: 1,
+  trapRate: 1,
+  noise: 2,
+  severityOk: 1,
+  candidateRecall: 1,
+  minutes: 1,
+  costUsd: 3,
+  notCompleted: 1,
+};
+
+const num = (m: Metric, x: number) => (RATE.has(m) ? `${(x * 100).toFixed(DIGITS[m])}%` : x.toFixed(DIGITS[m]));
+const cell = (m: Metric, s: Stat) =>
+  s === null ? "-" : s.min === s.max ? num(m, s.mean) : `${num(m, s.mean)} (${num(m, s.min)} to ${num(m, s.max)})`;
+const delta = (m: Metric, a: Stat, b: Stat) => {
+  if (a === null || b === null) return "-";
+  const d = RATE.has(m) ? (b.mean - a.mean) * 100 : b.mean - a.mean;
+  return `${d >= 0 ? "+" : ""}${d.toFixed(DIGITS[m])}${RATE.has(m) ? " pts" : ""}`;
+};
+
+function table(rows: string[][]) {
+  const w = rows[0]?.map((_, i) => Math.max(...rows.map((r) => (r[i] ?? "").length))) ?? [];
+  return rows
+    .map((r) =>
+      r
+        .map((c, i) => c.padEnd(w[i] ?? 0))
+        .join("  ")
+        .trimEnd(),
+    )
+    .join("\n");
+}
+
+const header = (r: EvalResult) => {
+  const model = r.runs.find((x) => x.model)?.model ?? "unknown model";
+  const runs = `${r.cases.length} case${r.cases.length === 1 ? "" : "s"} x ${r.repeat}`;
+  return `commit ${r.commit}${r.dirty ? " (uncommitted changes)" : ""}, prompt version ${r.promptVersion}, profile ${r.profile.id} (revision ${r.profile.revision.slice(0, 8)}), volume ${r.volume ?? "none"}, CLI ${r.cliVersion}, ${model}, ${r.runner} CLI, ${runs}`;
+};
+
+export function summaryText(r: EvalResult, s: Score = score(r)): string {
+  const rows = [["metric", "all cases"], ...METRICS.map((m) => [LABEL[m], cell(m, s.suite[m])])];
+  const ids = Object.keys(s.cases);
+  const perCase = [
+    ["case", "recall", "precision", "noise", "minutes"],
+    ...ids.map((id) => {
+      const c = s.cases[id] as Score["cases"][string];
+      return [id, cell("recall", c.recall), cell("precision", c.precision), cell("noise", c.noise), cell("minutes", c.minutes)];
+    }),
+  ];
+  return [header(r), "", table(rows), "", table(perCase)].join("\n");
+}
+
+// Case truth that differs between two files: the numbers of that case do not compare.
+const truth = (r: EvalResult) => new Map(r.cases.map((c) => [c.id, JSON.stringify([c.head, c.bugs, c.traps])]));
+
+export function compareText(a: EvalResult, b: EvalResult): string {
+  const sa = score(a);
+  const sb = score(b);
+  const ta = truth(a);
+  const tb = truth(b);
+  const out = [`A: ${header(a)}`, `B: ${header(b)}`];
+  const only = [...new Set([...ta.keys(), ...tb.keys()])].filter((id) => !(ta.has(id) && tb.has(id)));
+  if (only.length) out.push(`Cases in one file only: ${only.join(", ")}. The "all cases" rows do not compare.`);
+  const changed = [...ta.keys()].filter((id) => tb.has(id) && ta.get(id) !== tb.get(id));
+  if (changed.length) out.push(`Cases whose fixture changed between A and B: ${changed.join(", ")}. Their numbers do not compare.`);
+  const ids = [...ta.keys()].filter((id) => tb.has(id)).sort();
+  for (const m of METRICS) {
+    const rows = [
+      ["case", "A", "B", "delta"],
+      ["all cases", cell(m, sa.suite[m]), cell(m, sb.suite[m]), delta(m, sa.suite[m], sb.suite[m])],
+      ...ids.map((id) => {
+        const x = sa.cases[id]?.[m] ?? null;
+        const y = sb.cases[id]?.[m] ?? null;
+        return [id, cell(m, x), cell(m, y), delta(m, x, y)];
+      }),
+    ];
+    out.push("", LABEL[m], table(rows));
+  }
+  return out.join("\n");
+}
+
+export function readResult(path: string): EvalResult {
+  const r = JSON.parse(readFileSync(path, "utf8")) as EvalResult;
+  if (r.format !== 1 || !Array.isArray(r.cases) || !Array.isArray(r.runs)) throw new Error(`${path} is not an eval result file.`);
+  return r;
+}
+
+if (import.meta.main) {
+  const files = process.argv.slice(2);
+  if (files.length !== 2) {
+    console.error("Usage: bun run eval:compare <a.json> <b.json>");
+    process.exit(2);
+  }
+  try {
+    console.log(compareText(readResult(files[0] as string), readResult(files[1] as string)));
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(2);
+  }
+}

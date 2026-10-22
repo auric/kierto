@@ -1,0 +1,5 @@
+# Build Board
+
+- TypeScript with strict mode. Use 2-space indentation.
+- Run `npm test` before each commit.
+- Keep secrets out of config/overrides.json. The file is committed in some deployments.

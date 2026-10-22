@@ -1,0 +1,46 @@
+{
+  "id": "ts-upload-audit",
+  "title": "Accept avatar uploads",
+  "language": "typescript",
+  "pr": {
+    "title": "Add avatar uploads",
+    "description": "Adds `PUT /me/avatar`. The body is the raw image. The handler streams it to a temp file with a 10 MB limit, checks the magic bytes, and copies the file to the blob store under `avatars/<user id>`."
+  },
+  "task": "Members can upload an avatar image (PNG, JPEG, or WebP) of up to 10 MB from the profile page. Store it in the blob store under the user ID and return its URL.\n\nReject other file types with 415 and larger files with 413.\n\nThe security team needs an audit trail: each accepted upload must write the audit event `avatar.update` with the user ID as actor and target, as the rename does.",
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/uploads/avatar.ts",
+      "side": "new",
+      "lines": [46, 47],
+      "severityMin": "minor",
+      "module": "core",
+      "note": "Resource leak on an early return: a body that is not an image returns 415 and never deletes the temp file, so each such upload leaves up to 10 MB in the temp folder."
+    },
+    {
+      "id": "B2",
+      "path": "src/uploads/avatar.ts",
+      "side": "new",
+      "lines": [49, 55],
+      "severityMin": "major",
+      "module": "intent",
+      "note": "Task requirement missed: an accepted upload writes no avatar.update audit event, and avatarRoutes does not even get the AuditLog."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/uploads/sniff.ts",
+      "side": "new",
+      "lines": [6, 15],
+      "why": "Style only: the short names sw, asc, b, and s are terse, but the logic is right and the tests cover it."
+    },
+    {
+      "id": "T2",
+      "path": "src/uploads/avatar.ts",
+      "side": "new",
+      "lines": [34, 35],
+      "why": "The declared Content-Length can be missing or false, but limitBytes enforces the 10 MB limit on the stream."
+    }
+  ]
+}

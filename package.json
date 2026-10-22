@@ -29,6 +29,8 @@
     "check": "bun run typecheck && bun run typecheck:5 && bun run lint && bun test --timeout 30000",
     "release": "bun scripts/release.ts",
     "notices": "bun scripts/notices.ts",
+    "eval": "bun scripts/eval/run.ts",
+    "eval:compare": "bun scripts/eval/compare.ts",
     "screenshots": "bun run build && node scripts/screenshots.ts"
   },
   "dependencies": {
