@@ -1,6 +1,6 @@
 # Review v2 plan: spec
 
-Status: draft for the user's decision, 2026-10-22. design.md gives the reasons and the alternatives. tasks.md gives the work packages. Code references point to HEAD abae1a2. "Unverified" marks a claim that no code, doc, or gate run confirmed. UI texts are in quotes and use plain words. Internal names (slice, stack, gate, verdict) stay in code and docs only.
+Status: decided, 2026-10-22. design.md gives the reasons, the alternatives, and the user's decisions of 2026-10-22 (section 10). tasks.md gives the work packages. Code references point to HEAD abae1a2. "Unverified" marks a claim that no code, doc, or gate run confirmed. UI texts are in quotes and use plain words. Internal names (slice, stack, gate, verdict) stay in code and docs only.
 
 ## 0. Conventions and constants
 
@@ -1109,7 +1109,7 @@ The review start route keeps its input. Modules and volume come from the profile
 | 3.5 | Review runs stay read-only. New implement runs: Edit and Write in an app-owned worktree, no shell, the enforcement table. The app runs allowlisted commands. Native Windows has no OS sandbox. |
 | 3.6 | Outbound: git push and PR create and update on a click, only to task branches, with a lease. Jira fetch of a typed key. Build status reads. |
 | 4 Architecture | src/server/tasks/ (loop, push, worktree), the verify phase in review/. |
-| 5 Constitution | Principle 2 (read-only runs) and 5 (one run at a time, step-wise for tasks), after the user's decisions Q1 to Q5. |
+| 5 Constitution | Principle 2 (read-only runs) and 5 (one run at a time, step-wise for tasks), with the user's decisions Q1 to Q5 of 2026-10-22 (design.md section 10). |
 | 6 Specify (US5, US9) | US5: findings carry a check result and a trigger; Explain is a walkthrough page. US9: one default review setup with checks and volume; Explain setup. New user story: build a Jira task. |
 | 7 Plan | Run kinds explain, discuss, interview, spec, implement. Verify phase. Severity rubric with caps. Modules. Profile upgrades (version 5, retire rule). Path-scoped instructions. Mermaid with an exact pin. Data model (review_run columns, task tables). Routes. The Bitbucket calls. Tests: eval harness. |
 | 9 Backlog | "Learn from discards" stays later. "Accept and discard rates per profile" moves to part 4. "Self-review before I open a PR" and "Draft fixes" partly move to part 6. |

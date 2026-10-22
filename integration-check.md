@@ -370,3 +370,16 @@ Run: `bun scripts/gate0/resolve-thread.ts --pr <TEST_PR_URL> --thread <ID>` on a
 | U65. A resolve adds a pull request activity | REFUTED (Data Center 9.x, 2026-10-20) | Gate line "activities: before=5 new=0". The app does not depend on it. Sync reads the resolve from the comment. |
 | U66. The status for a user that may not change the comment | UNVERIFIED | The 2026-10-20 run had no `--forbidden` thread. The app maps 401 and 403 to "Bitbucket refused to resolve the thread" with a link to the thread. |
 | U67. A reply in a resolved thread is refused (Data Center docs: "you can only react to resolved comment threads but you can't edit or reply") | CONFIRMED (Data Center 9.x, 2026-10-20) | Gate line "reply to resolved: HTTP 400 com.atlassian.bitbucket.validation.ArgumentValidationException taken=false". The status is 400, not 409. The app reads the root comment before each reply post. A resolved thread gets the reopen PUT first (U62). A failed reopen sends no reply. The post confirm says "Reopen thread, post reply". If the post still gets 400 ArgumentValidationException and a new read shows the thread resolved, the post fails with "This thread is resolved. Reopen it first." The fake Bitbucket refuses such a reply with the same 400 body. |
+
+## Review v2 (not run)
+
+Status: NOT RUN, 2026-10-22. The rows come from docs/plans/review-v2/spec.md and the Claude Code docs. Only the fake CLI covers them. Gate B18 and B20 (WP-G0) record the real results. Code may depend on them only with the fallback in each row.
+
+Run: `bun scripts/gate/claude-checks.ts --only B18,B20`.
+
+| Fact | Result | Evidence |
+|---|---|---|
+| U68. The real CLI accepts `verifyJsonSchema()` (draft-07, the verdict enum, a nullable `duplicateOf`) with `--json-schema`, and `structured_output` parses with zod | UNVERIFIED | Only the fake CLI ran. B18 checks it. On a rejection, the verify phase fails, and the run ends incomplete with every candidate unchecked. |
+| U69. The real CLI accepts `explainJsonSchema()` with a Markdown walkthrough of up to 60,000 characters | UNVERIFIED | B20 sends one Haiku run with a short walkthrough. The long case needs a real explain run (smoke v2 part C). On a rejection, the run fails and keeps the raw output. |
+| U70. The real CLI accepts `discussJsonSchema()` with the verdict enum and a nullable `revision` | UNVERIFIED | B20 sends one Haiku run. On a rejection, the turn fails, shows its error, and applies nothing. |
+| U71. Effort per agent: one verify run takes `--effort medium` and an `--agents` file with rl-verifier effort high | UNVERIFIED | B13 (U57) confirmed model and effort in an `--agents` definition. B18 records them with the verify schema. A bad effort refuses the whole file (U58), so the app checks each effort before the run. |

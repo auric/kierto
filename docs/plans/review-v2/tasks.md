@@ -1,6 +1,6 @@
 # Review v2 plan: tasks
 
-Status: draft for the user's decision, 2026-10-22. design.md gives the decisions. spec.md gives the behavior and the acceptance criteria (AC-…). Part 6 starts only after the user answers design.md section 10 Q1 to Q5 and Gate WP-G0 passes.
+Status: decided, 2026-10-22. design.md gives the decisions; section 10 holds the user's answers of 2026-10-22. spec.md gives the behavior and the acceptance criteria (AC-…). The user approved Q1 to Q5 on 2026-10-22. Part 6 starts only after Gate WP-G0 passes, and write runs only after Gate B17 passes (Q1).
 
 ## 0. Rules for every work package
 
@@ -18,7 +18,7 @@ Status: draft for the user's decision, 2026-10-22. design.md gives the decisions
 
 | Wave | Packages (∥ = parallel worktrees) | Needs |
 |---|---|---|
-| W1 | WP-D1 ∥ WP-M1 ∥ WP-G0 | the user's go for parts 1 to 4 |
+| W1 | WP-D1 ∥ WP-M1 ∥ WP-G0 | the user's go for parts 1 to 4 (given 2026-10-22) |
 | U1 | User gate G-EVAL-0: baseline eval of the current prompts | WP-M1 |
 | W2 | WP-R1 | U1 |
 | W3 | WP-R2, then WP-R3 (same files) ∥ WP-M2 | WP-R1 |
@@ -27,7 +27,7 @@ Status: draft for the user's decision, 2026-10-22. design.md gives the decisions
 | W5 | WP-X2 ∥ WP-D2 | WP-X1 (X2), WP-R3 (D2) |
 | W6 | WP-D3 | WP-D2, WP-R4 |
 | U3 | User smoke docs/smoke-v2.md parts A to D | W6 |
-| W7 | WP-D6, then WP-B0 | the user's answers to Q1 to Q5, Gate WP-G0 passed |
+| W7 | WP-D6, then WP-B0 | Gate WP-G0 passed (Q1 to Q5 approved 2026-10-22) |
 | W8 | WP-B1 ∥ WP-B2 | WP-B0 |
 | W9 | WP-B3, then WP-B4, then WP-B5 | WP-B1, WP-B2 |
 | US | User smoke docs/smoke-task.md part S (small task end to end) | W9 |
@@ -160,7 +160,7 @@ Shared-file ownership (merge order):
 
 ### WP-D6. Docs for part 6 (implementer, W7)
 
-- Files: BRIEF.md (spec.md section 10 rows for part 6, with the user's answers to Q1 to Q5), CLAUDE.md (hard rules: the write-run and push exceptions, the layout src/server/tasks/ and src/web/tasks/), integration-check.md (rows B17 to B20 and G1 to G7 with their results).
+- Files: BRIEF.md (spec.md section 10 rows for part 6, with the decisions Q1 to Q5 of design.md section 10), CLAUDE.md (hard rules: the write-run and push exceptions, the layout src/server/tasks/ and src/web/tasks/), integration-check.md (rows B17 to B20 and G1 to G7 with their results).
 - Tests: none.
 
 ### WP-B0. Task contracts and the run table change (implementer-xhigh, W7)

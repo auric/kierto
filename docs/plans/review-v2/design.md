@@ -1,6 +1,6 @@
 # Review v2 plan: design
 
-Status: draft for the user's decision, 2026-10-22. Docs only, no code changed. Code references point to HEAD abae1a2 on branch r2. "Unverified" marks a claim that no code, document, or gate run confirmed. Companion files: spec.md (behavior, data, routes, schemas, prompts, acceptance criteria) and tasks.md (work packages and gates).
+Status: decided, 2026-10-22. The user answered the questions of section 10 on 2026-10-22. Docs only, no code changed. Code references point to HEAD abae1a2 on branch r2. "Unverified" marks a claim that no code, document, or gate run confirmed. Companion files: spec.md (behavior, data, routes, schemas, prompts, acceptance criteria) and tasks.md (work packages and gates).
 
 Parts: 1 Review quality, 2 Discuss a finding, 3 Explain this PR, 4 Measure quality, 5 Brainstorm, 6 Build a Jira task. A UX rule set (section 5.6) applies to every part.
 
@@ -8,8 +8,8 @@ Parts: 1 Review quality, 2 Discuss a finding, 3 Explain this PR, 4 Measure quali
 
 - Inputs: the subsystem map, the prompt dump of 13 run kinds, and three research notes of 2026-10-22 (session scratchpad). Each code claim below was checked against the files at abae1a2.
 - External sources: section 3 lists each one with its link. The Claude Code permission, sandbox, CLI, and headless pages were read on 2026-10-22. The Bitbucket REST rows come from the Bitbucket Server 7.21 reference. The Data Center 9.x behavior of each new Bitbucket call is a Gate-0 item (tasks.md, WP-G0).
-- BRIEF hard rules stay unless section 10 asks the user to change one: sanitized snapshot for read-only runs, no `--bare`, auth route check, nothing posts without a click, untrusted data rules, token rules, one run slot, writer priority, field-by-field profile upgrades, draft-07 schemas, and "an incomplete run never says no issues".
-- The visible app name in the code is "PR Review Inbox" (src/web/App.tsx:369). CLAUDE.md says "Kierto". The UI texts in this plan avoid the name.
+- BRIEF hard rules stay unless a decision of section 10 (Q1 to Q5) changes one: sanitized snapshot for read-only runs, no `--bare`, auth route check, nothing posts without a click, untrusted data rules, token rules, one run slot, writer priority, field-by-field profile upgrades, draft-07 schemas, and "an incomplete run never says no issues".
+- The visible app name is "PR Review Inbox" (src/web/App.tsx:369, CLAUDE.md). The UI texts in this plan avoid the name.
 
 ## 1. Problem
 
@@ -362,31 +362,31 @@ Fill this in when the sources arrive. Compare each row on the same eval cases wh
 | Build a task | Interview, spec review, tests first, PR size, stack handling. |
 | UX | Steps to a posted review, keyboard, plain words. |
 
-## 10. Open questions (recommended default in brackets)
+## 10. Decisions (2026-10-22)
 
-Hard-rule changes first. Each one needs the user's explicit yes.
+The user answered every question on 2026-10-22. Q1 to Q5 change BRIEF hard rules; WP-D6 writes them into BRIEF.md and CLAUDE.md. Q4 and Q6 to Q24 take the recommended defaults.
 
-1. Q1 Write runs. BRIEF 3.5 says runs are read-only. Allow a new run kind implement with Edit and Write? It runs only in an app-owned worktree of the cache. It never runs in the user's clone, and review runs stay read-only. Safeguards: no shell, `--restricted`, and `--strict-mcp-config`. Config files stay out of the worktree (sparse checkout). A path check after each step resets a bad step. Each step has turn and time caps. Cancel works at any time. The plan approval comes first. The log keeps each command and diff. [Yes, after Gate B17 passes.]
-2. Q2 App-run commands. BRIEF section 7 says no repository scripts run. Allow the app to run the build and test commands that the user approves per repository? They run as exact argv, with no shell and with timeouts, in the task worktree. These commands run code that Claude wrote. On native Windows no OS sandbox exists (S15). [Yes. The first use shows one warning with "I understand". A WSL2 or sandbox runner comes later.]
-3. Q3 Push and PR. BRIEF and CLAUDE.md say the app never pushes. Allow a push and a PR create or update on a click? Rules: only branches that the task created, never the target branch, always with a lease, and a force push only after a confirm. The token needs Repository write. [Yes.]
-4. Q4 Jira keys without a PR. BRIEF section 7 lets the app fetch only keys that a PR names. Allow a fetch of the key that the user types in "Build a Jira task"? [Yes.]
-5. Q5 Many runs after one approval. BRIEF 3.2 says every review starts from a click. The loop starts several Claude runs after the plan approval and after each PR click. [Yes. Each part stops at its PR click and at the colleagues' review. Re-read the usage terms before a release.]
-6. Q6 Spec files in the repository. The spec PR adds `specs/<KEY>/` to the target branch. [Yes, folder per repository setting, default `specs/<KEY>/`.]
-7. Q7 Retire the unedited Security and Over-engineering profiles and replace them with the Security and Simplify checkboxes? [Yes.]
-8. Q8 Verify phase effort. [medium. The eval can raise it.]
-9. Q9 A revised verdict on an untouched finding also stores a revision, not an in-place change? [Yes, one rule for all.]
-10. Q10 A withdrawn verdict on an accepted finding discards it at once, with Restore and the mark? [Yes, as a session reject does.]
-11. Q11 Size limits: no Agent tool below 1,200 changed lines and 30 files; rl-verifier above 12 candidates. [Yes. The eval tunes them.]
-12. Q12 Default volume. [Balanced.]
-13. Q13 Explain as a page in the detail pane, not in the panel slot. [Page.]
-14. Q14 Discard reason chips after a discard, optional. [Yes.]
-15. Q15 Small tasks use one combined plan.md. [Yes.]
-16. Q16 Code of a medium or large task stacks on the spec branch, so it does not wait for the spec merge. [Yes.]
-17. Q17 Line budget per PR. [400 changed lines, lock files excluded, per repository setting.]
-18. Q18 Open code PRs per task at once. [2.]
-19. Q19 Gate for the next part: approvals needed. [1 approval, no Needs work, no open blocker task, builds green or none. Override with one confirm.]
-20. Q20 Open part PRs without a click. [Off. A per-task switch "Open part PRs for me" exists under More.]
-21. Q21 Minor points of the own review. [Listed in the Task view. Not fixed by the loop. "Fix these too" is one click.]
-22. Q22 Tasks started outside a PR: attachments. [Later. v1 lists them by name only.]
-23. Q23 Retarget after a merge. [One click with one confirm, because it changes a colleague's view.]
-24. Q24 Review runs for a task before any PR exists need review_run.pr nullable (B14). [Yes, with the query audit.]
+1. Q1 Write runs: yes, after Gate B17 passes. Kind implement gets Edit and Write only in an app-owned worktree of the cache, never in the user's clone. Review runs stay read-only.
+2. Q2 App-run commands: yes, with one first-use warning and "I understand". Claude gets no shell. The app runs only the approved argv commands, with timeouts. Native Windows has no OS sandbox (S15); a WSL2 or sandbox runner comes later.
+3. Q3 Push and PR: yes, push and PR create or update only on a click. Only task branches, never the target branch, always with a lease. A force push needs a confirm. The token needs Repository write.
+4. Q4 Jira keys without a PR: yes. The app fetches the key that the user types in "Build a Jira task".
+5. Q5 Many runs after one approval: yes. After one plan approval, the loop runs several Claude runs until it needs the user. Each part stops at its PR click and at the colleagues' review. Re-read the usage terms before a release.
+6. Q6 Spec files in the repository: yes, in `specs/<KEY>/` by default, as a per-repository setting.
+7. Q7 Retire profiles: yes. Unedited Security and Over-engineering profiles retire, and the Security and Simplify checkboxes replace them.
+8. Q8 Verify phase effort: medium. The eval can raise it.
+9. Q9 Revised verdict on an untouched finding: it stores a revision, as on every finding.
+10. Q10 Withdrawn verdict on an accepted finding: it discards the finding at once, with Restore and the mark.
+11. Q11 Size limits: no Agent tool below 1,200 changed lines and 30 files; rl-verifier above 12 candidates. The eval tunes both.
+12. Q12 Default volume: Balanced.
+13. Q13 Explain: a page in the detail pane, not in the panel slot.
+14. Q14 Discard reason chips: yes, optional, after a discard.
+15. Q15 Small tasks: one combined plan.md.
+16. Q16 Medium and large code: it stacks on the spec branch and does not wait for the spec merge.
+17. Q17 Line budget per PR: 400 changed lines, lock files excluded, per repository setting.
+18. Q18 Open code PRs per task at once: 2.
+19. Q19 Gate for the next part: 1 approval, no Needs work, no open blocker task, builds green or none. One confirm overrides it.
+20. Q20 Open part PRs without a click: off. A per-task switch "Open part PRs for me" sits under More.
+21. Q21 Minor points of the own review: listed in the Task view, not fixed by the loop. "Fix these too" is one click.
+22. Q22 Attachments of tasks started outside a PR: later. v1 lists them by name only.
+23. Q23 Retarget after a merge: one click with one confirm, because it changes a colleague's view.
+24. Q24 Nullable review_run.pr for task runs (B14): yes, with the query audit.
