@@ -105,7 +105,7 @@ async function main() {
       metafile: true,
     });
     if (!server.success || !server.metafile) throw new Error(`The server bundle failed:\n${server.logs.join("\n")}`);
-    // Bun 1.4.3 gives an object, although its types say a JSON string.
+    // Bun 1.4.3 and 1.4.4 give an object, although the types say a JSON string.
     const raw: unknown = server.metafile;
     const meta = (typeof raw === "string" ? JSON.parse(raw) : raw) as {
       outputs: Record<string, { inputs: Record<string, { bytesInOutput: number }> }>;

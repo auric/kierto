@@ -48,7 +48,7 @@ This test checks the compiled binary, the check interval, the profile editor, an
 
 ## WSL or Linux
 
-1. Install Bun 1.4.2: `curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.2"`. Run `bun --version`. Expect 1.4.2.
+1. Install Bun 1.4.4: `curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.4"`. Run `bun --version`. Expect 1.4.4.
 2. Clone the repository into the Linux file system, not under `/mnt/c`. Run `bun install`.
 3. Run `bun test`. Expect no fails.
 4. Run `bun run compile`. Expect `dist/bin/pr-review-inbox-linux-x64` (or `-arm64`).

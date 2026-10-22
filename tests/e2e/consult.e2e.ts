@@ -6,7 +6,7 @@
 // the commit in the clone, and no post.
 // Runs against serve.ts only: the fake Bitbucket with the author PR 1004, the temp git remote, and the fake CLI.
 import { test as base, expect, type Page } from "@playwright/test";
-import { APP_PORT, cloneState, control, E2E_TOKEN, FAKE_URL, makeClone, openApp, runArgv, sessions, writes } from "./control";
+import { APP_PORT, COMMIT_MS, cloneState, control, E2E_TOKEN, FAKE_URL, makeClone, openApp, runArgv, sessions, writes } from "./control";
 
 const APP = `http://127.0.0.1:${APP_PORT}`;
 const TITLE = "Release the write lock after each entry";
@@ -442,7 +442,7 @@ test("Ask your session to propose fixes: the mode and its cost, the preview, App
   await expect(form).toBeHidden();
   await expect(apply).toContainText("On fix/flush-lock at");
   await apply.getByRole("button", { name: "Apply and commit" }).click();
-  await expect(apply).toBeHidden();
+  await expect(apply).toBeHidden({ timeout: COMMIT_MS });
   const after = await cloneState(path);
   expect(after).toMatchObject({ branch: "fix/flush-lock", subject: "Fix 2 review comments on PR 1004" });
   expect(after.head).not.toBe(before);

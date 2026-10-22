@@ -82,6 +82,9 @@ export async function addOwnProfiles(page: Page): Promise<void> {
   await page.reload();
 }
 
+// Apply and commit does real git work in a temp clone. A loaded runner can take much longer than 5 s.
+export const COMMIT_MS = 30_000;
+
 // The animation name and the running animations of an element.
 export const motion = (l: Locator) => l.evaluate((e) => ({ name: getComputedStyle(e).animationName, running: e.getAnimations().length }));
 

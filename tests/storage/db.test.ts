@@ -759,3 +759,34 @@ test("migration from a version-29 database keeps every run and child row; kinds 
   const second = { ...schema(path), rows: rows() };
   expect(second).toEqual(first);
 });
+
+// Bun 1.4.3 and earlier dropped a runtime error in any statement but the last of db.exec(). The DROP TABLE then lost the runs.
+test("a migration statement that fails before the last one rolls back the whole migration and keeps every run", () => {
+  const path = join(dir, "v29-bad-row.sqlite");
+  const old = new Database(path, { create: true, strict: true });
+  migrate(old, [
+    ...V23,
+    "024_consult.sql",
+    "025_session.sql",
+    "026_thread_resolver.sql",
+    "027_post_resolve.sql",
+    "028_run_event_agent.sql",
+    "029_draft_stale.sql",
+  ]);
+  old.exec("PRAGMA user_version = 29");
+  old.exec("PRAGMA ignore_check_constraints = ON");
+  old.exec(`INSERT INTO pull_request (id, project, repo, pr_id) VALUES (1, 'P', 'r', 1);
+    INSERT INTO review_run (id, pr, kind, profile, note, idem_key, source_head, target_head, status, started_at)
+      VALUES (4, 1, 'review', 'general', 'n', 'k1', 'a', 'b', 'bogus', 1)`);
+  old.close();
+
+  expect(() => openDb(path)).toThrow(/CHECK/);
+  const db = new Database(path, { readonly: true });
+  try {
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
+    expect(db.query("SELECT id, status FROM review_run").all()).toEqual([{ id: 4, status: "bogus" }]);
+    expect(db.query("SELECT name FROM sqlite_master WHERE name = 'review_run_new'").all()).toEqual([]);
+  } finally {
+    db.close();
+  }
+});

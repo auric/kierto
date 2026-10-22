@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       # The typecheck scripts run tsc with Node.
       - uses: actions/setup-node@v7.0.0
         with:
@@ -54,7 +54,7 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       # The Playwright runner needs Node 20 or later.
       - uses: actions/setup-node@v7.0.0
         with:

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
 import {
   APP_PORT,
+  COMMIT_MS,
   cloneState,
   control,
   E2E_TOKEN,
@@ -31,8 +32,6 @@ const TITLE = "Release the write lock after each entry";
 const PR_PATH = "/rest/api/1.0/projects/PROJ1/repos/sample-repo-4/pull-requests/1004";
 // A run passes the git workspace, the fake CLI, and the validator.
 const RUN_MS = 60_000;
-// Apply and commit does real git work in a temp clone. A loaded runner can take much longer than 5 s.
-const COMMIT_MS = 30_000;
 // PR 1004: two general threads by the reviewer. Each newest message is the root. The own scenario adds my general thread OWN.
 const LOCK = 5000001;
 const LOOP = 5000002;
@@ -348,7 +347,7 @@ test("a dirty clone keeps Apply disabled; a clean one commits; Undo resets the c
   await box.getByRole("button", { name: "Check the clone again" }).click();
   await expect(box.getByRole("list", { name: "Clone problems" })).toHaveCount(0);
   await apply.click();
-  await expect(box).toBeHidden();
+  await expect(box).toBeHidden({ timeout: COMMIT_MS });
   const short = git(path, ["rev-parse", "--short", "HEAD"]);
   await expect(draft(page, LOCK)).toContainText(`Fixed in ${short}.`);
 
@@ -571,7 +570,7 @@ test("Fix on my own comment runs without a reply draft; the edit shows, Apply co
   await page.locator("[data-fixbar]").getByRole("button", { name: "Apply 1 edit from 1 comment" }).click();
   await setClone(page, path);
   await applyDialog(page).getByRole("button", { name: "Apply and commit" }).click();
-  await expect(applyDialog(page)).toBeHidden();
+  await expect(applyDialog(page)).toBeHidden({ timeout: COMMIT_MS });
   expect(git(path, ["diff", "--name-only", "HEAD^", "HEAD"])).toBe("README.md");
   expect(git(path, ["status", "--porcelain"])).toBe("");
   const short = git(path, ["rev-parse", "--short", "HEAD"]);
