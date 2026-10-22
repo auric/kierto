@@ -288,21 +288,41 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       expect(result.cases.map((x) => [x.id, x.head])).toEqual([[c.id, repo.head]]);
       const [run] = result.runs;
       expect(run).toMatchObject({ case: c.id, repeat: 1, status: "completed", error: null, questions: 0 });
-      expect(run?.items.map((i) => [i.path, i.line, i.anchorState, i.check, i.group])).toEqual(
-        findings.map((f) => [f.path, f.line, "exact", "unchecked", "main"]),
+      // The echo check confirms each candidate.
+      expect(run?.items.map((i) => [i.path, i.line, i.anchorState, i.verdict, i.check, i.group])).toEqual(
+        findings.map((f) => [f.path, f.line, "exact", "confirmed", "checked", "main"]),
       );
+      expect(run?.verify).toEqual({
+        candidates: findings.length,
+        confirmed: findings.length,
+        refuted: 0,
+        unsure: 0,
+        questions: 0,
+        duplicates: 0,
+        unchecked: 0,
+      });
+      expect(run?.phases?.map((p) => p.name)).toEqual(["find", "check"]);
+      const phaseCost = (run?.phases ?? []).reduce((sum, p) => sum + (p.usage?.costUsd ?? 0), 0);
+      expect(phaseCost).toBeGreaterThan(0);
+      expect(run?.usage?.costUsd).toBeCloseTo(phaseCost, 10);
       const s = score(result).suite;
       expect(s.recall?.mean).toBe(1);
+      expect(s.candidateRecall?.mean).toBe(1);
       expect(s.precision?.mean).toBe(c.bugs.length / findings.length);
       expect(s.trapRate?.mean).toBe(1 / c.traps.length);
       expect(s.noise?.mean).toBe(1);
       expect(s.severityOk?.mean).toBe(1);
 
-      // The auth route check ran, and the review ran once with the fake CLI, the task file, and the project rules of the case.
+      // The auth route check ran. The review ran two processes, finder and check, with the fake CLI. The finder got the task file and
+      // the project rules of the case.
       const calls = readRecords<{ argv: string[]; stdin: string }>(record);
       expect(calls.some((x) => x.argv[0] === "auth" && x.argv[1] === "status")).toBe(true);
       const runs = calls.filter((x) => x.argv.includes("-p"));
-      expect(runs).toHaveLength(1);
+      expect(runs).toHaveLength(2);
+      expect(runs.map((x) => JSON.parse(x.argv[x.argv.indexOf("--json-schema") + 1] ?? "{}").properties?.verdicts !== undefined)).toEqual([
+        false,
+        true,
+      ]);
       expect(calls.some((x) => x.argv.includes("--bare"))).toBe(false);
       const stdin = runs[0]?.stdin ?? "";
       expect(stdin).toContain("- ./context/task.md holds the text of the linked tasks");
@@ -324,6 +344,85 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       const again = JSON.parse(readFileSync(rescored, "utf8")) as EvalResult;
       expect(again.rescoredAt).toBeString();
       expect(score(again)).toEqual(score(result));
+    },
+    SLOW,
+  );
+
+  test(
+    "a finding that the check refutes is hidden from shown items but counts in candidate recall",
+    async () => {
+      const [c] = loadCases("ts-cache-race");
+      const bug = c?.bugs[0];
+      if (!c || !bug) throw new Error("The case ts-cache-race or its first bug is missing.");
+      const dir = temp("refute");
+      const repo = await buildRepo(c, temp("repo"));
+      const at = async (path: string, line: number, severity: string) => ({
+        path,
+        side: "new",
+        line,
+        lineEnd: line,
+        anchorText: ((await repo.show(repo.head, path)).split("\n")[line - 1] ?? "").trim(),
+        severity,
+        category: "logic",
+        body: "A finding of the fake CLI.",
+        evidence: `${path}:${line}`,
+        evidenceStatus: "code",
+        confidence: "high",
+        agent: null,
+      });
+      // Candidate 1 is on the bug, candidate 2 on a line with no bug and no trap.
+      const findings = [await at(bug.path, bug.lines[0], bug.severityMin), await at("src/users/cache.ts", 1, "minor")];
+      const verdict = (candidate: number, v: string, severity: string) => ({
+        candidate,
+        verdict: v,
+        severity,
+        reason: `The fake check gives candidate ${candidate} the verdict ${v}.`,
+        evidence: `${findings[candidate - 1]?.path}:${findings[candidate - 1]?.line}`,
+        duplicateOf: null,
+        question: "",
+      });
+      const scenario = join(dir, "scenario.json");
+      writeFileSync(
+        scenario,
+        JSON.stringify({
+          record: join(dir, "calls.jsonl"),
+          auth: { loggedIn: true, authMethod: "claude.ai", projectsDirectory: join(dir, "projects") },
+          fixture: claudeStream(dir, "eval", "claude/b9-wp8-flags.jsonl", {
+            summary: "Fake review.",
+            risks: [],
+            questions: [],
+            coverage: { read: ["src/users/service.ts"], skipped: [], unavailable: [], notChecked: [] },
+            findings,
+          }),
+          bySchema: {
+            verify: {
+              verify: {
+                verdicts: [verdict(1, "refuted", bug.severityMin), verdict(2, "confirmed", "minor")],
+                coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+              },
+            },
+          },
+          delayMs: 1,
+        }),
+      );
+      const out = join(dir, "out");
+      const r = await bun([RUN, "--cases", c.id, "--out", out, "--runner", process.execPath, FAKE, scenario]);
+      expect(r.stderr).toBe("");
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain(`[1/1] ${c.id} #1: completed`);
+      expect(r.stdout).toContain(", 1 shown, 0/");
+      const files = readdirSync(out).filter((f) => f.endsWith(".json"));
+      const result = JSON.parse(readFileSync(join(out, files[0] as string), "utf8")) as EvalResult;
+      const [run] = result.runs;
+      expect(run?.items.map((i) => [i.line, i.verdict, i.check, i.group])).toEqual([
+        [bug.lines[0], "refuted", "unchecked", "hidden"],
+        [1, "confirmed", "checked", "main"],
+      ]);
+      expect(run?.verify).toMatchObject({ candidates: 2, confirmed: 1, refuted: 1, unchecked: 0 });
+      const s = score(result).suite;
+      expect(s.recall?.mean).toBe(0);
+      expect(s.candidateRecall?.mean).toBe(1 / c.bugs.length);
+      expect(s.noise?.mean).toBe(1);
     },
     SLOW,
   );

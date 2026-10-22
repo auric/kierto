@@ -2,17 +2,15 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Scoring of an eval result file (docs/plans/review-v2/spec.md section 4.3). Pure: no file, no process, no clock.
-import type { RunUsage } from "../../src/shared/dto";
-import type { AnchorState, Coverage, Side } from "../../src/shared/review";
+import type { RunPhase, RunUsage, VerifySummary, Volume } from "../../src/shared/dto";
+import type { AnchorState, Check, Coverage, DisplayGroup, Severity, Side } from "../../src/shared/review";
 import type { RunStatus } from "../../src/shared/run-log";
 import type { EvalBug, EvalSet, EvalTrap } from "./cases";
 
-export type Severity = "blocker" | "major" | "minor" | "nit";
-export type Volume = "quiet" | "balanced" | "thorough";
-// null: a run without a verify phase (prompt version 1).
-export type Check = "checked" | "unsure" | "unchecked";
-// main: the main Drafts list. fold: a fold under it. hidden: refuted or duplicate, shown only in the run record.
-export type Group = "main" | "fold" | "hidden";
+export type { Check, Severity, Volume };
+// run.ts sets it with displayGroup of src/shared/review.ts. Scoring reads the stored group, so older result files keep their groups:
+// prompt version 1 shows every finding, and version 2.0 has no verdicts, so its items are unchecked.
+export type Group = DisplayGroup;
 
 const RANK: Record<Severity, number> = { nit: 0, minor: 1, major: 2, blocker: 3 };
 
@@ -26,6 +24,7 @@ export type EvalItem = {
   severity: Severity;
   finderSeverity: Severity;
   verdict: string | null;
+  // null: a run without a verify phase (prompt version 1).
   check: Check | null;
   group: Group;
   status: string;
@@ -60,6 +59,10 @@ export type CaseRun = {
   usage: RunUsage | null;
   // The coverage of the run summary. Skipped or unavailable entries make a run incomplete. Absent in files made before this field existed.
   coverage?: Coverage | null;
+  // The verdict counts and the find and check phases of the run summary. usage is the sum of both phases. Absent in files made before
+  // prompt version 2.1.
+  verify?: VerifySummary | null;
+  phases?: RunPhase[];
   items: EvalItem[];
   dropped: EvalDropped[];
   questions: number;
@@ -98,20 +101,6 @@ export type EvalResult = {
   cases: EvalCaseInfo[];
   runs: CaseRun[];
 };
-
-// spec.md section 1.7: the check state of a candidate from its verdict.
-export const checkOf = (verdict: string | null): Check =>
-  verdict === "confirmed" ? "checked" : verdict === "unsure" ? "unsure" : "unchecked";
-
-// spec.md section 1.4. check null: prompt version 1 has no verify phase and no volume, so the app shows every finding.
-export function displayGroup(i: { verdict: string | null; check: Check | null; severity: Severity }, volume: Volume | null): Group {
-  if (i.verdict === "refuted" || i.verdict === "duplicate") return "hidden";
-  if (i.check === null) return "main";
-  const v = volume ?? "balanced";
-  if (v === "thorough") return "main";
-  if (v === "quiet") return i.check !== "unsure" && RANK[i.severity] >= RANK.major ? "main" : "fold";
-  return i.check !== "unsure" && i.severity !== "nit" ? "main" : "fold";
-}
 
 // Both ends inclusive (spec.md section 4.3).
 export const overlaps = (a: [number, number], b: [number, number]) => a[0] <= b[1] && b[0] <= a[1];

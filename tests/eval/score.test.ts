@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { compareText, summaryText } from "../../scripts/eval/compare";
 import { rescore } from "../../scripts/eval/rescore";
-import { type CaseRun, displayGroup, type EvalItem, type EvalResult, overlaps, score } from "../../scripts/eval/score";
+import { type CaseRun, type EvalItem, type EvalResult, overlaps, score } from "../../scripts/eval/score";
 
 const item = (o: Partial<EvalItem> & Pick<EvalItem, "path" | "side" | "line" | "lineEnd">): EvalItem => ({
   anchorState: "exact",
@@ -304,31 +304,5 @@ describe("eval:rescore", () => {
       "Case b has no fixture now. It keeps its stored bugs and traps.",
       "No case has new bugs or traps.",
     ]);
-  });
-});
-
-describe("display group (spec.md section 1.4)", () => {
-  test("prompt version 1 shows every finding", () => {
-    expect(displayGroup({ verdict: null, check: null, severity: "nit" }, null)).toBe("main");
-    expect(displayGroup({ verdict: null, check: null, severity: "nit" }, "quiet")).toBe("main");
-  });
-
-  test("version 2 folds by check, severity, and volume", () => {
-    const g = (
-      verdict: string | null,
-      check: "checked" | "unsure" | "unchecked",
-      severity: "blocker" | "major" | "minor" | "nit",
-      v: "quiet" | "balanced" | "thorough",
-    ) => displayGroup({ verdict, check, severity }, v);
-    expect(g("refuted", "unchecked", "major", "thorough")).toBe("hidden");
-    expect(g("duplicate", "unchecked", "major", "balanced")).toBe("hidden");
-    expect(g("confirmed", "checked", "major", "quiet")).toBe("main");
-    expect(g(null, "unchecked", "blocker", "quiet")).toBe("main");
-    expect(g("confirmed", "checked", "minor", "quiet")).toBe("fold");
-    expect(g("confirmed", "checked", "minor", "balanced")).toBe("main");
-    expect(g("confirmed", "checked", "nit", "balanced")).toBe("fold");
-    expect(g("unsure", "unsure", "minor", "balanced")).toBe("fold");
-    expect(g("unsure", "unsure", "minor", "thorough")).toBe("main");
-    expect(g("confirmed", "checked", "nit", "thorough")).toBe("main");
   });
 });

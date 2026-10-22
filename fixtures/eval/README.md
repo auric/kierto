@@ -113,6 +113,7 @@ It prints one table per metric with the delta, for all cases and for each case. 
 - false positives: shown items that match no bug, trap hits included, per case. For a case with no bug, it is the number of shown items.
 - severity ok: found bugs whose best shown match has at least the minimum severity, over found bugs.
 - candidate recall: bugs that any item matched, refuted and duplicate items included. It shows what a verify phase lost.
+- Since prompt version 2.1, each review runs a finder process and then a check process. A finding that the check refutes or marks duplicate leaves the shown items, so recall drops, but candidate recall still counts it. The result file records the verdict counts as `verify` and the time and usage of each phase as `phases`. The cost is the sum of both phases.
 - Each number is the mean over the repeats, with the min and the max.
 
 ## v1 cases

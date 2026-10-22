@@ -20,22 +20,11 @@ import type { GitRemote } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { EFFORTS, type Effort, type IssueContext, modelName, profileList, type RunDetail } from "../../src/shared/dto";
-import type { AnchoredFinding } from "../../src/shared/review";
-import * as review from "../../src/shared/review";
+import { checkOf, displayGroup, type FindingPayload, REVIEW_PROMPT_VERSION } from "../../src/shared/review";
 import { stubListTools } from "../../tests/support/review-fixture";
 import { buildRepo, type EvalCase, type EvalSet, loadCases, SETS } from "./cases";
 import { summaryText } from "./compare";
-import {
-  type CaseRun,
-  checkOf,
-  displayGroup,
-  type EvalCaseInfo,
-  type EvalItem,
-  type EvalResult,
-  type Severity,
-  score,
-  type Volume,
-} from "./score";
+import { type CaseRun, type EvalCaseInfo, type EvalItem, type EvalResult, score, type Volume } from "./score";
 
 const REPO = resolve(import.meta.dir, "../..");
 export const WARNING = "Each case runs your Claude CLI and uses your plan quota.";
@@ -50,8 +39,7 @@ const MAX_REPEAT = 10;
 const BASE_URL = "https://bitbucket.example.invalid";
 const PROJECT = "EVAL";
 const TASK_KEY = "EVAL-1";
-// prompt version 2 adds REVIEW_PROMPT_VERSION (spec.md section 0). Version 1 has none.
-const PROMPT_VERSION = String((review as unknown as Record<string, unknown>).REVIEW_PROMPT_VERSION ?? "1");
+const PROMPT_VERSION = REVIEW_PROMPT_VERSION;
 
 const USAGE = `Usage: bun run eval -- [--real] [--set ${Object.keys(SETS).join("|")}] [--cases all|id,id] [--profile general] [--profile-version ${PROFILES_VERSION}] [--modules security,api]
   [--volume balanced] [--model opus] [--effort ${EFFORTS.join("|")}] [--repeat 2] [--out <folder>] [--keep] [--runner <command> <args...>]
@@ -184,21 +172,12 @@ async function checkoutState() {
   }
 }
 
-type V2Fields = {
-  verify?: { verdict?: string };
-  finderSeverity?: Severity;
-  title?: string;
-  trigger?: string;
-  module?: string;
-};
-
-function items(d: RunDetail, volume: Volume | null): EvalItem[] {
+// volume: the volume of the run summary, as the app reads it (stats.ts).
+function items(d: RunDetail, volume: Volume | undefined): EvalItem[] {
   return d.items.flatMap((it) => {
     if (it.kind !== "finding") return [];
-    const p = it.payload as AnchoredFinding & V2Fields;
+    const p = it.payload as FindingPayload;
     const a = it.anchor ?? { ...p.anchor, side: p.side };
-    const verdict = p.verify?.verdict ?? null;
-    const check = PROMPT_VERSION === "1" ? null : checkOf(verdict);
     return [
       {
         path: a.path,
@@ -208,9 +187,9 @@ function items(d: RunDetail, volume: Volume | null): EvalItem[] {
         anchorState: a.state,
         severity: p.severity,
         finderSeverity: p.finderSeverity ?? p.severity,
-        verdict,
-        check,
-        group: displayGroup({ verdict, check, severity: p.severity }, volume),
+        verdict: p.verify?.verdict ?? null,
+        check: checkOf(p),
+        group: displayGroup(p, volume),
         status: it.status,
         title: p.title ?? "",
         body: p.body,
@@ -241,6 +220,8 @@ const errorRun = (c: EvalCase, repeat: number, error: string): CaseRun => ({
   minutes: null,
   usage: null,
   coverage: null,
+  verify: null,
+  phases: [],
   items: [],
   dropped: [],
   questions: 0,
@@ -252,7 +233,6 @@ type Context = {
   listTools: ListTools | undefined;
   profiles: ReturnType<typeof profileList.parse>;
   profile: string;
-  volume: Volume | null;
   keep: boolean;
   onJobs: (j: ReviewJobs | null) => void;
 };
@@ -335,7 +315,6 @@ async function runCase(c: EvalCase, repeat: number, ctx: Context): Promise<{ run
       const d = jobs.run(db, started.run.id);
       if (!d) return { run: errorRun(c, repeat, "The run row is missing."), head, base };
       const r = d.run;
-      const volume = (r.summary as unknown as { volume?: Volume } | null)?.volume ?? ctx.volume;
       return {
         run: {
           case: c.id,
@@ -353,7 +332,9 @@ async function runCase(c: EvalCase, repeat: number, ctx: Context): Promise<{ run
           minutes: r.finishedAt === null ? null : (r.finishedAt - r.startedAt) / 60_000,
           usage: r.usage,
           coverage: r.summary?.coverage ?? null,
-          items: items(d, volume),
+          verify: r.summary?.verify ?? null,
+          phases: r.summary?.phases ?? [],
+          items: items(d, r.summary?.volume),
           dropped: (r.summary?.dropped ?? []).map((x) => ({
             path: x.path,
             side: x.side,
@@ -460,7 +441,6 @@ export async function main(argv: string[]): Promise<number> {
       listTools: o.real ? undefined : stubListTools,
       profiles: p.list,
       profile: profile.id,
-      volume,
       keep: o.keep,
       onJobs: (j) => {
         jobs = j;
