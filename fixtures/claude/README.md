@@ -7,10 +7,27 @@ Recorded with Claude Code 2.1.295. WP8 requires this CLI version or later.
 | File | Check |
 |---|---|
 | `b1-review-agent.jsonl` | B1. A review agent from an `--agents` file tries a shell command, Write, and a Read of a sibling folder. |
+| `b13-agent-fields.jsonl` | Not mapped to a check. |
+| `b13-bad-effort.jsonl` | Not mapped to a check. |
+| `b14-default.jsonl` | Not mapped to a check. |
+| `b14-haiku.jsonl` | Not mapped to a check. |
+| `b15-main.jsonl` | Not mapped to a check. |
+| `b15-reviewer.jsonl` | Not mapped to a check. |
+| `b16-create.jsonl` | Not mapped to a check. |
+| `b16-fork-nopersist.jsonl` | Not mapped to a check. |
+| `b16-fork.jsonl` | Not mapped to a check. |
+| `b17-write-confinement.jsonl` | Not mapped to a check. |
+| `b18-verify-effort.jsonl` | Not mapped to a check. |
+| `b19-usage.jsonl` | Not mapped to a check. |
 | `b2-deny-agent.jsonl` | B2. The main agent tries `general-purpose`, a user agent, and `rl-reviewer`. Variants: `Agent(...)` deny rules, `Task(...)` deny rules, `CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS=1`, and an `--agent` main thread. |
 | `b2-deny-task.jsonl` | B2. The main agent tries `general-purpose`, a user agent, and `rl-reviewer`. Variants: `Agent(...)` deny rules, `Task(...)` deny rules, `CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS=1`, and an `--agent` main thread. |
 | `b2-main-agent.jsonl` | B2. The main agent tries `general-purpose`, a user agent, and `rl-reviewer`. Variants: `Agent(...)` deny rules, `Task(...)` deny rules, `CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS=1`, and an `--agent` main thread. |
 | `b2-no-builtins.jsonl` | B2. The main agent tries `general-purpose`, a user agent, and `rl-reviewer`. Variants: `Agent(...)` deny rules, `Task(...)` deny rules, `CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS=1`, and an `--agent` main thread. |
+| `b20-discuss.jsonl` | Not mapped to a check. |
+| `b20-explain.jsonl` | Not mapped to a check. |
+| `b20-implement.jsonl` | Not mapped to a check. |
+| `b20-interview.jsonl` | Not mapped to a check. |
+| `b20-spec.jsonl` | Not mapped to a check. |
 | `b3-default.jsonl` | B3. One subagent run with `--json-schema`: Agent tool_use, child events, `task_*` events, result events. Variant: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`. |
 | `b3-no-background.jsonl` | B3. One subagent run with `--json-schema`: Agent tool_use, child events, `task_*` events, result events. Variant: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`. |
 | `b4-no-persistence.jsonl` | B4. One subagent run with `--no-session-persistence`. |
