@@ -21,6 +21,7 @@
       "path": "jobs/sync_users.py",
       "side": "new",
       "lines": [12, 14],
+      "alt": [{ "path": "client/api.py", "side": "new", "lines": [44, 47] }],
       "severityMin": "major",
       "module": "core",
       "note": "Missed caller: fetch_page now counts from 0, but the unchanged sync job starts at page 1. It skips the first page and then disables those accounts."

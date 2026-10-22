@@ -7,7 +7,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { buildRepo, FIXTURE_SUFFIX, INSTRUCTION_FILE, loadCases } from "../../scripts/eval/cases";
+import { buildRepo, type EvalCase, type EvalSet, FIXTURE_SUFFIX, INSTRUCTION_FILE, loadCases, SETS } from "../../scripts/eval/cases";
 import { compareText } from "../../scripts/eval/compare";
 import { DEFAULT_MODEL_WARNING, parseOptions, WARNING } from "../../scripts/eval/run";
 import { type EvalResult, score } from "../../scripts/eval/score";
@@ -19,6 +19,7 @@ const SLOW = 120_000;
 const ROOT = resolve(import.meta.dir, "../..");
 const RUN = join(ROOT, "scripts/eval/run.ts");
 const COMPARE = join(ROOT, "scripts/eval/compare.ts");
+const RESCORE = join(ROOT, "scripts/eval/rescore.ts");
 const NO_REAL = join(ROOT, "tests/support/no-real-claude.ts");
 const FAKE = join(ROOT, "tests/support/fake-claude.ts");
 
@@ -60,9 +61,22 @@ describe("eval harness without --real (AC-M2)", () => {
     const r = await bun([RUN, "--cases", "all", "--repeat", "2"], guard);
     expect(r.stderr).toBe("");
     expect(r.code).toBe(2);
-    expect(r.stdout).toContain(`Eval plan: ${loadCases("all").length} cases, 2 repeats, profile general.`);
+    expect(r.stdout).toContain(`Eval plan: ${loadCases("all").length} cases, 2 repeats, profile general, set v1.`);
     expect(r.stdout).toContain(WARNING);
     expect(r.stdout).toContain(DEFAULT_MODEL_WARNING);
+    const hard = await bun([RUN, "--set", "hard"], guard);
+    expect(hard.code).toBe(2);
+    expect(hard.stdout).toContain(`Eval plan: ${loadCases("all", SETS.hard).length} cases, 1 repeat, profile general, set hard.`);
+  });
+
+  test("--set picks the case folder, and --cases works within it", () => {
+    expect(parseOptions([])).toMatchObject({ set: "v1", cases: "all" });
+    expect(parseOptions(["--set", "hard", "--cases", "a,b"])).toMatchObject({ set: "hard", cases: "a,b" });
+    expect(parseOptions(["--set", "toString"])).toHaveProperty("error");
+    const [first] = loadCases("all", SETS.hard);
+    if (!first) throw new Error("The hard set is empty.");
+    expect(loadCases(first.id, SETS.hard).map((c) => c.id)).toEqual([first.id]);
+    expect(() => loadCases(first.id)).toThrow("Unknown case");
   });
 
   test("parses --model and --effort with the profile rules of the app", () => {
@@ -93,42 +107,61 @@ describe("eval harness without --real (AC-M2)", () => {
   });
 });
 
+// The bug, trap, and changed-line limits of each set (fixtures/eval/README.md).
+const LIMITS: Record<EvalSet, { bugs: [number, number]; traps: [number, number]; lines: [number, number] }> = {
+  v1: { bugs: [1, 3], traps: [1, 2], lines: [150, 500] },
+  hard: { bugs: [0, 3], traps: [3, 4], lines: [150, 1500] },
+};
+const within = (n: number, [lo, hi]: [number, number]) => n >= lo && n <= hi;
+
 describe("eval cases", () => {
   const cases = loadCases("all");
+  const sets = Object.entries(SETS).map(([set, dir]) => [set as EvalSet, loadCases("all", dir)] as const);
   let instructionFiles = 0;
 
   test(
-    "each case applies to its base, and its bug and trap lines hold text on their side",
+    "each case applies to its base, and each bug, trap, and alt range holds text on its side",
     async () => {
-      for (const c of cases) {
-        const repo = await buildRepo(c, temp(c.id));
-        const numstat = await git(["--git-dir", repo.url, "diff", "--numstat", repo.base, repo.head], { env: repo.env });
-        const counted = numstat
-          .trim()
-          .split("\n")
-          .reduce((s, l) => s + Number(l.split("\t")[0]) + Number(l.split("\t")[1]), 0);
-        expect({ id: c.id, lines: c.changedLines }).toEqual({ id: c.id, lines: counted });
-        expect(c.changedLines).toBeGreaterThanOrEqual(150);
-        expect(c.changedLines).toBeLessThanOrEqual(500);
-        for (const p of [...c.bugs, ...c.traps]) {
-          const text = (await repo.show(p.side === "new" ? repo.head : repo.base, p.path)).split("\n");
-          if (text.at(-1) === "") text.pop();
-          expect({ id: c.id, place: p.id, inside: p.lines[1] <= text.length }).toEqual({ id: c.id, place: p.id, inside: true });
-          expect(
-            text
-              .slice(p.lines[0] - 1, p.lines[1])
-              .join("")
-              .trim(),
-          ).not.toBe("");
+      for (const [set, all] of sets)
+        for (const c of all as EvalCase[]) {
+          const repo = await buildRepo(c, temp(c.id));
+          const numstat = await git(["--git-dir", repo.url, "diff", "--numstat", "--no-renames", repo.base, repo.head], { env: repo.env });
+          const counted = numstat
+            .trim()
+            .split("\n")
+            .reduce((s, l) => s + Number(l.split("\t")[0]) + Number(l.split("\t")[1]), 0);
+          expect({ id: c.id, lines: c.changedLines }).toEqual({ id: c.id, lines: counted });
+          const lim = LIMITS[set];
+          expect({ id: c.id, lines: within(c.changedLines, lim.lines), bugs: within(c.bugs.length, lim.bugs) }).toEqual({
+            id: c.id,
+            lines: true,
+            bugs: true,
+          });
+          expect({ id: c.id, traps: within(c.traps.length, lim.traps) }).toEqual({ id: c.id, traps: true });
+          for (const p of [...c.bugs, ...c.traps])
+            for (const [i, s] of [p, ...(p.alt ?? [])].entries()) {
+              const place = i ? `${p.id} alt ${i}` : p.id;
+              const text = (await repo.show(s.side === "new" ? repo.head : repo.base, s.path)).split("\n");
+              if (text.at(-1) === "") text.pop();
+              expect({ id: c.id, place, inside: s.lines[1] <= text.length }).toEqual({ id: c.id, place, inside: true });
+              const lines = text
+                .slice(s.lines[0] - 1, s.lines[1])
+                .join("")
+                .trim();
+              expect({ id: c.id, place, empty: lines === "" }).toEqual({ id: c.id, place, empty: false });
+            }
+          // Each stored instruction file lands in the base commit under its real name, byte for byte.
+          for (const stored of new Bun.Glob(`**/*${FIXTURE_SUFFIX}`).scanSync(join(c.dir, "base"))) {
+            const path = stored.replaceAll("\\", "/").slice(0, -FIXTURE_SUFFIX.length);
+            const built = Buffer.from(await repo.show(repo.base, path));
+            expect({ id: c.id, path, same: built.equals(readFileSync(join(c.dir, "base", stored))) }).toEqual({
+              id: c.id,
+              path,
+              same: true,
+            });
+            instructionFiles++;
+          }
         }
-        // Each stored instruction file lands in the base commit under its real name, byte for byte.
-        for (const stored of new Bun.Glob(`**/*${FIXTURE_SUFFIX}`).scanSync(join(c.dir, "base"))) {
-          const path = stored.replaceAll("\\", "/").slice(0, -FIXTURE_SUFFIX.length);
-          const built = Buffer.from(await repo.show(repo.base, path));
-          expect({ id: c.id, path, same: built.equals(readFileSync(join(c.dir, "base", stored))) }).toEqual({ id: c.id, path, same: true });
-          instructionFiles++;
-        }
-      }
       expect(instructionFiles).toBeGreaterThan(0);
     },
     SLOW,
@@ -149,6 +182,18 @@ describe("eval cases", () => {
       python: 4,
     });
     expect(Math.max(...cases.map((c) => c.changedLines))).toBeGreaterThanOrEqual(450);
+  });
+
+  test("the hard set has 8 to 10 cases in all three languages, 1 or 2 cases with no bug, and a diff of 800 lines or more", () => {
+    const hard = loadCases("all", SETS.hard);
+    expect(hard.length).toBeGreaterThanOrEqual(8);
+    expect(hard.length).toBeLessThanOrEqual(10);
+    expect(new Set(hard.map((c) => c.language)).size).toBe(3);
+    expect([1, 2]).toContain(hard.filter((c) => c.bugs.length === 0).length);
+    expect(Math.max(...hard.map((c) => c.changedLines))).toBeGreaterThanOrEqual(800);
+    // Case IDs are unique over all sets, so eval:rescore finds each case by its ID.
+    const ids = sets.flatMap(([, all]) => all.map((c) => c.id));
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
 
@@ -244,6 +289,61 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       expect(cmp.code).toBe(0);
       expect(cmp.stdout).toMatch(/all cases\s+100\.0%\s+100\.0%\s+\+0\.0 pts/);
       expect(cmp.stdout).not.toContain("used different");
+
+      // The fixture did not change, so a re-score finds the same head and gives the same numbers.
+      const rescored = join(dir, "rescored.json");
+      const re = await bun([RESCORE, file, "--out", rescored]);
+      expect(re.stderr).toBe("");
+      expect(re.code).toBe(0);
+      expect(re.stdout).toContain("No case has new bugs or traps.");
+      expect(re.stdout).not.toContain("the fixture head is");
+      const again = JSON.parse(readFileSync(rescored, "utf8")) as EvalResult;
+      expect(again.rescoredAt).toBeString();
+      expect(score(again)).toEqual(score(result));
+    },
+    SLOW,
+  );
+
+  test(
+    "an incomplete run records its coverage, and its run line names the skipped and unavailable entries",
+    async () => {
+      const [c] = loadCases("cpp-job-queue");
+      if (!c) throw new Error("The case cpp-job-queue is missing.");
+      const dir = temp("coverage");
+      const record = join(dir, "calls.jsonl");
+      const scenario = join(dir, "scenario.json");
+      const coverage = {
+        read: ["src/thread_pool.cpp"],
+        skipped: ["tests/thread_pool_test.cpp: over the read limit"],
+        unavailable: ["third_party/: not in the snapshot"],
+        notChecked: ["the CMake files"],
+      };
+      writeFileSync(
+        scenario,
+        JSON.stringify({
+          record,
+          auth: { loggedIn: true, authMethod: "claude.ai", projectsDirectory: join(dir, "projects") },
+          fixture: claudeStream(dir, "eval", "claude/b9-wp8-flags.jsonl", {
+            summary: "Partial.",
+            risks: [],
+            questions: [],
+            coverage,
+            findings: [],
+          }),
+          delayMs: 1,
+        }),
+      );
+      const out = join(dir, "out");
+      const r = await bun([RUN, "--cases", c.id, "--out", out, "--runner", process.execPath, FAKE, scenario]);
+      expect(r.stderr).toBe("");
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain(`[1/1] ${c.id} #1: incomplete`);
+      expect(r.stdout).toContain("    skipped: tests/thread_pool_test.cpp: over the read limit\n");
+      expect(r.stdout).toContain("    unavailable: third_party/: not in the snapshot\n");
+      const files = readdirSync(out).filter((f) => f.endsWith(".json"));
+      const result = JSON.parse(readFileSync(join(out, files[0] as string), "utf8")) as EvalResult;
+      expect(result.set).toBe("v1");
+      expect(result.runs[0]).toMatchObject({ status: "incomplete", coverage });
     },
     SLOW,
   );

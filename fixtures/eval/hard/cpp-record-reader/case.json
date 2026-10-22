@@ -1,0 +1,53 @@
+{
+  "id": "cpp-record-reader",
+  "title": "Read index version 2 and support extends in the manifest",
+  "language": "cpp",
+  "pr": {
+    "title": "pkgdb: index version 2 and manifest extends",
+    "description": "The package server writes index version 2 since release 7, so pkgdb now reads version 2 only. Version 2 has a 32-bit record count and the package size. docs/index-format.md describes the layout.\n\nThe manifest can now extend a package: `extends` names a package of the index or of an earlier line, and the new package inherits its flags and dependencies. This replaces the copy-and-edit lines in the farm manifests."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/index.cpp",
+      "side": "new",
+      "lines": [108, 112],
+      "alt": [{ "path": "src/index.cpp", "side": "new", "lines": [98, 98] }],
+      "severityMin": "major",
+      "module": "core",
+      "note": "Borrowed pointer across a call that invalidates it: base comes from reg.find(), and the unchanged registry.h says the pointer is valid only until the next add(), because add() can move every entry. applyManifest calls reg.add() and then reg.inherit(name, *base), which reads a moved-from or freed Entry when the vector grows. The test passes only because 3 index entries leave room for one more."
+    },
+    {
+      "id": "B2",
+      "path": "src/index.cpp",
+      "side": "new",
+      "lines": [62, 63],
+      "severityMin": "major",
+      "module": "security",
+      "note": "Wrong overflow guard: recordBytes < count detects a wrapped addition, not a wrapped multiplication by 24. For count = 186737709 the 32-bit product wraps to 186737720, which passes the guard, so the vector holds 178 MB while the loop reads count records (4.4 GB) past its end. The test uses count 0xffffffff, which the guard happens to catch."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/index.cpp",
+      "side": "new",
+      "lines": [93, 93],
+      "why": "std::stoul can throw, and the cast cuts a value above 32 bits, but the unchanged parseManifest() passes only flags of 1 to 8 lowercase hex digits, so stoul cannot throw and the value fits in 32 bits."
+    },
+    {
+      "id": "T2",
+      "path": "src/index.cpp",
+      "side": "new",
+      "lines": [53, 55],
+      "why": "loadIndex reads from f without a null check, but index.h says f must be open, and the only caller, the unchanged main.cpp, checks the fopen result before the call."
+    },
+    {
+      "id": "T3",
+      "path": "src/index.cpp",
+      "side": "new",
+      "lines": [13, 17],
+      "why": "The new 64-bit read copies bytes with memcpy and no byte swap, but the unchanged include/pkgdb/format.h defines the format as little-endian and has a static_assert that the host is little-endian."
+    }
+  ]
+}

@@ -1,0 +1,283 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1b205cb..93f4899 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ find_package(Threads REQUIRED)
+ 
+-add_library(shipper src/async_sink.cpp src/options.cpp src/record.cpp src/registry.cpp)
++add_library(shipper src/async_sink.cpp src/json_line.cpp src/options.cpp src/record.cpp src/registry.cpp)
+ target_include_directories(shipper PUBLIC include)
+ target_link_libraries(shipper PUBLIC Threads::Threads)
+ target_compile_options(shipper PRIVATE -Wall -Wextra -Werror)
+diff --git a/README.md b/README.md
+index 7fcd5ab..708de26 100644
+--- a/README.md
++++ b/README.md
+@@ -5,5 +5,16 @@ A small library that ships application log records to the log collector.
+ - `Record::make()` builds a record. The text is cut at 16 KiB, and control characters become spaces.
+ - `AsyncSink` queues records and writes them in batches on its own worker thread through a `Transport`.
+ - `SinkRegistry` names the sinks of a process and counts their dropped records for the metrics page.
++- `toJsonLine()` encodes a record as one JSON Lines entry for the collector.
+ 
+-A full queue refuses new records: `push()` returns false.
++## Full queue
++
++A full queue keeps the newest records: `push()` drops the oldest queued record and counts it in `SinkRegistry::drops()`. Before this version, `push()` refused the new record, and the newest lines of an incident were lost.
++
++## Batches
++
++A batch holds at most `SinkOptions::maxBatchBytes` of text (256 KiB by default), so the collector never sees a request above its limit.
++
++## Shutdown
++
++Call `flush()` in the shutdown hook to wait until the transport has each queued record, then `close()`.
+diff --git a/include/shipper/async_sink.h b/include/shipper/async_sink.h
+index 236f3c1..9af18ba 100644
+--- a/include/shipper/async_sink.h
++++ b/include/shipper/async_sink.h
+@@ -25,9 +25,13 @@ class AsyncSink {
+   AsyncSink(const AsyncSink&) = delete;
+   AsyncSink& operator=(const AsyncSink&) = delete;
+ 
+-  // Queues a record. Returns false when the queue is full, and after close() or detach().
++  // Queues a record. A full queue drops its oldest record and counts the drop in the registry. Returns false after close()
++  // or detach().
+   bool push(Record r);
+ 
++  // Blocks until the transport has each record that push() queued before the call. The shutdown hook and the tests use it.
++  void flush();
++
+   // Stops taking records, writes the queued ones, and joins the worker. A second call does nothing.
+   void close();
+ 
+diff --git a/include/shipper/json_line.h b/include/shipper/json_line.h
+new file mode 100644
+index 0000000..adac9a8
+--- /dev/null
++++ b/include/shipper/json_line.h
+@@ -0,0 +1,12 @@
++#pragma once
++
++#include <string>
++
++#include "shipper/record.h"
++
++namespace shipper {
++
++// One JSON Lines entry of the log collector: {"ts":<ms since epoch>,"level":"<name>","msg":"<text>"} and a newline.
++std::string toJsonLine(const Record& r);
++
++}  // namespace shipper
+diff --git a/src/async_sink.cpp b/src/async_sink.cpp
+index dec55ca..dc18fac 100644
+--- a/src/async_sink.cpp
++++ b/src/async_sink.cpp
+@@ -3,6 +3,8 @@
+ #include <iterator>
+ #include <vector>
+ 
++#include "shipper/registry.h"
++
+ namespace shipper {
+ 
+ AsyncSink::AsyncSink(std::string name, SinkOptions options, std::unique_ptr<Transport> transport, SinkRegistry& registry)
+@@ -17,7 +19,11 @@ AsyncSink::~AsyncSink() { close(); }
+ bool AsyncSink::push(Record r) {
+   std::lock_guard<std::mutex> lock(mutex_);
+   if (closed_ || detached_) return false;
+-  if (queue_.size() >= options_.capacity) return false;
++  if (queue_.size() >= options_.capacity) {
++    // A full queue keeps the newest records: the oldest one goes, and the registry counts it for the metrics page.
++    queue_.pop_front();
++    registry_.countDrop(name_);
++  }
+   queue_.push_back(std::move(r));
+   ready_.notify_one();
+   return true;
+@@ -28,6 +34,11 @@ void AsyncSink::detach() {
+   detached_ = true;
+ }
+ 
++void AsyncSink::flush() {
++  std::unique_lock<std::mutex> lock(mutex_);
++  drained_.wait(lock, [this] { return queue_.empty() || closed_; });
++}
++
+ void AsyncSink::close() {
+   {
+     std::unique_lock<std::mutex> lock(mutex_);
+@@ -44,8 +55,14 @@ void AsyncSink::run() {
+   for (;;) {
+     ready_.wait(lock, [this] { return !queue_.empty() || closed_; });
+     if (queue_.empty()) return;
+-    std::vector<Record> batch(std::make_move_iterator(queue_.begin()), std::make_move_iterator(queue_.end()));
+-    queue_.clear();
++    // A batch holds at most maxBatchBytes of text.
++    std::vector<Record> batch;
++    std::size_t bytes = 0;
++    while (!queue_.empty() && bytes + queue_.front().text().size() <= options_.maxBatchBytes) {
++      bytes += queue_.front().text().size();
++      batch.push_back(std::move(queue_.front()));
++      queue_.pop_front();
++    }
+     ++writing_;
+     lock.unlock();
+     transport_->write(batch);
+diff --git a/src/json_line.cpp b/src/json_line.cpp
+new file mode 100644
+index 0000000..c4d03d8
+--- /dev/null
++++ b/src/json_line.cpp
+@@ -0,0 +1,32 @@
++#include "shipper/json_line.h"
++
++#include <chrono>
++
++namespace shipper {
++namespace {
++
++const char* levelName(Level level) {
++  switch (level) {
++    case Level::kDebug: return "debug";
++    case Level::kInfo: return "info";
++    case Level::kWarning: return "warning";
++    case Level::kError: return "error";
++  }
++  return "info";
++}
++
++}  // namespace
++
++std::string toJsonLine(const Record& r) {
++  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(r.time().time_since_epoch()).count();
++  std::string out = "{\"ts\":" + std::to_string(ms) + ",\"level\":\"" + levelName(r.level()) + "\",\"msg\":\"";
++  out.reserve(out.size() + r.text().size() + 3);
++  for (const char c : r.text()) {
++    if (c == '"' || c == '\\') out += '\\';
++    out += c;
++  }
++  out += "\"}\n";
++  return out;
++}
++
++}  // namespace shipper
+diff --git a/tests/async_sink_test.cpp b/tests/async_sink_test.cpp
+index 130311d..c018273 100644
+--- a/tests/async_sink_test.cpp
++++ b/tests/async_sink_test.cpp
+@@ -2,9 +2,11 @@
+ #include <cstdio>
+ #include <memory>
+ #include <mutex>
++#include <string>
+ #include <vector>
+ 
+ #include "shipper/async_sink.h"
++#include "shipper/json_line.h"
+ #include "shipper/registry.h"
+ 
+ namespace {
+@@ -16,18 +18,26 @@ class FakeTransport : public Transport {
+  public:
+   void write(const std::vector<Record>& batch) override {
+     std::lock_guard<std::mutex> lock(mutex_);
+-    batches_.push_back(batch.size());
+-    for (const auto& r : batch) texts_.push_back(r.text());
++    std::size_t bytes = 0;
++    for (const auto& r : batch) {
++      texts_.push_back(r.text());
++      bytes += r.text().size();
++    }
++    batchBytes_.push_back(bytes);
+   }
+   std::vector<std::string> texts() {
+     std::lock_guard<std::mutex> lock(mutex_);
+     return texts_;
+   }
++  std::vector<std::size_t> batchBytes() {
++    std::lock_guard<std::mutex> lock(mutex_);
++    return batchBytes_;
++  }
+ 
+  private:
+   std::mutex mutex_;
+-  std::vector<std::size_t> batches_;
+   std::vector<std::string> texts_;
++  std::vector<std::size_t> batchBytes_;
+ };
+ 
+ void closeWritesEachQueuedRecord() {
+@@ -41,14 +51,38 @@ void closeWritesEachQueuedRecord() {
+   assert(!sink.push(Record::make(Level::kInfo, "late")));
+ }
+ 
+-void aFullQueueRefusesARecord() {
++void flushWaitsForTheQueuedRecords() {
++  SinkRegistry reg;
++  auto transport = std::make_unique<FakeTransport>();
++  FakeTransport* t = transport.get();
++  AsyncSink sink("app", SinkOptions{}, std::move(transport), reg);
++  for (int i = 0; i < 10; ++i) sink.push(Record::make(Level::kInfo, "line " + std::to_string(i)));
++  sink.flush();
++  assert(t->texts().size() == 10);
++  sink.close();
++}
++
++void aFullQueueDropsTheOldestRecord() {
+   SinkRegistry reg;
+-  AsyncSink sink("app", SinkOptions{.capacity = 1}, std::make_unique<FakeTransport>(), reg);
+-  int refused = 0;
+-  for (int i = 0; i < 1000; ++i)
+-    if (!sink.push(Record::make(Level::kInfo, "x"))) ++refused;
++  auto transport = std::make_unique<FakeTransport>();
++  FakeTransport* t = transport.get();
++  AsyncSink sink("app", SinkOptions{.capacity = 1}, std::move(transport), reg);
++  for (int i = 0; i < 1000; ++i) assert(sink.push(Record::make(Level::kInfo, std::to_string(i))));
++  sink.close();
++  const auto texts = t->texts();
++  assert(texts.back() == "999");
++  assert(texts.size() + reg.drops("app") == 1000);
++}
++
++void batchesStayUnderTheByteLimit() {
++  SinkRegistry reg;
++  auto transport = std::make_unique<FakeTransport>();
++  FakeTransport* t = transport.get();
++  AsyncSink sink("app", SinkOptions{.maxBatchBytes = kMaxRecordBytes}, std::move(transport), reg);
++  for (int i = 0; i < 20; ++i) sink.push(Record::make(Level::kInfo, std::string(10'000, 'x')));
+   sink.close();
+-  std::printf("refused %d of 1000\n", refused);
++  for (const std::size_t bytes : t->batchBytes()) assert(bytes <= kMaxRecordBytes);
++  assert(t->texts().size() == 20);
+ }
+ 
+ void removeDetachesTheSink() {
+@@ -59,18 +93,21 @@ void removeDetachesTheSink() {
+   assert(!sink->push(Record::make(Level::kInfo, "after remove")));
+ }
+ 
+-void recordTextIsOneLine() {
+-  const Record r = Record::make(Level::kWarning, "a\nb\tc");
+-  assert(r.text() == "a b c");
++void jsonLineEscapesQuotesAndBackslashes() {
++  const std::string line = toJsonLine(Record::make(Level::kWarning, "say \"hi\" \\ bye\n"));
++  assert(line.find(",\"level\":\"warning\",\"msg\":\"say \\\"hi\\\" \\\\ bye \"}\n") != std::string::npos);
++  assert(line.rfind("{\"ts\":", 0) == 0);
+ }
+ 
+ }  // namespace
+ 
+ int main() {
+   closeWritesEachQueuedRecord();
+-  aFullQueueRefusesARecord();
++  flushWaitsForTheQueuedRecords();
++  aFullQueueDropsTheOldestRecord();
++  batchesStayUnderTheByteLimit();
+   removeDetachesTheSink();
+-  recordTextIsOneLine();
++  jsonLineEscapesQuotesAndBackslashes();
+   std::puts("async_sink_test: ok");
+   return 0;
+ }

@@ -1,0 +1,56 @@
+{
+  "id": "py-price-cache",
+  "title": "Cache the catalog prices without a TTL",
+  "language": "python",
+  "pr": {
+    "title": "Price cache for GET /prices",
+    "description": "`GET /prices` sends about 400 queries per second to the database at peak, mostly for the same SKUs. This adds an in-memory price cache in front of the repository.\n\nThe cache follows the price events of the event bus and drops an entry when its price changes, so it needs no TTL and never shows an old price. Unknown SKUs are not cached. `GET /prices/cache` shows the entries, hits, and misses.\n\nTests cover the hits, the batch lookup, unknown SKUs, the admin page, and the supplier feed."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "catalog/cache.py",
+      "side": "new",
+      "lines": [20, 20],
+      "alt": [
+        { "path": "catalog/cache.py", "side": "new", "lines": [11, 11] },
+        { "path": "CHANGELOG.md", "side": "new", "lines": [7, 7] }
+      ],
+      "severityMin": "major",
+      "module": "core",
+      "note": "A cache invalidated by an event from another module: the cache drops entries only on PRICE_CHANGED. The unchanged catalog/importer.py writes the supplier feed with update_many() and publishes one CATALOG_RELOADED, and the unchanged events.py says no PRICE_CHANGED follows for the single SKUs. With no TTL, every price that the feed changes stays old in the cache until the process restarts."
+    },
+    {
+      "id": "B2",
+      "path": "tests/test_cache.py",
+      "side": "new",
+      "lines": [67, 68],
+      "severityMin": "minor",
+      "module": "tests",
+      "note": "A test that can never fail: assertTrue(x, msg) only checks that x is truthy and takes the second argument as the message. The cached amount is a nonzero Decimal whether it is old or new, so the supplier feed test passes and hides B1. It needs assertEqual."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "catalog/cache.py",
+      "side": "new",
+      "lines": [30, 30],
+      "why": "The dict and the counters change without a lock, which looks like a race between requests, but the unchanged app.py serves with one thread, and the bus calls subscribers in the publishing thread."
+    },
+    {
+      "id": "T2",
+      "path": "catalog/cache.py",
+      "side": "new",
+      "lines": [39, 39],
+      "why": "get_many() builds one IN list for all missing SKUs, which looks unbounded, but prices() has one caller, GET /prices, and the unchanged parse_skus() allows at most 100 SKUs without duplicates."
+    },
+    {
+      "id": "T3",
+      "path": "catalog/cache.py",
+      "side": "new",
+      "lines": [26, 26],
+      "why": "The cache hands out its stored objects, which looks like shared mutable state, but the unchanged catalog/model.py makes Price a frozen dataclass, so no caller can change a cached entry."
+    }
+  ]
+}

@@ -1,0 +1,210 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..c0d702b
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,7 @@
++# Changelog
++
++## 4.2.0
++
++- `GET /prices` reads through an in-memory price cache. The database load of the shop pages drops by about 90 %.
++- New: `GET /prices/cache` shows the entries, hits, and misses of the cache.
++- Price changes from the admin page and from the supplier feed reach the cache at once.
+diff --git a/README.md b/README.md
+index a9cb8e1..f837631 100644
+--- a/README.md
++++ b/README.md
+@@ -6,3 +6,9 @@ The catalog service of the shop: products and prices.
+ - `catalog/admin.py` changes single prices from the admin page.
+ - `catalog/importer.py` imports the supplier price feed (up to 200 000 rows) from the admin page, in the same process.
+ - `GET /prices?sku=...&sku=...` answers the shop pages, about 400 requests per second at peak.
++
++## Price cache
++
++`GET /prices` reads through `catalog/cache.py`. Each price stays in memory after its first lookup, until its price changes. The cache follows the price events of the event bus, so it has no TTL and the shop never shows an old price.
++
++`GET /prices/cache` shows the number of entries, hits, and misses.
+diff --git a/app.py b/app.py
+index 5960b33..810ab97 100644
+--- a/app.py
++++ b/app.py
+@@ -8,6 +8,7 @@ from waitress import serve
+ 
+ from catalog import events
+ from catalog.api import routes
++from catalog.cache import PriceCache
+ from catalog.repo import PriceRepo
+ 
+ 
+@@ -18,6 +19,7 @@ def create_app() -> Flask:
+     repo = PriceRepo(conn)
+     app.extensions["event_bus"] = bus
+     app.extensions["price_repo"] = repo
++    app.extensions["price_cache"] = PriceCache(repo, bus)
+     app.register_blueprint(routes)
+     return app
+ 
+diff --git a/catalog/api.py b/catalog/api.py
+index 0fca3b5..035a669 100644
+--- a/catalog/api.py
++++ b/catalog/api.py
+@@ -13,5 +13,11 @@ def get_prices():
+         skus = parse_skus(request.args.getlist("sku"))
+     except BadRequest as e:
+         return jsonify(error=str(e)), 400
+-    prices = current_app.extensions["price_repo"].get_many(skus)
++    prices = current_app.extensions["price_cache"].prices(skus)
+     return jsonify({sku: {"amount": str(p.amount), "currency": p.currency} for sku, p in prices.items()})
++
++
++@routes.get("/prices/cache")
++def cache_stats():
++    cache = current_app.extensions["price_cache"]
++    return jsonify(entries=len(cache), hits=cache.hits, misses=cache.misses)
+diff --git a/catalog/cache.py b/catalog/cache.py
+new file mode 100644
+index 0000000..fe37a28
+--- /dev/null
++++ b/catalog/cache.py
+@@ -0,0 +1,46 @@
++"""In-process cache of the catalog prices for GET /prices."""
++
++from catalog import events
++from catalog.model import Price
++from catalog.repo import PriceRepo
++
++
++class PriceCache:
++    """Keeps each price after its first lookup.
++
++    A price.changed event drops the entry of its SKU, so the cache needs no TTL: an entry lives until its price changes.
++    Unknown SKUs are not cached, so a new product shows up on its first lookup.
++    """
++
++    def __init__(self, repo: PriceRepo, bus: events.EventBus) -> None:
++        self._repo = repo
++        self._prices: dict[str, Price] = {}
++        self.hits = 0
++        self.misses = 0
++        bus.subscribe(events.PRICE_CHANGED, self._drop)
++
++    def price(self, sku: str) -> Price | None:
++        cached = self._prices.get(sku)
++        if cached is not None:
++            self.hits += 1
++            return cached
++        self.misses += 1
++        found = self._repo.get(sku)
++        if found is not None:
++            self._prices[sku] = found
++        return found
++
++    def prices(self, skus: list[str]) -> dict[str, Price]:
++        """The prices of the known SKUs, in request order. One repo query fetches the missing ones."""
++        missing = [s for s in skus if s not in self._prices]
++        self.hits += len(skus) - len(missing)
++        self.misses += len(missing)
++        if missing:
++            self._prices.update(self._repo.get_many(missing))
++        return {s: self._prices[s] for s in skus if s in self._prices}
++
++    def _drop(self, sku: str) -> None:
++        self._prices.pop(sku, None)
++
++    def __len__(self) -> int:
++        return len(self._prices)
+diff --git a/docs/caching.md b/docs/caching.md
+new file mode 100644
+index 0000000..6ae0017
+--- /dev/null
++++ b/docs/caching.md
+@@ -0,0 +1,14 @@
++# Caching in the catalog
++
++## Why
++
++At peak, `GET /prices` sends about 400 queries per second to the database, and most ask for the same 2 000 SKUs. The price cache answers them from memory.
++
++## Rules
++
++- The cache holds only known SKUs. A lookup of an unknown SKU goes to the database each time, so a new product needs no event.
++- The cache has no TTL. Each price change reaches it as an event on the in-process bus, and the cache drops that entry.
++
++## Size
++
++The catalog has about 60 000 SKUs. A cached `Price` takes about 300 bytes, so a full cache needs about 18 MB.
+diff --git a/tests/test_cache.py b/tests/test_cache.py
+new file mode 100644
+index 0000000..9abf16f
+--- /dev/null
++++ b/tests/test_cache.py
+@@ -0,0 +1,68 @@
++import unittest
++from decimal import Decimal
++
++from catalog import events
++from catalog.admin import set_price
++from catalog.cache import PriceCache
++from catalog.importer import import_prices
++from catalog.model import Price
++
++
++class FakeRepo:
++    def __init__(self, prices):
++        self.prices = {p.sku: p for p in prices}
++        self.queries = 0
++
++    def get(self, sku):
++        self.queries += 1
++        return self.prices.get(sku)
++
++    def get_many(self, skus):
++        self.queries += 1
++        return {s: self.prices[s] for s in skus if s in self.prices}
++
++    def update(self, sku, amount):
++        self.prices[sku] = Price(sku, amount, self.prices[sku].currency)
++
++    def update_many(self, rows):
++        for sku, amount in rows:
++            self.update(sku, amount)
++        return len(rows)
++
++
++def eur(sku, amount):
++    return Price(sku, Decimal(amount), "EUR")
++
++
++class PriceCacheTest(unittest.TestCase):
++    def setUp(self):
++        self.bus = events.EventBus()
++        self.repo = FakeRepo([eur("A-1", "120"), eur("B-2", "9.90")])
++        self.cache = PriceCache(self.repo, self.bus)
++
++    def test_reads_each_price_once(self):
++        self.cache.price("A-1")
++        self.cache.price("A-1")
++        self.assertEqual(self.repo.queries, 1)
++        self.assertEqual((self.cache.hits, self.cache.misses), (1, 1))
++
++    def test_fetches_the_missing_prices_in_one_query(self):
++        self.cache.price("A-1")
++        self.assertEqual(self.cache.prices(["A-1", "B-2", "C-3"]), {"A-1": eur("A-1", "120"), "B-2": eur("B-2", "9.90")})
++        self.assertEqual(self.repo.queries, 2)
++
++    def test_does_not_cache_an_unknown_sku(self):
++        self.assertIsNone(self.cache.price("C-3"))
++        self.repo.prices["C-3"] = eur("C-3", "5")
++        self.assertEqual(self.cache.price("C-3"), eur("C-3", "5"))
++
++    def test_a_price_change_from_the_admin_page_drops_the_entry(self):
++        self.cache.price("A-1")
++        set_price(self.repo, self.bus, "A-1", Decimal("125"))
++        self.assertEqual(self.cache.price("A-1").amount, Decimal("125"))
++
++    def test_the_bulk_import_refreshes_cached_prices(self):
++        self.cache.prices(["A-1", "B-2"])
++        import_prices(self.repo, self.bus, [("A-1", Decimal("125")), ("B-2", Decimal("8.50"))])
++        self.assertTrue(self.cache.price("A-1").amount, Decimal("125"))
++        self.assertTrue(self.cache.price("B-2").amount, Decimal("8.50"))

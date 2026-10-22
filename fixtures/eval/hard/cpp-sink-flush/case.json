@@ -1,0 +1,53 @@
+{
+  "id": "cpp-sink-flush",
+  "title": "Drop the oldest record, add flush(), and limit batch bytes",
+  "language": "cpp",
+  "pr": {
+    "title": "shipper: keep the newest records, flush(), byte-limited batches, JSON lines",
+    "description": "Four changes to the async sink:\n\n- A full queue now drops its oldest record and counts the drop in the registry, so the newest lines of an incident survive.\n- `flush()` waits until the transport has each queued record. The shutdown hook calls it before `close()`.\n- A batch holds at most `maxBatchBytes` of text, so the collector never sees a request above its limit.\n- `toJsonLine()` encodes a record for the collector.\n\nTests cover each change."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/async_sink.cpp",
+      "side": "new",
+      "lines": [25, 25],
+      "alt": [{ "path": "src/async_sink.cpp", "side": "new", "lines": [20, 20] }],
+      "severityMin": "major",
+      "module": "concurrency",
+      "note": "Lock order across two files: push() calls registry_.countDrop() while it holds the sink mutex, and countDrop() takes the registry mutex. The unchanged SinkRegistry::remove() and ~SinkRegistry() hold the registry mutex and call AsyncSink::detach(), which takes the sink mutex. registry.h states the order (registry before sink), so a push into a full queue during remove() deadlocks both threads."
+    },
+    {
+      "id": "B2",
+      "path": "src/async_sink.cpp",
+      "side": "new",
+      "lines": [39, 39],
+      "severityMin": "major",
+      "module": "concurrency",
+      "note": "A predicate loop that checks the wrong condition: flush() waits for queue_.empty(), but the unchanged worker pops a batch before it writes it, so the queue is empty while the last batch is still in flight. flush() returns before the transport has the records; the unchanged close() shows the right predicate, queue_.empty() && writing_ == 0. The shutdown hook then loses the last records."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/async_sink.cpp",
+      "side": "new",
+      "lines": [24, 24],
+      "why": "pop_front() on an empty deque is undefined, but the branch runs only when the queue holds capacity records, and the unchanged validate() that the constructor calls refuses a capacity of 0."
+    },
+    {
+      "id": "T2",
+      "path": "src/async_sink.cpp",
+      "side": "new",
+      "lines": [61, 61],
+      "why": "A record larger than maxBatchBytes would never fit and leave an empty batch in a busy loop, but the unchanged Record::make() cuts each text at kMaxRecordBytes, and the unchanged validate() keeps maxBatchBytes at or above kMaxRecordBytes."
+    },
+    {
+      "id": "T3",
+      "path": "src/json_line.cpp",
+      "side": "new",
+      "lines": [24, 26],
+      "why": "The encoder escapes only quotes and backslashes, which looks like invalid JSON for control characters, but the unchanged Record::make(), the only way to build a Record, turns each byte below 0x20 into a space and cuts on a UTF-8 boundary."
+    }
+  ]
+}

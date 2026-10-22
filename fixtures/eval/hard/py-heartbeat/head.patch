@@ -1,0 +1,237 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..043b700
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,6 @@
++# Changelog
++
++## 1.9.0
++
++- A report month that renders for more than 60 s no longer loses its job: a heartbeat thread keeps the lease of the running job alive between steps and during a step.
++- The runner no longer moves the heartbeat after each step.
+diff --git a/README.md b/README.md
+index b49c9e2..794a7c4 100644
+--- a/README.md
++++ b/README.md
+@@ -3,7 +3,8 @@
+ Runs the background jobs of the reporting service from the `jobs` table.
+ 
+ - A worker claims one job at a time. The claim gives it a lease: `worker` and `heartbeat_at` on the job row.
+-- A handler is a generator. Each `yield` ends one step, and the runner moves `heartbeat_at` after each step.
++- A handler is a generator. Each `yield` ends one step.
++- A heartbeat thread in each worker moves `heartbeat_at` of the running job every `HEARTBEAT_INTERVAL_S`, also while one step runs for minutes.
+ - `worker/supervisor.py` runs each minute on the scheduler host. It puts a running job back into the queue when its `heartbeat_at` is older than `STALE_AFTER_S`.
+ - A worker that lost its lease cannot complete the job: `complete()` raises `LostOwnership`.
+ - `GET /status` on port 9102 shows the job that the worker runs.
+diff --git a/tests/test_heartbeat.py b/tests/test_heartbeat.py
+new file mode 100644
+index 0000000..5653823
+--- /dev/null
++++ b/tests/test_heartbeat.py
+@@ -0,0 +1,85 @@
++import threading
++import time
++
++from worker.heartbeat import Heartbeat
++from worker.state import JobState
++
++
++class RecordingQueue:
++    def __init__(self, fail_first=0):
++        self.beats = []
++        self.fail_first = fail_first
++        self._lock = threading.Lock()
++
++    def beat(self, job_id, worker_id):
++        with self._lock:
++            if self.fail_first:
++                self.fail_first -= 1
++                raise ConnectionError("database down")
++            self.beats.append((job_id, worker_id))
++
++    def count(self):
++        with self._lock:
++            return len(self.beats)
++
++
++def wait_for(cond, timeout=2.0):
++    end = time.monotonic() + timeout
++    while time.monotonic() < end:
++        if cond():
++            return True
++        time.sleep(0.01)
++    return False
++
++
++def start(queue, state):
++    hb = Heartbeat(queue, state, "w1", interval_s=0.01)
++    hb.start()
++    return hb
++
++
++def test_beats_the_running_job():
++    q, state = RecordingQueue(), JobState()
++    state.job_id = 7
++    hb = start(q, state)
++    try:
++        assert wait_for(lambda: q.count() >= 3)
++    finally:
++        hb.stop()
++    assert set(q.beats) == {(7, "w1")}
++
++
++def test_does_not_beat_without_a_running_job():
++    q = RecordingQueue()
++    hb = start(q, JobState())
++    time.sleep(0.1)
++    hb.stop()
++    assert q.beats == []
++
++
++def test_follows_the_next_job():
++    q, state = RecordingQueue(), JobState()
++    state.job_id = 1
++    hb = start(q, state)
++    try:
++        assert wait_for(lambda: q.count() >= 1)
++        state.job_id = 2
++        assert wait_for(lambda: (2, "w1") in q.beats)
++    finally:
++        hb.stop()
++
++
++def test_keeps_beating_after_a_failed_beat():
++    q, state = RecordingQueue(fail_first=2), JobState()
++    state.job_id = 5
++    hb = start(q, state)
++    try:
++        assert wait_for(lambda: q.count() >= 1)
++    finally:
++        hb.stop()
++
++
++def test_stop_ends_the_thread():
++    hb = start(RecordingQueue(), JobState())
++    hb.stop()
++    assert not hb.alive()
+diff --git a/tests/test_runner.py b/tests/test_runner.py
+index 6e25852..048aadd 100644
+--- a/tests/test_runner.py
++++ b/tests/test_runner.py
+@@ -40,7 +40,7 @@ HANDLERS = {"two": two_steps, "broken": broken}
+ def test_runs_a_job_and_stores_the_last_value():
+     q = FakeQueue([Job(1, "two", {"n": 3})])
+     assert run_job(q, HANDLERS, JobState(), "w1")
+-    assert q.calls == [("beat", 1), ("beat", 1), ("complete", 1, {"done": 3})]
++    assert q.calls == [("complete", 1, {"done": 3})]
+ 
+ 
+ def test_an_empty_queue_returns_false():
+@@ -53,6 +53,12 @@ def test_a_failed_handler_marks_the_job_failed():
+     assert q.calls == [("fail", 2, "ValueError: bad payload")]
+ 
+ 
++def test_an_unknown_kind_marks_the_job_failed():
++    q = FakeQueue([Job(4, "nothing", {})])
++    run_job(q, HANDLERS, JobState(), "w1")
++    assert q.calls == [("fail", 4, "KeyError: 'nothing'")]
++
++
+ def test_a_lost_lease_drops_the_result():
+     q = FakeQueue([Job(3, "two", {"n": 1})], lose=True)
+     state = JobState()
+diff --git a/worker/heartbeat.py b/worker/heartbeat.py
+new file mode 100644
+index 0000000..926b2f3
+--- /dev/null
++++ b/worker/heartbeat.py
+@@ -0,0 +1,43 @@
++"""Keeps the lease of the running job alive while a step runs."""
++
++import logging
++import threading
++
++from worker import settings
++from worker.queue import Queue
++from worker.state import JobState
++
++log = logging.getLogger(__name__)
++
++
++class Heartbeat:
++    """Moves heartbeat_at of the running job every interval on its own thread, so a step that blocks for minutes keeps
++    its lease."""
++
++    def __init__(self, queue: Queue, state: JobState, worker_id: str, interval_s: float = settings.HEARTBEAT_INTERVAL_S) -> None:
++        self._queue = queue
++        self._state = state
++        self._worker_id = worker_id
++        self._interval_s = interval_s
++        self._stop = threading.Event()
++        self._thread = threading.Thread(target=self._run, name="heartbeat", daemon=True)
++
++    def start(self) -> None:
++        self._thread.start()
++
++    def stop(self) -> None:
++        self._stop.set()
++        self._thread.join()
++
++    def alive(self) -> bool:
++        return self._thread.is_alive()
++
++    def _run(self) -> None:
++        while not self._stop.wait(self._interval_s):
++            job_id = self._state.job_id
++            if job_id is None:
++                continue
++            try:
++                self._queue.beat(job_id, self._worker_id)
++            except Exception:
++                log.warning("heartbeat of job %s failed; the next one tries again", job_id, exc_info=True)
+diff --git a/worker/runner.py b/worker/runner.py
+index 2125839..625a277 100644
+--- a/worker/runner.py
++++ b/worker/runner.py
+@@ -5,6 +5,7 @@ import time
+ from collections.abc import Callable, Iterator
+ 
+ from worker import settings
++from worker.heartbeat import Heartbeat
+ from worker.queue import LostOwnership, Queue
+ from worker.state import JobState
+ 
+@@ -15,7 +16,7 @@ Handler = Callable[[dict], Iterator[object]]
+ 
+ 
+ def run_job(queue: Queue, handlers: dict[str, Handler], state: JobState, worker_id: str) -> bool:
+-    """Claims and runs one job. Returns False when the queue was empty."""
++    """Claims and runs one job. Returns False when the queue was empty. The heartbeat thread keeps the lease alive."""
+     job = queue.claim(worker_id)
+     if job is None:
+         return False
+@@ -23,7 +24,7 @@ def run_job(queue: Queue, handlers: dict[str, Handler], state: JobState, worker_
+     try:
+         result = None
+         for result in handlers[job.kind](job.payload):
+-            queue.beat(job.id, worker_id)
++            pass
+         queue.complete(job.id, worker_id, result)
+     except LostOwnership:
+         log.warning("job %s went to another worker; its result is dropped", job.id)
+@@ -36,6 +37,11 @@ def run_job(queue: Queue, handlers: dict[str, Handler], state: JobState, worker_
+ 
+ 
+ def run_forever(queue: Queue, handlers: dict[str, Handler], state: JobState, worker_id: str) -> None:
+-    while True:
+-        if not run_job(queue, handlers, state, worker_id):
+-            time.sleep(settings.POLL_INTERVAL_S)
++    heartbeat = Heartbeat(queue, state, worker_id)
++    heartbeat.start()
++    try:
++        while True:
++            if not run_job(queue, handlers, state, worker_id):
++                time.sleep(settings.POLL_INTERVAL_S)
++    finally:
++        heartbeat.stop()

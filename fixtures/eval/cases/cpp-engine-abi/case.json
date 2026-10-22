@@ -13,6 +13,7 @@
       "path": "include/engine/engine.h",
       "side": "new",
       "lines": [31, 31],
+      "alt": [{ "path": "include/engine/engine.h", "side": "new", "lines": [18, 18] }],
       "severityMin": "major",
       "module": "api",
       "note": "Broken API compatibility: flush_interval_ms goes into the middle of engine_options and ENGINE_ABI_VERSION stays 3. A plugin built against the old header passes queue_depth where the engine now reads the flush interval."
@@ -31,6 +32,7 @@
       "path": "include/engine/engine.h",
       "side": "new",
       "lines": [45, 46],
+      "alt": [{ "path": "src/engine.cpp", "side": "new", "lines": [96, 96] }],
       "severityMin": "minor",
       "module": "intent",
       "note": "Task requirement missed: engine_version takes an engine and returns NULL without one, but the task asks for a call before engine_create()."

@@ -12,6 +12,7 @@
       "path": "src/settings/serialize.ts",
       "side": "new",
       "lines": [8, 8],
+      "alt": [{ "path": "src/settings/model.ts", "side": "new", "lines": [13, 14] }],
       "severityMin": "major",
       "module": "api",
       "note": "Broken API compatibility: GET /v1/settings now returns retries instead of retryLimit, so existing v1 clients lose the field."

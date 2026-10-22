@@ -21,6 +21,10 @@
       "path": "src/app/main.cpp",
       "side": "new",
       "lines": [7, 8],
+      "alt": [
+        { "path": "src/log_file.cpp", "side": "new", "lines": [24, 26] },
+        { "path": "src/log_file.h", "side": "new", "lines": [26, 27] }
+      ],
       "severityMin": "major",
       "module": "core",
       "note": "Missed caller: openLog now returns nullptr instead of throwing, but the unchanged main() calls log->write() without a check, so a log path that cannot be opened crashes the service."

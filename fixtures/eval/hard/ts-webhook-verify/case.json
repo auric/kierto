@@ -1,0 +1,40 @@
+{
+  "id": "ts-webhook-verify",
+  "title": "Receive signed webhooks of the payments provider",
+  "language": "typescript",
+  "pr": {
+    "title": "Add the payments webhook",
+    "description": "Adds `POST /hooks/payments`. It checks the `X-Payments-Signature` header with the parser of the previous PR, refuses deliveries signed more than 5 minutes off, stores each new event of a handled type, and queues the `webhook-event` job. Duplicates and other event types answer 200, so the provider stops retrying.\n\nNew setting: `PAYMENTS_WEBHOOK_SECRET`. docs/webhooks.md describes the route and its answers."
+  },
+  "bugs": [],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/webhooks/payments.ts",
+      "side": "new",
+      "lines": [27, 27],
+      "why": "timingSafeEqual throws on buffers of different length, but the unchanged parseSignatureHeader() keeps only v1 values of exactly 64 lowercase hex characters, so each buffer is 32 bytes like the HMAC-SHA256 digest."
+    },
+    {
+      "id": "T2",
+      "path": "src/webhooks/payments.ts",
+      "side": "new",
+      "lines": [23, 23],
+      "why": "The header and docs/webhooks.md give t in seconds and the clock is in milliseconds, which looks like a unit mismatch, but the unchanged parseSignatureHeader() returns t in milliseconds and keeps the sent value as timestamp for the signed payload."
+    },
+    {
+      "id": "T3",
+      "path": "src/webhooks/payments.ts",
+      "side": "new",
+      "lines": [30, 30],
+      "why": "JSON.parse can throw, but the body has a valid signature at this point, and the unchanged withErrors() wrapper that main.ts puts around the router turns a SyntaxError into a 400 answer. A test checks the SyntaxError."
+    },
+    {
+      "id": "T4",
+      "path": "src/webhooks/payments.ts",
+      "side": "new",
+      "lines": [33, 34],
+      "why": "has() and then add() look like a check-then-act race that queues a duplicate twice, but the unchanged EventStore.add() inserts the event and its job in one statement with ON CONFLICT DO NOTHING, so a racing duplicate inserts nothing and gets 200."
+    }
+  ]
+}

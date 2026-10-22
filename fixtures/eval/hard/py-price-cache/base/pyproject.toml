@@ -1,0 +1,8 @@
+[project]
+name = "shop-catalog"
+version = "4.1.0"
+requires-python = ">=3.11"
+dependencies = ["flask>=3.0", "waitress>=3.0", "psycopg[binary]>=3.1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,54 @@
+{
+  "id": "ts-payment-retry",
+  "title": "Capture orders from the job queue with retries",
+  "language": "typescript",
+  "pr": {
+    "title": "Add the capture-order job with gateway retries",
+    "description": "Adds the `capture-order` job. It charges the order total with the card gateway and marks the order paid or declined.\n\nA timeout or a 502, 503, or 504 answer gets more attempts with the shared retry policy (`PAYMENT_RETRY_ATTEMPTS`, `PAYMENT_RETRY_BASE_MS`). The new `retry()` helper is generic, so the refund job can use it in a follow-up. When the last attempt fails, the order goes back to pending and the job queue runs the job again later.\n\nTests cover the paid, declined, retried, and failed paths with a fake gateway."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/payments/capture.ts",
+      "side": "new",
+      "lines": [22, 29],
+      "severityMin": "major",
+      "module": "core",
+      "note": "Non-idempotent retry: each attempt sends a new randomUUID() idempotency key. The unchanged gateway.ts says that a GatewayTimeout can follow a created charge and that only a repeated key prevents a second charge, so a retried timeout, and each later run of the failed job, charges the card again. subscriptions.ts shows the stable key."
+    },
+    {
+      "id": "B2",
+      "path": "src/payments/capture.ts",
+      "side": "new",
+      "lines": [35, 35],
+      "alt": [{ "path": "src/payments/capture.ts", "side": "new", "lines": [39, 40] }],
+      "severityMin": "major",
+      "module": "core",
+      "note": "Callee contract in an unchanged file: gateway.charge() resolves a decline with status \"declined\" and never throws CardDeclined (only authorize() does). captureOrder does not check charge.status, so a declined card marks the order paid with the ID of the declined charge. The fake gateway of the tests throws CardDeclined, so the tests pass."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/payments/capture.ts",
+      "side": "new",
+      "lines": [18, 19],
+      "why": "The status check and markCapturing look like a check-then-act race between two workers, but the unchanged markCapturing() is one conditional UPDATE that throws OrderBusy when another worker moved the order first, and the unchanged worker.ts marks such a job done."
+    },
+    {
+      "id": "T2",
+      "path": "src/payments/retry.ts",
+      "side": "new",
+      "lines": [20, 20],
+      "why": "The exponential wait has no cap, but the unchanged config.ts limits maxAttempts to 1 to 5 and baseDelayMs to 50 to 2000, so the longest wait is 16 s in a background job."
+    },
+    {
+      "id": "T3",
+      "path": "src/payments/capture.ts",
+      "side": "new",
+      "lines": [36, 36],
+      "alt": [{ "path": "src/payments/capture.ts", "side": "new", "lines": [41, 41] }],
+      "why": "The audit write looks like a floating promise that can reject unhandled, but the unchanged AuditLog.record() catches every error and never rejects, by its contract."
+    }
+  ]
+}

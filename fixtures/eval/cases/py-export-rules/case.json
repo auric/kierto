@@ -31,6 +31,7 @@
       "path": "app/cli.py",
       "side": "new",
       "lines": [11, 11],
+      "alt": [{ "path": "ops/nightly.sh", "side": "new", "lines": [5, 5] }],
       "severityMin": "major",
       "module": "api",
       "note": "Broken API compatibility: the CLI flag --out becomes --target with no alias, and the unchanged ops/nightly.sh still passes --out, so the nightly export fails."

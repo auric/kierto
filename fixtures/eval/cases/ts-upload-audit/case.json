@@ -22,6 +22,7 @@
       "path": "src/uploads/avatar.ts",
       "side": "new",
       "lines": [49, 55],
+      "alt": [{ "path": "src/routes.ts", "side": "new", "lines": [15, 15] }],
       "severityMin": "major",
       "module": "intent",
       "note": "Task requirement missed: an accepted upload writes no avatar.update audit event, and avatarRoutes does not even get the AuditLog."

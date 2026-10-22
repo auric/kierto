@@ -1,0 +1,52 @@
+{
+  "id": "ts-session-split",
+  "title": "Split the session module",
+  "language": "typescript",
+  "pr": {
+    "title": "Split src/auth/sessions.ts into one module per concern",
+    "description": "Moves `src/auth/sessions.ts` into `src/auth/session/`: `types`, `tokens`, `expiry`, `store`, `cookies`, and `csrf`, with an `index.ts` that exports all of them. The tests move the same way, with the shared helpers in `tests/auth/session/helpers.ts`; the store tests split into `store.test.ts` and `rotation.test.ts`.\n\nNo behavior change. The code moves as is, except one mechanical rename: the private maps of `SessionStore` become `byId`, `idsByUser`, and `rotatedIds`. The other files change only their import path. This prepares the Redis store, which replaces only `store.ts`."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/auth/session/expiry.ts",
+      "side": "new",
+      "lines": [8, 9],
+      "severityMin": "major",
+      "module": "security",
+      "note": "One-token change inside a moved block: nextExpiry() now uses Math.max instead of Math.min. After the first request a session no longer ends after 30 idle minutes, and an active session never reaches the 12-hour absolute lifetime. The moved comment above it and the README still promise both limits."
+    },
+    {
+      "id": "B2",
+      "path": "tests/auth/session/store.test.ts",
+      "side": "new",
+      "lines": [40, 40],
+      "severityMin": "minor",
+      "module": "tests",
+      "note": "A test that can never fail: the moved absolute-lifetime test ends with expect(...).toBeNull without the call, so it asserts nothing. The base test had toBeNull(), which fails with the Math.max change, so the bug passes CI."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/auth/session/tokens.ts",
+      "side": "new",
+      "lines": [19, 19],
+      "why": "The split result is cast to two strings without a length check, but verifyToken has one caller, the unchanged requireSession() in src/http/auth.ts, and it passes only tokens that match TOKEN_FORMAT: two 43-character parts."
+    },
+    {
+      "id": "T2",
+      "path": "src/auth/session/tokens.ts",
+      "side": "new",
+      "lines": [22, 22],
+      "why": "timingSafeEqual throws on buffers of different length, but the unchanged TOKEN_FORMAT check makes the signature 43 characters, and sign() always returns 43 base64url characters of an HMAC-SHA256."
+    },
+    {
+      "id": "T3",
+      "path": "src/auth/session/store.ts",
+      "side": "new",
+      "lines": [41, 41],
+      "why": "The in-memory map looks like it grows without bound, but the unchanged src/jobs/sweeper.ts, started in src/main.ts, removes expired sessions each minute, and create() caps each user at 10 sessions."
+    }
+  ]
+}

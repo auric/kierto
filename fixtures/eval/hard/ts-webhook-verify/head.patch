@@ -1,0 +1,231 @@
+diff --git a/docs/webhooks.md b/docs/webhooks.md
+index 22c31c6..152c794 100644
+--- a/docs/webhooks.md
++++ b/docs/webhooks.md
+@@ -5,3 +5,27 @@ All webhook routes answer within a few milliseconds: they store the event and qu
+ ## Carrier
+ 
+ `POST /hooks/carrier`. The carrier sends the shared `CARRIER_TOKEN` in `X-Carrier-Token`. It retries a delivery until it gets a 2xx answer.
++
++## Payments
++
++`POST /hooks/payments`. Set `PAYMENTS_WEBHOOK_SECRET` to the signing secret that the dashboard of the provider shows.
++
++Each delivery has this header:
++
++```
++X-Payments-Signature: t=1700000000,v1=5f2b...e1
++```
++
++- `t` is the signing time as Unix seconds.
++- `v1` is the lowercase hex HMAC-SHA256 of `<t>.<raw body>` with the signing secret. During a secret rotation, the header has two `v1` values; either one is enough.
++
++The route answers:
++
++| Status | When |
++|---|---|
++| 202 | A new event of a handled type. The job is queued. |
++| 200 | A duplicate delivery, or an event type that the job does not handle. The provider stops retrying. |
++| 400 | No valid signature header, a signing time more than 5 minutes off, or a body that is not JSON. |
++| 401 | No `v1` value matches. |
++
++The provider retries each delivery with a backoff for 3 days until it gets a 2xx answer, and it can send one event more than once. The event ID makes each event count once.
+diff --git a/src/config.ts b/src/config.ts
+index 5dbe090..a0ea84c 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -2,6 +2,8 @@ export type Config = {
+   port: number;
+   databaseUrl: string;
+   carrierToken: Buffer;
++  // The signing secret of the payments provider, as its dashboard shows it. The HMAC key is its UTF-8 bytes.
++  paymentsSecret: Buffer;
+ };
+ 
+ function required(env: Record<string, string | undefined>, name: string): string {
+@@ -15,5 +17,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
+     port: Number(env.PORT ?? 8080),
+     databaseUrl: required(env, "DATABASE_URL"),
+     carrierToken: Buffer.from(required(env, "CARRIER_TOKEN"), "utf8"),
++    paymentsSecret: Buffer.from(required(env, "PAYMENTS_WEBHOOK_SECRET"), "utf8"),
+   };
+ }
+diff --git a/src/main.ts b/src/main.ts
+index f8ef649..0c6b243 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -4,6 +4,7 @@ import { EventStore } from "./events/store";
+ import { withErrors } from "./http/errors";
+ import { router } from "./http/server";
+ import { carrierWebhook } from "./webhooks/carrier";
++import { paymentsWebhook } from "./webhooks/payments";
+ 
+ const config = loadConfig();
+ const events = new EventStore(connect(config.databaseUrl));
+@@ -11,6 +12,7 @@ const events = new EventStore(connect(config.databaseUrl));
+ const app = withErrors(
+   router({
+     "POST /hooks/carrier": carrierWebhook(config.carrierToken, events),
++    "POST /hooks/payments": paymentsWebhook({ secret: config.paymentsSecret, events }),
+   }),
+   (m) => console.error(m),
+ );
+diff --git a/src/webhooks/payments.ts b/src/webhooks/payments.ts
+new file mode 100644
+index 0000000..e27c692
+--- /dev/null
++++ b/src/webhooks/payments.ts
+@@ -0,0 +1,37 @@
++import { createHmac, timingSafeEqual } from "node:crypto";
++import type { EventStore } from "../events/store";
++import { readRawBody } from "../http/body";
++import { type Handler, json } from "../http/server";
++import { parseSignatureHeader } from "./header";
++
++export const SIGNATURE_HEADER = "x-payments-signature";
++// A delivery signed longer ago than this, or this far in the future, is refused, so a captured request cannot be replayed.
++export const TOLERANCE_MS = 5 * 60_000;
++
++// The event types that the webhook-event job handles. The provider stops retrying other types after a 2xx answer.
++export const HANDLED_TYPES = new Set(["payment.succeeded", "payment.failed", "refund.succeeded", "dispute.opened"]);
++
++type PaymentEvent = { id: string; type: string; created: number; data: Record<string, unknown> };
++
++export type PaymentsWebhookDeps = { secret: Buffer; events: EventStore; clock?: () => number };
++
++export function paymentsWebhook(deps: PaymentsWebhookDeps): Handler {
++  const clock = deps.clock ?? Date.now;
++  return async (req) => {
++    const header = parseSignatureHeader(req.headers[SIGNATURE_HEADER]);
++    if (!header) return json(400, { error: "missing or malformed signature header" });
++    if (Math.abs(clock() - header.t) > TOLERANCE_MS) return json(400, { error: "the signature time is outside the tolerance" });
++
++    const raw = await readRawBody(req);
++    const signed = createHmac("sha256", deps.secret).update(`${header.timestamp}.`).update(raw).digest();
++    const valid = header.v1.some((sig) => timingSafeEqual(Buffer.from(sig, "hex"), signed));
++    if (!valid) return json(401, { error: "bad signature" });
++
++    const event = JSON.parse(raw.toString("utf8")) as PaymentEvent | null;
++    if (typeof event?.id !== "string" || !HANDLED_TYPES.has(event.type)) return json(200, { status: "ignored" });
++
++    if (await deps.events.has("payments", event.id)) return json(200, { status: "duplicate" });
++    const inserted = await deps.events.add("payments", event.id, event.type, event);
++    return json(inserted ? 202 : 200, { status: inserted ? "queued" : "duplicate" });
++  };
++}
+diff --git a/tests/webhooks/payments.test.ts b/tests/webhooks/payments.test.ts
+new file mode 100644
+index 0000000..99066ac
+--- /dev/null
++++ b/tests/webhooks/payments.test.ts
+@@ -0,0 +1,110 @@
++import { describe, expect, test } from "bun:test";
++import { createHmac } from "node:crypto";
++import type { EventStore } from "../../src/events/store";
++import type { Request } from "../../src/http/server";
++import { paymentsWebhook, SIGNATURE_HEADER, TOLERANCE_MS } from "../../src/webhooks/payments";
++
++const SECRET = Buffer.from("whsec_test_secret", "utf8");
++const NOW = 1_700_000_000_000;
++
++function fakeEvents() {
++  const stored = new Map<string, unknown>();
++  const store = {
++    has: async (provider: string, id: string) => stored.has(`${provider}/${id}`),
++    add: async (provider: string, id: string, _type: string, payload: unknown) => {
++      if (stored.has(`${provider}/${id}`)) return false;
++      stored.set(`${provider}/${id}`, payload);
++      return true;
++    },
++  };
++  return { events: store as unknown as EventStore, stored };
++}
++
++const sign = (seconds: number, body: string, secret = SECRET) =>
++  createHmac("sha256", secret).update(`${seconds}.${body}`).digest("hex");
++
++function delivery(body: string, header: string | undefined): Request {
++  return {
++    method: "POST",
++    path: "/hooks/payments",
++    headers: header === undefined ? {} : { [SIGNATURE_HEADER]: header },
++    body: (async function* () {
++      yield new TextEncoder().encode(body);
++    })(),
++  };
++}
++
++const event = (id: string, type = "payment.succeeded") => JSON.stringify({ id, type, created: NOW / 1000, data: { amount: 4990 } });
++const seconds = NOW / 1000;
++
++describe("paymentsWebhook", () => {
++  test("queues a signed event of a handled type", async () => {
++    const { events, stored } = fakeEvents();
++    const body = event("evt_1");
++    const res = await paymentsWebhook({ secret: SECRET, events, clock: () => NOW })(delivery(body, `t=${seconds},v1=${sign(seconds, body)}`));
++    expect(res).toEqual({ status: 202, body: { status: "queued" } });
++    expect([...stored.keys()]).toEqual(["payments/evt_1"]);
++  });
++
++  test("accepts the second signature during a secret rotation", async () => {
++    const { events } = fakeEvents();
++    const body = event("evt_2");
++    const header = `t=${seconds},v1=${sign(seconds, body, Buffer.from("old"))},v1=${sign(seconds, body)}`;
++    const res = await paymentsWebhook({ secret: SECRET, events, clock: () => NOW })(delivery(body, header));
++    expect(res.status).toBe(202);
++  });
++
++  test("refuses a wrong signature", async () => {
++    const { events, stored } = fakeEvents();
++    const body = event("evt_3");
++    const res = await paymentsWebhook({ secret: SECRET, events, clock: () => NOW })(
++      delivery(body, `t=${seconds},v1=${sign(seconds, body, Buffer.from("other"))}`),
++    );
++    expect(res.status).toBe(401);
++    expect(stored.size).toBe(0);
++  });
++
++  test("refuses a signature that is too old or too far in the future", async () => {
++    const { events } = fakeEvents();
++    const body = event("evt_4");
++    const hook = paymentsWebhook({ secret: SECRET, events, clock: () => NOW });
++    for (const offset of [TOLERANCE_MS + 1_000, -(TOLERANCE_MS + 1_000)]) {
++      const t = (NOW - offset) / 1000;
++      expect((await hook(delivery(body, `t=${t},v1=${sign(t, body)}`))).status).toBe(400);
++    }
++    const t = (NOW - TOLERANCE_MS + 1_000) / 1000;
++    expect((await hook(delivery(body, `t=${t},v1=${sign(t, body)}`))).status).toBe(202);
++  });
++
++  test("refuses a missing or malformed header", async () => {
++    const { events } = fakeEvents();
++    const hook = paymentsWebhook({ secret: SECRET, events, clock: () => NOW });
++    expect((await hook(delivery(event("evt_5"), undefined))).status).toBe(400);
++    expect((await hook(delivery(event("evt_5"), "v1=abc"))).status).toBe(400);
++  });
++
++  test("answers 200 for a duplicate delivery and stores the event once", async () => {
++    const { events, stored } = fakeEvents();
++    const body = event("evt_6");
++    const hook = paymentsWebhook({ secret: SECRET, events, clock: () => NOW });
++    const header = `t=${seconds},v1=${sign(seconds, body)}`;
++    expect((await hook(delivery(body, header))).status).toBe(202);
++    expect(await hook(delivery(body, header))).toEqual({ status: 200, body: { status: "duplicate" } });
++    expect(stored.size).toBe(1);
++  });
++
++  test("ignores an event type that the job does not handle", async () => {
++    const { events, stored } = fakeEvents();
++    const body = event("evt_7", "customer.updated");
++    const res = await paymentsWebhook({ secret: SECRET, events, clock: () => NOW })(delivery(body, `t=${seconds},v1=${sign(seconds, body)}`));
++    expect(res).toEqual({ status: 200, body: { status: "ignored" } });
++    expect(stored.size).toBe(0);
++  });
++
++  test("a signed body that is not JSON throws a SyntaxError for the error wrapper", async () => {
++    const { events } = fakeEvents();
++    const body = "{not json";
++    const run = paymentsWebhook({ secret: SECRET, events, clock: () => NOW })(delivery(body, `t=${seconds},v1=${sign(seconds, body)}`));
++    await expect(run).rejects.toBeInstanceOf(SyntaxError);
++  });
++});

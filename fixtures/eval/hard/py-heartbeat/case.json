@@ -1,0 +1,40 @@
+{
+  "id": "py-heartbeat",
+  "title": "Keep the job lease alive from a heartbeat thread",
+  "language": "python",
+  "pr": {
+    "title": "Heartbeat thread for long job steps",
+    "description": "Report months that render for more than 60 s in one step lost their job: the runner moved `heartbeat_at` only between steps, so the supervisor requeued the job and a second worker rendered it again.\n\nEach worker now runs a heartbeat thread that moves `heartbeat_at` of the running job every `HEARTBEAT_INTERVAL_S`, also during a step. The runner no longer beats after each step. A failed heartbeat is logged, and the next one tries again.\n\nTests cover the heartbeat thread and the changed runner."
+  },
+  "bugs": [],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "worker/heartbeat.py",
+      "side": "new",
+      "lines": [37, 37],
+      "why": "The heartbeat thread reads job_id while the runner thread writes it, which looks like a data race, but the unchanged JobState makes job_id a property that takes a lock on each read and write."
+    },
+    {
+      "id": "T2",
+      "path": "worker/heartbeat.py",
+      "side": "new",
+      "lines": [42, 43],
+      "why": "The broad except swallows a failed heartbeat, which looks like it hides a lost lease, but the unchanged supervisor requeues a job only after STALE_AFTER_S, six missed heartbeats, and the unchanged Queue.complete() raises LostOwnership, so a worker that lost its lease cannot store a result. Raising would end the heartbeat thread."
+    },
+    {
+      "id": "T3",
+      "path": "worker/heartbeat.py",
+      "side": "new",
+      "lines": [41, 41],
+      "why": "The heartbeat thread uses the same Queue as the runner thread, which looks like one database connection shared across threads, but each unchanged Queue method leases its own connection from Pool, which is thread-safe by its contract."
+    },
+    {
+      "id": "T4",
+      "path": "worker/heartbeat.py",
+      "side": "new",
+      "lines": [36, 36],
+      "why": "The first heartbeat comes one interval after the thread notices a job, which looks like a gap in which the supervisor can requeue a fresh job, but the unchanged Queue.claim() sets heartbeat_at = now() when it starts the lease."
+    }
+  ]
+}

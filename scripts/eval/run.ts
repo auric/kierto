@@ -23,7 +23,7 @@ import { EFFORTS, type Effort, type IssueContext, modelName, profileList, type R
 import type { AnchoredFinding } from "../../src/shared/review";
 import * as review from "../../src/shared/review";
 import { stubListTools } from "../../tests/support/review-fixture";
-import { buildRepo, type EvalCase, loadCases } from "./cases";
+import { buildRepo, type EvalCase, type EvalSet, loadCases, SETS } from "./cases";
 import { summaryText } from "./compare";
 import {
   type CaseRun,
@@ -50,13 +50,14 @@ const TASK_KEY = "EVAL-1";
 // prompt version 2 adds REVIEW_PROMPT_VERSION (spec.md section 0). Version 1 has none.
 const PROMPT_VERSION = String((review as unknown as Record<string, unknown>).REVIEW_PROMPT_VERSION ?? "1");
 
-const USAGE = `Usage: bun run eval -- [--real] [--cases all|id,id] [--profile general] [--modules security,api] [--volume balanced]
-  [--model opus] [--effort ${EFFORTS.join("|")}] [--repeat 2] [--out <folder>] [--keep] [--runner <command> <args...>]
+const USAGE = `Usage: bun run eval -- [--real] [--set ${Object.keys(SETS).join("|")}] [--cases all|id,id] [--profile general] [--modules security,api]
+  [--volume balanced] [--model opus] [--effort ${EFFORTS.join("|")}] [--repeat 2] [--out <folder>] [--keep] [--runner <command> <args...>]
 --real runs the claude CLI on PATH. --runner runs the given CLI instead and must come last. Without both, the plan prints and the exit code is 2.`;
 
 export type Options = {
   real: boolean;
   runner: string[] | null;
+  set: EvalSet;
   cases: string;
   profile: string;
   modules: string[] | null;
@@ -80,6 +81,7 @@ export function parseOptions(argv: string[]): Options | { error: string } {
       allowPositionals: false,
       options: {
         real: { type: "boolean", default: false },
+        set: { type: "string", default: "v1" },
         cases: { type: "string", default: "all" },
         profile: { type: "string", default: "general" },
         modules: { type: "string" },
@@ -98,6 +100,8 @@ export function parseOptions(argv: string[]): Options | { error: string } {
     return { error: (e as Error).message };
   }
   if (v.real && runner) return { error: "Pass --real or --runner, not both." };
+  const set = v.set ?? "v1";
+  if (!Object.hasOwn(SETS, set)) return { error: `--set must be one of ${Object.keys(SETS).join(", ")}.` };
   const repeat = Number(v.repeat);
   if (!Number.isInteger(repeat) || repeat < 1 || repeat > MAX_REPEAT) return { error: `--repeat must be 1 to ${MAX_REPEAT}.` };
   const volume = v.volume ?? null;
@@ -111,6 +115,7 @@ export function parseOptions(argv: string[]): Options | { error: string } {
   return {
     real: v.real ?? false,
     runner,
+    set: set as EvalSet,
     cases: v.cases ?? "all",
     profile: v.profile ?? "general",
     modules: v.modules === undefined ? null : v.modules.split(",").map((s) => s.trim()),
@@ -146,11 +151,11 @@ function evalProfile(o: Options) {
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 function plan(o: Options, cases: EvalCase[]) {
-  const lines = [`Eval plan: ${count(cases.length, "case")}, ${count(o.repeat, "repeat")}, profile ${o.profile}.`];
+  const lines = [`Eval plan: ${count(cases.length, "case")}, ${count(o.repeat, "repeat")}, profile ${o.profile}, set ${o.set}.`];
   const w = Math.max(...cases.map((c) => c.id.length));
   for (const c of cases)
     lines.push(
-      `  ${c.id.padEnd(w)}  ${c.language.padEnd(10)}  ${String(c.changedLines).padStart(3)} changed lines  ${count(c.bugs.length, "bug")}  ${count(c.traps.length, "trap")}`,
+      `  ${c.id.padEnd(w)}  ${c.language.padEnd(10)}  ${String(c.changedLines).padStart(4)} changed lines  ${count(c.bugs.length, "bug")}  ${count(c.traps.length, "trap")}`,
     );
   if (!o.model && !o.effort) lines.push(DEFAULT_MODEL_WARNING);
   lines.push(WARNING, "Add --real to run it.");
@@ -224,6 +229,7 @@ const errorRun = (c: EvalCase, repeat: number, error: string): CaseRun => ({
   finishedAt: null,
   minutes: null,
   usage: null,
+  coverage: null,
   items: [],
   dropped: [],
   questions: 0,
@@ -335,6 +341,7 @@ async function runCase(c: EvalCase, repeat: number, ctx: Context): Promise<{ run
           finishedAt: r.finishedAt,
           minutes: r.finishedAt === null ? null : (r.finishedAt - r.startedAt) / 60_000,
           usage: r.usage,
+          coverage: r.summary?.coverage ?? null,
           items: items(d, volume),
           dropped: (r.summary?.dropped ?? []).map((x) => ({
             path: x.path,
@@ -374,7 +381,7 @@ export async function main(argv: string[]): Promise<number> {
   }
   let cases: EvalCase[];
   try {
-    cases = loadCases(o.cases);
+    cases = loadCases(o.cases, SETS[o.set]);
   } catch (e) {
     console.error((e as Error).message);
     return 2;
@@ -428,6 +435,7 @@ export async function main(argv: string[]): Promise<number> {
       profile: { ...profile, revision: profileRevision(profile) },
       volume,
       requested,
+      set: o.set,
       repeat: o.repeat,
       cases: [],
       runs: [],
@@ -447,7 +455,7 @@ export async function main(argv: string[]): Promise<number> {
       },
     };
     console.log(
-      `Eval: ${count(cases.length, "case")} x ${o.repeat}, profile ${profile.id}, model ${requested.model}, effort ${requested.effort}, prompt version ${PROMPT_VERSION}, CLI ${checked.version}.`,
+      `Eval: set ${o.set}, ${count(cases.length, "case")} x ${o.repeat}, profile ${profile.id}, model ${requested.model}, effort ${requested.effort}, prompt version ${PROMPT_VERSION}, CLI ${checked.version}.`,
     );
     if (!o.model && !o.effort) console.log(DEFAULT_MODEL_WARNING);
     if (o.real) console.log(WARNING);
@@ -474,11 +482,21 @@ export async function main(argv: string[]): Promise<number> {
         result.runs.push(run);
         save(file, result);
         const s = info.has(c.id) ? score({ ...result, runs: [run] }).cases[c.id] : undefined;
-        const recall = s?.recall ? `${Math.round(s.recall.mean * c.bugs.length)}/${c.bugs.length} bugs` : "no score";
+        const recall =
+          c.bugs.length === 0
+            ? "no seeded bug"
+            : s?.recall
+              ? `${Math.round(s.recall.mean * c.bugs.length)}/${c.bugs.length} bugs`
+              : "no score";
         const time = run.minutes === null ? "" : `, ${run.minutes.toFixed(1)} min`;
         const shown = run.items.filter((i) => i.group === "main").length;
+        // judge.ts: skipped or unavailable coverage entries make a run incomplete.
+        const cov = run.status === "incomplete" ? run.coverage : null;
+        const gaps = cov
+          ? (["skipped", "unavailable"] as const).map((k) => (cov[k].length ? `\n    ${k}: ${cov[k].join("; ")}` : "")).join("")
+          : "";
         console.log(
-          `[${n}/${total}] ${c.id} #${repeat}: ${run.status}${time}, ${shown} shown, ${recall}${run.error ? ` (${run.error})` : ""}`,
+          `[${n}/${total}] ${c.id} #${repeat}: ${run.status}${time}, ${shown} shown, ${recall}${run.error ? ` (${run.error})` : ""}${gaps}`,
         );
       }
     console.log(`\n${summaryText(result)}\nResult: ${file}`);

@@ -20,12 +20,41 @@ bun run eval -- --real --cases all --repeat 2 --model opus
 
 - Profile: the shipped `general` profile, unedited, with `--model opus`. The effort stays unset, so the default effort of your Claude Code settings applies. The harness never reads your own config or profiles.
 - Later runs must use the same `--model` and `--effort` values, or the numbers do not compare. Without both flags, the result depends on your Claude Code default model, and the harness prints a warning.
-- The result file records the requested model and effort (`requested`, or `default` for no flag). Each run records the model that ran (`model`, `models` with the subagent models) and its effort (`effort`, `effortDefault`).
+- The result file records the requested model and effort (`requested`, or `default` for no flag). Each run records the model that ran (`model`, `models` with the subagent models), its effort (`effort`, `effortDefault`), and its coverage (`coverage`).
+- The first baseline file (commit 9391ec4) has no `requested` field. It ran Opus 5.5 at the default effort, high. compare.ts compares such a file by the models and efforts that ran, so a later run with `--model opus` gives no false warning.
 - Runs: 12 cases x 2 repeats = 24 review runs, one after the other in the one run slot. `--repeat 1` halves the quota, but the numbers get more noise.
-- Time and cost: not measured yet. This run measures them. design.md section 5.1 estimates 5 to 12 minutes for one finder pass on a 500-line change. Plan for 2 to 4 hours and a large part of a daily plan quota.
+- Time and cost: measured on the first baseline (Opus 5.5, effort high, 150 to 500 changed lines): 0.6 to 0.9 minutes and $0.13 to $0.31 of reported cost per run. 24 runs take about 20 minutes.
 - Before the run: `claude` is on PATH (the native `claude.exe` on Windows), and `claude auth status` shows `authMethod` `claude.ai`. The harness checks this and stops on a mismatch.
 - Ctrl+C stops after the current case. A second Ctrl+C quits at once and stops the CLI. The result file gets each case as it ends, so a stopped run keeps its finished cases.
 - PASS: a result file with all 12 cases. The run prints its path.
+- A run with skipped or unavailable coverage ends `incomplete`. Its run line prints those entries, and the result file keeps them.
+
+## Hard set baseline
+
+The v1 set is at its ceiling: the first baseline found all 27 bugs in repeat 1. The hard set in `fixtures/eval/hard/` has bugs that need unchanged code, bugs that look correct, two diffs of about 1100 lines, 3 or 4 traps per case, and two cases with no bug. Run its baseline once, without `--model`, as the first baseline ran:
+
+```
+bun run eval -- --real --set hard --repeat 2
+```
+
+- Runs: 9 cases x 2 repeats = 18 review runs. `--cases all` without `--set` still means the 12 v1 cases, so the v1 baseline stays comparable.
+- Time and cost: an estimate from the v1 baseline, not measured. The 7 cases of 150 to 290 lines take about 0.6 to 0.9 minutes and $0.15 to $0.31 each. The 2 cases of about 1100 lines take about 1.5 to 3 minutes and $0.40 to $0.80 each. One repeat takes about 7 to 12 minutes and $2 to $4; two repeats take about 15 to 25 minutes and $4 to $8 of reported cost.
+- Compare a later run with `bun run eval:compare <baseline>.json <new>.json`. If the case files changed after the baseline, re-score it first (see below).
+
+## Re-score a result file
+
+`bun run eval:rescore <result.json> [--out <file>]` scores the runs of a result file again with the bugs and traps of the current case files. It needs no CLI and no network.
+
+- It prints the suite numbers with the stored and the current bugs and traps, and the delta. `--out` writes the re-scored result file, which `eval:compare` reads. It never changes the input file.
+- It finds each case by its ID in all sets. A case with no fixture keeps its stored bugs and traps.
+- It builds each case repository again and warns when the head commit differs from the file: the runs then reviewed other code.
+
+Re-score a baseline after you add `alt` places, then compare it with a later run:
+
+```
+bun run eval:rescore eval-results/<baseline>.json --out eval-results/<baseline>-rescored.json
+bun run eval:compare eval-results/<baseline>-rescored.json eval-results/<new>.json
+```
 
 Each run uses the review pipeline of the app: a sanitized snapshot of a temp git repository, the auth route check, the scrubbed env, and no `--bare`. The harness serves the repository through the `gitRemote` option and keeps its data in a temp folder with memory secrets. No run reaches Bitbucket or your data folder.
 
@@ -42,7 +71,8 @@ It prints one table per metric with the delta, for all cases and for each case. 
 ## Options
 
 - `--real`: run the `claude` CLI on PATH. Without `--real` or `--runner`, the harness prints the plan and exits with code 2.
-- `--cases all` or `--cases id,id`: the cases to run. Default: all.
+- `--set v1` or `--set hard`: the case set, `fixtures/eval/cases/` or `fixtures/eval/hard/`. Default: v1.
+- `--cases all` or `--cases id,id`: the cases of the set to run. Default: all.
 - `--profile <id>`: a shipped review profile. Default: `general`.
 - `--modules a,b` and `--volume quiet|balanced|thorough`: profile fields of prompt version 2. Prompt version 1 refuses them.
 - `--model <name>`: the model of the runs, for this eval only. A model alias such as `haiku`, `sonnet`, or `opus`, or a full model ID such as `claude-opus-5-5`. Default: no flag, so your Claude Code default applies.
@@ -54,17 +84,18 @@ It prints one table per metric with the delta, for all cases and for each case. 
 
 ## Metrics
 
-- An item matches a bug or a trap when the path and the side are the same and the line ranges overlap, both ends included.
+- An item matches a bug or a trap when the path and the side are the same and the line ranges overlap, both ends included. An item on an `alt` place matches too.
 - Shown items: the main list of the run. Prompt version 1 has no verify phase, so it shows each finding. Version 2 uses the volume rules of spec.md section 1.4.
 - recall: bugs with a shown match, over all bugs.
 - precision: shown items that match a bug, over shown items.
 - trap rate: shown items on a trap that match no bug, over all traps.
 - noise: shown items that match no bug and no trap, per case.
+- false positives: shown items that match no bug, trap hits included, per case. For a case with no bug, it is the number of shown items.
 - severity ok: found bugs whose best shown match has at least the minimum severity, over found bugs.
 - candidate recall: bugs that any item matched, refuted and duplicate items included. It shows what a verify phase lost.
 - Each number is the mean over the repeats, with the min and the max.
 
-## Cases
+## v1 cases
 
 | Case | Seeds |
 |---|---|
@@ -81,12 +112,29 @@ It prints one table per metric with the delta, for all cases and for each case. 
 | `py-pager-client` | An off-by-one in the retry loop, so the last failure never raises. A missed caller: the sync job still starts at page 1 after pages moved to count from 0. Traps: fewer retries, as the PR text says, and one-letter names (style only). |
 | `py-export-rules` | A rule of the scoped `app/handlers/CLAUDE.md` broken: the handler reads `os.environ`. A task requirement that the code misses: soft-deleted accounts are exported. A CLI flag renamed with no alias, so the nightly script fails. Trap: new columns that the task names. |
 
+## Hard cases
+
+Each line names what the case seeds and why a strong reviewer can miss it. Each bug was proven on the built repository: a C++ bug under AddressSanitizer, ThreadSanitizer, or a demo program; a Python or TypeScript bug by a test or a demo run. All fixture tests pass on base and head.
+
+| Case | Lines | Seeds | Why it is hard |
+|---|---|---|---|
+| `ts-payment-retry` | 287 | A retry that sends a new idempotency key per attempt, so a timed-out charge is charged again. A declined charge marked paid, because `charge()` resolves a decline and only `authorize()` throws `CardDeclined`. Traps: check-then-claim, an uncapped backoff, a floating audit promise. | Both bugs follow only from the contract in the unchanged `gateway.ts`. The fake gateway of the tests throws `CardDeclined`, so the tests pass. |
+| `ts-session-split` | 1081 | A module split where `nextExpiry()` changes from `Math.min` to `Math.max`: no idle timeout and no absolute lifetime. The moved absolute-lifetime test loses its call parentheses (`toBeNull`) and can never fail. Traps: an unchecked token split, `timingSafeEqual` lengths, an unbounded session map. | One token in 1081 moved lines, between the mechanical renames of the store maps, under a PR text that says "no behavior change". The broken test keeps CI green. |
+| `ts-webhook-verify` | 176 | No bug. Traps: `timingSafeEqual` lengths, seconds against milliseconds, an unguarded `JSON.parse`, a has-then-add race. | Each trap looks like a classic bug, and the unchanged header parser, error wrapper, and event store guard it. It scores false positives. |
+| `cpp-record-reader` | 179 | A borrowed `Registry::find()` pointer used after `add()`, which can move every entry (heap use after free). An overflow guard `recordBytes < count` for a multiplication. Traps: `stoul`, a null `FILE*`, a memcpy without byte swap. | The pointer rule is in the unchanged `registry.h`; the test has room for one more entry, so it passes. The guard is the right idiom for an addition, and the test uses a count that it catches. |
+| `cpp-sink-flush` | 153 | `push()` calls the registry while it holds the sink mutex, against the lock order that the unchanged `registry.h` states (deadlock with `remove()`). `flush()` waits for an empty queue, but the worker pops a batch before it writes it. Traps: `pop_front()` on a full queue, an oversized record, JSON escaping. | Each bug needs a second file or the unchanged worker loop. `flush()` uses a correct-looking predicate loop. |
+| `cpp-buffer-split` | 1105 | A file split and a namespace rename where `Buffer::view()` checks `capacity_ - offset` instead of `size_ - offset`: pooled buffers leak the bytes of other clients. Traps: a power-of-two mask, an unchecked `commit()`, a span that `consume()` invalidates. | One token in 1105 moved lines. The test helper sizes each buffer exactly, so no test can see it. |
+| `py-archive-import` | 163 | A TOCTOU between `exists()` and `os.rename()` with 4 parallel workers, so a second batch replaces the audit copy. `read_header()` returns `None` for an empty upload, which the importer dereferences. A lock timeout in milliseconds used as seconds (8.3 hours). Traps: a path from the file, an f-string table name, an unbounded read. | Each bug needs the unchanged scheduler, settings, upload API, or header reader. The test sets the timeout to 0.2 and hides the unit. |
+| `py-price-cache` | 151 | A cache that drops entries only on `price.changed`, while the unchanged bulk import publishes `catalog.reloaded`, and there is no TTL. A test that uses `assertTrue(x, expected)`, which can never fail and hides the stale price. Traps: a dict without a lock, an unbounded `IN` list, shared cached objects. | The event contract is in the unchanged `events.py` and `importer.py`. The broken test claims to cover the supplier feed. |
+| `py-heartbeat` | 161 | No bug. Traps: a cross-thread read of `job_id`, a swallowed heartbeat error, a queue shared across threads, a first heartbeat one interval late. | Each trap looks like a classic concurrency bug, and the unchanged `JobState`, supervisor, `Pool`, and `claim()` guard it. It scores false positives. |
+
 ## Case format
 
 Each case folder holds:
 
 - `case.json`: the PR title and text, the optional task text (it becomes `context/task.md`), the optional project rules text (it becomes the extra instructions of the repository), the bugs, and the traps. Each bug and trap names a path, a side, and a line range on that side. `scripts/eval/cases.ts` has the schema.
+- `alt` (optional, on a bug or a trap): more places of the same bug or trap, each with a path, a side, and a line range. An item on any place matches. Add one only where a fix can go too: a declaration and its definition, a caller and its changed callee, or a field that must become atomic. Each alt range must hold text, like the main range.
 - `base/`: the files of the base commit, which is also the target branch. A `CLAUDE.md`, `CLAUDE.local.md`, or `AGENTS.md` file is stored with the suffix `.fixture`, so Claude Code sessions in this repository never load it as instructions. The harness writes it under its real name into the temp repository. The loader refuses such a file without the suffix.
-- `head.patch`: a unified diff that `git apply` applies to `base/`. Make it with `git diff --no-renames` in a scratch repository.
+- `head.patch`: a unified diff that `git apply` applies to `base/`. Make it with `git diff --no-renames` in a scratch repository. The app diffs with `git diff -M`, so check that a moved file does not pair as a rename (`git diff -M --summary`) when a case needs the whole move in view.
 
-To add a case, keep 150 to 500 changed lines, 1 to 3 bugs, and 1 or 2 traps. Then run `bun test tests/eval`. It applies each patch, checks the changed-line count, and checks that each bug and trap range holds text on its side.
+To add a v1 case, keep 150 to 500 changed lines, 1 to 3 bugs, and 1 or 2 traps. A hard case has 150 to 1500 changed lines, 0 to 3 bugs, and 3 or 4 traps. Case IDs are unique over both sets. Then run `bun test tests/eval`. It applies each patch, checks the changed-line count and the limits of the set, and checks that each bug, trap, and alt range holds text on its side.

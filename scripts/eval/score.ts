@@ -3,9 +3,9 @@
 
 // Scoring of an eval result file (docs/plans/review-v2/spec.md section 4.3). Pure: no file, no process, no clock.
 import type { RunUsage } from "../../src/shared/dto";
-import type { AnchorState, Side } from "../../src/shared/review";
+import type { AnchorState, Coverage, Side } from "../../src/shared/review";
 import type { RunStatus } from "../../src/shared/run-log";
-import type { EvalBug, EvalTrap } from "./cases";
+import type { EvalBug, EvalSet, EvalTrap } from "./cases";
 
 export type Severity = "blocker" | "major" | "minor" | "nit";
 export type Volume = "quiet" | "balanced" | "thorough";
@@ -58,6 +58,8 @@ export type CaseRun = {
   finishedAt: number | null;
   minutes: number | null;
   usage: RunUsage | null;
+  // The coverage of the run summary. Skipped or unavailable entries make a run incomplete. Absent in files made before this field existed.
+  coverage?: Coverage | null;
   items: EvalItem[];
   dropped: EvalDropped[];
   questions: number;
@@ -84,8 +86,12 @@ export type EvalResult = {
   runner: "real" | "fake";
   profile: Record<string, unknown> & { id: string; name: string; revision: string };
   volume: Volume | null;
-  // The --model and --effort values of the run, or "default" for no flag. Absent in files made before this field existed: no flags.
+  // The --model and --effort values of the run, or "default" for no flag. Absent in files made before this field existed.
   requested?: { model: string; effort: string };
+  // The case set. Absent in files made before this field existed: v1.
+  set?: EvalSet;
+  // Set by eval:rescore, which replaces the bugs and traps of each case with the current fixture.
+  rescoredAt?: string;
   repeat: number;
   cases: EvalCaseInfo[];
   runs: CaseRun[];
@@ -107,14 +113,17 @@ export function displayGroup(i: { verdict: string | null; check: Check | null; s
 
 // Both ends inclusive (spec.md section 4.3).
 export const overlaps = (a: [number, number], b: [number, number]) => a[0] <= b[1] && b[0] <= a[1];
-const matches = (i: EvalItem, r: { path: string; side: Side; lines: [number, number] }) =>
-  i.path === r.path && i.side === r.side && overlaps([i.line, i.lineEnd], r.lines);
+type Spot = { path: string; side: Side; lines: [number, number] };
+// An item on the main place or on any alt place of a bug or trap matches it.
+const matches = (i: EvalItem, r: Spot & { alt?: Spot[] }) =>
+  [r, ...(r.alt ?? [])].some((p) => i.path === p.path && i.side === p.side && overlaps([i.line, i.lineEnd], p.lines));
 
 export const METRICS = [
   "recall",
   "precision",
   "trapRate",
   "noise",
+  "falsePositives",
   "severityOk",
   "candidateRecall",
   "minutes",
@@ -182,6 +191,7 @@ function metrics(ts: Tally[]): Record<Metric, number | null> {
     precision: ratio(sum(ts, "shownMatched"), sum(ts, "shown")),
     trapRate: ratio(sum(ts, "trapHits"), sum(ts, "traps")),
     noise: ratio(sum(ts, "noise"), ts.length),
+    falsePositives: ratio(sum(ts, "shown") - sum(ts, "shownMatched"), ts.length),
     severityOk: ratio(sum(ts, "severityOk"), sum(ts, "found")),
     candidateRecall: ratio(sum(ts, "candidates"), sum(ts, "bugs")),
     minutes: meanOf(ts.map((t) => t.minutes)),

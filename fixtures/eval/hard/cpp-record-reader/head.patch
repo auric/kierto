@@ -1,0 +1,310 @@
+diff --git a/README.md b/README.md
+index 017582d..ce7469a 100644
+--- a/README.md
++++ b/README.md
+@@ -8,6 +8,16 @@ pkgdb <index.bin> <manifest.txt>
+ 
+ The index comes from the package server. The manifest is local: it adds packages and can override index entries.
+ 
++## Index
++
++pkgdb reads index version 2 only. The package server writes version 2 since release 7. Version 2 adds the package size.
++
+ ## Manifest
+ 
+-One package per line, four fields separated by spaces: `name path flags extends`. `flags` is hex. `extends` is `-` in this version.
++One package per line, four fields separated by spaces: `name path flags extends`. `flags` is hex.
++
++`extends` is `-`, or the name of a package that the index or an earlier manifest line defines. The new package then inherits the flags and the dependencies of that package, and depends on it.
++
++```
++openssl-fips /opt/openssl-fips 4 openssl
++```
+diff --git a/docs/index-format.md b/docs/index-format.md
+new file mode 100644
+index 0000000..aafc66e
+--- /dev/null
++++ b/docs/index-format.md
+@@ -0,0 +1,36 @@
++# Index file format, version 2
++
++All integers are little-endian. Offsets and sizes are in bytes.
++
++## Header (16 bytes)
++
++| Offset | Type | Field |
++|---|---|---|
++| 0 | u32 | Magic `0x58444b50` ("PKDX") |
++| 4 | u16 | Version, 2 |
++| 6 | u16 | Reserved, 0 |
++| 8 | u32 | Record count |
++| 12 | u32 | String table size |
++
++## Records (24 bytes each)
++
++The records follow the header. The record block is count x 24 bytes. pkgdb refuses an index whose record block does not fit in 32 bits.
++
++| Offset | Type | Field |
++|---|---|---|
++| 0 | u32 | Name offset in the string table |
++| 4 | u16 | Name length |
++| 6 | u16 | Flags |
++| 8 | u32 | Path offset in the string table |
++| 12 | u16 | Path length |
++| 14 | u16 | Reserved, 0 |
++| 16 | u64 | Package size |
++
++## String table
++
++The string table follows the records. Names and paths are UTF-8 without a terminator. Each name and path must lie inside the table, or pkgdb refuses the index.
++
++## Changes from version 1
++
++- The record count is a u32 (a u16 in version 1), and the header has a reserved u16 before it.
++- Each record ends with the package size.
+diff --git a/src/index.cpp b/src/index.cpp
+index 90dc708..2d6a916 100644
+--- a/src/index.cpp
++++ b/src/index.cpp
+@@ -10,6 +10,12 @@
+ namespace pkgdb {
+ namespace {
+ 
++std::uint64_t readU64(const std::uint8_t* p) {
++  std::uint64_t v;
++  std::memcpy(&v, p, sizeof v);
++  return v;
++}
++
+ std::uint32_t readU32(const std::uint8_t* p) {
+   std::uint32_t v;
+   std::memcpy(&v, p, sizeof v);
+@@ -26,6 +32,8 @@ bool inTable(std::uint32_t offset, std::uint32_t length, std::uint32_t tableSize
+   return offset <= tableSize && length <= tableSize - offset;
+ }
+ 
++std::string at(const ManifestLine& m) { return " (line " + std::to_string(m.line) + ")"; }
++
+ }  // namespace
+ 
+ const char* describe(IndexError e) {
+@@ -33,7 +41,7 @@ const char* describe(IndexError e) {
+     case IndexError::kOk: return "ok";
+     case IndexError::kTruncated: return "the file is truncated";
+     case IndexError::kBadMagic: return "not an index file";
+-    case IndexError::kBadVersion: return "unsupported index version";
++    case IndexError::kBadVersion: return "unsupported index version; pkgdb reads version 2 only";
+     case IndexError::kTooLarge: return "the index is too large";
+     case IndexError::kBadOffset: return "a string offset is outside the table";
+     case IndexError::kDuplicate: return "a package is listed twice";
+@@ -43,20 +51,23 @@ const char* describe(IndexError e) {
+ }
+ 
+ IndexError loadIndex(std::FILE* f, Registry& reg) {
+-  std::uint8_t hdr[kHeaderSize1];
++  std::uint8_t hdr[kHeaderSize2];
+   if (std::fread(hdr, 1, sizeof hdr, f) != sizeof hdr) return IndexError::kTruncated;
+   if (readU32(hdr) != kIndexMagic) return IndexError::kBadMagic;
+-  if (readU16(hdr + 4) != kIndexVersion1) return IndexError::kBadVersion;
+-  const std::uint16_t count = readU16(hdr + 6);
+-  const std::uint32_t tableSize = readU32(hdr + 8);
++  if (readU16(hdr + 4) != kIndexVersion2) return IndexError::kBadVersion;
++  const std::uint32_t count = readU32(hdr + 8);
++  const std::uint32_t tableSize = readU32(hdr + 12);
+ 
+-  std::vector<std::uint8_t> records(std::size_t{count} * kRecordSize1);
++  // The record block must fit in 32 bits, like each offset of the format.
++  const std::uint32_t recordBytes = count * kRecordSize2;
++  if (recordBytes < count) return IndexError::kTooLarge;
++  std::vector<std::uint8_t> records(recordBytes);
+   if (std::fread(records.data(), 1, records.size(), f) != records.size()) return IndexError::kTruncated;
+   std::vector<char> table(tableSize);
+   if (std::fread(table.data(), 1, table.size(), f) != table.size()) return IndexError::kTruncated;
+ 
+-  for (std::size_t i = 0; i < count; ++i) {
+-    const std::uint8_t* r = records.data() + i * kRecordSize1;
++  for (std::uint32_t i = 0; i < count; ++i) {
++    const std::uint8_t* r = records.data() + std::size_t{i} * kRecordSize2;
+     const std::uint32_t nameOff = readU32(r);
+     const std::uint16_t nameLen = readU16(r + 4);
+     const std::uint16_t flags = readU16(r + 6);
+@@ -67,22 +78,38 @@ IndexError loadIndex(std::FILE* f, Registry& reg) {
+     e.name.assign(table.data() + nameOff, nameLen);
+     e.path.assign(table.data() + pathOff, pathLen);
+     e.flags = flags;
++    e.size = readU64(r + 16);
+     if (!reg.add(std::move(e))) return IndexError::kDuplicate;
+   }
+   return IndexError::kOk;
+ }
+ 
++// Adds the manifest entries in file order. An entry with an extends name inherits the flags and the dependencies of that
++// entry, which the index or an earlier manifest line must define.
+ IndexError applyManifest(const std::vector<ManifestLine>& lines, Registry& reg, std::vector<std::string>& errors) {
+   for (const ManifestLine& m : lines) {
+-    if (m.fields[3] != "-") {
+-      errors.push_back(m.fields[0] + ": extends is not supported yet");
+-      continue;
++    const std::string& name = m.fields[0];
++    const std::string& path = m.fields[1];
++    const auto flags = static_cast<std::uint32_t>(std::stoul(m.fields[2], nullptr, 16));
++    const std::string& extends = m.fields[3];
++
++    const Entry* base = nullptr;
++    if (extends != "-") {
++      base = reg.find(extends);
++      if (!base) {
++        errors.push_back(name + ": unknown base " + extends + at(m));
++        continue;
++      }
+     }
+     Entry e;
+-    e.name = m.fields[0];
+-    e.path = m.fields[1];
+-    e.flags = static_cast<std::uint32_t>(std::stoul(m.fields[2], nullptr, 16));
+-    if (!reg.add(std::move(e))) errors.push_back(m.fields[0] + ": defined twice");
++    e.name = name;
++    e.path = path;
++    e.flags = flags;
++    if (!reg.add(std::move(e))) {
++      errors.push_back(name + ": defined twice" + at(m));
++      continue;
++    }
++    if (base) reg.inherit(name, *base);
+   }
+   return errors.empty() ? IndexError::kOk : IndexError::kManifest;
+ }
+diff --git a/tests/index_test.cpp b/tests/index_test.cpp
+index 6f05d4f..c58be61 100644
+--- a/tests/index_test.cpp
++++ b/tests/index_test.cpp
+@@ -12,12 +12,14 @@ namespace {
+ 
+ void put16(std::vector<std::uint8_t>& b, std::uint16_t v) { b.insert(b.end(), {std::uint8_t(v), std::uint8_t(v >> 8)}); }
+ void put32(std::vector<std::uint8_t>& b, std::uint32_t v) { put16(b, std::uint16_t(v)); put16(b, std::uint16_t(v >> 16)); }
++void put64(std::vector<std::uint8_t>& b, std::uint64_t v) { put32(b, std::uint32_t(v)); put32(b, std::uint32_t(v >> 32)); }
+ 
+-// A version 1 index with one record per name. Each path is "/pkg/<name>".
+-std::vector<std::uint8_t> indexV1(const std::vector<std::string>& names) {
++// A version 2 index with one record per name. Each path is "/pkg/<name>" and each size is 1000 times the position.
++std::vector<std::uint8_t> indexV2(const std::vector<std::string>& names) {
+   std::string table;
+   std::vector<std::uint8_t> recs;
+-  for (const auto& n : names) {
++  for (std::size_t i = 0; i < names.size(); ++i) {
++    const std::string& n = names[i];
+     const std::string path = "/pkg/" + n;
+     put32(recs, std::uint32_t(table.size()));
+     put16(recs, std::uint16_t(n.size()));
+@@ -26,12 +28,14 @@ std::vector<std::uint8_t> indexV1(const std::vector<std::string>& names) {
+     put32(recs, std::uint32_t(table.size()));
+     put16(recs, std::uint16_t(path.size()));
+     put16(recs, 0);
++    put64(recs, 1000 * (i + 1));
+     table += path;
+   }
+   std::vector<std::uint8_t> b;
+   put32(b, pkgdb::kIndexMagic);
+-  put16(b, pkgdb::kIndexVersion1);
+-  put16(b, std::uint16_t(names.size()));
++  put16(b, pkgdb::kIndexVersion2);
++  put16(b, 0);
++  put32(b, std::uint32_t(names.size()));
+   put32(b, std::uint32_t(table.size()));
+   b.insert(b.end(), recs.begin(), recs.end());
+   b.insert(b.end(), table.begin(), table.end());
+@@ -47,43 +51,85 @@ pkgdb::IndexError load(const std::vector<std::uint8_t>& bytes, pkgdb::Registry&
+   return r;
+ }
+ 
+-void loadsVersion1() {
++pkgdb::IndexError apply(const std::string& manifest, pkgdb::Registry& reg, std::vector<std::string>& errors) {
++  std::vector<pkgdb::ManifestError> perr;
++  const auto lines = pkgdb::parseManifest(manifest, perr);
++  assert(perr.empty());
++  return pkgdb::applyManifest(lines, reg, errors);
++}
++
++void loadsVersion2() {
+   pkgdb::Registry reg;
+-  assert(load(indexV1({"zlib", "openssl"}), reg) == pkgdb::IndexError::kOk);
++  assert(load(indexV2({"zlib", "openssl"}), reg) == pkgdb::IndexError::kOk);
+   assert(reg.size() == 2);
+   assert(reg.find("openssl")->path == "/pkg/openssl");
++  assert(reg.find("openssl")->size == 2000);
++}
++
++void refusesVersion1() {
++  auto bytes = indexV2({"zlib"});
++  bytes[4] = 1;
++  pkgdb::Registry reg;
++  assert(load(bytes, reg) == pkgdb::IndexError::kBadVersion);
+ }
+ 
+ void refusesATruncatedFile() {
+-  auto bytes = indexV1({"zlib"});
++  auto bytes = indexV2({"zlib"});
+   bytes.resize(bytes.size() - 1);
+   pkgdb::Registry reg;
+   assert(load(bytes, reg) == pkgdb::IndexError::kTruncated);
+ }
+ 
+ void refusesAnOffsetOutsideTheTable() {
+-  auto bytes = indexV1({"zlib"});
+-  bytes[pkgdb::kHeaderSize1] = 0xff;
++  auto bytes = indexV2({"zlib"});
++  bytes[pkgdb::kHeaderSize2] = 0xff;
+   pkgdb::Registry reg;
+   assert(load(bytes, reg) == pkgdb::IndexError::kBadOffset);
+ }
+ 
++void refusesARecordBlockAbove4GiB() {
++  auto bytes = indexV2({"zlib"});
++  bytes[8] = bytes[9] = bytes[10] = bytes[11] = 0xff;
++  pkgdb::Registry reg;
++  assert(load(bytes, reg) == pkgdb::IndexError::kTooLarge);
++}
++
+ void manifestAddsEntries() {
+   pkgdb::Registry reg;
+-  std::vector<pkgdb::ManifestError> perr;
+-  const auto lines = pkgdb::parseManifest("curl /opt/curl 3 -\n", perr);
+   std::vector<std::string> errors;
+-  assert(pkgdb::applyManifest(lines, reg, errors) == pkgdb::IndexError::kOk);
++  assert(apply("curl /opt/curl 3 -\n", reg, errors) == pkgdb::IndexError::kOk);
+   assert(reg.find("curl")->flags == 3);
+ }
+ 
++void manifestEntryInheritsFromTheIndex() {
++  pkgdb::Registry reg;
++  assert(load(indexV2({"zlib", "openssl", "libssh"}), reg) == pkgdb::IndexError::kOk);
++  std::vector<std::string> errors;
++  assert(apply("openssl-fips /opt/openssl-fips 4 openssl\n", reg, errors) == pkgdb::IndexError::kOk);
++  const pkgdb::Entry* e = reg.find("openssl-fips");
++  assert(e->flags == 0x5);
++  assert(e->deps == std::vector<std::string>{"openssl"});
++}
++
++void manifestReportsAnUnknownBase() {
++  pkgdb::Registry reg;
++  std::vector<std::string> errors;
++  assert(apply("a /opt/a 1 nothing\n", reg, errors) == pkgdb::IndexError::kManifest);
++  assert(errors.size() == 1 && errors[0] == "a: unknown base nothing (line 1)");
++  assert(reg.find("a") == nullptr);
++}
++
+ }  // namespace
+ 
+ int main() {
+-  loadsVersion1();
++  loadsVersion2();
++  refusesVersion1();
+   refusesATruncatedFile();
+   refusesAnOffsetOutsideTheTable();
++  refusesARecordBlockAbove4GiB();
+   manifestAddsEntries();
++  manifestEntryInheritsFromTheIndex();
++  manifestReportsAnUnknownBase();
+   std::puts("index_test: ok");
+   return 0;
+ }

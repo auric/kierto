@@ -4,6 +4,7 @@
 // docs/plans/review-v2 AC-M1: the eval scorer gives the documented numbers on a hand-made result. No process, no file.
 import { describe, expect, test } from "bun:test";
 import { compareText, summaryText } from "../../scripts/eval/compare";
+import { rescore } from "../../scripts/eval/rescore";
 import { type CaseRun, displayGroup, type EvalItem, type EvalResult, overlaps, score } from "../../scripts/eval/score";
 
 const item = (o: Partial<EvalItem> & Pick<EvalItem, "path" | "side" | "line" | "lineEnd">): EvalItem => ({
@@ -141,6 +142,8 @@ describe("eval score (AC-M1)", () => {
     expect(s.trapRate?.mean).toBeCloseTo(1 / 6, 10);
     expect(s.trapRate).toMatchObject({ min: 0, max: 1 / 3 });
     expect(s.noise).toEqual({ mean: 0.75, min: 0.5, max: 1 });
+    // Repeat 1: 3 shown items on no bug in 2 cases. Repeat 2: 1 in 2 cases.
+    expect(s.falsePositives).toEqual({ mean: 1, min: 0.5, max: 1.5 });
     expect(s.severityOk).toEqual({ mean: 0.75, min: 0.5, max: 1 });
     // The refuted item of repeat 1 still counts as a candidate for bug a/B2.
     expect(s.candidateRecall?.mean).toBeCloseTo(2 / 3, 10);
@@ -174,6 +177,121 @@ describe("eval score (AC-M1)", () => {
     // Recall goes from 50.0% to 66.7%: repeat 2 finds b/B1 too.
     expect(text).toMatch(/all cases\s+50\.0% \(33\.3% to 66\.7%\)\s+66\.7%\s+\+16\.7 pts/);
     expect(summaryText(RESULT)).toContain("prompt version 1");
+  });
+});
+
+describe("alt places", () => {
+  // Bug B1: the declaration at c.h:5 or the definition at c.cpp:40-42. Trap T1: c.cpp:60 or its caller at main.cpp:9.
+  const ALT: EvalResult = {
+    ...RESULT,
+    repeat: 1,
+    cases: [
+      {
+        id: "c",
+        title: "Case c",
+        language: "cpp",
+        changedLines: 200,
+        base: "b3",
+        head: "h3",
+        bugs: [
+          {
+            id: "B1",
+            path: "c.h",
+            side: "new",
+            lines: [5, 5],
+            alt: [{ path: "c.cpp", side: "new", lines: [40, 42] }],
+            severityMin: "minor",
+            module: "core",
+            note: "n",
+          },
+        ],
+        traps: [
+          { id: "T1", path: "c.cpp", side: "new", lines: [60, 60], alt: [{ path: "main.cpp", side: "new", lines: [9, 9] }], why: "w" },
+        ],
+      },
+    ],
+    runs: [
+      run("c", 1, [
+        item({ path: "c.cpp", side: "new", line: 42, lineEnd: 44 }),
+        item({ path: "main.cpp", side: "new", line: 9, lineEnd: 9 }),
+        item({ path: "c.cpp", side: "old", line: 40, lineEnd: 40 }),
+      ]),
+    ],
+  };
+
+  test("an item on any place of a bug or a trap matches it", () => {
+    const s = score(ALT).suite;
+    expect(s.recall?.mean).toBe(1);
+    expect(s.precision?.mean).toBeCloseTo(1 / 3, 10);
+    expect(s.trapRate?.mean).toBe(1);
+    // The old-side item is on no place: the side must match too.
+    expect(s.noise?.mean).toBe(1);
+    expect(s.falsePositives?.mean).toBe(2);
+  });
+});
+
+describe("compare by the models and efforts that ran", () => {
+  // A file made before "requested" and "models" existed: no flags, and only the init model of each run.
+  const OLD: EvalResult = {
+    ...RESULT,
+    runs: RESULT.runs.map((r) => ({ ...r, model: "claude-opus-5-5", effort: "default", effortDefault: "high" })),
+  };
+  // A later run with --model opus and no --effort. Its runs also record a subagent model.
+  const LATER: EvalResult = {
+    ...OLD,
+    requested: { model: "opus", effort: "default" },
+    runs: OLD.runs.map((r) => ({ ...r, models: ["claude-opus-5-5", "claude-haiku-4-5"] })),
+  };
+
+  test("a file with no requested field compares by the init models and efforts that ran", () => {
+    const text = compareText(OLD, LATER);
+    expect(text).not.toContain("used different");
+    expect(text).toContain("model not recorded (ran claude-opus-5-5), effort not recorded (ran high)");
+    expect(text).toContain("model opus (ran claude-haiku-4-5, claude-opus-5-5), effort default (ran high)");
+  });
+
+  test("a real difference still warns", () => {
+    const sonnet = { ...LATER, runs: LATER.runs.map((r) => ({ ...r, model: "claude-sonnet-5", models: ["claude-sonnet-5"] })) };
+    expect(compareText(OLD, sonnet)).toContain("A and B used different models.");
+    const low = { ...LATER, runs: LATER.runs.map((r) => ({ ...r, effort: "low" })) };
+    expect(compareText(OLD, low)).toContain("A and B used different efforts.");
+    expect(compareText(OLD, low)).not.toContain("used different models");
+  });
+});
+
+describe("eval:rescore", () => {
+  const [a, b] = RESULT.cases as [EvalResult["cases"][number], EvalResult["cases"][number]];
+
+  test("puts the current bugs and traps into each case and notes a changed head", () => {
+    // The current fixture of case a gives bug B2 an alt place on the nit item of repeat 1.
+    const bugs = a.bugs.map((x) =>
+      x.id === "B2" ? { ...x, alt: [{ path: "a.ts", side: "new" as const, lines: [70, 70] as [number, number] }] } : x,
+    );
+    const truth = new Map([
+      ["a", { head: "h1", bugs, traps: a.traps }],
+      ["b", { head: "h9", bugs: b.bugs, traps: b.traps }],
+    ]);
+    const { result, notes } = rescore(RESULT, truth, "2026-10-22T01:00:00.000Z");
+    expect(result.cases.map((c) => c.bugs)).toEqual([bugs, b.bugs]);
+    expect(result.rescoredAt).toBe("2026-10-22T01:00:00.000Z");
+    expect(result.runs).toBe(RESULT.runs);
+    // Repeat 1 now finds 3 of 3 bugs, repeat 2 still 1 of 3.
+    expect(score(result).suite.recall).toEqual({ mean: 2 / 3, min: 1 / 3, max: 1 });
+    expect(notes).toEqual([
+      "Case b: the fixture head is h9, the runs reviewed h2. Its numbers can be wrong.",
+      "Cases with new bugs or traps: a.",
+    ]);
+    expect(RESULT.cases[0]?.bugs[1]).not.toHaveProperty("alt");
+  });
+
+  test("a case with no fixture keeps its stored bugs and traps", () => {
+    const { result, notes } = rescore(RESULT, new Map(), "2026-10-22T01:00:00.000Z");
+    expect(result.cases).toEqual(RESULT.cases);
+    expect(notes).toEqual([
+      "Case a has no fixture now. It keeps its stored bugs and traps.",
+      "Case b has no fixture now. It keeps its stored bugs and traps.",
+      "No case has new bugs or traps.",
+    ]);
   });
 });
 

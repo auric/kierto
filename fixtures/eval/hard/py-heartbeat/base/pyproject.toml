@@ -1,0 +1,8 @@
+[project]
+name = "job-worker"
+version = "1.8.0"
+requires-python = ">=3.11"
+dependencies = ["psycopg[binary]>=3.1", "psycopg-pool>=3.2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,244 @@
+diff --git a/README.md b/README.md
+index 5716767..654ea8a 100644
+--- a/README.md
++++ b/README.md
+@@ -5,5 +5,8 @@ Imports the booking batches that the branch offices upload into the ledger table
+ - `api/upload.py` writes each upload to `/srv/ledger/inbox`.
+ - `ledger/scheduler.py` runs `WORKERS` import processes. Each one claims an inbox file by renaming it and calls `import_file()`.
+ - A rejected file goes to `/srv/ledger/rejected`. Any other failure puts the file back into the inbox for the next round.
++- An imported file goes to `/srv/ledger/archive/<day>/<batch>.csv`, the audit copy. docs/batch-format.md describes the format and the archive rule.
+ 
+ The branch offices pick the batch names. Two offices can upload a batch of the same name at the same time.
++
++Each import holds the ledger advisory lock while it writes, like the API. It waits at most `LEDGER_LOCK_TIMEOUT` for it.
+diff --git a/docs/batch-format.md b/docs/batch-format.md
+new file mode 100644
+index 0000000..cf06fd7
+--- /dev/null
++++ b/docs/batch-format.md
+@@ -0,0 +1,23 @@
++# Batch file format, version 2
++
++A batch file is UTF-8 CSV with a header line:
++
++```
++#batch=<name> rows=<count> currency=<code>
++<account>,<amount>,<booked on>
++...
++```
++
++- `name`: 1 to 40 characters from `A-Z a-z 0-9 _ -`. The office picks it.
++- `count`: the number of booking lines. At most 50 000.
++- `code`: EUR, USD, GBP, or CHF. Each currency has its own ledger table.
++- `amount`: a decimal number with a point, such as `-12.50`.
++- `booked on`: an ISO date.
++
++## Import
++
++The importer refuses a file whose line count differs from the header, so a partial upload never reaches the ledger.
++
++After the import, the file moves to `archive/<YYYY-MM-DD>/<name>.csv`. The archive is the audit copy: a second batch of the same name on the same day is rejected and never replaces it. The office must upload it under a new name.
++
++Version 1 files (no header, EUR only) are refused from this release on. All offices send version 2 since March.
+diff --git a/ledger/importer.py b/ledger/importer.py
+index 37c2b4e..96790a3 100644
+--- a/ledger/importer.py
++++ b/ledger/importer.py
+@@ -1,11 +1,15 @@
+-"""Imports one claimed batch file into the ledger table."""
++"""Imports one claimed batch file into the ledger tables."""
+ 
+ import csv
+ import logging
++import os
++import time
+ from decimal import Decimal, InvalidOperation
+ from pathlib import Path
+ 
+-from ledger import settings
++from ledger import db, settings
++from ledger.io_utils import BadHeader, read_header
++from ledger.schema import TABLE_BY_CURRENCY
+ 
+ log = logging.getLogger(__name__)
+ 
+@@ -14,6 +18,14 @@ class ImportRejected(Exception):
+     """The file breaks a rule. The scheduler moves it to the rejected folder."""
+ 
+ 
++class ArchiveExists(ImportRejected):
++    """A batch of this name is archived today already. The archive is the audit copy, so nothing replaces it."""
++
++
++class LockTimeout(Exception):
++    """Another writer held the ledger lock too long. The scheduler puts the file back for the next round."""
++
++
+ def _row(fields: list[str], line: int) -> tuple[str, Decimal, str]:
+     if len(fields) != 3:
+         raise ImportRejected(f"line {line}: expected 3 fields")
+@@ -25,17 +37,52 @@ def _row(fields: list[str], line: int) -> tuple[str, Decimal, str]:
+     return account, value, booked_on
+ 
+ 
++def _wait_for_lock(conn) -> None:
++    deadline = time.monotonic() + settings.LEDGER_LOCK_TIMEOUT
++    while not db.try_lock(conn, db.LEDGER_LOCK):
++        if time.monotonic() > deadline:
++            raise LockTimeout("the ledger lock is busy")
++        time.sleep(0.5)
++
++
++def _archive_path(batch: str) -> Path:
++    day = settings.ARCHIVE_ROOT / time.strftime("%Y-%m-%d")
++    day.mkdir(parents=True, exist_ok=True)
++    return day / f"{batch}.csv"
++
++
+ def import_file(path: Path, conn) -> int:
+-    """Inserts the rows of a claimed file of format version 1 (no header, EUR only) and moves it to the done folder."""
+-    batch = path.name.split(".")[0]
++    """Inserts the rows of a claimed file of format version 2 and moves the file into the archive of the day."""
+     with path.open(newline="", encoding="utf-8") as f:
+-        rows = [_row(fields, n) for n, fields in enumerate(csv.reader(f), start=1)]
+-    with conn.cursor() as cur:
+-        cur.executemany(
+-            "INSERT INTO ledger_eur (batch, account, amount, booked_on) VALUES (%s, %s, %s, %s)",
+-            [(batch, *r) for r in rows],
+-        )
+-    conn.commit()
+-    path.rename(settings.DONE_DIR / f"{batch}.csv")
+-    log.info("imported %s: %d rows", batch, len(rows))
++        try:
++            header = read_header(f)
++        except BadHeader as e:
++            raise ImportRejected(str(e)) from None
++        if header.rows > settings.MAX_ROWS:
++            raise ImportRejected(f"{header.rows} rows is above the limit of {settings.MAX_ROWS}")
++        rows = [_row(fields, n) for n, fields in enumerate(csv.reader(f), start=2)]
++    if len(rows) != header.rows:
++        raise ImportRejected(f"the header says {header.rows} rows, the file has {len(rows)}")
++
++    dest = _archive_path(header.batch)
++    if dest.exists():
++        raise ArchiveExists(f"batch {header.batch} is archived today already")
++
++    table = TABLE_BY_CURRENCY[header.currency]
++    _wait_for_lock(conn)
++    try:
++        with conn.cursor() as cur:
++            cur.executemany(
++                f"INSERT INTO {table} (batch, account, amount, booked_on) VALUES (%s, %s, %s, %s)",
++                [(header.batch, *r) for r in rows],
++            )
++        conn.commit()
++    except BaseException:
++        conn.rollback()
++        raise
++    finally:
++        db.unlock(conn, db.LEDGER_LOCK)
++
++    os.rename(path, dest)
++    log.info("imported %s into %s: %d rows, archived as %s", header.batch, table, len(rows), dest)
+     return len(rows)
+diff --git a/tests/test_importer.py b/tests/test_importer.py
+index ba12f3f..a6385fe 100644
+--- a/tests/test_importer.py
++++ b/tests/test_importer.py
+@@ -2,7 +2,7 @@ from decimal import Decimal
+ 
+ import pytest
+ 
+-from ledger import importer, settings
++from ledger import db, importer, settings
+ 
+ 
+ class FakeCursor:
+@@ -23,6 +23,7 @@ class FakeConn:
+     def __init__(self):
+         self.inserted = []
+         self.commits = 0
++        self.rollbacks = 0
+ 
+     def cursor(self):
+         return FakeCursor(self)
+@@ -30,29 +31,68 @@ class FakeConn:
+     def commit(self):
+         self.commits += 1
+ 
++    def rollback(self):
++        self.rollbacks += 1
++
+ 
+ @pytest.fixture
+ def folders(tmp_path, monkeypatch):
+-    for name in ("inbox", "done"):
++    for name in ("inbox", "archive"):
+         (tmp_path / name).mkdir()
+-    monkeypatch.setattr(settings, "DONE_DIR", tmp_path / "done")
++    monkeypatch.setattr(settings, "ARCHIVE_ROOT", tmp_path / "archive")
++    monkeypatch.setattr(db, "try_lock", lambda conn, key: True)
++    monkeypatch.setattr(db, "unlock", lambda conn, key: None)
+     return tmp_path
+ 
+ 
+-def test_imports_rows_and_moves_the_file(folders):
+-    path = folders / "inbox" / "b1.csv.123.part"
+-    path.write_text("acc-1,10.50,2026-01-02\nacc-2,-3.00,2026-01-02\n", encoding="utf-8")
++def batch(folders, name, text):
++    path = folders / "inbox" / f"{name}.csv.123.part"
++    path.write_text(text, encoding="utf-8")
++    return path
++
++
++def test_imports_rows_into_the_table_of_the_currency_and_archives_the_file(folders):
++    path = batch(folders, "b1", "#batch=b1 rows=2 currency=USD\nacc-1,10.50,2026-01-02\nacc-2,-3.00,2026-01-02\n")
+     conn = FakeConn()
+     assert importer.import_file(path, conn) == 2
+     sql, rows = conn.inserted[0]
+-    assert "ledger_eur" in sql
++    assert "ledger_usd" in sql
+     assert rows == [("b1", "acc-1", Decimal("10.50"), "2026-01-02"), ("b1", "acc-2", Decimal("-3.00"), "2026-01-02")]
+     assert conn.commits == 1
+-    assert (folders / "done" / "b1.csv").exists()
++    assert not path.exists()
++    assert len(list((folders / "archive").glob("*/b1.csv"))) == 1
++
++
++def test_rejects_a_batch_that_is_archived_today(folders):
++    importer.import_file(batch(folders, "b2", "#batch=b2 rows=1 currency=EUR\nacc-1,1.00,2026-01-02\n"), FakeConn())
++    conn = FakeConn()
++    with pytest.raises(importer.ArchiveExists):
++        importer.import_file(batch(folders, "b2", "#batch=b2 rows=1 currency=EUR\nacc-9,9.00,2026-01-02\n"), conn)
++    assert conn.inserted == []
++
++
++def test_rejects_a_bad_header(folders):
++    with pytest.raises(importer.ImportRejected, match="bad header"):
++        importer.import_file(batch(folders, "b3", "#batch=../x rows=1 currency=EUR\nacc-1,1.00,2026-01-02\n"), FakeConn())
++    with pytest.raises(importer.ImportRejected, match="bad header"):
++        importer.import_file(batch(folders, "b4", "#batch=b4 rows=1 currency=XYZ\nacc-1,1.00,2026-01-02\n"), FakeConn())
++
++
++def test_rejects_a_row_count_that_differs_from_the_header(folders):
++    with pytest.raises(importer.ImportRejected, match="the header says 3 rows, the file has 1"):
++        importer.import_file(batch(folders, "b5", "#batch=b5 rows=3 currency=EUR\nacc-1,1.00,2026-01-02\n"), FakeConn())
++
++
++def test_rejects_a_file_above_the_row_limit(folders, monkeypatch):
++    monkeypatch.setattr(settings, "MAX_ROWS", 1)
++    with pytest.raises(importer.ImportRejected, match="above the limit"):
++        importer.import_file(batch(folders, "b6", "#batch=b6 rows=2 currency=EUR\na,1,2026-01-02\nb,2,2026-01-02\n"), FakeConn())
+ 
+ 
+-def test_rejects_a_bad_amount(folders):
+-    path = folders / "inbox" / "b2.csv.123.part"
+-    path.write_text("acc-1,ten,2026-01-02\n", encoding="utf-8")
+-    with pytest.raises(importer.ImportRejected, match="line 1: bad amount"):
++def test_gives_up_when_the_ledger_lock_stays_busy(folders, monkeypatch):
++    monkeypatch.setattr(db, "try_lock", lambda conn, key: False)
++    monkeypatch.setattr(settings, "LEDGER_LOCK_TIMEOUT", 0.2)
++    path = batch(folders, "b7", "#batch=b7 rows=1 currency=EUR\nacc-1,1.00,2026-01-02\n")
++    with pytest.raises(importer.LockTimeout):
+         importer.import_file(path, FakeConn())
++    assert path.exists()

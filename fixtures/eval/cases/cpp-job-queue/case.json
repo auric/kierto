@@ -21,6 +21,7 @@
       "path": "src/thread_pool.cpp",
       "side": "new",
       "lines": [58, 58],
+      "alt": [{ "path": "src/thread_pool.h", "side": "new", "lines": [44, 44] }],
       "severityMin": "major",
       "module": "concurrency",
       "note": "Race: workers read stopping_ without the mutex while stop() writes it under the mutex. That is a data race and undefined behavior."

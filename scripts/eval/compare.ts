@@ -11,6 +11,7 @@ const LABEL: Record<Metric, string> = {
   precision: "precision: shown findings that match a bug",
   trapRate: "trap rate: shown findings on a trap, per trap",
   noise: "noise: shown findings on no bug and no trap, per case",
+  falsePositives: "false positives: shown findings on no bug, trap hits included, per case",
   severityOk: "severity ok: found bugs at or above their minimum severity",
   candidateRecall: "candidate recall: bugs that any finding matched, hidden ones included",
   minutes: "minutes per case",
@@ -23,6 +24,7 @@ const DIGITS: Record<Metric, number> = {
   precision: 1,
   trapRate: 1,
   noise: 2,
+  falsePositives: 2,
   severityOk: 1,
   candidateRecall: 1,
   minutes: 1,
@@ -51,32 +53,48 @@ function table(rows: string[][]) {
     .join("\n");
 }
 
-// A file made before "requested" existed ran without --model and --effort.
-const requested = (r: EvalResult) => r.requested ?? { model: "default", effort: "default" };
 const list = (s: Set<string>) => (s.size ? [...s].sort().join(", ") : "unknown");
 // The models that ran: the init model and the subagent models of each run.
 const usedModels = (r: EvalResult) => new Set(r.runs.flatMap((x) => x.models ?? (x.model ? [x.model] : [])));
+const initModels = (r: EvalResult) => new Set(r.runs.flatMap((x) => (x.model ? [x.model] : [])));
 // The effort that ran: the --effort value, else the default effort that the user settings gave.
 const usedEfforts = (r: EvalResult) =>
   new Set(r.runs.flatMap((x) => (x.effort === null ? [] : [x.effort === "default" ? (x.effortDefault ?? "default") : x.effort])));
 
 const header = (r: EvalResult) => {
-  const q = requested(r);
+  // A file made before "requested" existed does not record the flags. The models and efforts that ran still show.
+  const q = r.requested ?? { model: "not recorded", effort: "not recorded" };
   const runs = `${r.cases.length} case${r.cases.length === 1 ? "" : "s"} x ${r.repeat}`;
-  return `commit ${r.commit}${r.dirty ? " (uncommitted changes)" : ""}, prompt version ${r.promptVersion}, profile ${r.profile.id} (revision ${r.profile.revision.slice(0, 8)}), volume ${r.volume ?? "none"}, CLI ${r.cliVersion}, model ${q.model} (ran ${list(usedModels(r))}), effort ${q.effort} (ran ${list(usedEfforts(r))}), ${r.runner} CLI, ${runs}`;
+  const rescored = r.rescoredAt ? `, re-scored ${r.rescoredAt}` : "";
+  return `commit ${r.commit}${r.dirty ? " (uncommitted changes)" : ""}, set ${r.set ?? "v1"}${rescored}, prompt version ${r.promptVersion}, profile ${r.profile.id} (revision ${r.profile.revision.slice(0, 8)}), volume ${r.volume ?? "none"}, CLI ${r.cliVersion}, model ${q.model} (ran ${list(usedModels(r))}), effort ${q.effort} (ran ${list(usedEfforts(r))}), ${r.runner} CLI, ${runs}`;
 };
 
 export function summaryText(r: EvalResult, s: Score = score(r)): string {
   const rows = [["metric", "all cases"], ...METRICS.map((m) => [LABEL[m], cell(m, s.suite[m])])];
   const ids = Object.keys(s.cases);
   const perCase = [
-    ["case", "recall", "precision", "noise", "minutes"],
+    ["case", "recall", "precision", "false positives", "noise", "minutes"],
     ...ids.map((id) => {
       const c = s.cases[id] as Score["cases"][string];
-      return [id, cell("recall", c.recall), cell("precision", c.precision), cell("noise", c.noise), cell("minutes", c.minutes)];
+      return [
+        id,
+        cell("recall", c.recall),
+        cell("precision", c.precision),
+        cell("falsePositives", c.falsePositives),
+        cell("noise", c.noise),
+        cell("minutes", c.minutes),
+      ];
     }),
   ];
   return [header(r), "", table(rows), "", table(perCase)].join("\n");
+}
+
+// One row per metric: the "all cases" numbers of two scores and the delta.
+export function suiteDelta(a: Score, b: Score, names: [string, string]): string {
+  return table([
+    ["metric", ...names, "delta"],
+    ...METRICS.map((m) => [LABEL[m], cell(m, a.suite[m]), cell(m, b.suite[m]), delta(m, a.suite[m], b.suite[m])]),
+  ]);
 }
 
 // Case truth that differs between two files: the numbers of that case do not compare.
@@ -92,11 +110,14 @@ export function compareText(a: EvalResult, b: EvalResult): string {
   if (only.length) out.push(`Cases in one file only: ${only.join(", ")}. The "all cases" rows do not compare.`);
   const changed = [...ta.keys()].filter((id) => tb.has(id) && ta.get(id) !== tb.get(id));
   if (changed.length) out.push(`Cases whose fixture changed between A and B: ${changed.join(", ")}. Their numbers do not compare.`);
-  const qa = requested(a);
-  const qb = requested(b);
+  // The flags compare only when both files record them. A file made before "models" existed records only the init model of each run.
+  const qa = a.requested;
+  const qb = b.requested;
   const same = (x: Set<string>, y: Set<string>) => list(x) === list(y);
-  if (qa.model !== qb.model || !same(usedModels(a), usedModels(b))) out.push("A and B used different models. The numbers do not compare.");
-  if (qa.effort !== qb.effort || !same(usedEfforts(a), usedEfforts(b)))
+  const all = (r: EvalResult) => r.runs.every((x) => x.models !== undefined);
+  const ran = all(a) && all(b) ? usedModels : initModels;
+  if ((qa && qb && qa.model !== qb.model) || !same(ran(a), ran(b))) out.push("A and B used different models. The numbers do not compare.");
+  if ((qa && qb && qa.effort !== qb.effort) || !same(usedEfforts(a), usedEfforts(b)))
     out.push("A and B used different efforts. The numbers do not compare.");
   const ids = [...ta.keys()].filter((id) => tb.has(id)).sort();
   for (const m of METRICS) {

@@ -1,0 +1,63 @@
+{
+  "id": "py-archive-import",
+  "title": "Import batch format 2 and archive each batch once",
+  "language": "python",
+  "pr": {
+    "title": "Batch format 2: header, currencies, audit archive, ledger lock",
+    "description": "Imports batch files of format version 2 (docs/batch-format.md): a header line with the batch name, the row count, and the currency. Each currency goes into its own ledger table.\n\nAfter the import, the file moves into `archive/<day>/<batch>.csv`, the audit copy. A second batch of the same name on the same day is rejected, so nothing replaces an audit copy.\n\nEach import now holds the ledger advisory lock while it writes, like the API, and gives up after `LEDGER_LOCK_TIMEOUT`. Version 1 files are refused."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "ledger/importer.py",
+      "side": "new",
+      "lines": [68, 69],
+      "alt": [{ "path": "ledger/importer.py", "side": "new", "lines": [86, 86] }],
+      "severityMin": "major",
+      "module": "concurrency",
+      "note": "TOCTOU between check and rename: dest.exists() runs before the lock and os.rename() after it. The unchanged scheduler.py runs 4 workers at once and says that two files of the same batch name can be imported at the same time, so both pass the check, both insert their rows, and the second rename silently replaces the first audit copy on POSIX. The lock does not cover the check or the rename."
+    },
+    {
+      "id": "B2",
+      "path": "ledger/importer.py",
+      "side": "new",
+      "lines": [61, 61],
+      "alt": [{ "path": "ledger/importer.py", "side": "new", "lines": [58, 58] }],
+      "severityMin": "minor",
+      "module": "core",
+      "note": "Callee contract in an unchanged file: read_header() returns None for an empty file, which the unchanged api/upload.py leaves after an aborted upload. header.rows then raises AttributeError, which is not ImportRejected, so the unchanged scheduler puts the file back into the inbox and retries it every 5 s forever instead of rejecting it."
+    },
+    {
+      "id": "B3",
+      "path": "ledger/importer.py",
+      "side": "new",
+      "lines": [41, 41],
+      "severityMin": "major",
+      "module": "core",
+      "note": "Unit mismatch across modules: the unchanged settings.py gives LEDGER_LOCK_TIMEOUT in milliseconds (30 000, which api/locks.py passes to SET lock_timeout), and _wait_for_lock adds it to time.monotonic() in seconds. A worker waits up to 8.3 hours for a busy lock instead of 30 s, with its claimed file stuck. The test sets the value to 0.2 and hides it."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "ledger/importer.py",
+      "side": "new",
+      "lines": [51, 51],
+      "why": "The batch name from the file goes into a path, which looks like path traversal, but the unchanged read_header() raises BadHeader for any name outside [A-Za-z0-9_-]{1,40}."
+    },
+    {
+      "id": "T2",
+      "path": "ledger/importer.py",
+      "side": "new",
+      "lines": [76, 76],
+      "why": "The table name goes into the SQL with an f-string, which looks like SQL injection, but it comes from the fixed TABLE_BY_CURRENCY map, and the unchanged read_header() refuses a currency outside that map."
+    },
+    {
+      "id": "T3",
+      "path": "ledger/importer.py",
+      "side": "new",
+      "lines": [63, 63],
+      "why": "All rows go into memory regardless of the header count, which looks unbounded, but the unchanged api/upload.py refuses any upload above 20 MB, so a file holds at most that much text."
+    }
+  ]
+}

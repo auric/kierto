@@ -21,6 +21,7 @@
       "path": "src/reports/daily.ts",
       "side": "new",
       "lines": [12, 13],
+      "alt": [{ "path": "src/orders/repo.ts", "side": "new", "lines": [10, 11] }],
       "severityMin": "major",
       "module": "core",
       "note": "Missed caller: listOrders now takes a row offset, but the unchanged daily report still passes page numbers 1, 2, 3, so it skips the first row and counts each order many times."

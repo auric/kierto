@@ -1,0 +1,49 @@
+{
+  "id": "cpp-buffer-split",
+  "title": "Split net/buffers into one file per class",
+  "language": "cpp",
+  "pr": {
+    "title": "net: one file per class, namespace net::detail becomes net",
+    "description": "`include/net/buffers.h` and `src/net/buffers.cpp` grew to five classes. This moves each one into its own header and source file: `buffer`, `buffer_pool`, `send_ring`, `frames`, and `debug`. The namespace `net::detail` becomes `net`, because these types are the public API of the library now. The tests move the same way, with the shared helpers in `tests/test_util.h`.\n\nNo behavior change: the code moves as is. The server files change only their includes and the namespace."
+  },
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "src/net/buffer.cpp",
+      "side": "new",
+      "lines": [16, 17],
+      "alt": [{ "path": "src/net/frames.cpp", "side": "new", "lines": [25, 26] }],
+      "severityMin": "major",
+      "module": "security",
+      "note": "One-token change inside a moved block: Buffer::view() now checks len against capacity_ - offset instead of size_ - offset, so it returns bytes past the written part. BufferPool reuses buffers across clients and reset() keeps the old bytes, so a client that sends a ping header with a long length and no payload gets a frame of stale bytes from other clients echoed back. The test helper sizes each buffer exactly, so the tests cannot see it."
+    }
+  ],
+  "traps": [
+    {
+      "id": "T1",
+      "path": "src/net/send_ring.cpp",
+      "side": "new",
+      "lines": [12, 12],
+      "alt": [
+        { "path": "src/net/send_ring.cpp", "side": "new", "lines": [5, 5] },
+        { "path": "src/net/send_ring.cpp", "side": "new", "lines": [22, 22] }
+      ],
+      "why": "The index mask is wrong for a capacity that is not a power of two, but the only caller, the unchanged Connection, passes config.sendRing, and the unchanged loadConfig() refuses a send_ring that is not a power of two from 2 to 1024."
+    },
+    {
+      "id": "T2",
+      "path": "include/net/buffer.h",
+      "side": "new",
+      "lines": [22, 22],
+      "why": "commit() adds n to size_ without a check against the capacity, but the only caller, the unchanged Connection::onReadable(), passes the result of recv() into writable(), which is at most writable().size()."
+    },
+    {
+      "id": "T3",
+      "path": "src/net/frames.cpp",
+      "side": "new",
+      "lines": [27, 27],
+      "alt": [{ "path": "include/net/frames.h", "side": "new", "lines": [18, 20] }],
+      "why": "The frame span points into the buffer, and consume() moves those bytes, which looks like a dangling span, but the unchanged Connection::onReadable() hands each frame to the handler before it calls consume()."
+    }
+  ]
+}

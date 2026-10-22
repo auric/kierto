@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// The eval cases of fixtures/eval/cases (docs/plans/review-v2/spec.md section 4.3) and the temp git repository of one case.
+// The eval cases of fixtures/eval (docs/plans/review-v2/spec.md section 4.3) and the temp git repository of one case.
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { z } from "zod";
@@ -9,7 +9,12 @@ import { parseDiff } from "../../src/server/review/diffmap";
 import { git, gitEnv } from "../../src/server/review/git";
 import { severities } from "../../src/shared/review";
 
-export const CASES_DIR = resolve(import.meta.dir, "../../fixtures/eval/cases");
+const EVAL_DIR = resolve(import.meta.dir, "../../fixtures/eval");
+// v1: the 12 cases of the first baseline. hard: bugs that need unchanged code, bigger diffs, more traps, and cases with no bug.
+export const SETS = { v1: join(EVAL_DIR, "cases"), hard: join(EVAL_DIR, "hard") } as const;
+export type EvalSet = keyof typeof SETS;
+export const CASES_DIR = SETS.v1;
+const CASE_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 // spec.md section 1.3: core and the module IDs.
 export const MODULE_IDS = [
   "core",
@@ -28,18 +33,21 @@ export const LANGUAGES = ["typescript", "cpp", "python"] as const;
 const range = z
   .tuple([z.number().int().min(1), z.number().int().min(1)])
   .refine(([s, e]) => s <= e, "The first line is after the last line.");
-const place = { id: z.string().min(1), path: z.string().min(1), side: z.enum(["new", "old"]), lines: range };
+const spot = { path: z.string().min(1), side: z.enum(["new", "old"]), lines: range };
+// alt: other places of the same bug or trap, such as a declaration and its definition, or a caller and its changed callee.
+const place = { id: z.string().min(1), ...spot, alt: z.array(z.object(spot)).min(1).optional() };
 export const evalBug = z.object({ ...place, severityMin: z.enum(severities), module: z.enum(MODULE_IDS), note: z.string().min(1) });
 export const evalTrap = z.object({ ...place, why: z.string().min(1) });
+// tests/eval/harness.test.ts checks the bug, trap, and line counts of each set.
 export const caseFile = z.object({
-  id: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/),
+  id: z.string().regex(CASE_ID),
   title: z.string().min(1),
   language: z.enum(LANGUAGES),
   pr: z.object({ title: z.string().min(1), description: z.string() }),
   task: z.string().optional(),
   instructions: z.string().optional(),
-  bugs: z.array(evalBug).min(1).max(3),
-  traps: z.array(evalTrap).min(1).max(2),
+  bugs: z.array(evalBug).max(3),
+  traps: z.array(evalTrap).min(1).max(4),
 });
 export type EvalBug = z.infer<typeof evalBug>;
 export type EvalTrap = z.infer<typeof evalTrap>;
@@ -88,6 +96,15 @@ export function loadCases(ids: string, root = CASES_DIR): EvalCase[] {
   const unknown = want.filter((id) => !all.includes(id));
   if (unknown.length) throw new Error(`Unknown case: ${unknown.join(", ")}. Known cases: ${all.join(", ")}.`);
   return all.filter((f) => want.includes(f)).map((f) => loadCase(join(root, f)));
+}
+
+// The current fixture of a case ID in any set, or null.
+export function findCase(id: string): EvalCase | null {
+  if (!CASE_ID.test(id)) return null;
+  const dir = Object.values(SETS)
+    .map((s) => join(s, id))
+    .find((d) => existsSync(join(d, "case.json")));
+  return dir ? loadCase(dir) : null;
 }
 
 // A fixed identity and date, so a case gives the same commits on each run.

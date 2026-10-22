@@ -1,0 +1,344 @@
+diff --git a/README.md b/README.md
+index d2cf356..2ee4dc7 100644
+--- a/README.md
++++ b/README.md
+@@ -4,9 +4,16 @@ Payment jobs of the shop. Each worker process takes jobs from the `jobs` table a
+ 
+ ## Jobs
+ 
++- `capture-order`: charges the total of a pending order and marks it paid or declined. Payload: `{ "orderId": "..." }`.
+ - `renew-subscription`: charges the next period of a subscription.
+ - `refund`: refunds a charge.
+ 
++## Retries
++
++A gateway call that times out or gets a 502, 503, or 504 answer gets up to `PAYMENT_RETRY_ATTEMPTS` attempts. The wait before the second attempt is `PAYMENT_RETRY_BASE_MS`, and each later wait doubles.
++
++When the last attempt fails, `capture-order` puts the order back to pending and the job fails. The job queue runs it again after 30 s, 60 s, 120 s, and so on.
++
+ ## Configuration
+ 
+ | Variable | Default | Meaning |
+diff --git a/src/jobs/handlers.ts b/src/jobs/handlers.ts
+index 44b587d..caf4fdc 100644
+--- a/src/jobs/handlers.ts
++++ b/src/jobs/handlers.ts
+@@ -1,6 +1,8 @@
+ import type { AuditLog } from "../audit";
+ import type { Config } from "../config";
+ import type { Db } from "../db";
++import { OrderRepo } from "../orders/repo";
++import { captureOrder } from "../payments/capture";
+ import type { Gateway } from "../payments/gateway";
+ import { renewSubscription } from "../payments/subscriptions";
+ import type { Handlers } from "./worker";
+@@ -14,7 +16,11 @@ const text = (payload: Record<string, unknown>, key: string): string => {
+ };
+ 
+ export function handlers(deps: Deps): Handlers {
++  const orders = new OrderRepo(deps.db);
+   return {
++    "capture-order": async (job) => {
++      await captureOrder({ orders, gateway: deps.gateway, audit: deps.audit, config: deps.config }, text(job.payload, "orderId"));
++    },
+     "renew-subscription": (job) => renewSubscription(deps.db, deps.gateway, deps.audit, text(job.payload, "subscriptionId")),
+     refund: (job) =>
+       deps.gateway.refund(text(job.payload, "chargeId"), Number(job.payload.amountCents), `refund-${job.id}`),
+diff --git a/src/payments/capture.ts b/src/payments/capture.ts
+new file mode 100644
+index 0000000..e735243
+--- /dev/null
++++ b/src/payments/capture.ts
+@@ -0,0 +1,48 @@
++import { randomUUID } from "node:crypto";
++import type { AuditLog } from "../audit";
++import type { Config } from "../config";
++import type { OrderRepo } from "../orders/repo";
++import { CardDeclined, type Gateway, GatewayTimeout, GatewayUnavailable } from "./gateway";
++import { retry, type Sleep, sleep } from "./retry";
++
++export type CaptureDeps = { orders: OrderRepo; gateway: Gateway; audit: AuditLog; config: Config; wait?: Sleep };
++
++export type CaptureResult = { status: "paid"; chargeId: string } | { status: "declined"; code: string } | { status: "skipped" };
++
++// A timeout or a 502, 503, or 504 answer is worth another attempt. Any other error is not.
++export const retryable = (e: unknown): boolean => e instanceof GatewayTimeout || e instanceof GatewayUnavailable;
++
++// Charges the total of a pending order. The capture-order job calls it, and several worker processes run jobs at once.
++export async function captureOrder(deps: CaptureDeps, orderId: string): Promise<CaptureResult> {
++  const order = await deps.orders.get(orderId);
++  if (order.status !== "pending") return { status: "skipped" };
++  await deps.orders.markCapturing(order.id);
++
++  try {
++    const charge = await retry(
++      () =>
++        deps.gateway.charge({
++          amountCents: order.totalCents,
++          currency: order.currency,
++          cardToken: order.cardToken,
++          reference: `order-${order.id}`,
++          idempotencyKey: randomUUID(),
++        }),
++      deps.config.payments.retry,
++      retryable,
++      deps.wait ?? sleep,
++    );
++    await deps.orders.markPaid(order.id, charge.chargeId);
++    void deps.audit.record({ type: "order.paid", orderId: order.id, chargeId: charge.chargeId, amountCents: order.totalCents });
++    return { status: "paid", chargeId: charge.chargeId };
++  } catch (e) {
++    if (e instanceof CardDeclined) {
++      await deps.orders.markDeclined(order.id, e.code);
++      void deps.audit.record({ type: "order.declined", orderId: order.id, code: e.code });
++      return { status: "declined", code: e.code };
++    }
++    // The job runs again later and finds the order pending.
++    await deps.orders.release(order.id);
++    throw e;
++  }
++}
+diff --git a/src/payments/retry.ts b/src/payments/retry.ts
+new file mode 100644
+index 0000000..3729c5c
+--- /dev/null
++++ b/src/payments/retry.ts
+@@ -0,0 +1,23 @@
++import type { RetryPolicy } from "../config";
++
++export type Sleep = (ms: number) => Promise<void>;
++
++export const sleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
++
++// Runs fn up to policy.maxAttempts times. Only errors that retryable() accepts get another attempt. The wait before the
++// second attempt is baseDelayMs, and each later wait doubles.
++export async function retry<T>(
++  fn: (attempt: number) => Promise<T>,
++  policy: RetryPolicy,
++  retryable: (e: unknown) => boolean,
++  wait: Sleep = sleep,
++): Promise<T> {
++  for (let attempt = 1; ; attempt++) {
++    try {
++      return await fn(attempt);
++    } catch (e) {
++      if (attempt >= policy.maxAttempts || !retryable(e)) throw e;
++      await wait(policy.baseDelayMs * 2 ** (attempt - 1));
++    }
++  }
++}
+diff --git a/tests/payments/capture.test.ts b/tests/payments/capture.test.ts
+new file mode 100644
+index 0000000..cf4efda
+--- /dev/null
++++ b/tests/payments/capture.test.ts
+@@ -0,0 +1,117 @@
++import { describe, expect, test } from "bun:test";
++import type { AuditEvent, AuditLog } from "../../src/audit";
++import type { Config } from "../../src/config";
++import type { Order, OrderRepo } from "../../src/orders/repo";
++import { captureOrder } from "../../src/payments/capture";
++import {
++  CardDeclined,
++  type ChargeRequest,
++  type ChargeResult,
++  type Gateway,
++  GatewayTimeout,
++  GatewayUnavailable,
++} from "../../src/payments/gateway";
++
++const config = { payments: { retry: { maxAttempts: 3, baseDelayMs: 1 } } } as Config;
++const noWait = async () => {};
++
++const pending = (): Order => ({ id: "o-1", customerId: "c-1", status: "pending", totalCents: 4_990, currency: "EUR", cardToken: "tok_1" });
++
++function fakeOrders(order: Order) {
++  const calls: string[] = [];
++  const repo = {
++    get: async () => ({ ...order }),
++    markCapturing: async () => {
++      calls.push("capturing");
++      order.status = "capturing";
++    },
++    release: async () => {
++      calls.push("release");
++      order.status = "pending";
++    },
++    markPaid: async (_id: string, chargeId: string) => {
++      calls.push(`paid ${chargeId}`);
++      order.status = "paid";
++    },
++    markDeclined: async (_id: string, code: string) => {
++      calls.push(`declined ${code}`);
++      order.status = "declined";
++    },
++  };
++  return { orders: repo as unknown as OrderRepo, calls };
++}
++
++type Step = "ok" | "decline" | "timeout" | "unavailable";
++
++// Answers each charge with the next step of the script.
++function fakeGateway(script: Step[]) {
++  const requests: ChargeRequest[] = [];
++  const gateway = {
++    async charge(req: ChargeRequest): Promise<ChargeResult> {
++      requests.push(req);
++      const step = script.shift() ?? "ok";
++      if (step === "timeout") throw new GatewayTimeout("no answer");
++      if (step === "unavailable") throw new GatewayUnavailable("HTTP 503");
++      if (step === "decline") throw new CardDeclined("insufficient_funds");
++      return { status: "succeeded", chargeId: `ch_${requests.length}`, declineCode: null };
++    },
++  };
++  return { gateway: gateway as unknown as Gateway, requests };
++}
++
++function fakeAudit() {
++  const events: AuditEvent[] = [];
++  return { audit: { record: async (e: AuditEvent) => void events.push(e) } as unknown as AuditLog, events };
++}
++
++describe("captureOrder", () => {
++  test("charges the order total and marks the order paid", async () => {
++    const { orders, calls } = fakeOrders(pending());
++    const { gateway, requests } = fakeGateway(["ok"]);
++    const { audit, events } = fakeAudit();
++    const result = await captureOrder({ orders, gateway, audit, config, wait: noWait }, "o-1");
++    expect(result).toEqual({ status: "paid", chargeId: "ch_1" });
++    expect(calls).toEqual(["capturing", "paid ch_1"]);
++    expect(requests[0]).toMatchObject({ amountCents: 4_990, currency: "EUR", cardToken: "tok_1", reference: "order-o-1" });
++    expect(events.map((e) => e.type)).toEqual(["order.paid"]);
++  });
++
++  test("retries a timeout and a 503, then marks the order paid", async () => {
++    const { orders, calls } = fakeOrders(pending());
++    const { gateway, requests } = fakeGateway(["timeout", "unavailable", "ok"]);
++    const result = await captureOrder({ orders, gateway, audit: fakeAudit().audit, config, wait: noWait }, "o-1");
++    expect(result).toEqual({ status: "paid", chargeId: "ch_3" });
++    expect(requests).toHaveLength(3);
++    expect(calls).toEqual(["capturing", "paid ch_3"]);
++  });
++
++  test("marks a declined card and does not retry it", async () => {
++    const { orders, calls } = fakeOrders(pending());
++    const { gateway, requests } = fakeGateway(["decline"]);
++    const { audit, events } = fakeAudit();
++    const result = await captureOrder({ orders, gateway, audit, config, wait: noWait }, "o-1");
++    expect(result).toEqual({ status: "declined", code: "insufficient_funds" });
++    expect(requests).toHaveLength(1);
++    expect(calls).toEqual(["capturing", "declined insufficient_funds"]);
++    expect(events.map((e) => e.type)).toEqual(["order.declined"]);
++  });
++
++  test("gives the order back after the last failed attempt", async () => {
++    const { orders, calls } = fakeOrders(pending());
++    const { gateway, requests } = fakeGateway(["timeout", "timeout", "timeout"]);
++    const run = captureOrder({ orders, gateway, audit: fakeAudit().audit, config, wait: noWait }, "o-1");
++    await expect(run).rejects.toBeInstanceOf(GatewayTimeout);
++    expect(requests).toHaveLength(3);
++    expect(calls).toEqual(["capturing", "release"]);
++  });
++
++  test("skips an order that is not pending", async () => {
++    const order = { ...pending(), status: "paid" as const };
++    const { orders, calls } = fakeOrders(order);
++    const { gateway, requests } = fakeGateway([]);
++    const result = await captureOrder({ orders, gateway, audit: fakeAudit().audit, config, wait: noWait }, "o-1");
++    expect(result).toEqual({ status: "skipped" });
++    expect(requests).toHaveLength(0);
++    expect(calls).toEqual([]);
++  });
++});
+diff --git a/tests/payments/retry.test.ts b/tests/payments/retry.test.ts
+new file mode 100644
+index 0000000..b148e6d
+--- /dev/null
++++ b/tests/payments/retry.test.ts
+@@ -0,0 +1,86 @@
++import { describe, expect, test } from "bun:test";
++import { retry } from "../../src/payments/retry";
++
++class Flaky extends Error {}
++class Fatal extends Error {}
++
++const policy = { maxAttempts: 4, baseDelayMs: 100 };
++const isFlaky = (e: unknown) => e instanceof Flaky;
++
++function recorder() {
++  const waits: number[] = [];
++  return { waits, wait: async (ms: number) => void waits.push(ms) };
++}
++
++describe("retry", () => {
++  test("returns the first result without a wait", async () => {
++    const r = recorder();
++    expect(await retry(async () => 7, policy, isFlaky, r.wait)).toBe(7);
++    expect(r.waits).toEqual([]);
++  });
++
++  test("retries a retryable error and doubles the wait", async () => {
++    const r = recorder();
++    let calls = 0;
++    const value = await retry(
++      async () => {
++        calls++;
++        if (calls < 4) throw new Flaky("try again");
++        return "done";
++      },
++      policy,
++      isFlaky,
++      r.wait,
++    );
++    expect(value).toBe("done");
++    expect(calls).toBe(4);
++    expect(r.waits).toEqual([100, 200, 400]);
++  });
++
++  test("throws the last error after maxAttempts", async () => {
++    const r = recorder();
++    let calls = 0;
++    const run = retry(
++      async () => {
++        calls++;
++        throw new Flaky(`attempt ${calls}`);
++      },
++      policy,
++      isFlaky,
++      r.wait,
++    );
++    await expect(run).rejects.toThrow("attempt 4");
++    expect(calls).toBe(4);
++  });
++
++  test("does not retry an error that retryable() refuses", async () => {
++    const r = recorder();
++    let calls = 0;
++    const run = retry(
++      async () => {
++        calls++;
++        throw new Fatal("no");
++      },
++      policy,
++      isFlaky,
++      r.wait,
++    );
++    await expect(run).rejects.toBeInstanceOf(Fatal);
++    expect(calls).toBe(1);
++    expect(r.waits).toEqual([]);
++  });
++
++  test("passes the attempt number to fn", async () => {
++    const seen: number[] = [];
++    await retry(
++      async (attempt) => {
++        seen.push(attempt);
++        if (attempt < 3) throw new Flaky("again");
++      },
++      policy,
++      isFlaky,
++      recorder().wait,
++    );
++    expect(seen).toEqual([1, 2, 3]);
++  });
++});
