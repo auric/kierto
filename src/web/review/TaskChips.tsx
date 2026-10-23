@@ -65,7 +65,8 @@ const fetchBtn =
 // id: the prefix of the element IDs, one per place. focusTo: the element that takes the focus when Remove takes the chip away.
 // compact: a place outside the brief. It shows only the chips that can fetch or hold fetched text, with the fetch state
 // instead of the source. It shows nothing when no chip is left. onSettings absent: an error offers no settings link.
-// onTaskIds: "Set up task IDs" opens Settings, Task IDs.
+// onTaskIds: "Set up task IDs" opens Settings, Task IDs. onBuild: "Build this task" (docs/plans/review-v2/spec.md section 6.12) on each
+// chip whose text the app has or can fetch. One click creates the task, or opens its open task.
 export function TaskChips(props: {
   pr: number;
   tasks: PrTask[];
@@ -76,6 +77,7 @@ export function TaskChips(props: {
   announce: (text: string) => void;
   onSettings?: () => void;
   onTaskIds?: () => void;
+  onBuild?: (key: string) => Promise<void>;
 }) {
   const { pr, tasks, meta, id, compact, announce, onSettings } = props;
   const qc = useQueryClient();
@@ -102,11 +104,15 @@ export function TaskChips(props: {
       document.getElementById(`${id}-fetch-${key}`) ??
       document.getElementById(props.focusTo)
     )?.focus();
-  const run = async (key: string, act: "fetch" | "remove") => {
+  const run = async (key: string, act: "fetch" | "remove" | "build") => {
     if (busy.has(key)) return;
     setBusy((b) => new Set(b).add(key));
     setErrors((es) => es.filter((e) => e.key !== key));
     try {
+      if (act === "build") {
+        await props.onBuild?.(key);
+        return;
+      }
       if (act === "fetch") await fetchTask(qc, pr, key);
       else await removeTask(qc, pr, key);
       announce(act === "fetch" ? `Fetched ${key} from ${source}.` : `Removed the ${key} text.`);
@@ -114,7 +120,8 @@ export function TaskChips(props: {
       if (act === "remove") requestAnimationFrame(() => refocus(key));
     } catch (e) {
       const message = (e as Error).message;
-      const setup = !!onSettings && e instanceof ApiError && e.status === 409;
+      // A build also gets 409 while a run holds the slot. Only a missing tracker setup offers the settings.
+      const setup = !!onSettings && e instanceof ApiError && e.status === 409 && (act !== "build" || !on);
       setErrors((es) => [...es.filter((x) => x.key !== key), { key, message, setup }]);
       announce(`${key}: ${message}`);
     } finally {
@@ -199,6 +206,21 @@ export function TaskChips(props: {
                   >
                     {wait && <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />}
                     Fetch
+                  </button>
+                </Hint>
+              )}
+              {props.onBuild && (t.fetchable || t.fetched) && (
+                <Hint label={`Build this task: ${t.key}`}>
+                  <button
+                    id={`${id}-build-${t.key}`}
+                    type="button"
+                    className={fetchBtn}
+                    aria-label={`Build this task: ${t.key}`}
+                    aria-busy={wait || undefined}
+                    onClick={() => void run(t.key, "build")}
+                  >
+                    {wait && <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />}
+                    Build
                   </button>
                 </Hint>
               )}

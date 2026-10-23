@@ -195,6 +195,8 @@ export { type ItemRow, type SessionRecord, type SessionStart, toItemDto } from "
 
 // Plan v3 WP10: at most 2 `changed` events with runs per second.
 const NOTIFY_MS = 500;
+// A task run has pr NULL, so it reads SQL.run with a left join. tests/tasks/ui-routes.test.ts reads the log of a task run.
+const TASK_RUN = `${SQL.run.replace(" JOIN pull_request p ON", " LEFT JOIN pull_request p ON")} WHERE r.id = $id AND r.task = $task`;
 // A judge session run makes at most SESSION_MAX_TURNS read-only turns. A fix session run gets the runner limit (claude.ts).
 const SESSION_TIMEOUT_MS = 20 * 60_000;
 // The git MCP server runs `bun <main.ts> --git-mcp`. Bun.main is another file under bun test and in serve.ts.
@@ -1641,6 +1643,26 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   const prRow = (db: Database, id: number) => db.query(SQL.pr).get({ id }) as PrRow | null;
   const runRow = (db: Database, id: number) => db.query(`${SQL.run} WHERE r.id = $id`).get({ id }) as RunRow | null;
 
+  function runDetail(db: Database, r: RunRow | null): RunDetail | null {
+    // The DTO kind has no "consult". Only the SQL row can hold it.
+    if (!r || (r.kind as string) === "consult") return null;
+    // docs/plans/review-v2/spec.md section 2.2: a revision of a finding is no item of its own. Its open finding carries the newest
+    // waiting one as revised.
+    const rows = db.query(SQL.items).all({ run: r.id }) as ItemRow[];
+    const finding = (x: ItemRow) => x.kind === "finding";
+    const revs = rows.some(finding) && r.pr !== null ? revisions(db, r.pr) : new Map<number, ItemRow>();
+    return {
+      run: withPhase(db, toRunDto(r)),
+      events: (db.query(SQL.events).all({ run: r.id }) as (Omit<RunEvent, "builtin"> & { builtin: number })[]).map((e) => ({
+        ...e,
+        builtin: e.builtin === 1,
+      })),
+      items: rows
+        .filter((x) => !finding(x) || (JSON.parse(x.payload_json) as FindingPayload).revises === undefined)
+        .map((x) => (finding(x) ? withRevision(x, revs) : toItemDto(x))),
+    };
+  }
+
   function briefOf(db: Database, pr: number): BriefDto {
     const b = db.query(SQL.brief).get({ pr }) as { note: string; profile: string; updated_at: number } | null;
     // A deleted profile falls back to the first profile.
@@ -2077,24 +2099,12 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     },
 
     run(db: Database, id: number): RunDetail | null {
-      const r = runRow(db, id);
-      // The DTO kind has no "consult". Only the SQL row can hold it.
-      if (!r || (r.kind as string) === "consult") return null;
-      // docs/plans/review-v2/spec.md section 2.2: a revision of a finding is no item of its own. Its open finding carries the newest
-      // waiting one as revised.
-      const rows = db.query(SQL.items).all({ run: id }) as ItemRow[];
-      const finding = (x: ItemRow) => x.kind === "finding";
-      const revs = rows.some(finding) ? revisions(db, r.pr) : new Map<number, ItemRow>();
-      return {
-        run: withPhase(db, toRunDto(r)),
-        events: (db.query(SQL.events).all({ run: id }) as (Omit<RunEvent, "builtin"> & { builtin: number })[]).map((e) => ({
-          ...e,
-          builtin: e.builtin === 1,
-        })),
-        items: rows
-          .filter((x) => !finding(x) || (JSON.parse(x.payload_json) as FindingPayload).revises === undefined)
-          .map((x) => (finding(x) ? withRevision(x, revs) : toItemDto(x))),
-      };
+      return runDetail(db, runRow(db, id));
+    },
+
+    // GET /api/tasks/:id/runs/:run: the log of a run of that task (pr NULL). The PR routes give 404 for it.
+    taskRunLog(db: Database, task: number, id: number): RunDetail | null {
+      return runDetail(db, db.query(TASK_RUN).get({ id, task }) as RunRow | null);
     },
 
     raw(db: Database, id: number): string | null {

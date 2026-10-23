@@ -5,8 +5,8 @@
 // The history helpers keep the entry depth and the scrollTop of the detail in history.state.
 
 // "runs" and "post": the Review runs and Ready to post views of the AI review group (prototype/v3 AIVIEWS).
-// "archive": the PRs that no other view shows (views.ts archived).
-export const LIST_VIEWS = ["needs", "reviewing", "mine", "following", "archive", "runs", "post"] as const;
+// "archive": the PRs that no other view shows (views.ts archived). "tasks": the Tasks view (docs/plans/review-v2/spec.md section 6.12).
+export const LIST_VIEWS = ["needs", "reviewing", "mine", "following", "archive", "runs", "post", "tasks"] as const;
 export type ListView = (typeof LIST_VIEWS)[number];
 
 export const SETTINGS_SECTIONS = [
@@ -41,6 +41,8 @@ export type ListRoute = {
   // "project/repo": the repository filter.
   repo: string | null;
   q: string;
+  // The task of the Tasks view: /tasks/:id. Only view "tasks" has one.
+  task: number | null;
 };
 export type SettingsRoute = { kind: "settings"; section: SettingsSection | null; profile: string | null };
 export type Route = ListRoute | SettingsRoute;
@@ -55,6 +57,7 @@ export const listRoute = (view: ListView = "needs"): ListRoute => ({
   explain: false,
   repo: null,
   q: "",
+  task: null,
 });
 
 export const prKeyOf = (r: PrRef) => `${encodeURIComponent(r.project)}/${encodeURIComponent(r.repo)}/${r.id}`;
@@ -79,6 +82,10 @@ export function parseRoute(pathname: string, search: string): Route {
   // An unknown view drops the rest of the path.
   if (seg.length && !has(LIST_VIEWS, seg[0])) return listRoute();
   const out = listRoute(has(LIST_VIEWS, seg[0]) ? seg[0] : "needs");
+  if (out.view === "tasks") {
+    out.task = seg.length === 2 ? count(seg[1]) : null;
+    return out;
+  }
   out.repo = q.get("repo") || null;
   out.q = q.get("q") ?? "";
   const [, project, repo, num, page] = seg;
@@ -108,6 +115,7 @@ export function formatRoute(r: Route): string {
     const tail = r.section === "profiles" && r.profile ? `/${encodeURIComponent(r.profile)}` : "";
     return `/settings${r.section ? `/${r.section}` : ""}${tail}`;
   }
+  if (r.view === "tasks") return r.task === null ? "/tasks" : `/tasks/${r.task}`;
   const path = r.pr
     ? `/${r.view}/${encodeURIComponent(r.pr.project)}/${encodeURIComponent(r.pr.repo)}/${r.pr.id}${r.explain ? "/explain" : ""}`
     : `/${r.view}`;
@@ -137,6 +145,7 @@ export function navMode(from: Route, to: Route, opened: boolean): "push" | "repl
     return from.kind !== "settings" || from.section !== to.section || from.profile !== to.profile ? "push" : "replace";
   if (from.kind === "settings") return "replace";
   if (from.view !== to.view || (to.repo !== null && from.repo !== to.repo)) return "push";
+  if (to.view === "tasks") return from.task !== to.task && opened && to.task !== null ? "push" : "replace";
   const samePr = (from.pr && prKeyOf(from.pr)) === (to.pr && prKeyOf(to.pr));
   if (!samePr) return opened && to.pr ? "push" : "replace";
   if (from.explain !== to.explain) return to.explain || opened ? "push" : "replace";

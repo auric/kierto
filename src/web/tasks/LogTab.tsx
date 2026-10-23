@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
+// The Log tab (docs/plans/review-v2/spec.md sections 6.7 and 6.12): the steps, newest first, with their commands, exit codes, the
+// output tails folded, the saved patch, and a link to the run log of each step with a run (RunLog.tsx).
+import { CircleAlert, CircleCheck, CircleDashed, CircleMinus, LoaderCircle, ScrollText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import type { TaskDto, TaskStepDto } from "../../shared/dto";
+
+const KIND: Record<TaskStepDto["kind"], string> = {
+  interview: "Questions",
+  spec: "Plan",
+  tests: "Tests",
+  implement: "Code",
+  check: "Checks",
+  fix: "Fix",
+  review: "Own review",
+  commit: "Commit",
+  push: "Push",
+  pr: "Pull request",
+  retarget: "New target",
+  rebase: "Rebase",
+  replan: "Plan again",
+  question: "Question",
+  spec_change: "Plan change",
+  size: "Line limit",
+};
+
+const STATE: Record<TaskStepDto["state"], { text: string; icon: typeof CircleCheck; className?: string }> = {
+  ok: { text: "Done", icon: CircleCheck },
+  failed: { text: "Failed", icon: CircleAlert, className: "text-destructive" },
+  running: { text: "Running", icon: LoaderCircle, className: "motion-safe:animate-spin" },
+  waiting: { text: "Waiting", icon: CircleDashed },
+  cancelled: { text: "Cancelled", icon: CircleMinus },
+  skipped: { text: "Skipped", icon: CircleMinus },
+};
+
+const seconds = (ms: number) => (ms < 1000 ? `${ms} ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 60_000)} min`);
+
+export const stepId = (id: number) => `task-step-${id}`;
+
+export function LogTab({ t, onRunLog }: { t: TaskDto; onRunLog: (run: number) => void }) {
+  if (!t.steps.length) return <p className="m-0 text-sm text-muted-foreground">No step has run yet.</p>;
+  return (
+    <ol aria-label="Steps, newest first" className="m-0 grid list-none gap-2 p-0">
+      {t.steps.map((s) => {
+        const st = STATE[s.state];
+        const Icon = st.icon;
+        const d = s.detail;
+        const ms = s.endedAt === null ? null : s.endedAt - s.startedAt;
+        return (
+          <li
+            key={s.id}
+            id={stepId(s.id)}
+            data-task-item
+            tabIndex={-1}
+            className="grid gap-1.5 rounded-md border bg-card px-3 py-2 outline-offset-2 focus-visible:outline-2"
+          >
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+              <Icon aria-hidden className={cn("size-4 shrink-0", st.className)} />
+              <span className="font-semibold">{KIND[s.kind]}</span>
+              {s.item && (
+                <code translate="no" className="font-mono text-xs text-ink-2">
+                  {s.item}
+                </code>
+              )}
+              <span className={cn("text-ink-2", s.state === "failed" && "text-destructive")}>{st.text}</span>
+              {s.attempt > 1 && <span className="text-xs text-muted-foreground">try {s.attempt}</span>}
+              {ms !== null && <span className="text-xs text-muted-foreground">{seconds(ms)}</span>}
+              {s.run !== null && (
+                <Button variant="ghost" size="xs" className="ml-auto" onClick={() => onRunLog(s.run as number)}>
+                  <ScrollText aria-hidden data-icon="inline-start" />
+                  Run log
+                </Button>
+              )}
+            </div>
+            {d.diffStat && (
+              <p className="m-0 text-xs text-ink-2">
+                {d.diffStat.files} {d.diffStat.files === 1 ? "file" : "files"}, +{d.diffStat.added} −{d.diffStat.removed}
+              </p>
+            )}
+            {d.commands.map((c, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: commands run in their stored order and never move.
+              <details key={i} className="rounded-[5px] border bg-pane px-2 py-1 text-xs">
+                <summary className="flex cursor-pointer flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span className="font-medium">{c.name}</span>
+                  <code translate="no" className="font-mono [overflow-wrap:anywhere] text-ink-2">
+                    {c.argv.join(" ")}
+                  </code>
+                  <span className={cn(c.exit !== 0 && "font-semibold text-destructive")}>
+                    {c.exit === null ? "stopped" : `exit ${c.exit}`}
+                  </span>
+                  <span className="text-muted-foreground">{seconds(c.ms)}</span>
+                </summary>
+                <pre translate="no" className="m-0 mt-1 max-h-72 overflow-auto font-mono text-[11px] whitespace-pre-wrap">
+                  {c.tail.trimEnd() || "(no output)"}
+                </pre>
+              </details>
+            ))}
+            {d.findings.length > 0 && (
+              <p className="m-0 text-xs text-ink-2">
+                {d.findings.length} {d.findings.length === 1 ? "point" : "points"} in the review
+              </p>
+            )}
+            {d.deniedPaths.length > 0 && (
+              <p className="m-0 text-xs text-ink-2">
+                Files the app does not commit:{" "}
+                <span translate="no" className="font-mono [overflow-wrap:anywhere]">
+                  {d.deniedPaths.join(", ")}
+                </span>
+              </p>
+            )}
+            {d.specChange && (
+              <p className="m-0 text-xs text-ink-2">
+                Changed plan files:{" "}
+                <span translate="no" className="font-mono">
+                  {d.specChange.paths.join(", ")}
+                </span>
+              </p>
+            )}
+            {d.patch && (
+              <p className="m-0 text-xs text-ink-2">
+                The changes of this step are saved in{" "}
+                <code translate="no" className="font-mono [overflow-wrap:anywhere]">
+                  {d.patch}
+                </code>
+              </p>
+            )}
+            {d.notes.map((n) => (
+              <p key={n} className="m-0 text-xs whitespace-pre-wrap text-ink-2">
+                {n}
+              </p>
+            ))}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}

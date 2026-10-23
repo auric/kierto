@@ -44,8 +44,11 @@ import {
   budgetOf,
   docsOf,
   moreTime,
+  mustFixPoint,
+  openPoints,
   repoSettings,
   setBlocked,
+  setSettings,
   stepAnswers,
   stopForRun,
   TASK_CHANGED,
@@ -54,6 +57,7 @@ import {
   taskDto,
   taskFilesOf,
   taskRow,
+  taskSettingsOf,
 } from "./tasks";
 import {
   branchName,
@@ -160,8 +164,7 @@ export function checkFailure(r: Extract<ChecksResult, { status: "ran" }>): Conte
 type Point = { id: number; payload: FindingPayload };
 
 // The points of the own review that the loop fixes: confirmed blocker and major findings (spec.md section 6.7).
-export const mustFix = (points: Point[]) =>
-  points.filter((p) => p.payload.verify?.verdict === "confirmed" && (p.payload.severity === "blocker" || p.payload.severity === "major"));
+export const mustFix = (points: Point[]) => points.filter((p) => mustFixPoint(p.payload));
 
 // context/failure.md of a fix step after the own review: the confirmed points with path:line.
 export function reviewFailure(points: Point[]): ContextFile {
@@ -186,6 +189,8 @@ type Ctx = {
   docs: Docs;
   plan: Plan;
   budget: number;
+  // "Keep one PR": the line budget stops the part no more.
+  keep: boolean;
   exclude: string[];
   testGlobs: string[] | null;
   who: { name: string; email: string } | null;
@@ -457,7 +462,7 @@ export function createLoop(opts: LoopOptions) {
   async function sizeCheck(c: Ctx) {
     const n = await changedLines(c.wt, c.base, await headOf(c.wt), c.exclude);
     c.db.query(Q.lines).run({ id: c.part.id, lines: n.lines, now: now() });
-    if (n.lines <= c.budget) return;
+    if (n.lines <= c.budget || c.keep) return;
     const text = `Needs you: this PR would have ${n.lines} changed lines, over your ${c.budget} limit.`;
     const step = insertStep(c.db, { task: c.id, part: c.part.id, kind: "size", item: null, state: "failed" }, now());
     endStep(c.db, step, "failed", { diffStat: n, notes: [text] }, now());
@@ -703,6 +708,7 @@ export function createLoop(opts: LoopOptions) {
       docs,
       plan: docs.parsed,
       budget: budgetOf(db, t),
+      keep: taskSettingsOf(t).keepOnePr === true,
       exclude: repo.excludeGlobs ?? LOCK_GLOBS,
       testGlobs: repo.testGlobs,
       who: await identity(clone?.path ?? null),
@@ -787,24 +793,53 @@ export function createLoop(opts: LoopOptions) {
         await runPart(db, t, part);
       }
     } catch (e) {
-      if (e instanceof Halt) return;
-      const text = `The build stopped: ${noUrl((e as Error).message)}`;
-      log(`Task ${id}: ${text}`);
-      try {
-        db.transaction(() => {
-          const cur = taskRow(db, id);
-          if (cur) stopForRun(db, { task: id, version: cur.version }, null, { status: "failed", text }, now());
-        })();
-        changed(id);
-      } catch (e2) {
-        log(`Task ${id}: could not stop the build: ${(e2 as Error).message}`);
-      }
+      failed(db, id, e);
     }
   }
 
-  function kick(db: Database, id: number, reset = false) {
+  // An error that no reason covers stops the task. Resume starts the step again.
+  function failed(db: Database, id: number, e: unknown) {
+    if (e instanceof Halt) return;
+    const text = `The build stopped: ${noUrl((e as Error).message)}`;
+    log(`Task ${id}: ${text}`);
+    try {
+      db.transaction(() => {
+        const cur = taskRow(db, id);
+        if (cur) stopForRun(db, { task: id, version: cur.version }, null, { status: "failed", text }, now());
+      })();
+      changed(id);
+    } catch (e2) {
+      log(`Task ${id}: could not stop the build: ${(e2 as Error).message}`);
+    }
+  }
+
+  // spec.md section 6.7, own review: "Fix these too" starts one fix step with the listed points of a part that waits for its PR, then
+  // the checks with their fixes and one commit. The part keeps its state. Changes that an earlier stop left go to a patch first.
+  async function drivePoints(db: Database, id: number, partId: number) {
+    try {
+      const t = taskRow(db, id);
+      const part = parts(db, id).find((p) => p.id === partId);
+      if (!t || part?.state !== "self_reviewed") return;
+      const c = await context(db, t, part);
+      guard(c);
+      await undo(c.wt, db, id, (db.query(Q.lastStep).get({ part: part.id }) as { id: number | null }).id ?? 0);
+      refreshPlan(c);
+      const points = openPoints(db, id);
+      if (!points.length) return;
+      const allow = c.plan.parts.flatMap((x) => x.tasks.flatMap((k) => k.files));
+      const step = (a: number) => partStepFile(c.plan, c.plan.parts, "review", a);
+      await claude(c, "fix", "points", { allow, step, failure: reviewFailure(points) });
+      await greenOrFix(c, "points", allow, step);
+      await commit(c, "points", `${t.key}: Fix the small review points of part ${part.ord}`, allow);
+    } catch (e) {
+      failed(db, id, e);
+    }
+  }
+
+  // points: the part whose listed points the driver fixes. Absent: the build of the next part.
+  function kick(db: Database, id: number, reset = false, points?: number) {
     if (drivers.has(id) || closing) return;
-    const p = drive(db, id, reset).finally(() => {
+    const p = (points === undefined ? drive(db, id, reset) : drivePoints(db, id, points)).finally(() => {
       if (drivers.get(id) === p) drivers.delete(id);
     });
     drivers.set(id, p);
@@ -929,6 +964,39 @@ export function createLoop(opts: LoopOptions) {
         setBlocked(db, { task: id, version: t.version }, null, at);
       })();
       kick(db, id, true);
+      changed(id);
+      return { status: 202, task: dto(db, id) };
+    },
+
+    // POST /api/tasks/:id/limit (spec.md section 6.1): "Keep one PR" or "Change the limit" of a part over the line limit. The build goes
+    // on from the last commit. A new limit under the changed lines stops it again.
+    limit(db: Database, id: number, input: { version: number; keep?: true; lineBudget?: number }): TaskResult {
+      const t = load(db, id, input.version);
+      if ("status" in t) return t;
+      if (t.state !== "implementing" || blockedOf(t)?.kind !== "size") return conflict(db, id, "No part waits for the line limit.");
+      if (drivers.has(id)) return conflict(db, id, BUSY);
+      const s = taskSettingsOf(t);
+      setSettings(
+        db,
+        { task: id, version: t.version },
+        input.keep ? { ...s, keepOnePr: true } : { ...s, lineBudget: input.lineBudget },
+        now(),
+      );
+      kick(db, id, true);
+      changed(id);
+      return { status: 200, task: dto(db, id) };
+    },
+
+    // POST /api/tasks/:id/parts/:part/fix: "Fix these too" for the listed points of a part that waits for its PR.
+    fixPoints(db: Database, id: number, partId: number, input: { version: number }): TaskResult {
+      const t = load(db, id, input.version);
+      if ("status" in t) return t;
+      if (t.state !== "implementing" || t.blocked_json !== null) return conflict(db, id, TASK_STATE_TEXT[t.state]);
+      if (drivers.has(id)) return conflict(db, id, BUSY);
+      if (parts(db, id).find((p) => p.id === partId)?.state !== "self_reviewed")
+        return conflict(db, id, "This part does not wait for its PR.");
+      if (!openPoints(db, id).length) return conflict(db, id, "No point waits for a fix.");
+      kick(db, id, false, partId);
       changed(id);
       return { status: 202, task: dto(db, id) };
     },

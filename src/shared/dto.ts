@@ -1217,8 +1217,14 @@ export const taskPushInput = z.object({ version, force: z.literal(true).optional
 export const taskSizeInput = z.object({ version, size: taskSize });
 // POST /api/tasks/:id/spec-change/:step.
 export const specChangeInput = z.object({ version, accept: z.boolean() });
-// POST /api/tasks/:id/pause, /resume, /stop, /close, and /parts/:part/retarget.
+// POST /api/tasks/:id/pause, /resume, /stop, /close, /parts/:part/retarget, and /parts/:part/fix ("Fix these too").
 export const taskVersionInput = z.object({ version });
+// POST /api/tasks/:id/limit (spec.md section 6.1, a part over the line limit): keep, "Keep one PR"; lineBudget, "Change the limit" for
+// this task.
+export const taskLimitInput = z.union([
+  z.object({ version, keep: z.literal(true) }),
+  z.object({ version, lineBudget: z.number().int().min(1).max(100_000) }),
+]);
 // PUT /api/repos/:project/:repo/task-settings. spec_dir: a relative folder; {key} stands for the Jira key.
 export const repoTaskSettingsInput = z.object({
   specDir: z
@@ -1261,7 +1267,8 @@ export type TaskQuestionDto = {
   answeredAt: number | null;
 };
 
-// pushed: the lease of the next push.
+// pushed: the lease of the next push. prState and waiting: the synced PR row of pr (OPEN, MERGED, DECLINED), and the names of its
+// reviewers who have not approved yet. null and [] before the first sync of the PR.
 export type TaskPartDto = {
   id: number;
   ord: number;
@@ -1276,6 +1283,19 @@ export type TaskPartDto = {
   pushed: string | null;
   lines: number | null;
   usage: RunUsage | null;
+  prState: string | null;
+  waiting: string[];
+};
+
+// A point of the newest own review of a part that the loop does not fix: not a confirmed blocker or major (spec.md section 6.7).
+// "Fix these too" fixes them.
+export type TaskPointDto = { id: number; severity: string; path: string; line: number | null; text: string };
+
+// GET /api/tasks/:id/parts/:part/diff: the part diff from the base commit to the part head. more: the rows that the answer leaves out.
+export type TaskDiffDto = {
+  base: string;
+  head: string;
+  files: (Omit<DiffFileDto, "rows"> & { rows: DiffRowDto[]; more: number })[];
 };
 
 export type TaskStepDto = {
@@ -1292,7 +1312,8 @@ export type TaskStepDto = {
   endedAt: number | null;
 };
 
-// GET /api/tasks. A row of the Tasks view.
+// GET /api/tasks. A row of the Tasks view. progress: the facts of the status line (spec.md section 6.12, Inbox). part: the ordinal of
+// the first code part that did not merge, 0 before the build. ready: that part waits for its PR. merged: every PR of the task merged.
 export type TaskRowDto = {
   id: number;
   project: string;
@@ -1305,6 +1326,7 @@ export type TaskRowDto = {
   version: number;
   updatedAt: number;
   closedAt: number | null;
+  progress: { planReady: boolean; part: number; parts: number; ready: boolean; merged: boolean };
 };
 
 // The newest interview result (spec.md section 6.5) of round round. done false: the answers start round 2 when it is left.
@@ -1345,6 +1367,13 @@ export type TaskDto = TaskRowDto & {
   questions: TaskQuestionDto[];
   steps: TaskStepDto[];
   createdAt: number;
+  // The reviewers that the open-PR confirm starts with (spec.md section 6.9): settings.reviewers, else the reviewers of your newest
+  // PR in this repository.
+  reviewers: string[];
+  // The points that "Fix these too" fixes. Empty after the commit of their fix.
+  points: TaskPointDto[];
+  // The build loop works on the task now, also between two steps.
+  working: boolean;
 };
 
 // 409 of a task mutation: the version is old, or the state takes no such change. task: the current task.

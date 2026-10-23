@@ -22,7 +22,7 @@ import { createReviewJobs } from "../src/server/review/jobs";
 import { createSecrets } from "../src/server/secrets";
 import { createSettings } from "../src/server/settings";
 import { createSyncEngine } from "../src/server/sync/engine";
-import { FAKE_TOKEN, FAKE_USER, fixture, key, startFakeBitbucket } from "../tests/support/fake-bitbucket";
+import { FAKE_TOKEN, FAKE_USER, fixture, key, repoWrites, startFakeBitbucket } from "../tests/support/fake-bitbucket";
 import { JIRA_TOKEN, startFakeJira } from "../tests/support/fake-jira";
 import { claudeStream, fakeRunner, REVIEW_RESULT, reviewRemote, stubListTools } from "../tests/support/review-fixture";
 import * as S from "../tests/support/scenarios";
@@ -189,7 +189,101 @@ const DISCUSS = {
   reply: "",
   coverage: { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] },
 };
+// Build a Jira task (docs/plans/review-v2/spec.md sections 6.5 and 7.2) from the task chip of my PR 1004: the questions, a small plan
+// for src/cache/flush.ts of main, the files of each build step, and an own review with no point. The approved command is "bun test".
+const READ_FLUSH = { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] };
+const TASK_INTERVIEW = {
+  done: true,
+  summary:
+    "flush() holds the write lock for the whole batch, so a long flush blocks every reader. The task asks for one lock per entry. I plan to move cache.lock() into the loop and add a test for the lock order.",
+  questions: [
+    {
+      id: "q1",
+      text: "May a reader see a partly flushed batch?",
+      why: "With one lock per entry, a reader can run between two entries.",
+      kind: "choice",
+      options: [
+        { label: "Yes, entries are independent", detail: "Readers never need a whole batch." },
+        { label: "No, keep batches whole", detail: "Then the lock stays around the loop, and the task needs another design." },
+      ],
+      recommended: 0,
+    },
+    {
+      id: "q2",
+      text: "Must flush() release the lock when write() throws?",
+      why: "Today a throw leaves the lock held.",
+      kind: "choice",
+      options: [
+        { label: "Yes, in a finally block", detail: "One more block per entry." },
+        { label: "No, keep the current behavior", detail: "Out of scope for this task." },
+      ],
+      recommended: 0,
+    },
+  ],
+  unknowns: [],
+  coverage: READ_FLUSH,
+};
+const TASK_SPEC = {
+  title: "Release the write lock after each entry",
+  size: "small",
+  estimate: { parts: 1, lines: 30, files: 2, modules: ["cache"], db: false, api: false, unknowns: [] },
+  map: [
+    { path: "src/cache/flush.ts", line: 2, symbol: "flush", kind: "change", what: "Move the lock into the loop." },
+    { path: "src/cache/flush.ts", line: 6, symbol: "flush", kind: "change", what: "Release the lock after each entry." },
+  ],
+  change:
+    "flush() takes the write lock for one entry at a time, so a long flush no longer blocks the readers. A reader can see a partly flushed batch, as the answers allow.",
+  design: null,
+  spec: null,
+  parts: [
+    {
+      n: 1,
+      kind: "part",
+      title: "Lock per entry",
+      goal: "flush() holds the write lock for one entry at a time.",
+      lines: 30,
+      acceptance: [{ id: "A1", text: "flush() takes the lock inside the loop." }],
+      tests: [{ test: "tests/flush.test.ts", proves: ["A1"] }],
+      tasks: [
+        {
+          id: "T1",
+          title: "Take the lock inside the loop",
+          files: ["src/cache/flush.ts"],
+          run: ["tests/flush.test.ts"],
+          done: "tests/flush.test.ts passes.",
+        },
+      ],
+    },
+  ],
+  testing: { commands: [{ name: "test", kind: "test", argv: ["bun", "test"] }], services: [], notes: "" },
+  flag: null,
+  questions: [],
+  coverage: READ_FLUSH,
+};
+const TASK_TEST = `import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+
+test("flush takes the write lock for each entry", () => {
+  const src = readFileSync("src/cache/flush.ts", "utf8");
+  expect(src.indexOf("cache.lock()")).toBeGreaterThan(src.indexOf("for (const entry"));
+});
+`;
+const TASK_FLUSH = [
+  "export function flush(cache: Cache) {",
+  "  for (const entry of cache.dirty()) {",
+  "    const lock = cache.lock();",
+  "    try {",
+  "      write(entry);",
+  "    } finally {",
+  "      lock.release();",
+  "    }",
+  "  }",
+  "}",
+  "",
+].join("\n");
+
 // The verify phase of a review run gets one tool call and no subagent (docs/plans/review-v2/spec.md section 1.6).
+const NO_AGENTS = claudeStream(claudeDir, "check", "claude/b6-hostile-repo.jsonl");
 runner.write({
   fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT),
   fix: FIX,
@@ -197,10 +291,23 @@ runner.write({
   verify: VERIFY,
   explain: EXPLAIN,
   discuss: DISCUSS,
-  bySchema: { verify: { fixture: claudeStream(claudeDir, "check", "claude/b6-hostile-repo.jsonl") } },
+  interview: TASK_INTERVIEW,
+  spec: TASK_SPEC,
+  taskReview: { summary: "The lock moves into the loop.", risks: [], questions: [], findings: [], coverage: READ_FLUSH },
+  seq: {
+    "implement:tests": [{ writes: [{ path: "repo/tests/flush.test.ts", text: TASK_TEST }] }],
+    "implement:implement": [{ writes: [{ path: "repo/src/cache/flush.ts", text: TASK_FLUSH }] }],
+    "implement:fix": [{ writes: [{ path: "repo/src/cache/flush.ts", text: TASK_FLUSH }] }],
+  },
+  // The task runs get no subagent, as the verify phase.
+  bySchema: Object.fromEntries((["verify", "interview", "spec", "implement"] as const).map((k) => [k, { fixture: NO_AGENTS }])),
 });
 const SOURCE_PRS = [1001, 1002, 31, 210, 212, 77, 74, 33, 215, 9, 5, 2, 1004];
 const remote = await reviewRemote(claudeDir, { ...Object.fromEntries(SOURCE_PRS.map((id) => [id, "source" as const])), 81: "next" });
+// A task builds on the target branch of its PR (docs/plans/review-v2/spec.md section 6.2). The recorded PRs name topic/sample-4.
+await git(["--git-dir", remote.remote, "update-ref", "refs/heads/topic/sample-4", remote.target], {
+  env: gitEnv(join(claudeDir, "empty.gitconfig")),
+});
 
 // DEMO_PORT: scripts/screenshots.ts runs the demo on a spare port.
 const PORT = Number(process.env.DEMO_PORT ?? 7399);
@@ -726,6 +833,20 @@ for (const p of [...Object.values(prs), fixing]) {
 const dump = Buffer.concat([Buffer.from("MDMP", "latin1"), Buffer.alloc(4092)]);
 jira.attach("ABC-10688", { id: "10102", filename: "flush-hang.dmp", mimeType: "application/octet-stream", body: dump });
 
+// "Open the PR" of a task (docs/plans/review-v2/spec.md section 6.9): the PR create of PROJ1/sample-repo-4. The open-PR list and the
+// repository GET stay absent, as before, so the PR context of the reviews does not change. A new PR gets an empty activity page.
+const taskWrites = repoWrites(fake, "PROJ1", "sample-repo-4");
+delete fake.routes[key("GET", `${taskWrites.path}/pull-requests`)];
+delete fake.routes[key("GET", taskWrites.path)];
+const createTaskPr = fake.routes[key("POST", `${taskWrites.path}/pull-requests`)];
+fake.routes[key("POST", `${taskWrites.path}/pull-requests`)] = async (req) => {
+  const res = typeof createTaskPr === "function" ? await createTaskPr(req) : { status: 404 };
+  const id = "body" in res ? (res.body as { id?: number } | undefined)?.id : undefined;
+  if ("status" in res && res.status === 201 && id !== undefined)
+    fake.routes[key("GET", `${taskWrites.path}/pull-requests/${id}/activities`)] = { status: 200, body: S.onePage([]) };
+  return res;
+};
+
 // The user's clone of PROJ1/sample-repo-4: a temp clone of the demo remote on the PR source branch at its head, outside the data
 // folder. Its own identity and no signing, so a commit never waits for a prompt. The commit runs the user's hooks, as Apply does.
 const cloneDir = realpathSync.native(mkdtempSync(join(tmpdir(), "review-loop-demo-clone-")));
@@ -776,6 +897,8 @@ const review = createReviewJobs({
   runnerCommand: runner.command,
   listTools: stubListTools,
   gitRemote: remote.gitRemote,
+  // A task pushes its branch to the demo remote, on "Open the PR" only.
+  repoRemote: async () => ({ url: remote.remote, config: [] }),
 });
 
 await sync.syncNow();
@@ -786,6 +909,12 @@ db?.query("INSERT INTO repo_clone (project, repo, path, updated_at) VALUES ('PRO
   path: cloneDir,
   now: Date.now(),
 });
+// The demo remote has a branch "feature", so a "feature/" task branch cannot exist there (git refs are paths). Tasks use "task/".
+db?.query("INSERT INTO repo_task_settings (project, repo, branch_prefix, updated_at) VALUES ('PROJ1', 'sample-repo-4', 'task/', $now)").run(
+  {
+    now: Date.now(),
+  },
+);
 phase = 2;
 await sync.syncNow();
 

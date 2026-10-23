@@ -207,6 +207,7 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
       { keys: ["Esc", "←"], text: "Back to the list. In full width, Esc first goes back to three panes." },
       { keys: ["z"], text: "Full width on or off: hide the views and the list" },
       { keys: ["/"], text: "Filter the list" },
+      { keys: ["j", "k", "Enter"], text: "In a task: move over the steps and parts, or press the main button" },
     ],
   },
   {

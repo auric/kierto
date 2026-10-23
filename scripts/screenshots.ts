@@ -206,6 +206,30 @@ async function shots(browser: Browser) {
   await toTop(page.locator("#t-1000003"), 64);
   await save(page, "reply-note");
 
+  // Build a Jira task (docs/plans/review-v2/spec.md section 7.2): Build on the task chip of my PR, the questions with the recommended
+  // answers preselected, the plan with the first-use warning, then the change that waits for its PR (scripts/demo.ts TASK_*).
+  // The pointer moves away after each click, so no button shows its hover color. The button color has a short transition.
+  const rest = async () => {
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(400);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  };
+  await openPr(page, "Release the write lock after each entry");
+  await page.getByRole("button", { name: "Build this task: ABC-10688" }).click();
+  const questions = page.locator("#task-questions");
+  await questions.waitFor({ timeout: RUN_MS });
+  await rest();
+  await save(page, "task-questions");
+  await questions.getByRole("button", { name: "Send answers" }).click();
+  await page.locator("#task-plan").waitFor({ timeout: RUN_MS });
+  await page.getByRole("checkbox", { name: "I understand" }).check();
+  await rest();
+  await save(page, "task-plan");
+  await page.locator("[data-primary]").click();
+  await page.locator("[data-primary]", { hasText: "Open the PR" }).waitFor({ timeout: 3 * RUN_MS });
+  await rest();
+  await save(page, "task-build");
+
   await page.goto(`${BASE}/settings/profiles`);
   await page.locator("#h-profiles").waitFor();
   await toTop(page.locator("#h-profiles"));

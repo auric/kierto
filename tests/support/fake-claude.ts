@@ -54,6 +54,9 @@ export type FakeScenario = {
   bySchema?: Partial<Record<SchemaKind, Partial<Omit<FakeScenario, "record" | "auth" | "bySchema">>>>;
   // docs/plans/review-v2/spec.md section 6.7, own review: the structured output of a review run. Absent: the fixture result.
   review?: unknown;
+  // The structured output of the own review of a task part only: a review run whose stdin says "- Pull request: none yet.". Absent:
+  // review. The demo keeps the fixture result for its PR reviews this way.
+  taskReview?: unknown;
   // Fields for the Nth run of one call key (callKey), after bySchema. The last entry repeats. The record file counts the earlier runs.
   seq?: Record<string, Partial<Omit<FakeScenario, "record" | "auth" | "bySchema" | "seq">>[]>;
 };
@@ -390,7 +393,7 @@ async function main() {
     if (kind === "interview") return s.interview ?? echoInterview(stdin);
     if (kind === "spec") return s.spec ?? echoSpec();
     if (kind === "implement") return s.implement ?? echoImplement();
-    if (kind === "review") return s.review;
+    if (kind === "review") return s.taskReview !== undefined && stdin.includes("- Pull request: none yet.") ? s.taskReview : s.review;
     if (props.replies !== undefined) return s.replies ?? echoReplies(stdin, { notes: s.notes, cites: s.cites });
     if (props.earlier !== undefined) return s.rereview ?? echoRereview(stdin, fixture);
     if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);

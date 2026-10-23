@@ -26,6 +26,7 @@ The name says what the app does. It is one inbox for the pull requests that you 
 - Turns findings into drafts with a severity. You accept, edit, or discard each one, then post them as inline comments.
 - Drafts replies to the threads where it is your turn. On your own pull request, it proposes fixes that you review before they touch your clone.
 - Explains a pull request on its own page: what to read first, a walkthrough with links into the diff and diagrams, and the risks on their code.
+- Builds a Jira task: Claude asks a few questions, writes a short plan, and builds the code with tests in a copy of the repository that the app owns. The pull request opens only when you click.
 - Lists what the review did not check, so a gap never looks like a pass.
 
 ## Safety model
@@ -33,14 +34,15 @@ The name says what the app does. It is one inbox for the pull requests that you 
 - PR Review Inbox runs on your machine and listens on 127.0.0.1 only. It checks the Host and Origin of each request, and each change needs a session token.
 - Reviews use your own Claude Code CLI with your claude.ai login. PR Review Inbox removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the child process.
 - Nothing goes to Bitbucket until you click. PR Review Inbox posts your accepted drafts. Claude never posts.
-- Claude never runs in your clone. Reviews run on a sanitized snapshot with read-only tools. PR Review Inbox never pushes.
+- Claude never runs in your clone. Reviews run on a sanitized snapshot with read-only tools. PR Review Inbox never pushes your branches.
+- Build a Jira task is the only part that changes code or pushes. Claude edits files only in a worktree that the app owns, the app runs only the commands that you approved, and it pushes only the branch of the task when you click "Push and open PR". It never pushes to the target branch.
 - Your Bitbucket token goes into the OS secret store. It never goes into the database, logs, URLs, or prompts.
 
 ## Requirements
 
 - Windows or Linux.
 - The `claude` CLI, logged in with a claude.ai subscription. Check with `claude auth status`.
-- A Bitbucket Server or Data Center personal access token with Project read and Repository write. PR Review Inbox needs write only to post comments and to resolve or reopen threads.
+- A Bitbucket Server or Data Center personal access token with Project read and Repository write. PR Review Inbox needs write only to post comments, to resolve or reopen threads, and to push the branch and open the pull request of a Jira task.
 - `git` on the PATH.
 - Bun 1.x, only to build from source.
 
@@ -177,6 +179,75 @@ Press `w`, or click "Explain this PR", to open the walkthrough page of the pull 
   <img alt="The Explain page: the summary, the reading order, and the walkthrough with links into the diff and a flowchart" src="docs/screenshots/explain-light.webp">
 </picture>
 
+### Build a Jira task
+
+Click "Build" on the task chip of a pull request, or open Tasks in the sidebar and use "Build a Jira task" with a key and a repository. Claude reads the task and the code, then asks a few questions. Each question says why it matters and offers options, and the recommended option starts selected. "Use the recommended answers" sends them all.
+
+![The Task view with the step strip, the status sentence, and the questions with the recommended options](docs/screenshots/task-questions.webp)
+
+Then Claude writes a short change plan into `specs/<KEY>/plan.md`: the code to change with file and line, the pattern to copy, the tests to extend, and the tasks. The plan screen shows the size, the line count, and the commands that the plan proposes from the repository files. You pick the commands and approve the plan. Edit changes a plan file before the approval.
+
+![The plan screen with the size, the commands, the first-use warning, and the plan file](docs/screenshots/task-plan.webp)
+
+The build runs in steps. Claude writes the failing tests first, then the code of each task. After each step, the app runs your approved commands and shows each exit code and output in the Log tab. Each finished task becomes one commit with your name and email. At the end, Claude reviews its own change and fixes the points that its check confirms. The task view always says in one sentence who must act, with one main button. "Pause after this step", Stop, and Resume work at any step. Resume starts the stopped step again from the last commit and keeps the dropped changes as a patch file.
+
+![The change is ready and checked by Claude, with Open the PR, the build progress, and the Log tab](docs/screenshots/task-build.webp)
+
+The task stops and says why when it needs you: the tests stay red after 3 fixes, its own review still finds a point after 2 fixes, the change is over your line limit ("Keep one PR" or "Change the limit"), Claude asks a question, Claude wants to change the plan, or a step wrote a file that the app does not commit. "Fix the small points too" fixes the minor points of its own review. When the change is ready, "Open the PR" shows the branch, the target, the reviewers, and the line count. "Push and open PR" pushes the branch and opens the pull request. "Close the task" ends it. Its branch and pull request stay.
+
+What keeps this safe:
+
+- Claude edits files only in a git worktree in the data folder of the app, never in your clone. It has no shell, no web access, and no agents. The worktree hides `.claude/`, `.mcp.json`, CLAUDE.md, AGENTS.md, and git hook folders. A step that writes such a file, or a file outside the worktree, is undone, its changes go to a patch file, and the task stops.
+- The app runs only the commands that you approved, as argument lists without a shell, with no token in their environment. The first build in a repository asks you to confirm a warning: the commands run code that Claude wrote, and on Windows nothing limits what that code can read or reach.
+- Nothing goes to Bitbucket before "Push and open PR". The app pushes only the branch of the task, never the target branch, and always with a lease, so it never overwrites the push of someone else.
+
+This version builds small tasks: one pull request with the plan and the code. A medium or large plan waits after its approval, because the plan review pull request and the parts come in a later version. The task notices no merge by itself yet: close it when its pull request is done.
+
+<details>
+<summary>The states of a task</summary>
+
+```mermaid
+stateDiagram-v2
+  [*] --> interview
+  interview --> interview: ASKED
+  interview --> spec_draft: ANSWERED
+  interview --> stopped: STOP
+  interview --> failed: FAIL
+  spec_draft --> implementing: APPROVE if small
+  spec_draft --> spec_draft: APPROVE if planReview
+  spec_draft --> spec_pr_open: OPEN_SPEC_PR if planReview
+  spec_draft --> stopped: STOP
+  spec_draft --> failed: FAIL
+  spec_pr_open --> spec_approved: SPEC_GATE_PASSED if gate
+  spec_pr_open --> spec_approved: OVERRIDE
+  spec_pr_open --> done: CLOSE
+  spec_pr_open --> stopped: STOP
+  spec_pr_open --> failed: FAIL
+  spec_approved --> implementing: START_BUILDING
+  spec_approved --> stopped: STOP
+  spec_approved --> failed: FAIL
+  implementing --> implementing: PART_READY
+  implementing --> ready: LAST_PR_OPEN
+  implementing --> stopped: STOP
+  implementing --> failed: FAIL
+  ready --> done: ALL_MERGED
+  ready --> done: CLOSE
+  ready --> stopped: STOP
+  ready --> failed: FAIL
+  stopped --> interview: RESUME if stoppedFrom interview
+  stopped --> spec_draft: RESUME if stoppedFrom spec_draft
+  stopped --> spec_pr_open: RESUME if stoppedFrom spec_pr_open
+  stopped --> spec_approved: RESUME if stoppedFrom spec_approved
+  stopped --> implementing: RESUME if stoppedFrom implementing
+  stopped --> ready: RESUME if stoppedFrom ready
+  stopped --> done: CLOSE
+  stopped --> failed: FAIL
+  done --> done: CLOSE
+  failed --> [*]
+```
+
+</details>
+
 ### Project instructions
 
 Each run can read the CLAUDE.md files of your clone, extra text from Settings, and your global CLAUDE.md. CLAUDE.md files in the pull request do not load as instructions. Settings shows the full text that a run gets.
@@ -220,6 +291,7 @@ Press `?` in the app for the full list.
 | `p` | Post the accepted items |
 | `f` `F` | Your pull request: open the Fix list |
 | `x` | Resolve the current thread, or reopen it when it is resolved |
+| `j` `k`, `Enter` | In a task: move over the steps and parts, or press the main button |
 
 ## Configuration
 

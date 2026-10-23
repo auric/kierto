@@ -1,0 +1,420 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
+// docs/plans/review-v2/spec.md sections 6.12 and 7.1 (WP-B5, AC-UX1, AC-UX3, AC-UX9): one test per state row of the Task view table for
+// small tasks, the status line of a Tasks row, and the plain-word helpers.
+import { describe, expect, test } from "bun:test";
+import type { TaskDto, TaskPartDto, TaskQuestionDto, TaskRowDto, TaskStepDto } from "../../src/shared/dto";
+import { stepDetail } from "../../src/shared/task";
+import { elapsed, planSentence, rowStatus, stoppedAt, type TaskView, taskView } from "../../src/web/tasks/model";
+
+console.log(`tasks-model.test.ts imported from ${Bun.resolveSync("../../src/web/tasks/model", import.meta.dir)}`);
+
+const NOW = 1_800_000_000_000;
+const R = "Claude";
+const MIN = 60_000;
+
+const step = (o: Partial<TaskStepDto> & Pick<TaskStepDto, "id" | "kind">): TaskStepDto => ({
+  part: null,
+  ord: o.id,
+  run: null,
+  state: "ok",
+  attempt: 1,
+  item: null,
+  detail: stepDetail.parse({}),
+  startedAt: NOW - 5 * MIN,
+  endedAt: NOW - 4 * MIN,
+  ...o,
+});
+
+const part = (o: Partial<TaskPartDto> = {}): TaskPartDto => ({
+  id: 7,
+  ord: 1,
+  kind: "single",
+  title: "Trim spaces in user names",
+  branch: "feature/ABC-12-trim-spaces-in-user-names",
+  baseBranch: "main",
+  pr: null,
+  remotePr: null,
+  state: "implementing",
+  head: "a".repeat(40),
+  pushed: null,
+  lines: 80,
+  usage: null,
+  prState: null,
+  waiting: [],
+  ...o,
+});
+
+const question = (o: Partial<TaskQuestionDto> = {}): TaskQuestionDto => ({
+  id: 1,
+  source: "interview",
+  round: 1,
+  ord: 0,
+  text: "Keep the old behavior?",
+  why: "It changes the tests.",
+  kind: "choice",
+  options: [
+    { label: "Keep it", detail: "" },
+    { label: "Drop it", detail: "" },
+  ],
+  recommended: 0,
+  answer: null,
+  step: 1,
+  askedAt: NOW,
+  answeredAt: null,
+  ...o,
+});
+
+function task(o: Partial<TaskDto> = {}): TaskDto {
+  return {
+    id: 1,
+    project: "PROJ",
+    repo: "repo",
+    key: "ABC-12",
+    title: "Trim spaces in user names",
+    state: "interview",
+    size: null,
+    blocked: null,
+    version: 3,
+    updatedAt: NOW,
+    closedAt: null,
+    progress: { planReady: false, part: 0, parts: 0, ready: false, merged: false },
+    interview: null,
+    plan: null,
+    strip: { steps: ["Questions", "Plan", "Build", "Done"], current: 0 },
+    originPr: 5,
+    stoppedFrom: null,
+    sizeBy: null,
+    targetBranch: "main",
+    baseCommit: null,
+    specDir: "specs/ABC-12/",
+    specBranch: null,
+    estimate: null,
+    settings: {},
+    docs: null,
+    parts: [],
+    questions: [],
+    steps: [],
+    createdAt: NOW - 30 * MIN,
+    reviewers: [],
+    points: [],
+    working: false,
+    ...o,
+  };
+}
+
+const PLAN: NonNullable<TaskDto["plan"]> = {
+  proposed: "small",
+  minimum: "small",
+  rules: [],
+  budget: 400,
+  missing: 0,
+  base: "b".repeat(40),
+  commands: [{ id: "new-1", name: "test", kind: "test", argv: ["bun", "test"], timeoutSec: 600, saved: false }],
+  warning: true,
+  approved: false,
+};
+const ESTIMATE: NonNullable<TaskDto["estimate"]> = { parts: 1, lines: 80, files: 1, modules: [], db: false, api: false, unknowns: [] };
+
+const view = (t: TaskDto) => taskView(t, { runner: R, now: NOW });
+const shape = (v: TaskView) => ({
+  status: v.status,
+  primary: v.primary?.label ?? null,
+  more: v.more.map((a) => a.label),
+  screen: v.screen,
+});
+const building = (o: Partial<TaskDto> = {}) =>
+  task({ state: "implementing", size: "small", plan: { ...PLAN, approved: true }, estimate: ESTIMATE, parts: [part()], ...o });
+
+describe("the Task view table (spec.md section 6.12, small rows)", () => {
+  test("interview, running: Claude reads, no primary, Stop", () => {
+    const v = view(task({ steps: [step({ id: 1, kind: "interview", state: "running", startedAt: NOW - 2 * MIN, endedAt: null })] }));
+    expect(shape(v)).toEqual({ status: "Claude is reading the task and the code.", primary: null, more: ["Stop"], screen: "questions" });
+    expect(v.detail).toBe("Running for 2 minutes.");
+    expect(v.running).toBe(true);
+  });
+
+  test("interview, questions: the count, Answer N questions, and the recommended answers in More", () => {
+    const v = view(
+      task({
+        blocked: { kind: "question", step: 1, text: "Claude has 2 questions before it writes the plan." },
+        questions: [question(), question({ id: 2, ord: 1, kind: "text", options: [], recommended: null })],
+        steps: [step({ id: 1, kind: "interview" })],
+      }),
+    );
+    expect(shape(v)).toEqual({
+      status: "Claude has 2 questions before it writes the plan.",
+      primary: "Answer 2 questions",
+      more: ["Use the recommended answers", "Stop"],
+      screen: "questions",
+    });
+    expect(v.needsYou).toBe(true);
+  });
+
+  test("spec_draft, running: Claude writes the plan", () => {
+    const v = view(task({ state: "spec_draft", steps: [step({ id: 2, kind: "spec", state: "running", endedAt: null })] }));
+    expect(shape(v)).toEqual({ status: "Claude is writing the plan.", primary: null, more: ["Stop"], screen: "plan" });
+  });
+
+  test("spec_draft, ready: the size, the PR count, the lines, and Approve the plan", () => {
+    const v = view(task({ state: "spec_draft", size: "small", plan: PLAN, estimate: ESTIMATE, docs: { plan: "# Plan", version: 1 } }));
+    expect(shape(v)).toEqual({
+      status: "The plan is ready: small, 1 PR, about 80 changed lines.",
+      primary: "Approve the plan",
+      more: ["Edit", "Change size", "Stop"],
+      screen: "plan",
+    });
+  });
+
+  test("spec_draft, approved medium: the plan waits, and the view says that this version cannot open the spec PR", () => {
+    const v = view(task({ state: "spec_draft", size: "medium", plan: { ...PLAN, approved: true }, estimate: ESTIMATE }));
+    expect(v.primary).toBeNull();
+    expect(v.status).toContain("cannot open that PR yet");
+  });
+
+  test("implementing, running: the step sentence names Claude and the step, with Pause after this step", () => {
+    const v = view(building({ steps: [step({ id: 9, kind: "tests", part: 7, item: "P1", state: "running", endedAt: null })] }));
+    expect(shape(v)).toEqual({
+      status: "Claude is writing the tests.",
+      primary: null,
+      more: ["Pause after this step", "Stop"],
+      screen: "build",
+    });
+  });
+
+  test("implementing, checks: Running the tests, Stop only", () => {
+    const v = view(building({ steps: [step({ id: 9, kind: "check", part: 7, item: "T1.1", state: "running", endedAt: null })] }));
+    expect(shape(v)).toEqual({ status: "Running the tests.", primary: null, more: ["Stop"], screen: "build" });
+  });
+
+  test("implementing, own review: Claude checks its own change", () => {
+    const v = view(building({ steps: [step({ id: 9, kind: "review", part: 7, state: "running", endedAt: null })] }));
+    expect(v.status).toBe("Claude checks its own change.");
+  });
+
+  test("implementing, ready: Your change is ready, Open the PR, and the small points in More", () => {
+    const v = view(
+      building({
+        parts: [part({ state: "self_reviewed" })],
+        points: [{ id: 3, severity: "minor", path: "src/a.ts", line: 2, text: "Name the lock." }],
+      }),
+    );
+    expect(shape(v)).toEqual({
+      status: "Your change is ready and checked by Claude.",
+      primary: "Open the PR",
+      more: ["Show the diff", "Fix the small points too"],
+      screen: "ready",
+    });
+  });
+
+  test("implementing, ready while the loop works between steps: no Open the PR", () => {
+    const v = view(building({ parts: [part({ state: "self_reviewed" })], working: true }));
+    expect(v.primary).toBeNull();
+    expect(v.status).toBe("The app prepares the next step.");
+  });
+
+  test("blocked red: the server sentence, See why, Resume and Stop", () => {
+    const text = "Needs you: the tests of part 1 stay red after 3 tries.";
+    const v = view(building({ blocked: { kind: "red", step: 4, text } }));
+    expect(shape(v)).toEqual({ status: text, primary: "See why", more: ["Resume", "Stop"], screen: "build" });
+  });
+
+  test("blocked blocker: See why", () => {
+    const v = view(building({ blocked: { kind: "blocker", step: 4, text: "Needs you: Claude's review of part 1 still finds 1 point." } }));
+    expect(v.primary?.label).toBe("See why");
+  });
+
+  test("blocked question with a question row: Answer the question on the questions screen", () => {
+    const v = view(
+      building({
+        blocked: { kind: "question", step: 5, text: "Needs you: Claude asks: how to handle empty input?" },
+        questions: [question({ id: 9, source: "loop", round: 2, step: 5 })],
+      }),
+    );
+    expect(shape(v)).toEqual({
+      status: "Needs you: Claude asks: how to handle empty input?",
+      primary: "Answer the question",
+      more: ["Stop"],
+      screen: "questions",
+    });
+  });
+
+  test("blocked question without a question row (pause): Continue", () => {
+    const v = view(building({ blocked: { kind: "question", step: null, text: "Building is paused after the step. Continue?" } }));
+    expect(shape(v)).toMatchObject({ primary: "Continue", more: ["Stop"] });
+  });
+
+  test("blocked size: Keep one PR, then Change the limit in More", () => {
+    const text = "Needs you: this PR would have 520 changed lines, over your 400 limit.";
+    const v = view(building({ blocked: { kind: "size", step: 6, text } }));
+    expect(shape(v)).toEqual({ status: text, primary: "Keep one PR", more: ["Change the limit", "Stop"], screen: "build" });
+  });
+
+  test("blocked spec_change: Review the change, Reject in More", () => {
+    const v = view(building({ blocked: { kind: "spec_change", step: 6, text: "Needs you: Claude proposes a change to the spec." } }));
+    expect(shape(v)).toEqual({
+      status: "Needs you: Claude proposes a change to the spec.",
+      primary: "Review the change",
+      more: ["Reject", "Stop"],
+      screen: "change",
+    });
+  });
+
+  test("blocked budget: Continue with 60 more minutes", () => {
+    const v = view(
+      building({ blocked: { kind: "budget", step: null, text: "Needs you: part 1 used its 120 min. Continue with 60 more min?" } }),
+    );
+    expect(v.primary?.label).toBe("Continue with 60 more minutes");
+  });
+
+  test("blocked denied_path: the sentence with the paths, Resume", () => {
+    const text = "Needs you: the step changed .claude/settings.json, which the app does not commit.";
+    const v = view(building({ blocked: { kind: "denied_path", step: 6, text } }));
+    expect(shape(v)).toEqual({ status: text, primary: "Resume", more: ["Stop"], screen: "build" });
+  });
+
+  test("blocked error: one sentence with the cause, Resume", () => {
+    const v = view(
+      building({ blocked: { kind: "error", step: null, text: "Needs you: set user.name and user.email in your git config." } }),
+    );
+    expect(v.primary?.label).toBe("Resume");
+  });
+
+  test("blocked slot: the wait, no primary, Stop", () => {
+    const text = "Waiting for your review of PR 12 to finish.";
+    const v = view(
+      building({ blocked: { kind: "slot", step: 6, text }, steps: [step({ id: 6, kind: "tests", state: "waiting", endedAt: null })] }),
+    );
+    expect(shape(v)).toEqual({ status: text, primary: null, more: ["Stop"], screen: "build" });
+    expect(v.needsYou).toBe(false);
+  });
+
+  test("stopped: Stopped at with the part step, Resume, Close the task", () => {
+    const v = view(
+      building({
+        state: "stopped",
+        stoppedFrom: "implementing",
+        blocked: { kind: "error", step: null, text: "The run was cancelled." },
+        steps: [step({ id: 9, kind: "check", part: 7, item: "T1.1", state: "failed" })],
+      }),
+    );
+    expect(shape(v)).toEqual({
+      status: "Stopped at: task T1.1, running the tests.",
+      primary: "Resume",
+      more: ["Close the task"],
+      screen: "build",
+    });
+    expect(v.detail).toBe("The run was cancelled.");
+  });
+
+  test("ready: waiting for the named reviewers, Go to the PR, Close the task", () => {
+    const v = view(
+      building({ state: "ready", parts: [part({ state: "pr_open", remotePr: 101, prState: "OPEN", waiting: ["Anna Lee"] })] }),
+    );
+    expect(shape(v)).toEqual({
+      status: "Waiting for Anna Lee's review. Nothing to do.",
+      primary: "Go to the PR",
+      more: ["Close the task"],
+      screen: "pr",
+    });
+  });
+
+  test("ready with a merged PR: Done, Close the task", () => {
+    const v = view(building({ state: "ready", parts: [part({ state: "pr_open", remotePr: 101, prState: "MERGED" })] }));
+    expect(shape(v)).toMatchObject({ status: "Done. The PR merged.", primary: "Close the task" });
+  });
+
+  test("done: Close the task, then Closed with no primary", () => {
+    expect(shape(view(building({ state: "done" })))).toMatchObject({ status: "Done. The PR merged.", primary: "Close the task" });
+    expect(shape(view(building({ state: "done", closedAt: NOW })))).toMatchObject({ primary: null, screen: "end" });
+  });
+
+  test("failed: the reason and no action", () => {
+    const v = view(building({ state: "failed", blocked: { kind: "error", step: null, text: "The repository is gone." } }));
+    expect(shape(v)).toMatchObject({ status: "The task failed: The repository is gone.", primary: null, more: [] });
+  });
+});
+
+describe("rules over every row (spec.md section 7.1)", () => {
+  const all = (): TaskDto[] => [
+    task(),
+    task({ blocked: { kind: "question", step: 1, text: "x" }, questions: [question()] }),
+    task({ state: "spec_draft", size: "small", plan: PLAN, estimate: ESTIMATE }),
+    ...(["red", "blocker", "question", "budget", "size", "spec_change", "denied_path", "push", "slot", "error"] as const).map((kind) =>
+      building({ blocked: { kind, step: null, text: `Needs you: ${kind}.` } }),
+    ),
+    building({ parts: [part({ state: "self_reviewed" })] }),
+    building({ state: "stopped", stoppedFrom: "implementing" }),
+    building({ state: "ready", parts: [part({ state: "pr_open", remotePr: 1 })] }),
+    building({ state: "done" }),
+  ];
+
+  test("AC-UX1: at most one primary action, and no primary action also in More", () => {
+    for (const t of all()) {
+      const v = view(t);
+      expect(v.more.some((a) => a.kind === v.primary?.kind)).toBe(false);
+    }
+  });
+
+  test("AC-UX3: every state has one status sentence that ends with a full stop or a question mark", () => {
+    for (const t of all()) expect(view(t).status).toMatch(/^\S.*[.?]$/);
+  });
+});
+
+describe("plain-word helpers", () => {
+  test("elapsed says the time so far, never a time left", () => {
+    expect(elapsed(20_000)).toBe("Started less than a minute ago.");
+    expect(elapsed(MIN)).toBe("Running for 1 minute.");
+    expect(elapsed(9 * MIN)).toBe("Running for 9 minutes.");
+  });
+
+  test("stoppedAt names the part only when the task has more parts", () => {
+    const two = building({
+      parts: [part(), part({ id: 8, ord: 2, title: "Second" })],
+      steps: [step({ id: 3, kind: "implement", part: 8, item: "T2.3", state: "failed" })],
+    });
+    expect(stoppedAt(two)).toBe("Stopped at: part 2, task T2.3, writing the code.");
+    expect(stoppedAt(task())).toBe("Stopped.");
+  });
+
+  test("planSentence counts PRs by size", () => {
+    expect(planSentence(task({ size: "medium", estimate: { ...ESTIMATE, lines: 300 } }))).toBe(
+      "The plan is ready: medium, 1 code PR, about 300 changed lines.",
+    );
+    expect(planSentence(task({ size: "large", estimate: { ...ESTIMATE, parts: 4, lines: 1300 } }))).toBe(
+      "The plan is ready: large, 4 parts, about 1,300 changed lines.",
+    );
+  });
+});
+
+describe("the Tasks row status (spec.md section 6.12, Inbox; AC-UX9)", () => {
+  const row = (o: Partial<TaskRowDto>): TaskRowDto => {
+    const { interview: _i, plan: _p, ...r } = task();
+    return { ...r, ...o } as TaskRowDto;
+  };
+  const progress = (o: Partial<TaskRowDto["progress"]>) => ({ planReady: false, part: 0, parts: 0, ready: false, merged: false, ...o });
+
+  test("one meta line per state", () => {
+    expect(rowStatus(row({ state: "interview" }))).toEqual({ text: "Reading the task", needsYou: false });
+    expect(rowStatus(row({ state: "interview", blocked: { kind: "question", step: 1, text: "x" } })).text).toBe(
+      "Needs you: answer the questions",
+    );
+    expect(rowStatus(row({ state: "spec_draft", progress: progress({ planReady: true }) }))).toEqual({
+      text: "Needs you: approve the plan",
+      needsYou: true,
+    });
+    expect(rowStatus(row({ state: "implementing", progress: progress({ part: 1, parts: 1 }) })).text).toBe("Building part 1 of 1");
+    expect(rowStatus(row({ state: "implementing", progress: progress({ part: 1, parts: 1, ready: true }) })).text).toBe(
+      "Needs you: open the PR",
+    );
+    expect(rowStatus(row({ state: "implementing", blocked: { kind: "red", step: 1, text: "x" } })).text).toBe("Needs you: tests stay red");
+    expect(rowStatus(row({ state: "implementing", blocked: { kind: "slot", step: 1, text: "x" } }))).toEqual({
+      text: "Waiting for the run slot",
+      needsYou: false,
+    });
+    expect(rowStatus(row({ state: "ready" })).text).toBe("Waiting for review");
+    expect(rowStatus(row({ state: "stopped" })).text).toBe("Stopped");
+    expect(rowStatus(row({ state: "done", closedAt: NOW })).text).toBe("Closed");
+  });
+});

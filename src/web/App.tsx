@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { Group, PrRow } from "../shared/dto";
+import type { Group, PrRow, TaskCreateInput } from "../shared/dto";
 import { GROUPS, VIEW_LABEL, VIEWS, type View } from "../shared/views";
 import { type Effect, type KeyState, type Layer, reduceKey } from "./keys";
 import {
@@ -39,6 +39,7 @@ import { useReadyToPost } from "./publish/data";
 import { readyLine } from "./publish/model";
 import { useRuns } from "./review/data";
 import { latestByPr, runRows } from "./review/model";
+import { trackerOf } from "./review/tasks";
 import { Settings, type SettingsAt } from "./settings/Settings";
 import {
   claimEvents,
@@ -76,6 +77,10 @@ import {
 import { Sidebar, useNow } from "./shell/Sidebar";
 import { Splitter } from "./shell/Splitter";
 import { Calm } from "./states";
+import { createTask, useTasks } from "./tasks/data";
+import { rowStatus } from "./tasks/model";
+import { TaskList, taskGroups } from "./tasks/TaskList";
+import { type TaskApi, TaskView } from "./tasks/TaskView";
 
 export function App() {
   const [stale, setStale] = useState(false);
@@ -121,6 +126,32 @@ const onResize = (fn: () => void) => {
 };
 
 const prRef = (p: PrRow): PrRef => ({ project: p.project, repo: p.repo, id: p.prId });
+// The effects of keys that act on a PR. The Tasks view ignores them.
+const DETAIL_ONLY: ReadonlySet<Effect> = new Set<Effect>([
+  "next-new",
+  "prev-new",
+  "next-your",
+  "files",
+  "commits",
+  "show-in-diff",
+  "overview",
+  "drafts",
+  "log",
+  "rerun",
+  "rereview",
+  "ask",
+  "brief",
+  "accept",
+  "edit",
+  "discard",
+  "discuss",
+  "post",
+  "fix",
+  "fix-list",
+  "resolve",
+  "explain",
+  "explain-back",
+]);
 const findRef = (list: PrRow[] | undefined, r: PrRef) => list?.find((p) => p.prId === r.id && p.project === r.project && p.repo === r.repo);
 const DONE: readonly Group[] = GROUPS.find((g) => g[0] === "done")?.[2] ?? [];
 
@@ -129,7 +160,7 @@ const DONE: readonly Group[] = GROUPS.find((g) => g[0] === "done")?.[2] ?? [];
 type DetailRoute = { key: string | null; thread: number | null; file: FileRef | null; explain: boolean };
 type SettingsPlace = { section: SettingsSection | null; profile: string | null };
 
-const EMPTY: Record<Exclude<ListView, "post">, string> = {
+const EMPTY: Record<Exclude<ListView, "post" | "tasks">, string> = {
   needs: "Nothing needs you. New replies and review requests show here.",
   reviewing: "No open pull requests to review.",
   mine: "You have no open pull requests.",
@@ -154,6 +185,9 @@ function Shell({ stale }: { stale: boolean }) {
   const s0: SettingsPlace =
     start.route.kind === "settings" ? { section: start.route.section, profile: start.route.profile } : { section: null, profile: null };
   const [view, setView] = useState<ListView>(r0?.view ?? "needs");
+  // The task that the Tasks view shows (docs/plans/review-v2/spec.md section 6.12). The PR selection stays apart from it.
+  const [task, setTask] = useState<number | null>(r0?.task ?? null);
+  const taskApi = useRef<TaskApi | null>(null);
   const [repo, setRepo] = useState<string | null>(r0?.repo ?? null);
   const [query, setQuery] = useState(r0?.q ?? "");
   const [doneOpen, setDoneOpen] = useState(false);
@@ -203,6 +237,11 @@ function Shell({ stale }: { stale: boolean }) {
   const all = prs.data ?? [];
   const forge = meta.data?.forge.name ?? "";
   const runs = useRuns().data;
+  const taskRows = useTasks().data;
+  const tasksView = view === "tasks";
+  const taskIds = useMemo(() => taskGroups(taskRows ?? []).flatMap((g) => g.rows.map((r) => r.id)), [taskRows]);
+  // The first task is the default, as the first row of a PR list is.
+  const shownTask = tasksView ? (task ?? taskIds[0] ?? null) : null;
   const latest = useMemo(() => latestByPr(runs ?? []), [runs]);
   const running = runs?.some((r) => r.status === "running") ?? false;
   // Accepted items sit in review runs, so only PRs with a run can have a post plan.
@@ -235,7 +274,7 @@ function Shell({ stale }: { stale: boolean }) {
   const live = archiveView
     ? pool.filter((p) => matches(p, query))
     : !aiView
-      ? filterRows(all, view === "runs" || view === "post" || view === "archive" ? "following" : view, repo, query)
+      ? filterRows(all, view === "runs" || view === "post" || view === "archive" || view === "tasks" ? "following" : view, repo, query)
       : view === "runs"
         ? runRows(all, latest, query)
         : all.filter((p) => ready.has(p.id) && matches(p, query));
@@ -274,19 +313,21 @@ function Shell({ stale }: { stale: boolean }) {
   const shownKey = shown ? prKeyOf(shown) : null;
   const own = detail.key !== null && detail.key === shownKey;
   const explainOn = own && detail.explain;
-  const routePr = !narrow || mobile === "detail" ? shown : null;
+  const detailShown = !narrow || mobile === "detail";
+  const routePr = !tasksView && detailShown ? shown : null;
   const route: Route = showSettings
     ? { kind: "settings", ...settingsRoute }
     : {
         kind: "list",
         view,
         pr: routePr,
-        thread: own && !explainOn ? detail.thread : null,
-        file: own && !explainOn ? detail.file : null,
-        full,
+        thread: routePr && own && !explainOn ? detail.thread : null,
+        file: routePr && own && !explainOn ? detail.file : null,
+        full: !tasksView && full,
         explain: routePr !== null && explainOn,
-        repo,
-        q: query,
+        repo: tasksView ? null : repo,
+        q: tasksView ? "" : query,
+        task: tasksView && detailShown ? shownTask : null,
       };
   // The narrow layout has no rail and no full width. Full width needs a PR in the detail.
   const rail = !narrow && railOn(side, wide);
@@ -312,7 +353,7 @@ function Shell({ stale }: { stale: boolean }) {
   const refocus = useRef(false);
   const applyRoute = useRef((_: Route, __: number | null) => {});
   applyRoute.current = (r, scroll) => {
-    const toDetail = r.kind === "settings" || !!r.pr;
+    const toDetail = r.kind === "settings" || !!r.pr || (r.kind === "list" && r.task !== null);
     pending.current = narrow && !toDetail ? "focus-list" : null;
     refocus.current = true;
     setKs((k) => ({
@@ -334,6 +375,10 @@ function Shell({ stale }: { stale: boolean }) {
     setRepo(r.repo);
     setQuery(r.q);
     setFull(r.full);
+    if (r.view === "tasks") {
+      setTask(r.task);
+      return;
+    }
     if (!r.pr) return;
     const key = prKeyOf(r.pr);
     setPin(r.pr);
@@ -454,9 +499,17 @@ function Shell({ stale }: { stale: boolean }) {
     }
     if (effect === "focus-filter") filterRef.current?.focus();
     else if (effect === "focus-list") {
-      const row = selected === null ? null : document.getElementById(`row-${selected}`);
+      const listSel = tasksView ? shownTask : selected;
+      const row = listSel === null ? null : document.getElementById(`row-${listSel}`);
       (row ?? document.getElementById("rows"))?.focus({ preventScroll: true });
       row?.scrollIntoView({ block: "nearest" });
+    } else if (effect && tasksView) {
+      // The Task view keys (spec.md section 6.12): j and k move over the steps and parts, Enter runs the primary action.
+      if (!detailRef.current?.contains(document.activeElement)) detailRef.current?.focus({ preventScroll: true });
+      const t = taskApi.current;
+      if (effect === "thread-next" || effect === "thread-prev") t?.step(effect === "thread-next" ? 1 : -1);
+      else if (effect === "thread-toggle") t?.primary();
+      else if (effect === "close-log") t?.close();
     } else if (effect) {
       // Detail effects. Focus outside the pane moves into it, so a key without a target still leaves focus in the detail.
       // Focus inside the pane stays: n, j, and o start from it.
@@ -503,14 +556,15 @@ function Shell({ stale }: { stale: boolean }) {
     if (document.querySelector('[data-slot="dialog-content"]:not([data-closed])') && !t.closest('[data-slot="dialog-content"]')) return;
     // A checkbox takes keys like a button, so the detail keys work after the thread filter.
     const box = t instanceof HTMLInputElement && (t.type === "checkbox" || t.type === "radio");
-    // The arrow keys move between the profile radios of the review brief and between the items of a toggle group.
-    if (e.key.startsWith("Arrow") && ((box && t.type === "radio") || t.closest('[data-slot="toggle-group"]'))) return;
+    // The arrow keys move between the profile radios of the review brief, between the items of a toggle group, and between tabs.
+    if (e.key.startsWith("Arrow") && ((box && t.type === "radio") || t.closest('[data-slot="toggle-group"], [role="tablist"]'))) return;
     const typing = (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !box) || t.isContentEditable;
     const onButton = (t.tagName === "BUTTON" && !t.hasAttribute("data-row")) || t.tagName === "A" || t.tagName === "SUMMARY" || box;
-    const layer = detailApi.current?.layer(e.target) ?? null;
+    const layer = (tasksView ? taskApi.current?.layer(e.target) : detailApi.current?.layer(e.target)) ?? null;
     const dialog = !!t.closest('[role="dialog"]') || !!document.querySelector('[data-slot="dialog-content"]');
-    const r = reduceKey(state, e.key, {
-      ids,
+    // The Tasks view moves over task rows. The keys of a PR do nothing there: no PR detail shows.
+    const r = reduceKey(tasksView ? { ...state, selected: shownTask } : state, e.key, {
+      ids: tasksView ? taskIds : ids,
       typing,
       onButton,
       settingsLocked: locked,
@@ -519,9 +573,10 @@ function Shell({ stale }: { stale: boolean }) {
       narrow,
       full: fullOn,
       dialog,
-      explain: explainOn && !showSettings,
+      explain: !tasksView && explainOn && !showSettings,
     });
     if (!r.handled) return;
+    if (tasksView && (r.effect === "full-on" || r.effect === "full-off" || (r.effect !== null && DETAIL_ONLY.has(r.effect)))) return;
     e.preventDefault();
     // Esc leaves full width first. The text field keeps the focus, as in the prototype.
     if (e.key === "Escape" && typing && r.effect !== "full-off") t.blur();
@@ -529,7 +584,10 @@ function Shell({ stale }: { stale: boolean }) {
     if (r.effect === "full-on" || r.effect === "full-off") setFull(r.effect === "full-on");
     if (r.effect === "open-cause") opened.current = true;
     pending.current = r.effect;
-    setKs(r.state);
+    if (tasksView) {
+      setTask(r.state.selected);
+      setKs({ ...r.state, selected: ks.selected });
+    } else setKs(r.state);
   };
   useEffect(() => {
     const fn = (e: KeyboardEvent) => onKey.current(e);
@@ -559,6 +617,30 @@ function Shell({ stale }: { stale: boolean }) {
     setSettingsAt((a) => ({ section, profile, n: a.n + 1 }));
     go({ settings: true, mobile: "detail", focus: "detail" });
   };
+
+  // docs/plans/review-v2/spec.md section 6.12: "Build this task" opens the Task view. A history entry is pushed (navMode).
+  const openTask = useCallback(
+    (id: number) => {
+      opened.current = true;
+      setView("tasks");
+      setRepo(null);
+      setTask(id);
+      pending.current = null;
+      setKs((k) => ({ ...k, settings: locked, focus: "detail", mobile: "detail" }));
+    },
+    [locked],
+  );
+  // "Go to the PR" of a task: the PR in My PRs. The pin waits until the sync lists it.
+  const openPr = (r: PrRef) => {
+    opened.current = true;
+    setView("mine");
+    setRepo(null);
+    setQuery("");
+    setPin(r);
+    setDetail({ key: prKeyOf(r), thread: null, file: null, explain: false });
+    go({ selected: null, settings: false, focus: "detail", mobile: "detail" });
+  };
+  const onCreateTask = async (input: TaskCreateInput) => openTask((await createTask(input)).id);
 
   // The selection leaves a restored row, as it leaves an archived one. Focus stays in the list without a scroll.
   const restoreRef = useRef((_: PrRow) => {});
@@ -598,6 +680,7 @@ function Shell({ stale }: { stale: boolean }) {
         counts={viewCounts(all)}
         runs={{ count: all.filter((p) => latest.has(p.id)).length, running }}
         post={all.filter((p) => ready.has(p.id)).length}
+        tasks={taskRows?.filter((r) => rowStatus(r).needsYou).length ?? 0}
         repos={repoTree(all)}
         repo={repo}
         status={info}
@@ -608,6 +691,7 @@ function Shell({ stale }: { stale: boolean }) {
           go({ mobile: "list", settings: locked, focus: "list" });
         }}
         onRepo={(r) => {
+          if (tasksView) setView("needs");
           setRepo(r);
           go({ mobile: "list", settings: locked, focus: "list" });
         }}
@@ -622,58 +706,74 @@ function Shell({ stale }: { stale: boolean }) {
         }}
       />
       <main className="contents">
-        <ListPane
-          title={
-            repo ??
-            (view === "runs" ? "Review runs" : view === "post" ? "Ready to post" : view === "archive" ? "Archive" : VIEW_LABEL[view])
-          }
-          count={rows.length}
-          groups={groups}
-          updated={updated}
-          onResort={() => {
-            setFrozen({ scope, slots: [] });
-            go({ focus: "list" }, "focus-list");
-          }}
-          loading={archiveView ? archive.isPending : prs.isPending}
-          repo={repo}
-          query={query}
-          empty={
-            view === "post"
-              ? `Nothing is ready to post. Accept drafts from ${meta.data.runner.short} to post them to ${forge}.`
-              : EMPTY[view]
-          }
-          selected={showSettings ? null : selected}
-          focused={ks.focus === "list" && !showSettings}
-          doneOpen={doneOpen}
-          forge={forge}
-          runs={aiView && view === "runs" ? latest : null}
-          ready={aiView && view === "post" ? readyWhy : null}
-          onRestore={archiveView ? onRestore : null}
-          candidate={candidate}
-          following={follow.isPending}
-          followError={follow.error && !isStale(follow.error) ? follow.error.message : null}
-          banner={<Banner stale={stale} status={status.data} now={now} forge={forge} onSettings={() => openSettings()} />}
-          filterRef={filterRef}
-          onQuery={(q) => {
-            setQuery(q);
-            if (follow.error) follow.reset();
-          }}
-          onRepo={setRepo}
-          onDoneOpen={setDoneOpen}
-          onSelect={onOpen}
-          onOpen={onOpen}
-          onFollow={() =>
-            follow.mutate(query.trim(), {
-              onSuccess: () => {
-                setQuery("");
-                setView("following");
-                setRepo(null);
-              },
-            })
-          }
-          onMenu={() => go({ mobile: "side" })}
-          onFocus={() => ks.focus !== "list" && setKs((k) => ({ ...k, focus: "list" }))}
-        />
+        {tasksView ? (
+          <TaskList
+            rows={taskRows}
+            selected={showSettings ? null : shownTask}
+            focused={ks.focus === "list" && !showSettings}
+            repos={repoTree(all)}
+            tracker={trackerOf(meta.data)?.name ?? "issue"}
+            banner={<Banner stale={stale} status={status.data} now={now} forge={forge} onSettings={() => openSettings()} />}
+            onSelect={openTask}
+            onOpen={openTask}
+            onCreate={onCreateTask}
+            onMenu={() => go({ mobile: "side" })}
+            onFocus={() => ks.focus !== "list" && setKs((k) => ({ ...k, focus: "list" }))}
+          />
+        ) : (
+          <ListPane
+            title={
+              repo ??
+              (view === "runs" ? "Review runs" : view === "post" ? "Ready to post" : view === "archive" ? "Archive" : VIEW_LABEL[view])
+            }
+            count={rows.length}
+            groups={groups}
+            updated={updated}
+            onResort={() => {
+              setFrozen({ scope, slots: [] });
+              go({ focus: "list" }, "focus-list");
+            }}
+            loading={archiveView ? archive.isPending : prs.isPending}
+            repo={repo}
+            query={query}
+            empty={
+              view === "post"
+                ? `Nothing is ready to post. Accept drafts from ${meta.data.runner.short} to post them to ${forge}.`
+                : EMPTY[view]
+            }
+            selected={showSettings ? null : selected}
+            focused={ks.focus === "list" && !showSettings}
+            doneOpen={doneOpen}
+            forge={forge}
+            runs={aiView && view === "runs" ? latest : null}
+            ready={aiView && view === "post" ? readyWhy : null}
+            onRestore={archiveView ? onRestore : null}
+            candidate={candidate}
+            following={follow.isPending}
+            followError={follow.error && !isStale(follow.error) ? follow.error.message : null}
+            banner={<Banner stale={stale} status={status.data} now={now} forge={forge} onSettings={() => openSettings()} />}
+            filterRef={filterRef}
+            onQuery={(q) => {
+              setQuery(q);
+              if (follow.error) follow.reset();
+            }}
+            onRepo={setRepo}
+            onDoneOpen={setDoneOpen}
+            onSelect={onOpen}
+            onOpen={onOpen}
+            onFollow={() =>
+              follow.mutate(query.trim(), {
+                onSuccess: () => {
+                  setQuery("");
+                  setView("following");
+                  setRepo(null);
+                },
+              })
+            }
+            onMenu={() => go({ mobile: "side" })}
+            onFocus={() => ks.focus !== "list" && setKs((k) => ({ ...k, focus: "list" }))}
+          />
+        )}
         <Splitter
           width={listWidth}
           max={cap}
@@ -705,6 +805,26 @@ function Shell({ stale }: { stale: boolean }) {
               onBack={() => (narrow ? goBack() : go({ settings: false, mobile: "list", focus: "list" }, "focus-list"))}
               onSaved={() => go({ settings: false, mobile: "list" })}
             />
+          ) : tasksView ? (
+            <>
+              <BackBar onBack={goBack} />
+              {shownTask !== null ? (
+                <div key={`task-${shownTask}`} data-scroll className="relative flex-1 overflow-auto overscroll-contain">
+                  <TaskView ref={taskApi} id={shownTask} meta={meta.data} onPr={openPr} />
+                </div>
+              ) : (
+                <div className="mx-auto my-10 grid max-w-[52ch] gap-3 px-6 text-ink-2">
+                  <p className="m-0">
+                    {meta.data.runner.short} can build a task from your issue tracker: it asks a few questions, writes a short plan, and
+                    builds the code in its own copy of the repository. Nothing goes to {forge} before you click.
+                  </p>
+                  <p className="m-0">
+                    Start with “Build a {trackerOf(meta.data)?.name ?? "issue"} task” in the list, or with Build on a task chip of a pull
+                    request.
+                  </p>
+                </div>
+              )}
+            </>
           ) : prs.isPending || settings.isPending || (archiveView && archive.isPending) || pinWait ? (
             <DetailSkeleton />
           ) : current ? (
@@ -734,6 +854,7 @@ function Shell({ stale }: { stale: boolean }) {
                   onDiff={explainDiff}
                   onSettings={() => openSettings()}
                   onTaskIds={() => openSettings("task-ids")}
+                  onTask={openTask}
                   onProfile={(id) => openSettings("profiles", id)}
                   onLeave={() => {
                     const i = ids.indexOf(current.id);

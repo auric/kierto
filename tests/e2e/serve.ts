@@ -17,7 +17,7 @@ import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { createSyncEngine } from "../../src/server/sync/engine";
-import { FAKE_USER, fixture, key, type Reply, startFakeBitbucket } from "../support/fake-bitbucket";
+import { FAKE_USER, fixture, key, type Reply, repoWrites, startFakeBitbucket } from "../support/fake-bitbucket";
 import { readRecords } from "../support/fake-claude";
 import { startFakeJira } from "../support/fake-jira";
 import { claudeStream, fakeRunner, REVIEW_RESULT, reviewRemote, stubListTools } from "../support/review-fixture";
@@ -129,6 +129,8 @@ const STREAMS: Record<ClaudeScenario["stream"], string> = {
   ),
   // A session fork (docs/plans/session-consult.md part C): the read tools only, one Read, and the structured answer.
   session: resolve(import.meta.dir, "../../fixtures/claude-synthetic/session-resume.jsonl"),
+  // A task run (docs/plans/review-v2/spec.md section 6.2): no subagent. The scenario gives the structured results.
+  task: claudeStream(claudeDir, "task", "claude/b6-hostile-repo.jsonl"),
 };
 // The verify phase of a review run (docs/plans/review-v2/spec.md section 1.6): one tool call and no subagent, so the run log keeps the
 // subagents of the finder. The fake CLI gives a confirmed verdict per candidate. A scenario bySchema replaces it.
@@ -150,6 +152,12 @@ function setClaude(c: ClaudeScenario) {
     discuss: c.discuss,
     notes: c.notes,
     cites: c.cites,
+    // Part 6 (docs/plans/review-v2/spec.md section 6.5): the task runs, the files of an implement step, and the per-call results.
+    interview: c.interview,
+    spec: c.spec,
+    implement: c.implement,
+    review: c.review,
+    seq: c.seq,
     bySchema: c.bySchema ?? { verify: { fixture: CHECK_STREAM } },
     authMethod: c.login,
   });
@@ -283,6 +291,8 @@ const PRS: Record<number, typeof A> = { 1001: A, 210: B, 77: C, 1004: D };
 const pushed = new Map<number, { head: string; commits: unknown[]; changes: unknown[] }>();
 const remoteEnv = gitEnv(join(claudeDir, "empty.gitconfig"));
 const remoteGit = (args: string[]) => git(["--git-dir", remote.remote, ...args], { env: remoteEnv });
+// A task of PR A builds on its target branch (docs/plans/review-v2/spec.md section 6.2). The recorded PR names topic/sample-4.
+await remoteGit(["update-ref", `refs/heads/${(A.pr.toRef as unknown as { displayId: string }).displayId}`, remote.target]);
 
 // The dashboard and the PR route share the PR A object, so both report the pushed head and the description.
 // The git remote moves the PR ref too, so a review after the push fetches the pushed head (plan r2 UI-RR).
@@ -444,6 +454,21 @@ r[key("POST", `${A.path}/comments`)] = async (req) => {
 };
 r[key("GET", `${A.path}/comments/1000010`)] = () => (sc.reply === "deleted" ? NOT_FOUND : ok(S.findComment(withReply(), 1000010)));
 
+// ---------- Build a Jira task (docs/plans/review-v2/spec.md section 6.9): the PR create of PROJ1/sample-repo-2 ----------
+// The push goes to the local git remote (repoRemote below). The open-PR list and the repository GET stay absent, as before, so the PR
+// context of the other tests does not change. A created PR gets an empty activity page, so its sync is complete.
+const taskRepo = repoWrites(fake, "PROJ1", "sample-repo-2");
+delete r[key("GET", `${taskRepo.path}/pull-requests`)];
+delete r[key("GET", taskRepo.path)];
+const createTaskPr = r[key("POST", `${taskRepo.path}/pull-requests`)];
+r[key("POST", `${taskRepo.path}/pull-requests`)] = async (req) => {
+  const res = typeof createTaskPr === "function" ? await createTaskPr(req) : NOT_FOUND;
+  const id = "body" in res ? (res.body as { id?: number } | undefined)?.id : undefined;
+  if ("status" in res && res.status === 201 && id !== undefined)
+    r[key("GET", `${taskRepo.path}/pull-requests/${id}/activities`)] = ok(S.onePage([]));
+  return res;
+};
+
 // ---------- Fix it (plan r3): the user's clone ----------
 // Clones live outside the data folder, as a real clone does.
 const clonesDir = join(realpathSync.native(claudeDir), "clones");
@@ -579,7 +604,17 @@ function boot() {
   const live = createLive();
   const settings = createSettings({ dir: dataDir, secrets, jiraSecrets });
   const sync = createSyncEngine({ settings, live });
-  const review = createReviewJobs({ settings, live, dataDir, runnerCommand, listTools: stubListTools, gitRemote: remote.gitRemote });
+  // A task (docs/plans/review-v2/spec.md section 6.2) builds on main of the local remote and pushes its branch there.
+  const repoRemote = async () => ({ url: remote.remote, config: [] as [string, string][] });
+  const review = createReviewJobs({
+    settings,
+    live,
+    dataDir,
+    runnerCommand,
+    listTools: stubListTools,
+    gitRemote: remote.gitRemote,
+    repoRemote,
+  });
   const outbox = createOutbox({ settings, live });
   const server = startServer({
     port: APP_PORT,
@@ -620,6 +655,11 @@ r[key("POST", "/__control/reset")] = async () => {
   await resetClones();
   await headA();
   for (const p of [postsA, postsB, postsC, postsD]) p.reset();
+  // The task PRs and the task branches of the last test go. The other branches and the PR refs stay.
+  taskRepo.prs.clear();
+  taskRepo.writes.length = 0;
+  for (const ref of (await remoteGit(["for-each-ref", "--format=%(refname)", "refs/heads/task/"])).split("\n").filter(Boolean))
+    await remoteGit(["update-ref", "-d", ref]);
   fake.requests.length = 0;
   jira.requests.length = 0;
   Object.assign(folders, { opens: false, paths: [] });
@@ -677,6 +717,11 @@ r[key("POST", "/__control/posts")] = async (req) => {
 // Every request to the fake Bitbucket since the last reset that is not a GET. The control routes do not count.
 r[key("POST", "/__control/writes")] = () =>
   ok({ writes: fake.requests.filter((x) => !x.startsWith("GET ") && !x.includes(" /__control/")) });
+// The branches of the local git remote with their commits, and the bodies of the task PR creates since the last reset.
+r[key("POST", "/__control/task-remote")] = async () => {
+  const lines = (await remoteGit(["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"])).split("\n").filter(Boolean);
+  return ok({ heads: Object.fromEntries(lines.map((l) => l.split(" "))), creates: taskRepo.writes.map((w) => w.body) });
+};
 // ---------- Jira attachments (plan r3 S-ATT) ----------
 // Every request to the fake Jira since the last reset.
 r[key("POST", "/__control/live")] = () => ok({ streams: app.live.size() });

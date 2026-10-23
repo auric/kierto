@@ -125,7 +125,8 @@ function markJump(el: HTMLElement) {
 // settings at one profile. onRestore: the Archive view brings the PR back.
 // at: the URL state to restore. file: the file path in the URL. onRoute: the current thread and the opened file go to the URL.
 // explain: the Explain page shows. onExplain: opens it, or goes back to the PR; push: a step to the PR that pushes a history entry.
-// onDiff: goes from the Explain page to the Files diff at a file or a line, with a history entry.
+// onDiff: goes from the Explain page to the Files diff at a file or a line, with a history entry. onTask: "Build this task" on a task
+// chip opens the Task view (docs/plans/review-v2/spec.md section 6.12).
 export function PrDetail({
   pr: row,
   me,
@@ -140,6 +141,7 @@ export function PrDetail({
   onLeave,
   onSettings,
   onTaskIds,
+  onTask,
   onProfile,
   onRestore,
   ref,
@@ -157,6 +159,7 @@ export function PrDetail({
   onLeave: () => void;
   onSettings: () => void;
   onTaskIds: () => void;
+  onTask: (id: number) => void;
   onProfile: (id: string) => void;
   onRestore: (pr: PrRow) => void;
   ref: Ref<DetailApi | null>;
@@ -338,6 +341,7 @@ export function PrDetail({
     announce,
     onSettings,
     onTaskIds,
+    onTask,
     onProfile,
     showInDiff: (card) => showDiff.current(card),
     openExplain: () => onExplain(true),

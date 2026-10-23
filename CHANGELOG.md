@@ -10,6 +10,21 @@
 - The review brief shows the profile picker only when you have two or more review profiles. Explain has its own page.
 - "Keep" and "Dismiss" of a note suggestion on a reply draft now stay together on one line.
 
+### Build a Jira task
+
+- A new Tasks view in the sidebar lists your tasks with their status, such as "Building part 1 of 1" or "Needs you: tests stay red". "Build a Jira task" there starts a task from a key and a repository. "Build" on a task chip of a pull request starts it in one click. A second click opens the same task.
+- Each task has its own page with the steps "Questions › Plan › Build › Done", one sentence that says who must act now, and one main button. The tabs Questions, Spec, Plan, Log, and Diff hold the details. Each step with a run links to its run log.
+- Claude first reads the task and the code, then asks up to 8 questions as a form. Each question says why it matters, and the recommended option starts selected. "Use the recommended answers" sends them all. Claude asks a second round at most once.
+- Claude then writes a short change plan into `specs/<KEY>/plan.md`: the code to change with file and line, the pattern to copy, the tests, and the tasks. A map line that names code that does not exist is marked. You can edit the plan files before the approval. A line of the tasks list that does not parse is named, and the old text stays.
+- The plan screen shows the size with its meaning. A database or API change makes the plan at least medium, and an estimate over your line limit makes it large. You pick the commands that the app may run. The first build in a repository asks you to confirm a warning about the code that these commands run.
+- The build writes the failing tests first, then the code of each task. After each step, the app runs your approved commands as argument lists without a shell and keeps each exit code and output. A task first runs only its own tests, and the end of the build runs all approved commands. Each finished task is one commit with your name and email, and the plan ticks the task.
+- Claude then reviews its own change with the check step. Red checks get at most 3 fixes, and confirmed blocker and major points of the review get at most 2. "Fix the small points too" fixes the other points.
+- The build stops with one sentence and one button when it needs you: red tests, review points that stay, a question, a change to the plan, a file that the app does not commit, a time limit ("Continue with 60 more minutes"), or a change over your line limit ("Keep one PR" or "Change the limit"). "Pause after this step", Stop, and Resume work at any step. Resume starts the stopped step again from the last commit and keeps the dropped changes as a patch file.
+- Claude edits files only in a worktree that the app owns, with no shell, no web access, and no agents. The worktree hides the .claude folders, .mcp.json, CLAUDE.md, AGENTS.md, and git hook folders. A step that writes such a file is undone and stops the task.
+- "Open the PR" shows the branch, the target, the reviewers, and the line count. Nothing goes to Bitbucket before "Push and open PR". The app pushes only the task branch, never the target branch, and always with a lease, so it never overwrites the push of someone else. It opens one pull request, says which reviewers Bitbucket did not add, and follows the pull request in the inbox.
+- "Close the task" ends a task. Its branch and pull request stay.
+- This version builds small tasks: one pull request with the plan and the code. A medium or large plan waits after its approval.
+
 ### Ask Claude about a finding
 
 - Each finding card has "Ask Claude about this". The key `t` opens the same talk under the card, with the focus in its box. Ask why, push back, or add context. Each message is one run, and Claude reads the code again before it answers.

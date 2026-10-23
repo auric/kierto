@@ -196,6 +196,8 @@ export const taskSettings = z.object({
   partTimeMin: z.number().int().positive().optional(),
   // USD. It applies only when the CLI reports a cost (spec.md section 6.7).
   partCost: z.number().positive().optional(),
+  // spec.md section 6.1, "Keep one PR": the line limit stops the task no more.
+  keepOnePr: z.boolean().optional(),
 });
 export type TaskSettings = z.infer<typeof taskSettings>;
 

@@ -11,6 +11,7 @@ import {
   CloudOff,
   Eye,
   GitPullRequest,
+  ListChecks,
   LoaderCircle,
   type LucideIcon,
   Monitor,
@@ -59,18 +60,20 @@ const current = "bg-pane font-semibold text-foreground shadow-[inset_0_0_0_1px_v
 const heading = "rl-lbl m-0 px-2 py-1 text-xs font-semibold text-muted-foreground";
 
 export function Sidebar(props: {
-  // null: a repository or the settings take the list or the detail. "runs" and "post": the AI review views.
-  view: View | "runs" | "post" | "archive" | null;
+  // null: a repository or the settings take the list or the detail. "runs" and "post": the AI review views. "tasks": the Tasks view.
+  view: View | "runs" | "post" | "archive" | "tasks" | null;
   counts: Record<View, number>;
   // The PRs with a review run, and whether a review runs now.
   runs: { count: number; running: boolean };
   // The PRs with accepted items (prototype/v3 AIVIEWS.post).
   post: number;
+  // The tasks that wait for the user (docs/plans/review-v2/spec.md section 6.12).
+  tasks: number;
   repos: ProjectRepos[];
   repo: string | null;
   status: StatusInfo | null;
   checking: boolean;
-  onView: (v: View | "runs" | "post" | "archive") => void;
+  onView: (v: View | "runs" | "post" | "archive" | "tasks") => void;
   onRepo: (r: string | null) => void;
   onCheck: () => void;
   onSettings: () => void;
@@ -156,6 +159,21 @@ export function Sidebar(props: {
               <span className="rl-lbl truncate">Ready to post</span>
               <span className="rl-lbl ml-auto text-xs font-medium text-muted-foreground">{props.post || ""}</span>
               <Badge n={props.post} />
+            </button>
+          </Hint>
+          <Hint label={`Tasks: ${props.tasks} need you`} disabled={!rail} side="right">
+            <button
+              type="button"
+              id="nav-tasks"
+              className={cn(navItem, props.view === "tasks" && current)}
+              aria-current={props.view === "tasks" ? "page" : undefined}
+              aria-label={`Tasks: ${props.tasks} need you`}
+              onClick={() => props.onView("tasks")}
+            >
+              <ListChecks aria-hidden className="size-[15px] shrink-0" />
+              <span className="rl-lbl truncate">Tasks</span>
+              <span className="rl-lbl ml-auto text-xs font-medium text-muted-foreground">{props.tasks || ""}</span>
+              <Badge n={props.tasks} />
             </button>
           </Hint>
         </div>

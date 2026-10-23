@@ -21,12 +21,14 @@ import type {
   TaskPartDto,
   TaskPlanDto,
   TaskPlanInput,
+  TaskPointDto,
   TaskQuestionDto,
   TaskRowDto,
   TaskStepDto,
   taskDocInput,
   taskSizeInput,
 } from "../../shared/dto";
+import type { FindingPayload } from "../../shared/review";
 import {
   INTERVIEW_QUESTIONS,
   INTERVIEW_TURNS,
@@ -220,6 +222,9 @@ const Q = {
   storeContext: `INSERT INTO task_context (pr, key, source, json, fetched_at) VALUES ($pr, $key, 'jira', $json, $at)
     ON CONFLICT (pr, key) DO UPDATE SET source = excluded.source, json = excluded.json, fetched_at = excluded.fetched_at`,
   parts: "SELECT * FROM task_part WHERE task = $id ORDER BY ord",
+  partPr: "SELECT state, reviewers_json FROM pull_request WHERE id = $id",
+  codeParts: `SELECT p.ord, p.state, pr.state AS pr_state FROM task_part p LEFT JOIN pull_request pr ON pr.id = p.pr
+    WHERE p.task = $id AND p.kind <> 'spec' ORDER BY p.ord`,
   questions: "SELECT * FROM task_question WHERE task = $id ORDER BY round, ord, id",
   steps: "SELECT * FROM task_step WHERE task = $id ORDER BY id DESC LIMIT 50",
   busy: "SELECT 1 FROM task_step WHERE task = $id AND state IN ('waiting', 'running')",
@@ -334,6 +339,49 @@ export function moreTime(db: Database, ref: TaskRef, now = Date.now()): number {
   return patch(db, ref.task, ref.version, { settings_json: settings, blocked_json: null }, now);
 }
 
+// spec.md section 6.1, "Keep one PR" and "Change the limit": new task settings, and the size reason goes. Returns the new version.
+export function setSettings(db: Database, ref: TaskRef, s: TaskSettings, now = Date.now()): number {
+  return patch(db, ref.task, ref.version, { settings_json: JSON.stringify(s), blocked_json: null }, now);
+}
+export const taskSettingsOf = settingsOf;
+
+// spec.md section 6.7: the loop fixes the confirmed blocker and major points of its own review. The other points stay listed.
+export const mustFixPoint = (p: Pick<FindingPayload, "verify" | "severity">) =>
+  p.verify?.verdict === "confirmed" && (p.severity === "blocker" || p.severity === "major");
+
+const POINTS = {
+  review: `SELECT s.id, s.run FROM task_step s JOIN task_part p ON p.id = s.part
+    WHERE s.task = $id AND s.kind = 'review' AND s.state = 'ok' AND p.state = 'self_reviewed' ORDER BY s.id DESC LIMIT 1`,
+  fixed: "SELECT 1 FROM task_step WHERE task = $id AND kind = 'commit' AND item = 'points' AND state = 'ok' AND id > $after",
+  items: "SELECT id, payload_json FROM review_item WHERE run = $run AND kind = 'finding' ORDER BY id",
+};
+
+// The points that "Fix these too" fixes: the newest own review of a part that waits for its PR, without the points that the
+// verify phase discarded. Empty after the commit of their fix.
+export function openPoints(db: Database, id: number): (TaskPointDto & { payload: FindingPayload })[] {
+  const r = db.query(POINTS.review).get({ id }) as { id: number; run: number | null } | null;
+  if (!r?.run || db.query(POINTS.fixed).get({ id, after: r.id })) return [];
+  return (db.query(POINTS.items).all({ run: r.run }) as { id: number; payload_json: string }[]).flatMap((x) => {
+    const p = JSON.parse(x.payload_json) as FindingPayload;
+    if (p.discardedBy === "verify" || mustFixPoint(p)) return [];
+    return [{ id: x.id, severity: p.severity, path: p.path, line: p.line ?? null, text: p.body, payload: p }];
+  });
+}
+
+// spec.md section 6.9, Reviewers: the reviewers of the task settings, else the reviewers of your newest PR in this repository.
+function defaultReviewers(db: Database, t: TaskRow): string[] {
+  const own = settingsOf(t).reviewers;
+  if (own) return own;
+  const r = db
+    .query(
+      `SELECT reviewers_json FROM pull_request WHERE project = $project AND repo = $repo AND my_role = 'AUTHOR'
+        AND reviewers_json IS NOT NULL ORDER BY id DESC LIMIT 1`,
+    )
+    .get({ project: t.project, repo: t.repo }) as { reviewers_json: string } | null;
+  const list = r ? (JSON.parse(r.reviewers_json) as { slug: string; login?: string | null }[]) : [];
+  return [...new Set(list.map((x) => x.login ?? x.slug))];
+}
+
 // A failed or cancelled run stops the task with its reason. Resume runs the step again. The usage limit stops it too, with the CLI
 // text. A done or failed task keeps its state.
 export function stopForRun(db: Database, ref: TaskRef, step: number | null, e: Pick<Ending, "status" | "text">, now = Date.now()) {
@@ -402,9 +450,20 @@ type FullQuestionRow = QuestionRow & {
   answered_at: number | null;
 };
 
-const rowDto = (t: TaskRow): TaskRowDto => {
+const rowDto = (db: Database, t: TaskRow): TaskRowDto => {
   const b = t.blocked_json === null ? null : taskBlocked.safeParse(JSON.parse(t.blocked_json));
+  const code = db.query(Q.codeParts).all({ id: t.id }) as { ord: number; state: PartState; pr_state: string | null }[];
+  const merged = (p: (typeof code)[number]) => p.state === "merged" || p.pr_state === "MERGED";
+  const open = code.find((p) => !merged(p) && p.state !== "abandoned");
+  const docs = docsOf(t);
   return {
+    progress: {
+      planReady: t.state === "spec_draft" && docs !== null && !docs.approved,
+      part: open?.ord ?? 0,
+      parts: code.length,
+      ready: open?.state === "self_reviewed",
+      merged: code.length > 0 && code.every((p) => merged(p) || p.state === "abandoned"),
+    },
     id: t.id,
     project: t.project,
     repo: t.repo,
@@ -447,8 +506,11 @@ function planDto(db: Database, t: TaskRow, docs: Docs): TaskPlanDto {
 }
 
 export function taskDto(db: Database, t: TaskRow): TaskDto {
-  const parts = (db.query(Q.parts).all({ id: t.id }) as PartRow[]).map(
-    (p): TaskPartDto => ({
+  const parts = (db.query(Q.parts).all({ id: t.id }) as PartRow[]).map((p): TaskPartDto => {
+    const synced =
+      p.pr === null ? null : (db.query(Q.partPr).get({ id: p.pr }) as { state: string | null; reviewers_json: string | null } | null);
+    const reviewers = synced?.reviewers_json ? (JSON.parse(synced.reviewers_json) as { name: string; status: string }[]) : [];
+    return {
       id: p.id,
       ord: p.ord,
       kind: p.kind,
@@ -462,11 +524,13 @@ export function taskDto(db: Database, t: TaskRow): TaskDto {
       pushed: p.pushed,
       lines: p.lines,
       usage: p.usage_json === null ? null : (JSON.parse(p.usage_json) as RunUsage),
-    }),
-  );
+      prState: synced?.state ?? null,
+      waiting: reviewers.filter((r) => r.status !== "APPROVED").map((r) => r.name),
+    };
+  });
   const docs = docsOf(t);
   return {
-    ...rowDto(t),
+    ...rowDto(db, t),
     originPr: t.origin_pr,
     stoppedFrom: t.stopped_from,
     sizeBy: t.size_by,
@@ -512,6 +576,10 @@ export function taskDto(db: Database, t: TaskRow): TaskDto {
     interview: interviewOf(db, t.id),
     plan: docs ? planDto(db, t, docs) : null,
     strip: stepStrip({ size: t.size, state: t.state, stoppedFrom: t.stopped_from, parts }),
+    reviewers: defaultReviewers(db, t),
+    points: openPoints(db, t.id).map(({ payload: _, ...p }) => p),
+    // The routes set it from the loop.
+    working: false,
   };
 }
 
@@ -1017,6 +1085,25 @@ export function createTaskService(opts: TaskServiceOptions) {
     return { status: 200, task: taskDto(db, taskRow(db, id) as TaskRow) };
   }
 
+  // POST /api/tasks/:id/close (spec.md section 6.12): a stopped, ready, or done task ends. Its branches and PRs stay as they are.
+  function close(db: Database, id: number, input: { version: number }): TaskResult {
+    const t = taskRow(db, id);
+    if (!t) return { status: 404, error: "Task not found." };
+    if (t.version !== input.version) return conflict(db, t, TASK_CHANGED);
+    if (db.query(Q.busy).get({ id })) return conflict(db, t, "Claude is still working on this task. Stop it first.");
+    const error = db.transaction((): string | null => {
+      const at = now();
+      const r = advance(db, { task: id, version: t.version }, { type: "CLOSE" }, {}, at);
+      if (r.status !== 200) return "state" in r && r.state === "implementing" ? "Stop the build first, then close the task." : r.error;
+      patch(db, id, r.version, { blocked_json: null }, at);
+      db.query("UPDATE task SET closed_at = COALESCE(closed_at, $now) WHERE id = $id").run({ id, now: at });
+      return null;
+    })();
+    if (error) return conflict(db, t, error);
+    changed(id);
+    return { status: 200, task: taskDto(db, taskRow(db, id) as TaskRow) };
+  }
+
   return {
     create,
     answers,
@@ -1024,12 +1111,13 @@ export function createTaskService(opts: TaskServiceOptions) {
     docs,
     plan,
     resume,
+    close,
     get(db: Database, id: number): TaskDto | null {
       const t = taskRow(db, id);
       return t && taskDto(db, t);
     },
     list(db: Database, state: "open" | "all"): TaskRowDto[] {
-      return (db.query(Q.list).all({ all: state === "all" ? 1 : 0 }) as TaskRow[]).map(rowDto);
+      return (db.query(Q.list).all({ all: state === "all" ? 1 : 0 }) as TaskRow[]).map((t) => rowDto(db, t));
     },
   };
 }

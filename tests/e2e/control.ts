@@ -140,7 +140,8 @@ export type Scenario = {
 // session: a session fork (docs/plans/session-consult.md part C). consult: its answer; absent, one reject per item with status open.
 // answered: the answered list of a review result (docs/plans/thread-outcome.md section 9); absent, none.
 export type ClaudeScenario = {
-  stream: "tree" | "schema" | "limit" | "gaps" | "session";
+  // task: a run without subagents for the task runs (docs/plans/review-v2/spec.md section 6.2).
+  stream: "tree" | "schema" | "limit" | "gaps" | "session" | "task";
   hang?: boolean;
   replies?: unknown;
   rereview?: unknown;
@@ -156,6 +157,13 @@ export type ClaudeScenario = {
   // docs/plans/review-v2/spec.md section 2.9: the notes and the first cites of the echo reply result.
   notes?: unknown;
   cites?: unknown;
+  // Part 6 (docs/plans/review-v2/spec.md section 6.5): the interview, spec, implement, and own review results; seq: the fields of the Nth
+  // run of one call key, such as the files of each implement step.
+  interview?: unknown;
+  spec?: unknown;
+  implement?: unknown;
+  review?: unknown;
+  seq?: FakeScenario["seq"];
   bySchema?: FakeScenario["bySchema"];
   login?: string;
 };
@@ -201,6 +209,15 @@ export async function liveStreams(): Promise<number> {
   const res = await fetch(`${FAKE_URL}/__control/live`, { method: "POST", headers: { Authorization: `Bearer ${E2E_TOKEN}` } });
   if (!res.ok) throw new Error(`control live: ${res.status}`);
   return ((await res.json()) as { streams: number }).streams;
+}
+
+// ---------- Build a Jira task (docs/plans/review-v2/spec.md section 6.9) ----------
+
+// The branches of the local git remote of the tasks with their commits, and the body of each task PR create since the last reset.
+export async function taskRemote(): Promise<{ heads: Record<string, string>; creates: Record<string, unknown>[] }> {
+  const res = await fetch(`${FAKE_URL}/__control/task-remote`, { method: "POST", headers: { Authorization: `Bearer ${E2E_TOKEN}` } });
+  if (!res.ok) throw new Error(`control task-remote: ${res.status}`);
+  return (await res.json()) as { heads: Record<string, string>; creates: Record<string, unknown>[] };
 }
 
 // ---------- Fix it (plan r3): the user's clone ----------

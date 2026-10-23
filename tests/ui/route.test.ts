@@ -35,6 +35,9 @@ describe("route round trip", () => {
     ["/following?repo=~JDOE/sample-repo-1&q=cache%20lock", { ...listRoute("following"), repo: "~JDOE/sample-repo-1", q: "cache lock" }],
     ["/needs/PROJ1/sample-repo-2/1001/explain", pr({ explain: true })],
     ["/mine/PROJ1/sample-repo-2/1001/explain?full=1&q=lock", pr({ view: "mine", explain: true, full: true, q: "lock" })],
+    // docs/plans/review-v2/spec.md section 6.12: the Tasks view and the Task view route /tasks/:id.
+    ["/tasks", listRoute("tasks")],
+    ["/tasks/12", { ...listRoute("tasks"), task: 12 }],
     ["/settings", { kind: "settings", section: null, profile: null }],
     ["/settings/task-ids", { kind: "settings", section: "task-ids", profile: null }],
     ["/settings/profiles/over%20engineering", { kind: "settings", section: "profiles", profile: "over engineering" }],
@@ -106,6 +109,13 @@ describe("unknown and stale routes", () => {
     const r = parse("/needs/%7EJDOE/sample-repo-1/7");
     expect(formatRoute(r)).toBe("/needs/~JDOE/sample-repo-1/7");
   });
+
+  test("a task path takes one positive number. The Tasks view drops the PR, the filter, and the repository.", () => {
+    expect(parse("/tasks/0")).toEqual(listRoute("tasks"));
+    expect(parse("/tasks/abc")).toEqual(listRoute("tasks"));
+    expect(parse("/tasks/12/extra")).toEqual(listRoute("tasks"));
+    expect(parse("/tasks/12?q=lock&repo=PROJ1/r")).toEqual({ ...listRoute("tasks"), task: 12 });
+  });
 });
 
 describe("push or replace (plan pr-view-v4 section 5)", () => {
@@ -123,6 +133,14 @@ describe("push or replace (plan pr-view-v4 section 5)", () => {
   test("a view change pushes, also with a new selection", () => {
     expect(navMode(a, { ...b, view: "reviewing" }, false)).toBe("push");
     expect(navMode(listRoute(), { ...listRoute(), repo: "PROJ1/sample-repo-2" }, false)).toBe("push");
+  });
+
+  test("Build this task from a PR pushes. A task open by click pushes. j, k, and the default task replace.", () => {
+    const t = (task: number | null) => ({ ...listRoute("tasks"), task });
+    expect(navMode(a, t(12), true)).toBe("push");
+    expect(navMode(t(12), t(13), true)).toBe("push");
+    expect(navMode(t(12), t(13), false)).toBe("replace");
+    expect(navMode(t(null), t(12), false)).toBe("replace");
   });
 
   test("the repository chip that clears the filter, the filter text, and thread focus replace", () => {

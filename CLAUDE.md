@@ -97,7 +97,7 @@ Add or update a project skill:
 - Tests never touch the live Bitbucket server. Use sanitized fixtures and a fake `claude` executable. Real-server tests need separate authorization.
 - The Bitbucket token never goes into SQLite, localStorage, logs, URLs, or prompts.
 - Nothing goes to Bitbucket without an explicit user action. The app posts, not the AI.
-- The app never runs claude in the user's clone and never pushes.
+- The app never runs claude in the user's clone and pushes nothing, with one exception for Build a Jira task (BRIEF 3.5, 3.6). Its implement runs edit files only in an app-owned worktree of the cache, never in the user's clone. A push and a PR create or update go to Bitbucket only on the user's click. A push goes only to a branch that the task created, never to the target branch, and always with an explicit `--force-with-lease` and no `+` refspec.
 - No company names, hosts, or secrets in code, docs, or fixtures. The project may become open source.
 - Build a boundary (ForgeProvider, ReviewRunner, ContextSource) only when its milestone needs it.
 

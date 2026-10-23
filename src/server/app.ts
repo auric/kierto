@@ -112,7 +112,7 @@ export function createApp(opts: AppOptions) {
     .route("/api", createFixRoutes({ review, settings, live: opts.live, openFolder: opts.openFolder }))
     .route("/api", createContextRoutes({ settings, review, live: opts.live, openFolder: opts.openFolder }))
     .route("/api", createPublishRoutes({ review, settings, outbox }))
-    .route("/api", createTaskRoutes({ review, settings, live: opts.live }));
+    .route("/api", createTaskRoutes({ review, settings, live: opts.live, sync }));
 
   if (opts.assets) app.use("/assets/*", opts.assets);
   if (page !== undefined) {
