@@ -14,7 +14,7 @@ process.env.REVIEW_LOOP_DATA_DIR = dir;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 // The user_version after the last migration of db.ts.
-const LATEST = 33;
+const LATEST = 34;
 
 // One transaction per setup: a commit per statement is slow on Windows CI disks.
 const migrate = (db: Database, files: string[]) =>
@@ -1110,6 +1110,8 @@ test("migration from a version-32 database keeps every row and child row; task r
       exclude_globs_json: null,
       isolate_home: 1,
       warned_at: null,
+      // 034_task_base.sql runs after 033_task.sql in openDb.
+      last_base: null,
       updated_at: 1,
     });
     expect(() => db.run("INSERT INTO repo_task_settings (project, repo, updated_at) VALUES ('P', 'r', 2)")).toThrow(/UNIQUE/);
@@ -1146,4 +1148,28 @@ test("migration from a version-32 database keeps every row and child row; task r
   const first = { ...schema(path), rows: rows() };
   const second = { ...schema(path), rows: rows() };
   expect(second).toEqual(first);
+});
+
+test("migration from a version-33 database keeps every task setting; last_base is new and NULL; branch_prefix stays", () => {
+  const path = join(dir, "v33.sqlite");
+  const old = new Database(path, { create: true, strict: true });
+  migrate(old, [...V30, "031_pr_notes.sql", "032_ask_parent.sql", "033_task.sql"]);
+  old.exec("PRAGMA user_version = 33");
+  old.exec(
+    `INSERT INTO repo_task_settings (project, repo, branch_prefix, commands_json, updated_at) VALUES ('P', 'r', 'users/me/', '[]', 1)`,
+  );
+  const before = old.query("SELECT * FROM repo_task_settings").all();
+  const oldColumns = columns(old, "repo_task_settings");
+  old.close();
+
+  const db = openDb(path);
+  try {
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(LATEST);
+    expect(columns(db, "repo_task_settings")).toEqual([...oldColumns, "last_base"]);
+    expect(db.query("SELECT * FROM repo_task_settings").all()).toEqual(
+      (before as Record<string, unknown>[]).map((r) => ({ ...r, last_base: null })),
+    );
+  } finally {
+    db.close();
+  }
 });

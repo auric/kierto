@@ -66,7 +66,6 @@ async function setup() {
   const save = (commands: TaskCommand[], o: { warned?: boolean; isolate?: boolean } = {}) => {
     saveRepoSettings(db, "PROJ", "repo", {
       specDir: "specs/{key}/",
-      branchPrefix: "feature/",
       lineBudget: 400,
       maxOpen: 2,
       approvals: 1,

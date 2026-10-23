@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { MAX_TASK_RULES, profileList, settingsInput, taskRuleInput } from "../shared/dto";
+import { branchPrefixList, MAX_TASK_RULES, profileList, settingsInput, taskRuleInput } from "../shared/dto";
 import { log } from "./log";
 
 // No secret goes into this file.
@@ -40,6 +40,8 @@ const config = z.object({
   sessions: z.boolean().optional().catch(undefined),
   // Absent: on. Off: the user acknowledged the company AI policy for task attachments, so "Include in runs" does not ask.
   askAttachments: z.boolean().optional().catch(undefined),
+  // Absent: DEFAULT_BRANCH_PREFIXES (src/shared/task.ts).
+  taskBranchPrefixes: branchPrefixList.optional().catch(undefined),
 });
 
 export type Config = z.infer<typeof config>;

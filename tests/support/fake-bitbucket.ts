@@ -123,7 +123,13 @@ type WriteBody = Record<string, unknown> & {
 // The write endpoints of one repository (spec.md section 6.9), shaped as Gates G1 to G6 recorded them (integration-check.md "Review v2").
 // Create: HTTP 201, version 0, state OPEN. The PR author leaves the reviewers without an error (U74). A second open PR of the same refs: 409.
 // PUT and reopen: version + 1, or 409 on a stale version. Build stats: the five keys of Data Center 9.x. writes: each write body.
-export function repoWrites(fake: FakeBitbucket, project = "PROJ", repo = "repo") {
+// o.defaultBranch: absent gives main, null gives none. o.branches: more branch names. o.writable: false hides it from REPO_WRITE.
+export function repoWrites(
+  fake: FakeBitbucket,
+  project = "PROJ",
+  repo = "repo",
+  o: { defaultBranch?: string | null; branches?: string[]; writable?: boolean } = {},
+) {
   const path = `/rest/api/1.0/projects/${project}/repos/${repo}`;
   const user = (name: string) => ({
     name,
@@ -235,8 +241,54 @@ export function repoWrites(fake: FakeBitbucket, project = "PROJ", repo = "repo")
     return { status: 200, body: { successful: 0, inProgress: 0, failed: 0, cancelled: 0, unknown: 0, ...counts } };
   };
 
-  return { path, prs, builds, writes, repository };
+  // spec.md section 6.16.10, shaped as Gates G13 and G14 recorded them: the default branch keys displayId, id, type; branch values
+  // with isDefault (not the 9.6 schema's default); filterText matches a part of the name; boostMatches puts the exact match first.
+  // defaultBranch null: the repository names none (HTTP 404).
+  const branches = { defaultBranch: o.defaultBranch === undefined ? "main" : o.defaultBranch, names: [...(o.branches ?? [])] };
+  if (branches.defaultBranch && !branches.names.includes(branches.defaultBranch)) branches.names.unshift(branches.defaultBranch);
+  fake.routes[key("GET", `${path}/default-branch`)] = () =>
+    branches.defaultBranch
+      ? { status: 200, body: { id: `refs/heads/${branches.defaultBranch}`, displayId: branches.defaultBranch, type: "BRANCH" } }
+      : { status: 404, body: { errors: [{ message: "The repository has no default branch." }] } };
+  fake.routes[key("GET", `${path}/branches`)] = (req) => {
+    const q = new URL(req.url).searchParams;
+    const filter = q.get("filterText") ?? "";
+    const limit = Number(q.get("limit") ?? 25);
+    let names = branches.names.filter((n) => n.toLowerCase().includes(filter.toLowerCase()));
+    if (filter && q.get("boostMatches") === "true") names = [...names.filter((n) => n === filter), ...names.filter((n) => n !== filter)];
+    const values = names.slice(0, limit).map((n) => ({
+      id: `refs/heads/${n}`,
+      displayId: n,
+      type: "BRANCH",
+      latestCommit: "0".repeat(40),
+      latestChangeset: "0".repeat(40),
+      isDefault: n === branches.defaultBranch,
+    }));
+    return { status: 200, body: { size: values.length, limit, start: 0, isLastPage: names.length <= limit, values } };
+  };
+  // Gate G15: REPO_READ and REPO_WRITE list a writable repository for a plain token, REPO_ADMIN does not.
+  const listed = reposOf(fake);
+  listed.push({ ...repository, id: listed.length + 1, name: repo, scmId: "git", state: "AVAILABLE", writable: o.writable ?? true });
+  fake.routes[key("GET", "/rest/api/1.0/repos")] = (req) => {
+    const q = new URL(req.url).searchParams;
+    const permission = q.get("permission");
+    const values = listed
+      .filter((r) => permission === "REPO_READ" || (permission === "REPO_WRITE" && r.writable))
+      .filter((r) => (!q.get("projectkey") || r.project.key === q.get("projectkey")) && (!q.get("name") || r.name === q.get("name")))
+      .map(({ writable: _, ...r }) => r);
+    return { status: 200, body: { size: values.length, limit: Number(q.get("limit") ?? 25), start: 0, isLastPage: true, values } };
+  };
+
+  return { path, prs, builds, writes, repository, branches };
 }
+
+type ListedRepo = { slug: string; name: string; project: { key: string }; writable: boolean } & Record<string, unknown>;
+const listedRepos = new WeakMap<FakeBitbucket, ListedRepo[]>();
+const reposOf = (fake: FakeBitbucket) => {
+  const l = listedRepos.get(fake) ?? [];
+  listedRepos.set(fake, l);
+  return l;
+};
 
 // Reads a recorded fixture: { status, body }.
 export function fixture<T = unknown>(name: string): { status: number; body: T } {

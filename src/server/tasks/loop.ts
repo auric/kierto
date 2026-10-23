@@ -32,7 +32,7 @@ import type { ReviewJobs, TaskReviewStart } from "../review/jobs";
 import type { Ending } from "../review/judge";
 import { repoPath } from "../review/validate";
 import { type ContextFile, cachePath, longPath, noUrl } from "../review/workspace";
-import type { Settings } from "../settings";
+import { branchPrefixesOf, type Settings } from "../settings";
 import { CHECK_KINDS, type ChecksResult, checkStep, type Scope } from "./checks";
 import { commitTask, endStep, insertStep, type PathProblem, partBudget, runningStep, type StepOutcome, startStep } from "./implement";
 import { type Answer, answerProblem, type QuestionRow } from "./interview";
@@ -63,12 +63,15 @@ import {
   branchName,
   freeBranch,
   headOf,
+  mergeBase,
   openWorktree,
   patchFile,
+  remoteBranches,
   resetWorktree,
   savePatch,
   setupMark,
   status,
+  takeRemoteBranch,
   type Worktree,
   wtGit,
 } from "./worktree";
@@ -199,8 +202,10 @@ type Ctx = {
 
 const Q = {
   parts: "SELECT id, ord, kind, title, branch, base_branch, state FROM task_part WHERE task = $task ORDER BY ord",
-  insertPart: `INSERT INTO task_part (task, ord, kind, title, branch, base_branch, state, created_at, updated_at)
-    VALUES ($task, $ord, $kind, $title, $branch, $base, $state, $now, $now) RETURNING id`,
+  // pushed: the lease of the first push, the fetched remote head for Continue (spec.md section 6.16.4).
+  insertPart: `INSERT INTO task_part (task, ord, kind, title, branch, base_branch, pushed, state, created_at, updated_at)
+    VALUES ($task, $ord, $kind, $title, $branch, $base, $pushed, $state, $now, $now) RETURNING id`,
+  setBase: "UPDATE task SET base_commit = $base WHERE id = $id",
   attempt: "SELECT COALESCE(MAX(attempt), 0) + 1 AS n FROM task_step WHERE part = $part AND kind = $kind AND item = $item",
   committed: "SELECT 1 FROM task_step WHERE part = $part AND kind = 'commit' AND item = $item AND state = 'ok'",
   lastStep: "SELECT MAX(id) AS id FROM task_step WHERE part = $part",
@@ -653,19 +658,33 @@ export function createLoop(opts: LoopOptions) {
 
   // ---------- The driver ----------
 
-  // A small task gets one part on a free branch (spec.md section 6.8, Branch names).
+  // A small task gets one part (spec.md section 6.16.4). A name that exists on the server: Continue builds on its remote head and
+  // leases the first push on it. New takes the first free suffix.
   async function ensureParts(db: Database, id: number) {
     const t = taskRow(db, id);
     if (t?.state !== "implementing" || parts(db, id).length) return;
     if (t.size !== "small") throw new Error(`The app builds a ${t.size ?? "task without a size"} task only after its spec PR.`);
-    const s = repoSettings(db, t.project, t.repo);
+    if (!t.base_commit) throw new Error("The task has no approved plan.");
+    const s = taskSettingsOf(t);
+    const prefix = s.branchPrefix ?? (branchPrefixesOf(settings.config())[0] as string);
+    const name = branchName(prefix, t.key, { kind: "small", title: t.title });
     const remote = await review.taskRemote(t.project, t.repo);
     const cache = cachePath(longPath(dataDir), { project: t.project, repo: t.repo, id });
-    const branch = await freeBranch(dataDir, cache, remote, branchName(s.branchPrefix, t.key, { kind: "small", title: t.title }));
+    let branch = name;
+    let lease: string | null = null;
+    let base = t.base_commit;
+    if ((await remoteBranches(dataDir, remote, name)).has(name) && s.existing !== "new") {
+      lease = await takeRemoteBranch(dataDir, cache, remote, id, name);
+      const mb = await mergeBase(dataDir, cache, t.base_commit, lease);
+      if (!mb) throw new Error(`${name} on the server shares no commit with ${t.target_branch}. Start a new branch.`);
+      base = mb;
+    } else branch = await freeBranch(dataDir, cache, remote, name);
     db.transaction(() => {
       const cur = taskRow(db, id);
       if (cur?.state !== "implementing" || parts(db, id).length) return;
       const at = now();
+      // The line budget and the own review count the whole PR diff from here (spec.md section 6.16.4).
+      db.query(Q.setBase).run({ id, base });
       const row = db.query(Q.insertPart).get({
         task: id,
         ord: 1,
@@ -673,6 +692,7 @@ export function createLoop(opts: LoopOptions) {
         title: cur.title,
         branch,
         base: cur.target_branch,
+        pushed: lease,
         state: String(initialTransition(partMachine)[0].value),
         now: at,
       }) as { id: number };

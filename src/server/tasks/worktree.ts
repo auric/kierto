@@ -9,6 +9,7 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSyn
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { BRANCH_SUFFIX_MAX } from "../../shared/task";
 import { dbStem } from "../context/attachments";
 import { GitError, git, gitEnv } from "../review/git";
 import { type BranchRemote, cachePath, gitSetup, locked, longPath, noUrl, WorkspaceError } from "../review/workspace";
@@ -29,8 +30,8 @@ export const SPARSE = [
   "!/.githooks/",
   "!/.husky/",
 ];
-// A name that exists gets -2, -3, and so on (spec.md section 6.8). The search stops here.
-const MAX_SUFFIX = 99;
+// A name that exists gets -2, -3, and so on (spec.md section 6.16.4). The search stops here.
+const MAX_SUFFIX = BRANCH_SUFFIX_MAX;
 const RM_TREE = { recursive: true, force: true, maxRetries: 3 } as const;
 const HEAD = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const LS_REMOTE_MS = 60_000;
@@ -68,8 +69,14 @@ export const patchFile = (dataDir: string, db: Database, task: number, step: num
 // The Task view shows the same name before the build (PlanTab.tsx).
 export { branchName, slug } from "../../shared/task";
 
-// The first of name, name-2, name-3, ... that neither the remote (`git ls-remote --heads`) nor the cache has as a branch.
-export async function freeBranch(dataDir: string, cache: string, remote: BranchRemote, name: string): Promise<string> {
+const lsError = (e: unknown, remote: BranchRemote) => {
+  let m = noUrl((e as Error).message);
+  for (const [, v] of remote.config) if (v) m = m.replaceAll(v, "[redacted]");
+  return new WorkspaceError(m, e instanceof GitError && e.stopped);
+};
+
+// The remote branches name and name-* with their heads (`git ls-remote --heads`).
+export async function remoteBranches(dataDir: string, remote: BranchRemote, name: string): Promise<Map<string, string>> {
   const { empty, env } = gitSetup(longPath(dataDir));
   await git(["check-ref-format", "--branch", name], { env }).catch(() => {
     throw new WorkspaceError(`${name} is not a valid branch name.`);
@@ -81,11 +88,72 @@ export async function freeBranch(dataDir: string, cache: string, remote: BranchR
       timeoutMs: LS_REMOTE_MS,
     });
   } catch (e) {
-    let m = noUrl((e as Error).message);
-    for (const [, v] of remote.config) if (v) m = m.replaceAll(v, "[redacted]");
-    throw new WorkspaceError(m, e instanceof GitError && e.stopped);
+    throw lsError(e, remote);
   }
-  const taken = new Set(out.split("\n").flatMap((l) => (l.includes("\trefs/heads/") ? [l.slice(l.indexOf("\trefs/heads/") + 12)] : [])));
+  const heads = new Map<string, string>();
+  for (const l of out.split("\n")) {
+    const m = /^([0-9a-f]{40}(?:[0-9a-f]{24})?)\trefs\/heads\/(.+)$/.exec(l.trimEnd());
+    if (m) heads.set(m[2] as string, m[1] as string);
+  }
+  return heads;
+}
+
+// The first of name-<from>, ..., name-99 (name itself for from 1) that taken does not hold.
+export function firstFree(name: string, taken: ReadonlySet<string>, from = 1): string {
+  for (let i = from; i <= MAX_SUFFIX; i++) {
+    const n = i === 1 ? name : `${name}-${i}`;
+    if (!taken.has(n)) return n;
+  }
+  throw new WorkspaceError(`The branch names ${name} to ${name}-${MAX_SUFFIX} are all taken.`);
+}
+
+// spec.md section 6.16.4, Continue: the remote branch goes into the cache as refs/heads/<name>. Returns the fetched head, the lease of
+// the first push. A cache branch with commits that the fetched head does not hold stays, and the call throws: the app never drops
+// commits.
+export async function takeRemoteBranch(dataDir: string, cache: string, remote: BranchRemote, task: number, name: string): Promise<string> {
+  const { empty, env } = gitSetup(longPath(dataDir));
+  const c = (args: string[]) => git([`--git-dir=${cache}`, ...args], { env });
+  return locked(cache, async () => {
+    try {
+      // A task ref, so the fetch never moves a branch of the cache.
+      await git(
+        [`--git-dir=${cache}`, "fetch", "--no-tags", "--end-of-options", remote.url, `+refs/heads/${name}:refs/rl/task/${task}/remote`],
+        {
+          env: gitEnv(empty, remote.config),
+          timeoutMs: LS_REMOTE_MS,
+        },
+      );
+    } catch (e) {
+      throw lsError(e, remote);
+    }
+    const head = (await c(["rev-parse", "--verify", "--quiet", `refs/rl/task/${task}/remote^{commit}`]).catch(() => "")).trim();
+    if (!HEAD.test(head)) throw new WorkspaceError(`The server has no branch ${name}.`);
+    const local = (await c(["rev-parse", "--verify", "--quiet", `refs/heads/${name}^{commit}`]).catch(() => "")).trim();
+    if (
+      local &&
+      local !== head &&
+      !(await c(["merge-base", "--is-ancestor", local, head]).then(
+        () => true,
+        () => false,
+      ))
+    )
+      throw new WorkspaceError(`The app copy of ${name} has commits that the server does not have. Start a new branch.`);
+    await c(["update-ref", `refs/heads/${name}`, head]);
+    return head;
+  });
+}
+
+// git merge-base of two commits in the cache, or null when they share no history.
+export async function mergeBase(dataDir: string, cache: string, a: string, b: string): Promise<string | null> {
+  const { env } = gitSetup(longPath(dataDir));
+  const out = await git([`--git-dir=${cache}`, "merge-base", a, b], { env }).catch(() => "");
+  return HEAD.test(out.trim()) ? out.trim() : null;
+}
+
+// The first of name, name-2, name-3, ... that neither the remote (`git ls-remote --heads`) nor the cache has as a branch.
+export async function freeBranch(dataDir: string, cache: string, remote: BranchRemote, name: string): Promise<string> {
+  const { env } = gitSetup(longPath(dataDir));
+  const taken = new Set((await remoteBranches(dataDir, remote, name)).keys());
   const local = existsSync(join(cache, "HEAD"))
     ? (
         await git([`--git-dir=${cache}`, "for-each-ref", "--format=%(refname:lstrip=2)", `refs/heads/${name}`, `refs/heads/${name}-*`], {
@@ -96,11 +164,7 @@ export async function freeBranch(dataDir: string, cache: string, remote: BranchR
         .filter(Boolean)
     : [];
   for (const b of local) taken.add(b);
-  for (let i = 1; i <= MAX_SUFFIX; i++) {
-    const n = i === 1 ? name : `${name}-${i}`;
-    if (!taken.has(n)) return n;
-  }
-  throw new WorkspaceError(`The branch names ${name} to ${name}-${MAX_SUFFIX} are all taken.`);
+  return firstFree(name, taken);
 }
 
 // git in the worktree. --git-dir and --work-tree name both folders, so a changed repo/.git file cannot point git at another repository.

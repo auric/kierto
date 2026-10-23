@@ -9,6 +9,11 @@ import { validator } from "hono/validator";
 import type { z } from "zod";
 import {
   type ApiError,
+  type BranchCheckDto,
+  type BranchSearchDto,
+  branchCheckInput,
+  branchName,
+  branchSearchInput,
   type RepoTaskSettingsDto,
   type RunConflict,
   repoTaskSettingsInput,
@@ -16,6 +21,7 @@ import {
   type TaskConflict,
   type TaskDto,
   taskAnswersInput,
+  taskBaseInput,
   taskCreateInput,
   taskDocInput,
   taskLimitInput,
@@ -213,6 +219,54 @@ export function createTaskRoutes(opts: { review: ReviewJobs; settings: Settings;
         const d = db && review.taskRunLog(db, id, run);
         return d ? c.json(d, 200) : c.json<ApiError>({ error: "Run not found." }, 404);
       })
+      // spec.md section 6.16.4: the branch check of the plan screen.
+      .get(
+        "/tasks/:id/branch",
+        idParam,
+        validator("query", (v, c) => {
+          const r = branchCheckInput.extend({ base: branchName.optional() }).safeParse(v);
+          return r.success ? r.data : c.json<ApiError>({ error: "Invalid branch prefix." }, 400);
+        }),
+        async (c) => {
+          const db = review.open();
+          if (!db) return c.json(unconfigured, 409);
+          const r = await tasks.branch(db, c.req.valid("param").id, c.req.valid("query"));
+          return "name" in r ? c.json<BranchCheckDto>(r, 200) : answer(c, r);
+        },
+      )
+      // spec.md section 6.16.3: a base change. 202 when the plan runs again.
+      .put("/tasks/:id/base", idParam, body(taskBaseInput, "Give the task version and a branch name."), async (c) => {
+        const db = review.open();
+        return db ? answer(c, await tasks.base(db, c.req.valid("param").id, c.req.valid("json"))) : c.json(unconfigured, 409);
+      })
+      // spec.md section 6.16.3: the base picker. One page of the branch search and the default branch.
+      .get(
+        "/repos/:project/:repo/branches",
+        repoParam,
+        validator("query", (v, c) => {
+          const r = branchSearchInput.safeParse(v);
+          return r.success ? r.data : c.json<ApiError>({ error: "The filter has at most 255 characters." }, 400);
+        }),
+        async (c) => {
+          const { project, repo } = c.req.valid("param");
+          let provider: Awaited<ReturnType<Settings["provider"]>>;
+          try {
+            provider = await opts.settings.provider();
+          } catch (e) {
+            return c.json<ApiError>({ error: (e as Error).message }, 502);
+          }
+          if (!provider) return c.json(unconfigured, 409);
+          try {
+            const [page, defaultBranch] = await Promise.all([
+              provider.listBranches(project, repo, c.req.valid("query").filter),
+              provider.defaultBranch(project, repo).catch(() => null),
+            ]);
+            return c.json<BranchSearchDto>({ defaultBranch, ...page }, 200);
+          } catch (e) {
+            return c.json<ApiError>({ error: `Cannot read the branches of ${project}/${repo}. ${noUrl((e as Error).message)}` }, 502);
+          }
+        },
+      )
       .get("/repos/:project/:repo/task-settings", repoParam, (c) => {
         const db = review.open();
         if (!db) return c.json(unconfigured, 409);

@@ -16,8 +16,8 @@ import { git, gitEnv } from "../../src/server/review/git";
 import { createReviewJobs } from "../../src/server/review/jobs";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
-import type { ApiError, RunConflict, TaskConflict, TaskDto, TaskRowDto } from "../../src/shared/dto";
-import { FAKE_TOKEN, FAKE_USER, startFakeBitbucket } from "../support/fake-bitbucket";
+import type { ApiError, BranchCheckDto, BranchSearchDto, RunConflict, TaskConflict, TaskDto, TaskRowDto } from "../../src/shared/dto";
+import { FAKE_TOKEN, FAKE_USER, key, repoWrites, startFakeBitbucket } from "../support/fake-bitbucket";
 import { echoSpec, type FakeScenario, readRecords } from "../support/fake-claude";
 import { ISSUE_KEY, JIRA_TOKEN, startFakeJira } from "../support/fake-jira";
 import { claudeStream, fakeRunner, reviewRemote, stubListTools } from "../support/review-fixture";
@@ -152,7 +152,30 @@ async function setup() {
     await settle();
     return recommend(await get(c.body.id));
   };
-  return { db, pr, remote, scenario, json, create, get, settle, runCalls, runs, connectJira, recommend, toPlan, jira, events, review, dir };
+  // A branch of the remote at the target head.
+  const branchAt = (name: string) =>
+    git(["--git-dir", remote.remote, "update-ref", `refs/heads/${name}`, remote.target], { env: gitEnv(join(root, "empty.gitconfig")) });
+  return {
+    db,
+    pr,
+    remote,
+    scenario,
+    json,
+    create,
+    get,
+    settle,
+    runCalls,
+    runs,
+    connectJira,
+    recommend,
+    toPlan,
+    jira,
+    events,
+    review,
+    dir,
+    fake,
+    branchAt,
+  };
 }
 
 const specWith = (o: Record<string, unknown>) => ({ ...echoSpec(), ...o });
@@ -564,8 +587,16 @@ describe("plan (spec.md sections 6.1 and 6.4, AC-B4)", () => {
       expect((await h.json<ApiError>(`/api/tasks/${t.id}/plan`, { body: { ...body, commands: ["nope"], warning: true } })).body).toEqual({
         error: "Command nope is not in the plan.",
       });
-      const ok = await h.json<TaskDto>(`/api/tasks/${t.id}/plan`, { body: { ...body, warning: true } });
+      expect((await h.json<ApiError>(`/api/tasks/${t.id}/plan`, { body: { ...body, warning: true, prefix: "bad.." } })).status).toBe(400);
+      const ok = await h.json<TaskDto>(`/api/tasks/${t.id}/plan`, { body: { ...body, warning: true, prefix: "task/" } });
       expect([ok.status, ok.body.state, ok.body.plan?.approved, ok.body.plan?.warning]).toEqual([200, "implementing", true, false]);
+      // spec.md section 6.16: the prefix and the existing-branch pick go into the task settings, the base into last_base.
+      expect(ok.body.settings).toMatchObject({ branchPrefix: "task/", existing: "continue" });
+      expect(h.db.query("SELECT last_base FROM repo_task_settings WHERE project = $p AND repo = $r").get({ p: "PROJ", r: "repo" })).toEqual(
+        {
+          last_base: "main",
+        },
+      );
       const row = h.db.query("SELECT commands_json, warned_at FROM repo_task_settings WHERE project = 'PROJ' AND repo = 'repo'").get() as {
         commands_json: string;
         warned_at: number | null;
@@ -600,6 +631,13 @@ describe("plan (spec.md sections 6.1 and 6.4, AC-B4)", () => {
     };
     const put = await h.json(`/api/repos/PROJ/repo/task-settings`, { method: "PUT", body });
     expect(put.status).toBe(200);
+    // spec.md section 6.16.1: the route drops branchPrefix, and the column keeps its value.
+    expect(put.body).not.toHaveProperty("branchPrefix");
+    expect(
+      h.db.query("SELECT branch_prefix FROM repo_task_settings WHERE project = $p AND repo = $r").get({ p: "PROJ", r: "repo" }),
+    ).toEqual({
+      branch_prefix: "feature/",
+    });
     expect((await get()).body).toMatchObject({ specDir: "docs/specs/{key}/", lineBudget: 300, commands: [cmd], warnedAt: 5 });
     expect((await h.json(`/api/repos/PROJ/repo/task-settings`, { method: "PUT", body: { ...body, commands: [cmd, cmd] } })).status).toBe(
       400,
@@ -668,6 +706,126 @@ describe("plan (spec.md sections 6.1 and 6.4, AC-B4)", () => {
       expect(medium.body.docs?.tasks).toContain("Size: medium");
       expect(medium.body.docs?.tasks).toContain("### [ ] T1.2 Second task");
       expect(medium.body.docs?.plan).toBeUndefined();
+    },
+    SLOW,
+  );
+});
+
+describe("base branch and branch check (spec.md sections 6.16.3 and 6.16.4)", () => {
+  test(
+    "AC-B28: the base starts at the default branch of Bitbucket, then at the last pick while it exists; the origin PR target sets nothing",
+    async () => {
+      const h = await setup();
+      await h.connectJira();
+      for (const b of ["develop", "release/2.1"]) await h.branchAt(b);
+      const forge = repoWrites(h.fake, "PROJ", "repo", { defaultBranch: "develop", branches: ["release/2.1"] });
+      delete h.fake.routes[key("GET", forge.path)];
+      const a = await h.create();
+      expect([a.status, a.body.targetBranch]).toEqual([201, "develop"]);
+      await h.settle();
+      expect(h.runCalls()[0]?.stdin).toContain("- ./repo holds the branch develop at commit");
+      // A done task frees the key for the next task.
+      h.db.query("UPDATE task SET state = 'done'").run();
+      // The last pick that the branch search still finds wins.
+      h.db.query("INSERT INTO repo_task_settings (project, repo, last_base, updated_at) VALUES ('PROJ', 'repo', 'release/2.1', 1)").run();
+      const b = await h.create();
+      expect([b.status, b.body.targetBranch]).toEqual([201, "release/2.1"]);
+      expect(h.fake.requests).toContain(
+        "GET /rest/api/1.0/projects/PROJ/repos/repo/branches?filterText=release%2F2.1&boostMatches=true&orderBy=MODIFICATION&limit=25",
+      );
+      await h.settle();
+      h.db.query("UPDATE task SET state = 'done'").run();
+      // A last pick that is gone falls back to the default branch.
+      forge.branches.names.splice(forge.branches.names.indexOf("release/2.1"), 1);
+      const c = await h.create();
+      expect([c.status, c.body.targetBranch]).toEqual([201, "develop"]);
+      await h.settle();
+    },
+    SLOW,
+  );
+
+  test(
+    "AC-B29 (server): the branch search route marks the default branch and pages; a failed read names the repository",
+    async () => {
+      const h = await setup();
+      const forge = repoWrites(h.fake, "PROJ", "repo", { branches: ["release/2.1", "release/2.0", "topic"] });
+      const r = await h.json<BranchSearchDto>("/api/repos/PROJ/repo/branches?filter=release");
+      expect(r).toEqual({
+        status: 200,
+        body: {
+          defaultBranch: "main",
+          branches: [
+            { name: "release/2.1", isDefault: false },
+            { name: "release/2.0", isDefault: false },
+          ],
+          more: false,
+        },
+      });
+      expect((await h.json<BranchSearchDto>("/api/repos/PROJ/repo/branches")).body.branches[0]).toEqual({ name: "main", isDefault: true });
+      expect((await h.json<BranchSearchDto>("/api/repos/PROJ/repo/branches?filter=nothing")).body.branches).toEqual([]);
+      expect((await h.json(`/api/repos/PROJ/repo/branches?filter=${"x".repeat(256)}`)).status).toBe(400);
+      delete h.fake.routes[key("GET", `${forge.path}/branches`)];
+      const bad = await h.json<ApiError>("/api/repos/PROJ/repo/branches?filter=x");
+      expect(bad.status).toBe(502);
+      expect(bad.body.error).toStartWith("Cannot read the branches of PROJ/repo. ");
+    },
+    SLOW,
+  );
+
+  test(
+    "AC-B30: a base change before the plan keeps the run; with a plan it writes the plan again on the new base and keeps the answers",
+    async () => {
+      const h = await setup();
+      await h.branchAt("develop");
+      const t = await h.toPlan();
+      expect(t.plan).not.toBeNull();
+      const answered = t.questions.filter((q) => q.answer !== null).length;
+      expect(answered).toBeGreaterThan(0);
+      const runsBefore = h.runCalls().length;
+      const gone = await h.json<TaskConflict>(`/api/tasks/${t.id}/base`, { method: "PUT", body: { version: t.version, branch: "nope" } });
+      expect([gone.status, gone.body.error]).toEqual([409, "nope does not exist in PROJ/repo."]);
+      const r = await h.json<TaskDto>(`/api/tasks/${t.id}/base`, { method: "PUT", body: { version: t.version, branch: "develop" } });
+      expect([r.status, r.body.targetBranch, r.body.state, r.body.plan]).toEqual([202, "develop", "spec_draft", null]);
+      await h.settle();
+      const after = await h.get(t.id);
+      expect(after.plan).not.toBeNull();
+      expect(after.targetBranch).toBe("develop");
+      expect(after.questions.filter((q) => q.answer !== null).length).toBe(answered);
+      const calls = h.runCalls();
+      expect(calls.length).toBe(runsBefore + 1);
+      expect(calls.at(-1)?.stdin).toContain("- ./repo holds the branch develop at commit");
+      const stale = await h.json(`/api/tasks/${t.id}/base`, { method: "PUT", body: { version: t.version, branch: "main" } });
+      expect(stale.status).toBe(409);
+    },
+    SLOW,
+  );
+
+  test(
+    "the branch check names the planned branch, where it exists, the open PR from it, and the first free suffix",
+    async () => {
+      const h = await setup();
+      const t = await h.toPlan();
+      const name = `task/${ISSUE_KEY}-flush-the-cache-before-the-write-lock`;
+      const none = await h.json<BranchCheckDto>(`/api/tasks/${t.id}/branch?prefix=task/`);
+      expect(none).toEqual({ status: 200, body: { name, exists: [], openPr: null, nextFree: `${name}-2` } });
+      await h.branchAt(name);
+      await h.branchAt(`${name}-2`);
+      const { id: open } = h.db
+        .query(
+          `INSERT INTO pull_request (project, repo, pr_id, title, state, source_branch, target_branch, updated_date)
+          VALUES ('PROJ', 'repo', 9, 'Earlier', 'OPEN', $name, 'main', 1) RETURNING id`,
+        )
+        .get({ name }) as { id: number };
+      const both = await h.json<BranchCheckDto>(`/api/tasks/${t.id}/branch?prefix=task/`);
+      expect(both.body).toEqual({
+        name,
+        exists: [{ taskRepo: null, project: "PROJ", repo: "repo", head: h.remote.target }],
+        openPr: open,
+        nextFree: `${name}-3`,
+      });
+      // Without a prefix: the first prefix of Settings > Tasks.
+      expect((await h.json<BranchCheckDto>(`/api/tasks/${t.id}/branch`)).body.name).toStartWith(`feature/${ISSUE_KEY}-`);
+      expect((await h.json(`/api/tasks/${t.id}/branch?prefix=bad..`)).status).toBe(400);
     },
     SLOW,
   );

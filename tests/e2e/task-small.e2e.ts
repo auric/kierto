@@ -130,11 +130,10 @@ test("a small task: chip, questions, plan with the warning, a stop at the line l
   const prs = (await api(page, "GET", "/api/prs")).json as { id: number; prId: number }[];
   const prA = prs.find((p) => p.prId === 1001)?.id as number;
   expect((await api(page, "PUT", `/api/prs/${prA}/clone`, { path: await makeClone(1001) })).status).toBe(200);
+  // The local remote has a branch "feature", so a "feature/" branch cannot exist there (git refs are paths). Step 3 changes the
+  // prefix of this task to "task/" on the plan screen.
   const limit = await api(page, "PUT", "/api/repos/PROJ1/sample-repo-2/task-settings", {
     specDir: "specs/{key}/",
-    // The local remote has a branch "feature", so a "feature/" branch cannot exist there (git refs are paths). Step 3 changes the
-    // prefix to "task/" on the plan screen.
-    branchPrefix: "feature/",
     lineBudget: LIMIT,
     maxOpen: 2,
     approvals: 1,
@@ -172,8 +171,8 @@ test("a small task: chip, questions, plan with the warning, a stop at the line l
   await expect(page.getByRole("radio", { name: /^Small: one PR/ })).toBeChecked();
   await expect(page.getByRole("checkbox", { name: /bun test/ })).toBeChecked();
   await expect(page.getByText("Before the first build in this repository")).toBeVisible();
-  // The branch from the prefix of the repository. "Change the prefix" saves it with the task settings route, and Enter in its field
-  // does not submit the plan.
+  // The branch from the first prefix of Settings > Tasks. "Change the prefix" sets the prefix of this task for the approval, and Enter
+  // in its field does not submit the plan.
   const planned = page.locator("#task-branch");
   await expect(planned).toHaveText("feature/ABC-42-flush-the-cache-before-the-write-lock");
   await page.getByRole("button", { name: "Change the prefix" }).click();
@@ -188,10 +187,8 @@ test("a small task: chip, questions, plan with the warning, a stop at the line l
   await expect(page.getByRole("button", { name: "Change the prefix" })).toBeFocused();
   await expect(page.getByRole("alert").filter({ hasText: "tick “I understand” first" })).toHaveCount(0);
   await expect(primary(page)).toHaveCount(1);
-  expect((await api(page, "GET", "/api/repos/PROJ1/sample-repo-2/task-settings")).json).toMatchObject({
-    branchPrefix: "task/",
-    lineBudget: LIMIT,
-  });
+  // The repository settings keep no prefix (spec.md section 6.16.1).
+  expect((await api(page, "GET", "/api/repos/PROJ1/sample-repo-2/task-settings")).json).not.toHaveProperty("branchPrefix");
   await primary(page).click();
   await expect(page.getByRole("alert").filter({ hasText: "tick “I understand” first" })).toBeVisible();
   await page.getByRole("checkbox", { name: "I understand" }).check();

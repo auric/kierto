@@ -56,19 +56,6 @@ export const useRepoTaskSettings = (project: string, repo: string) =>
     queryFn: async () => read<RepoTaskSettingsDto>(await repoSettings$().$get({ param: { project, repo } })),
   });
 
-// PUT /api/repos/:project/:repo/task-settings takes every field. A fresh read right before the write keeps the other fields as stored.
-export function useSaveBranchPrefix(project: string, repo: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (branchPrefix: string) => {
-      const param = { project, repo };
-      const { project: _p, repo: _r, warnedAt: _w, ...stored } = await read<RepoTaskSettingsDto>(await repoSettings$().$get({ param }));
-      return read<RepoTaskSettingsDto>(await repoSettings$().$put({ param, json: { ...stored, branchPrefix } }));
-    },
-    onSuccess: (dto) => qc.setQueryData(["task-settings", project, repo], dto),
-  });
-}
-
 // POST /api/tasks: 201 with a new task, or 200 with the open task of the same key.
 export async function createTask(input: TaskCreateInput): Promise<TaskDto> {
   return read<TaskDto>(await api.api.tasks.$post({ json: input }));

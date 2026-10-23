@@ -15,8 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { TaskDto, TaskPlanInput } from "../../shared/dto";
-import { PART_STATE_TEXT, sizeRank, TASK_SIZES, type TaskSize } from "../../shared/task";
-import { useRepoTaskSettings, useSaveBranchPrefix } from "./data";
+import { PART_STATE_TEXT, PREFIX_MAX, sizeRank, TASK_SIZES, type TaskSize } from "../../shared/task";
+import { useSettings } from "../shell/data";
 import { codeParts, plannedBranch, prefixProblem, SIZE_LINE } from "./model";
 
 export const PLAN_FORM = "task-plan";
@@ -45,6 +45,8 @@ export function PlanApproval(props: {
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set(plan?.commands.map((c) => c.id) ?? []));
   const [warned, setWarned] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  // null: the first prefix of Settings > Tasks, which the server also takes when the approval names none.
+  const [prefix, setPrefix] = useState<string | null>(null);
   if (!plan) return null;
   const size = t.size ?? plan.proposed;
   const toggle = (id: string, on: boolean) =>
@@ -65,7 +67,7 @@ export function PlanApproval(props: {
         const p = planProblem(t, picked, warned);
         setProblem(p);
         if (p) return;
-        props.onApprove({ size, commands: picks.map((c) => c.id), ...(plan.warning && { warning: true }) });
+        props.onApprove({ size, commands: picks.map((c) => c.id), ...(plan.warning && { warning: true }), ...(prefix && { prefix }) });
       }}
     >
       <FieldSet className="gap-1.5">
@@ -107,7 +109,7 @@ export function PlanApproval(props: {
           );
         })}
       </FieldSet>
-      <BranchLine t={t} size={size} />
+      <BranchLine t={t} size={size} prefix={prefix} onPrefix={setPrefix} />
       {plan.missing > 0 && (
         <p className="m-0 text-sm text-ink-2">
           {plan.missing === 1 ? "1 map line names code that does not exist." : `${plan.missing} map lines name code that does not exist.`}{" "}
@@ -174,21 +176,19 @@ export function PlanApproval(props: {
   );
 }
 
-// spec.md section 6.8: the build names the branch from the prefix of the repository when it starts, so a change here applies to this
-// task. The prefix is a repository setting: later tasks use it too. Enter saves, and Esc closes the field.
-function BranchLine({ t, size }: { t: TaskDto; size: TaskSize }) {
-  const settings = useRepoTaskSettings(t.project, t.repo);
-  const save = useSaveBranchPrefix(t.project, t.repo);
+// spec.md section 6.16.1: the plan approval carries the prefix of this task. It starts at the first prefix of Settings > Tasks. Enter
+// takes the prefix, and Esc closes the field. WP-BR2 replaces this field with the "Branch type" chips.
+function BranchLine({ t, size, prefix, onPrefix }: { t: TaskDto; size: TaskSize; prefix: string | null; onPrefix: (p: string) => void }) {
+  const settings = useSettings();
   // null: the field is closed.
   const [draft, setDraft] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const change = useRef<HTMLButtonElement>(null);
   const field = useRef<HTMLInputElement>(null);
-  const stored = settings.data?.branchPrefix;
+  const stored = prefix ?? settings.data?.taskBranchPrefixes[0];
   const close = () => {
     setDraft(null);
     setProblem(null);
-    save.reset();
     requestAnimationFrame(() => change.current?.focus());
   };
   const submit = () => {
@@ -196,10 +196,11 @@ function BranchLine({ t, size }: { t: TaskDto; size: TaskSize }) {
     const p = prefixProblem(draft);
     setProblem(p);
     if (p) return field.current?.focus();
-    save.mutate(draft, { onSuccess: close });
+    onPrefix(draft);
+    close();
   };
   const shown = draft !== null && prefixProblem(draft) === null ? draft : stored;
-  const error = problem ?? save.error?.message ?? null;
+  const error = problem;
   return (
     <FieldSet className="gap-1.5">
       <FieldLegend className="text-sm font-semibold">Branch</FieldLegend>
@@ -238,7 +239,7 @@ function BranchLine({ t, size }: { t: TaskDto; size: TaskSize }) {
                 autoFocus
                 autoComplete="off"
                 spellCheck={false}
-                maxLength={100}
+                maxLength={PREFIX_MAX}
                 aria-invalid={error ? true : undefined}
                 aria-describedby={error ? "task-prefix-help task-prefix-error" : "task-prefix-help"}
                 className="h-8 font-mono"
@@ -260,20 +261,14 @@ function BranchLine({ t, size }: { t: TaskDto; size: TaskSize }) {
                 }}
               />
             </Field>
-            <Button type="button" variant="outline" disabled={save.isPending} onClick={submit}>
-              {save.isPending ? "Saving…" : "Save the prefix"}
+            <Button type="button" variant="outline" onClick={submit}>
+              Save the prefix
             </Button>
             <Button type="button" variant="ghost" onClick={close}>
               Cancel
             </Button>
           </div>
-          <FieldDescription id="task-prefix-help">
-            For example feature/ or task/. Leave it empty for no prefix. New tasks in{" "}
-            <span translate="no">
-              {t.project}/{t.repo}
-            </span>{" "}
-            use it too.
-          </FieldDescription>
+          <FieldDescription id="task-prefix-help">For example feature/ or task/. It applies to this task only.</FieldDescription>
           {error && <FieldError id="task-prefix-error">{error}</FieldError>}
         </div>
       )}

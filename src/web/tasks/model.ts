@@ -4,14 +4,7 @@
 // The Task view model (docs/plans/review-v2/spec.md sections 6.12 and 7): one status sentence that names who acts or what the app
 // waits for, at most one primary action, and the More actions, per state. Pure: tests/web/tasks-model.test.ts has one test per row.
 // runner: the short name of the CLI from meta, because UI code names no product (tests/ui/names.test.ts).
-import {
-  repoTaskSettingsInput,
-  type TaskDto,
-  type TaskPartDto,
-  type TaskQuestionDto,
-  type TaskRowDto,
-  type TaskStepDto,
-} from "../../shared/dto";
+import { branchPrefix, type TaskDto, type TaskPartDto, type TaskQuestionDto, type TaskRowDto, type TaskStepDto } from "../../shared/dto";
 import { branchName, type TaskSize } from "../../shared/task";
 
 export type ActionKind =
@@ -383,9 +376,9 @@ export const STEP_TEXT: Record<StepLook, string> = {
 export const plannedBranch = (prefix: string, t: Pick<TaskDto, "key" | "title">, size: TaskSize) =>
   size === "small" ? branchName(prefix, t.key, { kind: "small", title: t.title }) : `${prefix}${t.key}-`;
 
-// The branch prefix rule of PUT /api/repos/:project/:repo/task-settings (repoTaskSettingsInput), with its sentence.
+// The branch prefix rule of the plan approval (branchPrefix in dto.ts, spec.md section 6.16.1), with its sentence.
 export function prefixProblem(prefix: string): string | null {
-  const r = repoTaskSettingsInput.shape.branchPrefix.safeParse(prefix);
+  const r = branchPrefix.safeParse(prefix);
   return r.success ? null : (r.error.issues[0]?.message ?? "Invalid branch prefix.");
 }
 

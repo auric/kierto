@@ -9,6 +9,7 @@ import { initialTransition, transition } from "xstate";
 import type { z } from "zod";
 import { oneLine } from "../../shared/consult";
 import type {
+  BranchCheckDto,
   IssueContext,
   RepoTaskSettingsDto,
   RepoTaskSettingsInput,
@@ -30,6 +31,7 @@ import type {
 } from "../../shared/dto";
 import type { FindingPayload } from "../../shared/review";
 import {
+  branchName,
   INTERVIEW_QUESTIONS,
   INTERVIEW_TURNS,
   type InterviewResult,
@@ -57,6 +59,7 @@ import {
   taskSettings,
 } from "../../shared/task";
 import { NoCloneLink } from "../bitbucket/errors";
+import type { ForgeProvider } from "../bitbucket/provider";
 import { FAILED as JIRA_FAILED } from "../context/routes";
 import { ContextError, type ContextSource } from "../context/source";
 import { issueFile, taskContext } from "../context/task-file";
@@ -68,7 +71,7 @@ import type { ReviewJobs, TaskRunStart } from "../review/jobs";
 import { type Ending, judgeTask } from "../review/judge";
 import { buildInterviewPrompt, buildSpecPrompt } from "../review/prompt";
 import { type ContextFile, noUrl, remoteHead } from "../review/workspace";
-import type { Settings } from "../settings";
+import { branchPrefixesOf, type Settings } from "../settings";
 import {
   type Answer,
   afterAnswers,
@@ -94,6 +97,7 @@ import {
   sizeFloor,
   toPlan,
 } from "./plan";
+import { firstFree, remoteBranches } from "./worktree";
 
 type TaskSizeInput = z.infer<typeof taskSizeInput>;
 
@@ -238,13 +242,19 @@ const Q = {
   interview: `SELECT r.answer FROM task_step s JOIN review_run r ON r.id = s.run
     WHERE s.task = $id AND s.kind = 'interview' AND r.answer IS NOT NULL ORDER BY s.id DESC LIMIT 1`,
   settings: "SELECT * FROM repo_task_settings WHERE project = $project AND repo = $repo",
-  approve: `INSERT INTO repo_task_settings (project, repo, commands_json, warned_at, updated_at) VALUES ($project, $repo, $commands, $warned, $now)
+  // last_base: the base branch of the approved plan, the first pick of the next task (spec.md section 6.16.3).
+  approve: `INSERT INTO repo_task_settings (project, repo, commands_json, warned_at, last_base, updated_at)
+    VALUES ($project, $repo, $commands, $warned, $base, $now)
     ON CONFLICT (project, repo) DO UPDATE SET commands_json = excluded.commands_json,
-      warned_at = COALESCE(repo_task_settings.warned_at, excluded.warned_at), updated_at = excluded.updated_at`,
-  saveSettings: `INSERT INTO repo_task_settings (project, repo, spec_dir, branch_prefix, line_budget, max_open, approvals, commands_json,
+      warned_at = COALESCE(repo_task_settings.warned_at, excluded.warned_at), last_base = excluded.last_base, updated_at = excluded.updated_at`,
+  lastBase: "SELECT last_base FROM repo_task_settings WHERE project = $project AND repo = $repo",
+  openPr: `SELECT id FROM pull_request WHERE project = $project AND repo = $repo AND source_branch = $branch AND target_branch = $base
+    AND state = 'OPEN' ORDER BY id DESC LIMIT 1`,
+  // branch_prefix stays in the table. No code reads or writes it (spec.md section 6.16.1).
+  saveSettings: `INSERT INTO repo_task_settings (project, repo, spec_dir, line_budget, max_open, approvals, commands_json,
       test_globs_json, exclude_globs_json, isolate_home, updated_at)
-    VALUES ($project, $repo, $spec_dir, $prefix, $budget, $max_open, $approvals, $commands, $tests, $excludes, $isolate, $now)
-    ON CONFLICT (project, repo) DO UPDATE SET spec_dir = excluded.spec_dir, branch_prefix = excluded.branch_prefix,
+    VALUES ($project, $repo, $spec_dir, $budget, $max_open, $approvals, $commands, $tests, $excludes, $isolate, $now)
+    ON CONFLICT (project, repo) DO UPDATE SET spec_dir = excluded.spec_dir,
       line_budget = excluded.line_budget, max_open = excluded.max_open, approvals = excluded.approvals, commands_json = excluded.commands_json,
       test_globs_json = excluded.test_globs_json, exclude_globs_json = excluded.exclude_globs_json, isolate_home = excluded.isolate_home,
       updated_at = excluded.updated_at`,
@@ -252,7 +262,6 @@ const Q = {
 
 type SettingsRow = {
   spec_dir: string;
-  branch_prefix: string;
   line_budget: number;
   max_open: number;
   approvals: number;
@@ -273,7 +282,6 @@ export function repoSettings(db: Database, project: string, repo: string): RepoT
     project,
     repo,
     specDir: r?.spec_dir ?? TASK_DEFAULTS.specDir,
-    branchPrefix: r?.branch_prefix ?? TASK_DEFAULTS.branchPrefix,
     lineBudget: r?.line_budget ?? TASK_DEFAULTS.lineBudget,
     maxOpen: r?.max_open ?? TASK_DEFAULTS.maxOpen,
     approvals: r?.approvals ?? TASK_DEFAULTS.approvals,
@@ -290,7 +298,6 @@ export function saveRepoSettings(db: Database, project: string, repo: string, s:
     project,
     repo,
     spec_dir: s.specDir,
-    prefix: s.branchPrefix,
     budget: s.lineBudget,
     max_open: s.maxOpen,
     approvals: s.approvals,
@@ -310,7 +317,10 @@ export const budgetOf = (db: Database, t: TaskRow) => settingsOf(t).lineBudget ?
 export const docsOf = (t: TaskRow): Docs | null => (t.docs_json === null ? null : (JSON.parse(t.docs_json) as Docs));
 
 type Patch = Partial<
-  Record<"blocked_json" | "docs_json" | "estimate_json" | "size" | "size_by" | "base_commit" | "settings_json", string | null>
+  Record<
+    "blocked_json" | "docs_json" | "estimate_json" | "size" | "size_by" | "base_commit" | "settings_json" | "target_branch",
+    string | null
+  >
 >;
 
 // A version-checked write of task fields that are no state. Returns the new version.
@@ -604,6 +614,31 @@ export function stepAnswers(db: Database, id: number): ContextFile | null {
   return answersFile(rows, interviewOf(db, id));
 }
 
+// spec.md section 6.16.3, base preselection: the last pick when the branch search still finds exactly that name, else the default
+// branch of Bitbucket (Gate G13), else the remote HEAD of `git ls-remote --symref`. A failed read goes on to the next source.
+export async function preselectBase(d: {
+  last: string | null;
+  provider: Pick<ForgeProvider, "listBranches" | "defaultBranch"> | null;
+  project: string;
+  repo: string;
+  remoteHead: () => Promise<string>;
+}): Promise<string> {
+  const { provider, project, repo, last } = d;
+  if (provider && last)
+    try {
+      if ((await provider.listBranches(project, repo, last)).branches.some((b) => b.name === last)) return last;
+    } catch (e) {
+      log(`Cannot search the branches of ${project}/${repo}: ${noUrl((e as Error).message)}`);
+    }
+  if (provider)
+    try {
+      return await provider.defaultBranch(project, repo);
+    } catch (e) {
+      log(`Cannot read the default branch of ${project}/${repo} from Bitbucket: ${noUrl((e as Error).message)}`);
+    }
+  return d.remoteHead();
+}
+
 export type TaskServiceOptions = {
   review: ReviewJobs;
   settings: Settings;
@@ -850,15 +885,22 @@ export function createTaskService(opts: TaskServiceOptions) {
         return { status: 502, error: JIRA_FAILED[e.kind] };
       }
     }
-    let target = input.target ?? pr?.target_branch ?? null;
-    if (!target)
-      try {
-        target = await remoteHead(review.dataDir, await review.taskRemote(input.project, input.repo));
-      } catch (e) {
-        if (e instanceof NoCloneLink) return { status: 409, error: e.message };
-        return { status: 502, error: `Cannot read the default branch of ${input.project}/${input.repo}. ${noUrl((e as Error).message)}` };
-      }
-    const branch = target;
+    // spec.md section 6.16.3: the origin PR target no longer sets the base.
+    let branch: string;
+    try {
+      branch = await preselectBase({
+        last:
+          (db.query(Q.lastBase).get({ project: input.project, repo: input.repo }) as { last_base: string | null } | null)?.last_base ??
+          null,
+        provider: await settings.provider().catch(() => null),
+        project: input.project,
+        repo: input.repo,
+        remoteHead: async () => remoteHead(review.dataDir, await review.taskRemote(input.project, input.repo)),
+      });
+    } catch (e) {
+      if (e instanceof NoCloneLink) return { status: 409, error: e.message };
+      return { status: 502, error: `Cannot read the default branch of ${input.project}/${input.repo}. ${noUrl((e as Error).message)}` };
+    }
     const fetchedAt = now();
     let id: number;
     let status: 200 | 201 = 201;
@@ -1037,8 +1079,21 @@ export function createTaskService(opts: TaskServiceOptions) {
     try {
       db.transaction(() => {
         const at = now();
-        db.query(Q.approve).run({ project: t.project, repo: t.repo, commands: JSON.stringify(stored), warned: at, now: at });
-        const v = patch(db, id, t.version, resized(t, docs, input.size, true), at);
+        db.query(Q.approve).run({
+          project: t.project,
+          repo: t.repo,
+          commands: JSON.stringify(stored),
+          warned: at,
+          base: t.target_branch,
+          now: at,
+        });
+        // spec.md section 6.16: the branch prefix and the existing-branch pick go with the approval.
+        const s: TaskSettings = {
+          ...settingsOf(t),
+          branchPrefix: input.prefix ?? (branchPrefixesOf(settings.config())[0] as string),
+          existing: input.existing ?? "continue",
+        };
+        const v = patch(db, id, t.version, { ...resized(t, docs, input.size, true), settings_json: JSON.stringify(s) }, at);
         const r = advance(db, { task: id, version: v }, { type: "APPROVE" }, {}, at);
         if (r.status !== 200) throw new Refused(r.error);
       })();
@@ -1048,6 +1103,71 @@ export function createTaskService(opts: TaskServiceOptions) {
     }
     changed(id);
     return { status: 200, task: taskDto(db, taskRow(db, id) as TaskRow) };
+  }
+
+  // GET /api/tasks/:id/branch (spec.md section 6.16.4): the planned name, where it exists on the server, the open PR from it to the
+  // base, and the first free suffix. A small task names its one branch. A larger one names its spec branch.
+  async function branch(db: Database, id: number, input: { prefix?: string; base?: string }): Promise<BranchCheckDto | TaskResult> {
+    const t = taskRow(db, id);
+    if (!t) return { status: 404, error: "Task not found." };
+    const prefix = input.prefix ?? settingsOf(t).branchPrefix ?? (branchPrefixesOf(settings.config())[0] as string);
+    const small = (t.size ?? docsOf(t)?.parsed.proposed ?? "small") === "small";
+    const name = branchName(prefix, t.key, small ? { kind: "small", title: t.title } : { kind: "spec" });
+    let heads: Map<string, string>;
+    try {
+      heads = await remoteBranches(review.dataDir, await review.taskRemote(t.project, t.repo), name);
+    } catch (e) {
+      if (e instanceof NoCloneLink) return { status: 409, error: e.message };
+      return { status: 502, error: `Cannot read the branches of ${t.project}/${t.repo}. ${noUrl((e as Error).message)}` };
+    }
+    const head = heads.get(name);
+    const pr = db.query(Q.openPr).get({ project: t.project, repo: t.repo, branch: name, base: input.base ?? t.target_branch }) as {
+      id: number;
+    } | null;
+    return {
+      name,
+      exists: head ? [{ taskRepo: null, project: t.project, repo: t.repo, head }] : [],
+      openPr: pr?.id ?? null,
+      nextFree: firstFree(name, new Set(heads.keys()), 2),
+    };
+  }
+
+  // PUT /api/tasks/:id/base (spec.md section 6.16.3). Before the plan: the base changes. With a plan: the plan goes, and the spec run
+  // writes it again on the new base head. The answers stay.
+  async function base(db: Database, id: number, input: { version: number; branch: string }): Promise<TaskResult> {
+    const t = taskRow(db, id);
+    if (!t) return { status: 404, error: "Task not found." };
+    if (t.version !== input.version) return conflict(db, t, TASK_CHANGED);
+    if (t.state !== "interview" && t.state !== "spec_draft") return conflict(db, t, "The base branch changes only before the build.");
+    if (db.query(Q.busy).get({ id })) return conflict(db, t, "Claude is still working on this task. Wait for the step to end.");
+    if (input.branch === t.target_branch) return { status: 200, task: taskDto(db, t) };
+    let found: boolean;
+    try {
+      found = (await remoteBranches(review.dataDir, await review.taskRemote(t.project, t.repo), input.branch)).has(input.branch);
+    } catch (e) {
+      if (e instanceof NoCloneLink) return { status: 409, error: e.message };
+      return { status: 502, error: `Cannot read the branches of ${t.project}/${t.repo}. ${noUrl((e as Error).message)}` };
+    }
+    if (!found) return conflict(db, t, `${input.branch} does not exist in ${t.project}/${t.repo}.`);
+    const rerun = t.state === "spec_draft";
+    const busy = rerun ? review.busy() : null;
+    if (busy) return busyResult(busy);
+    try {
+      db.transaction(() => {
+        const cur = taskRow(db, id);
+        if (!cur || cur.version !== input.version) throw new Refused(TASK_CHANGED);
+        if (!rerun) return patch(db, id, cur.version, { target_branch: input.branch }, now());
+        const fields: Patch = { target_branch: input.branch, docs_json: null, estimate_json: null, size: null, size_by: null };
+        patch(db, id, cur.version, { ...fields, base_commit: null, blocked_json: null }, now());
+        const r = review.taskRun(db, specRun(db, taskRow(db, id) as TaskRow));
+        if (r.status !== 202) throw new Refused(r.conflict.error, r.conflict);
+      })();
+    } catch (e) {
+      if (!(e instanceof Refused)) throw e;
+      return e.running ? busyResult(e.running) : conflict(db, t, e.message);
+    }
+    changed(id);
+    return { status: rerun ? 202 : 200, task: taskDto(db, taskRow(db, id) as TaskRow) };
   }
 
   // POST /api/tasks/:id/resume of a task that stopped before its build (spec.md section 6.2): the state before the stop, then the run
@@ -1110,6 +1230,8 @@ export function createTaskService(opts: TaskServiceOptions) {
     size,
     docs,
     plan,
+    branch,
+    base,
     resume,
     close,
     get(db: Database, id: number): TaskDto | null {

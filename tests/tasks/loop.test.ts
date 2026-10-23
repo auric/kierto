@@ -15,6 +15,7 @@ import { createLive } from "../../src/server/live";
 import { DEFAULT_PROFILE, profileOf } from "../../src/server/review/catalog";
 import { git } from "../../src/server/review/git";
 import { createReviewJobs } from "../../src/server/review/jobs";
+import { cachePath, gitSetup, longPath } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
 import { type StepOutcome, startStep } from "../../src/server/tasks/implement";
@@ -29,6 +30,7 @@ import {
   tickTask,
 } from "../../src/server/tasks/loop";
 import { renderDocs, toPlan } from "../../src/server/tasks/plan";
+import { pushTaskBranch, staleText } from "../../src/server/tasks/push";
 import { recoverTasks, taskRow } from "../../src/server/tasks/tasks";
 import { openWorktree, status } from "../../src/server/tasks/worktree";
 import type { RunConflict, TaskDto } from "../../src/shared/dto";
@@ -37,7 +39,7 @@ import { echoSpec, type FakeScenario, readRecords } from "../support/fake-claude
 import { claudeStream, fakeRunner, stubListTools } from "../support/review-fixture";
 import { taskCache, taskRemote } from "./fixture";
 
-for (const m of ["tasks/loop", "tasks/implement", "tasks/tasks", "review/jobs", "review/workspace"])
+for (const m of ["tasks/loop", "tasks/implement", "tasks/tasks", "tasks/push", "tasks/worktree", "review/jobs", "review/workspace"])
   console.log(`loop.test.ts imported from ${Bun.resolveSync(`../../src/server/${m}`, import.meta.dir)}`);
 
 process.env.REVIEW_LOOP_SECRETS = "memory";
@@ -916,6 +918,85 @@ describe("the loop of one part (spec.md section 6.7)", () => {
       expect(s.loop.resume(s.db, s.task, { version: s.t().version }).status).toBe(200);
       await s.loop.idle(s.task);
       expect(s.part().state).toBe("self_reviewed");
+    },
+    SLOW,
+  );
+});
+
+describe("an existing branch on the server (spec.md section 6.16.4)", () => {
+  // push.ts takes a Jira key with two or more letters before the hyphen.
+  const PUSH_KEY = "AB-1";
+  const NAME = `feature/${PUSH_KEY}-add-the-feature`;
+  // A colleague commit on the remote branch NAME, on top of base.
+  const colleague = async (s: Awaited<ReturnType<typeof setup>>, parent: string, msg: string) => {
+    const c = await s.r.g(["commit-tree", `${parent}^{tree}`, "-p", parent, "-m", msg]);
+    await s.r.g(["update-ref", `refs/heads/${NAME}`, c]);
+    return c;
+  };
+
+  test(
+    "AC-B31: Continue builds on the fetched remote head and leases the first push on it; a push after a colleague push fails the lease",
+    async () => {
+      const s = await setup();
+      const id = s.addTask(PUSH_KEY, "Add the feature");
+      const remoteHead = await colleague(s, s.base, "colleague");
+      await s.build(id);
+      expect(s.part(id).state).toBe("self_reviewed");
+      expect(s.part(id).branch).toBe(NAME);
+      const row = s.db.query("SELECT pushed FROM task_part WHERE id = $id").get({ id: s.part(id).id }) as { pushed: string | null };
+      expect(row.pushed).toBe(remoteHead);
+      // base_commit: the merge base of the base head and the remote head, so the budget counts the whole PR diff.
+      expect(s.t(id).base_commit).toBe(s.base);
+      const dataDir = longPath(s.dataDir);
+      const cache = cachePath(dataDir, { project: "PROJ", repo: "repo", id });
+      const head = s.part(id).head as string;
+      const { env, empty } = gitSetup(dataDir);
+      await git([`--git-dir=${cache}`, "merge-base", "--is-ancestor", remoteHead, head], { env });
+
+      const argv: string[][] = [];
+      const spy: typeof git = (args, o) => {
+        argv.push(args);
+        return git(args, o);
+      };
+      const push = () =>
+        pushTaskBranch({
+          cache,
+          emptyGlobal: empty,
+          url: s.r.remote,
+          config: [],
+          commit: head,
+          branch: NAME,
+          lease: row.pushed,
+          task: { key: PUSH_KEY, prefix: "feature/", branches: [NAME], target: "main" },
+          git: spy,
+        });
+      // A colleague pushed after the fetch: the lease fails, and the remote keeps the colleague commit.
+      const moved = await colleague(s, remoteHead, "colleague again");
+      expect(await push()).toEqual({ status: "stale", sentence: staleText(NAME) });
+      expect(await s.r.g(["rev-parse", `refs/heads/${NAME}`])).toBe(moved);
+      // Back at the fetched head, the push goes through with the fetched head as its lease. Never a "+" refspec.
+      await s.r.g(["update-ref", `refs/heads/${NAME}`, remoteHead]);
+      argv.length = 0;
+      expect(await push()).toEqual({ status: "pushed" });
+      const sent = argv.find((a) => a.includes("push")) as string[];
+      expect(sent).toContain(`--force-with-lease=refs/heads/${NAME}:${remoteHead}`);
+      expect(sent.some((a) => a.startsWith("+"))).toBe(false);
+      expect(await s.r.g(["rev-parse", `refs/heads/${NAME}`])).toBe(head);
+    },
+    SLOW,
+  );
+
+  test(
+    "AC-B32: Start a new branch takes the first free suffix and an empty lease",
+    async () => {
+      const s = await setup({ settings: { existing: "new" } });
+      const id = s.addTask(PUSH_KEY, "Add the feature");
+      await colleague(s, s.base, "colleague");
+      await s.r.g(["update-ref", `refs/heads/${NAME}-2`, s.base]);
+      await s.build(id);
+      expect(s.part(id).branch).toBe(`${NAME}-3`);
+      expect(s.db.query("SELECT pushed FROM task_part WHERE id = $id").get({ id: s.part(id).id })).toEqual({ pushed: null });
+      expect(s.t(id).base_commit).toBe(s.base);
     },
     SLOW,
   );

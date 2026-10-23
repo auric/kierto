@@ -146,6 +146,17 @@ export const buildStats = z.object({
   unknown: z.number().optional().catch(undefined),
 });
 
+// GET .../default-branch (Gate G13): keys displayId, id, type. The id starts with refs/heads/.
+export const defaultBranch = z.object({ id: z.string(), displayId: z.string() });
+
+// GET .../branches values (Gate G14). The live flag key is isDefault. The Data Center 9.6 schema names it default.
+export const branch = z.object({
+  id: z.string(),
+  displayId: z.string(),
+  isDefault: z.boolean().optional().catch(undefined),
+  default: z.boolean().optional().catch(undefined),
+});
+
 export const page = <T extends z.ZodType>(item: T) =>
   z.object({
     start: z.number(),

@@ -423,8 +423,10 @@ describe("the branch line of the plan (spec.md section 6.8)", () => {
   });
 
   test("the prefix rule of the task settings route, with its sentence", () => {
-    for (const ok of ["feature/", "task/", "", "users/ada/", "fix-"]) expect(prefixProblem(ok)).toBeNull();
-    for (const bad of ["bad..", "a b", "/task/", "-x", "x~", "a/.b", "a.lock/"]) expect(prefixProblem(bad)).toBe("Invalid branch prefix.");
+    for (const ok of ["feature/", "task/", "users/ada/", "fix-"]) expect(prefixProblem(ok)).toBeNull();
+    // spec.md section 6.16.1: a prefix has 1 to 40 characters.
+    for (const bad of ["", "x".repeat(41), "bad..", "a b", "/task/", "-x", "x~", "a/.b", "a.lock/"])
+      expect(prefixProblem(bad)).toBe("Invalid branch prefix.");
   });
 });
 

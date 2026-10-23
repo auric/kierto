@@ -16,6 +16,7 @@ import {
   type TaskRule,
   taskPreviewInput,
 } from "../shared/dto";
+import { DEFAULT_BRANCH_PREFIXES } from "../shared/task";
 import type { PullRequest } from "../shared/types";
 import { ForgeError } from "./bitbucket/client";
 import { createBitbucketProvider, type ForgeProvider } from "./bitbucket/provider";
@@ -80,6 +81,7 @@ function retire(list: Profile[]): Profile[] {
   return list.filter((p) => !gone.includes(p)).map((p) => (p === general ? { ...p, modules: [...new Set([...p.modules, ...add])] } : p));
 }
 const checkSecondsOf = (c: Config | null) => c?.checkSeconds ?? DEFAULT_CHECK_SECONDS;
+export const branchPrefixesOf = (c: Config | null): string[] => c?.taskBranchPrefixes ?? [...DEFAULT_BRANCH_PREFIXES];
 
 const originOf = (url: string) => new URL(url).origin;
 
@@ -150,6 +152,7 @@ export function createSettings(
       },
       sessions: c?.sessions === true,
       askAttachments: c?.askAttachments !== false,
+      taskBranchPrefixes: branchPrefixesOf(c),
     };
   }
 
@@ -295,7 +298,10 @@ export function createSettings(
       "/",
       validator("json", (v, c) => {
         const r = settingsInput.safeParse(v);
-        return r.success ? r.data : c.json<ApiError>({ error: "Invalid settings." }, 400);
+        if (r.success) return r.data;
+        // The prefix list has its own sentences (spec.md section 6.16.1).
+        const prefix = r.error.issues.find((i) => i.path[0] === "taskBranchPrefixes");
+        return c.json<ApiError>({ error: prefix?.message ?? "Invalid settings." }, 400);
       }),
       (c) =>
         serial(async () => {
@@ -326,6 +332,7 @@ export function createSettings(
             globalInstructions: prev?.globalInstructions,
             sessions: input.sessions === undefined ? prev?.sessions : input.sessions || undefined,
             askAttachments: input.askAttachments === undefined ? prev?.askAttachments : input.askAttachments ? undefined : false,
+            taskBranchPrefixes: input.taskBranchPrefixes ?? prev?.taskBranchPrefixes,
           };
           const caFile = input.caFile || undefined;
           const notifications = input.notifications ?? prev?.notifications ?? false;

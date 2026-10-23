@@ -20,7 +20,7 @@ import type { Settings } from "../settings";
 import { endStep, insertStep } from "./implement";
 import type { Plan } from "./plan";
 import { pushTaskBranch } from "./push";
-import { advance, advancePart, docsOf, repoSettings, TASK_CHANGED, type TaskResult, type TaskRow, taskDto, taskRow } from "./tasks";
+import { advance, advancePart, docsOf, TASK_CHANGED, type TaskResult, type TaskRow, taskDto, taskRow, taskSettingsOf } from "./tasks";
 
 const MAX_ROWS = 2000;
 const MAX_LINE = 2000;
@@ -111,7 +111,8 @@ export function createPrOpener(deps: OpenPrDeps) {
   async function push(db: Database, t: TaskRow, part: PartRow, plan: Plan, reviewers: string[]): Promise<TaskResult> {
     const id = t.id;
     const head = part.head as string;
-    const repo = repoSettings(db, t.project, t.repo);
+    // The prefix of the plan approval. A part made before spec.md section 6.16 keeps the prefix that its stored branch carries.
+    const prefix = taskSettingsOf(t).branchPrefix ?? part.branch.slice(0, Math.max(0, part.branch.indexOf(`${t.key}-`)));
     const step = insertStep(db, { task: id, part: part.id, kind: "push", item: part.branch }, now());
     deps.live.broadcast("changed", { tasks: [id] });
     const fail = (status: 409 | 502, error: string, at = step): TaskResult => {
@@ -136,7 +137,7 @@ export function createPrOpener(deps: OpenPrDeps) {
         commit: head,
         branch: part.branch,
         lease: part.pushed,
-        task: { key: t.key, prefix: repo.branchPrefix, branches, target: t.target_branch },
+        task: { key: t.key, prefix, branches, target: t.target_branch },
       });
     } catch (e) {
       return fail(502, `The push of ${part.branch} failed: ${noUrl((e as Error).message)}`);

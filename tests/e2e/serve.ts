@@ -291,7 +291,7 @@ const PRS: Record<number, typeof A> = { 1001: A, 210: B, 77: C, 1004: D };
 const pushed = new Map<number, { head: string; commits: unknown[]; changes: unknown[] }>();
 const remoteEnv = gitEnv(join(claudeDir, "empty.gitconfig"));
 const remoteGit = (args: string[]) => git(["--git-dir", remote.remote, ...args], { env: remoteEnv });
-// A task of PR A builds on its target branch (docs/plans/review-v2/spec.md section 6.2). The recorded PR names topic/sample-4.
+// A task of PR A builds on the default branch of its repository, the target of PR A (spec.md section 6.16.3). The recorded PR names topic/sample-4.
 await remoteGit(["update-ref", `refs/heads/${(A.pr.toRef as unknown as { displayId: string }).displayId}`, remote.target]);
 
 // The dashboard and the PR route share the PR A object, so both report the pushed head and the description.
@@ -457,7 +457,8 @@ r[key("GET", `${A.path}/comments/1000010`)] = () => (sc.reply === "deleted" ? NO
 // ---------- Build a Jira task (docs/plans/review-v2/spec.md section 6.9): the PR create of PROJ1/sample-repo-2 ----------
 // The push goes to the local git remote (repoRemote below). The open-PR list and the repository GET stay absent, as before, so the PR
 // context of the other tests does not change. A created PR gets an empty activity page, so its sync is complete.
-const taskRepo = repoWrites(fake, "PROJ1", "sample-repo-2");
+// The default branch of the repository is the target of PR A, so a task builds there (spec.md section 6.16.3).
+const taskRepo = repoWrites(fake, "PROJ1", "sample-repo-2", { defaultBranch: (A.pr.toRef as unknown as { displayId: string }).displayId });
 delete r[key("GET", `${taskRepo.path}/pull-requests`)];
 delete r[key("GET", taskRepo.path)];
 const createTaskPr = r[key("POST", `${taskRepo.path}/pull-requests`)];

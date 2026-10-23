@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // The Tasks view of the list pane (docs/plans/review-v2/spec.md section 6.12): "Build a task" with a key, a repository from the known
-// ones, and an optional target branch (the default branch of the repository when empty), then one row per task with
+// ones (the base branch starts at the last pick or the default branch, spec.md section 6.16.3), then one row per task with
 // "<KEY> <title> · <repo>" and the status in the meta line.
 import { CircleAlert, Menu, Plus } from "lucide-react";
 import { memo, type ReactNode, useState } from "react";
@@ -127,7 +127,6 @@ function NewTask(props: { repos: ProjectRepos[]; tracker: string; onCreate: (inp
   const [open, setOpen] = useState(false);
   const [key, setKey] = useState("");
   const [repo, setRepo] = useState("");
-  const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chosen = all.find((r) => r.key === (repo || all[0]?.key));
@@ -150,9 +149,8 @@ function NewTask(props: { repos: ProjectRepos[]; tracker: string; onCreate: (inp
         setBusy(true);
         setError(null);
         try {
-          await props.onCreate({ project: chosen.project, repo: chosen.repo, key: k, ...(target.trim() && { target: target.trim() }) });
+          await props.onCreate({ project: chosen.project, repo: chosen.repo, key: k });
           setKey("");
-          setTarget("");
           setOpen(false);
         } catch (err) {
           setError((err as Error).message);
@@ -195,20 +193,6 @@ function NewTask(props: { repos: ProjectRepos[]; tracker: string; onCreate: (inp
             </option>
           ))}
         </select>
-      </div>
-      <div className="grid gap-1 text-sm">
-        <label htmlFor="new-task-target" className="text-ink-2">
-          Target branch (optional: the default branch when empty)
-        </label>
-        <Input
-          id="new-task-target"
-          name="target"
-          autoComplete="off"
-          spellCheck={false}
-          value={target}
-          className="h-8"
-          onChange={(e) => setTarget(e.target.value)}
-        />
       </div>
       {error && (
         <p role="alert" className="m-0 flex items-start gap-1.5 text-sm text-destructive">

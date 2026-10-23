@@ -185,7 +185,7 @@ Click "Build" on the task chip of a pull request, or open Tasks in the sidebar a
 
 ![The Task view with the step strip, the status sentence, and the questions with the recommended options](docs/screenshots/task-questions.webp)
 
-Then Claude writes a short change plan into `specs/<KEY>/plan.md`: the code to change with file and line, the pattern to copy, the tests to extend, and the tasks. The plan screen shows the size, the line count, the branch that the task will use, and the commands that the plan proposes from the repository files. "Change the prefix" sets the branch prefix of the repository (default `feature/`). You pick the commands and approve the plan. Edit changes a plan file before the approval.
+Then Claude writes a short change plan into `specs/<KEY>/plan.md`: the code to change with file and line, the pattern to copy, the tests to extend, and the tasks. The plan screen shows the size, the line count, the branch that the task will use, and the commands that the plan proposes from the repository files. "Change the prefix" sets the branch prefix of this task (default `feature/`). Branch names use the full Jira summary, cut at a word boundary over 100 characters. The base branch is the default branch of the repository on Bitbucket, or your last pick in that repository. You pick the commands and approve the plan. Edit changes a plan file before the approval.
 
 ![The plan screen with the size, the branch, the commands, the first-use warning, and the plan file](docs/screenshots/task-plan.webp)
 

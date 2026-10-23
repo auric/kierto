@@ -83,7 +83,16 @@ export const INTERVIEW_QUESTIONS = [8, 4] as const;
 export const INTERVIEW_TURNS = 30;
 export const SPEC_TURNS = 80;
 // spec.md section 6.3: the defaults of repo_task_settings. CHECK_TIMEOUT in seconds.
-export const TASK_DEFAULTS = { specDir: "specs/{key}/", branchPrefix: "feature/", lineBudget: 400, maxOpen: 2, approvals: 1 } as const;
+export const TASK_DEFAULTS = { specDir: "specs/{key}/", lineBudget: 400, maxOpen: 2, approvals: 1 } as const;
+// spec.md section 6.16: the whole branch name with its suffix, one prefix, the prefix list, and one page of the branch search.
+export const BRANCH_MAX = 100;
+export const PREFIX_MAX = 40;
+export const PREFIXES_MAX = 10;
+export const BRANCH_PAGE = 25;
+// spec.md section 6.16.1: Settings > Tasks "Branch prefixes". The first one starts selected on the plan screen.
+export const DEFAULT_BRANCH_PREFIXES = ["feature/", "bugfix/", "hotfix/"] as const;
+// spec.md section 6.16.4: a taken name gets -2 to -99.
+export const BRANCH_SUFFIX_MAX = 99;
 export const CHECK_TIMEOUT_SEC = 600;
 // spec.md section 0: the limits of one Claude step of a part (STEP_TIME, STEP_TURNS), the Claude time of one part (PART_TIME, in
 // minutes), and the output of one command (OUTPUT_TAIL: stored bytes; FAILURE_TAIL: bytes in context/failure.md).
@@ -99,29 +108,33 @@ export const FAILURE_TAIL = 32 * 1024;
 
 export const sizeRank = (s: TaskSize) => TASK_SIZES.indexOf(s);
 
-// spec.md section 6.8: a slug has at most 40 characters.
-const SLUG_MAX = 40;
-
-// spec.md section 6.8: lowercase ASCII letters, digits, and hyphens from the title, at most 40 characters.
+// spec.md section 6.16.2: lowercase ASCII letters, digits, and hyphens from the title. No length cut here.
 export function slug(title: string) {
   return title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .slice(0, SLUG_MAX)
-    .replace(/-+$/, "");
+    .replace(/^-+|-+$/g, "");
 }
 
-// spec.md section 6.8: <prefix><KEY>-spec, <prefix><KEY>-<n>-<slug>, and for a small task <prefix><KEY>-<slug>. A title without ASCII
-// letters or digits gives the slug "task" or "part", so the name keeps the form that push.ts checks.
+// spec.md section 6.16.2: the slug within room characters, cut at its last hyphen that fits, else at room. No trailing hyphen.
+function capSlug(s: string, room: number) {
+  if (s.length <= room) return s;
+  const cut = s.slice(0, room + 1).lastIndexOf("-");
+  return (cut > 0 ? s.slice(0, cut) : s.slice(0, room)).replace(/-+$/, "");
+}
+
+// spec.md section 6.16.2: <prefix><KEY>-spec, <prefix><KEY>-<n>-<slug>, and for a small task <prefix><KEY>-<slug>. A title without ASCII
+// letters or digits gives the slug "task" or "part", so the name keeps the form that push.ts checks. The name leaves room for the
+// longest suffix (-99), so every free name stays within BRANCH_MAX.
 export function branchName(
   prefix: string,
   key: string,
   part: { kind: "spec" } | { kind: "small"; title: string } | { kind: "part"; n: number; title: string },
 ) {
   if (part.kind === "spec") return `${prefix}${key}-spec`;
-  if (part.kind === "small") return `${prefix}${key}-${slug(part.title) || "task"}`;
-  return `${prefix}${key}-${part.n}-${slug(part.title) || "part"}`;
+  const head = part.kind === "small" ? `${prefix}${key}-` : `${prefix}${key}-${part.n}-`;
+  const room = BRANCH_MAX - `-${BRANCH_SUFFIX_MAX}`.length - head.length;
+  return `${head}${capSlug(slug(part.title), room) || (part.kind === "small" ? "task" : "part")}`;
 }
 
 // spec.md section 6.12: the step strip of the Task view. current: the index of the current step, -1 for a failed task.
@@ -223,6 +236,9 @@ export const taskSettings = z.object({
   partCost: z.number().positive().optional(),
   // spec.md section 6.1, "Keep one PR": the line limit stops the task no more.
   keepOnePr: z.boolean().optional(),
+  // spec.md section 6.16: the branch prefix of the plan approval, and the pick for a branch that exists on the server.
+  branchPrefix: z.string().min(1).max(PREFIX_MAX).optional(),
+  existing: z.enum(["continue", "new"]).optional(),
 });
 export type TaskSettings = z.infer<typeof taskSettings>;
 

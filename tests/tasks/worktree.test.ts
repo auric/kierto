@@ -199,8 +199,8 @@ describe("task worktree", () => {
 describe("branch names", () => {
   test("follow the spec forms and the slug rule", () => {
     expect(slug("Flush the cache — before the WRITE lock!")).toBe("flush-the-cache-before-the-write-lock");
-    expect(slug("x".repeat(50)).length).toBe(40);
-    expect(slug(`${"a".repeat(39)} b`)).toBe("a".repeat(39));
+    // spec.md section 6.16.2: no length cut in the slug. tests/tasks/branch.test.ts covers the cap of the whole name.
+    expect(slug("x".repeat(50)).length).toBe(50);
     expect(branchName("feature/", "PROJ-12", { kind: "spec" })).toBe("feature/PROJ-12-spec");
     expect(branchName("feature/", "PROJ-12", { kind: "small", title: "Add a flag" })).toBe("feature/PROJ-12-add-a-flag");
     expect(branchName("feature/", "PROJ-12", { kind: "part", n: 2, title: "Store rows" })).toBe("feature/PROJ-12-2-store-rows");

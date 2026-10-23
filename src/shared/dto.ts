@@ -32,6 +32,8 @@ import {
   INTERVIEW_QUESTIONS,
   type PartKind,
   type PartState,
+  PREFIX_MAX,
+  PREFIXES_MAX,
   type QuestionSource,
   type SizeSource,
   type SpecResult,
@@ -235,6 +237,8 @@ export const settingsInput = z.object({
   sessions: z.boolean().optional(),
   // Absent keeps the stored value. Off records the company AI policy acknowledgement for task attachments.
   askAttachments: z.boolean().optional(),
+  // Absent keeps the stored list (docs/plans/review-v2/spec.md section 6.16.1).
+  taskBranchPrefixes: z.lazy(() => branchPrefixList).optional(),
 });
 
 export type SettingsInput = z.infer<typeof settingsInput>;
@@ -262,6 +266,8 @@ export type SettingsDto = {
   sessions: boolean;
   // Ask the company AI policy question before a task attachment is included in runs. Default on.
   askAttachments: boolean;
+  // spec.md section 6.16.1: Settings > Tasks "Branch prefixes".
+  taskBranchPrefixes: string[];
 };
 
 export type ApiError = { error: string };
@@ -1174,6 +1180,17 @@ const refOk = (b: string) =>
   !b.endsWith(".") &&
   !b.split("/").some((c) => c.startsWith(".") || c.endsWith(".lock"));
 export const branchName = z.string().min(1).max(255).refine(refOk, "Invalid branch name.");
+// spec.md section 6.16.1: a prefix is valid when <prefix>x is a valid branch name.
+export const branchPrefix = z
+  .string()
+  .min(1, "Invalid branch prefix.")
+  .max(PREFIX_MAX, "Invalid branch prefix.")
+  .refine((p) => refOk(`${p}x`), "Invalid branch prefix.");
+export const branchPrefixList = z
+  .array(branchPrefix)
+  .min(1, "Keep at least one prefix.")
+  .max(PREFIXES_MAX, `At most ${PREFIXES_MAX} prefixes.`)
+  .refine((l) => new Set(l).size === l.length, "This prefix is already in the list.");
 const repoName = z.string().trim().min(1).max(255);
 const taskReviewers = z.array(z.string().trim().min(1).max(255)).max(MAX_TASK_REVIEWERS);
 const taskSize = z.enum(TASK_SIZES);
@@ -1184,7 +1201,6 @@ export const taskCreateInput = z.object({
   repo: repoName,
   key: z.string().regex(TASK_KEY),
   originPr: positiveInt.optional(),
-  target: branchName.optional(),
 });
 // GET /api/tasks.
 export const taskListInput = z.object({ state: z.enum(["open", "all"]).default("open") });
@@ -1206,7 +1222,25 @@ export const taskPlanInput = z.object({
   size: taskSize,
   commands: z.array(commandId).max(MAX_TASK_COMMANDS),
   warning: z.literal(true).optional(),
+  // spec.md section 6.16. Absent prefix: the first prefix of Settings > Tasks. Absent existing: continue.
+  prefix: branchPrefix.optional(),
+  existing: z.enum(["continue", "new"]).optional(),
 });
+// GET /api/repos/:project/:repo/branches (spec.md section 6.16.3).
+export const branchSearchInput = z.object({ filter: z.string().max(255).default("") });
+export type BranchSearchDto = { defaultBranch: string | null; branches: { name: string; isDefault: boolean }[]; more: boolean };
+// GET /api/tasks/:id/branch (spec.md section 6.16.4). Absent prefix: the stored pick, else the first prefix of Settings > Tasks.
+export const branchCheckInput = z.object({ prefix: branchPrefix.optional() });
+// exists: the repositories of the task where name exists, with the remote head. openPr: the synced open PR from name to the base.
+// nextFree: the first name with a suffix that no repository has. taskRepo stays null until a task has several repositories (WP-MR1).
+export type BranchCheckDto = {
+  name: string;
+  exists: { taskRepo: number | null; project: string; repo: string; head: string }[];
+  openPr: number | null;
+  nextFree: string;
+};
+// PUT /api/tasks/:id/base (spec.md section 6.16.3): 200, or 202 when the plan runs again on the new base.
+export const taskBaseInput = z.object({ version, branch: branchName });
 // POST /api/tasks/:id/spec-pr and POST /api/tasks/:id/parts/:part/pr.
 export const taskReviewersInput = z.object({ version, reviewers: taskReviewers });
 // POST /api/tasks/:id/build. override: start without the approval of the spec PR.
@@ -1232,10 +1266,6 @@ export const repoTaskSettingsInput = z.object({
     .min(1)
     .max(200)
     .refine((d) => !/^[/\\]|^[A-Za-z]:|\\/.test(d) && !d.split("/").includes(".."), "Use a relative folder with / separators."),
-  branchPrefix: z
-    .string()
-    .max(100)
-    .refine((p) => p === "" || refOk(`${p}x`), "Invalid branch prefix."),
   lineBudget: z.number().int().min(1).max(100_000),
   maxOpen: z.number().int().min(1).max(20),
   approvals: z.number().int().min(0).max(20),

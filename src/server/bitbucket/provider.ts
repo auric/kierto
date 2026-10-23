@@ -3,6 +3,7 @@
 
 // ForgeProvider for Bitbucket Server. It returns forge-neutral types from src/shared/types.ts.
 import { z } from "zod";
+import { BRANCH_PAGE } from "../../shared/task";
 import {
   anchorSpan,
   type Change,
@@ -20,10 +21,12 @@ import { type ClientOptions, createClient, ForgeError } from "./client";
 import { NoCloneLink } from "./errors";
 import {
   activity,
+  branch,
   buildStats,
   change,
   comment,
   commit,
+  defaultBranch,
   page,
   postedComment,
   pullRequest,
@@ -37,6 +40,7 @@ const DASHBOARD = `${API}/dashboard/pull-requests`;
 // spec.md section 2.8 (S20) and Gate G9: one page of open PRs.
 const OPEN_PR_LIMIT = 50;
 const HASH = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+const HEADS = "refs/heads/";
 
 const repoPath = (project: string, repo: string) => `${API}/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(repo)}`;
 const prPath = (ref: PrRef) => `${repoPath(ref.project, ref.repo)}/pull-requests/${ref.id}`;
@@ -158,6 +162,8 @@ export type CreateResult = { status: "created"; pr: PullRequest; dropped: string
 export type PrUpdate = { version: number; title?: string; description?: string; reviewers?: string[]; toBranch?: string };
 // All zeros: no build reported a status for the commit (spec.md section 6.10).
 export type BuildStats = { successful: number; inProgress: number; failed: number; cancelled: number; unknown: number };
+// more: the search has more branches than one page.
+export type BranchPage = { branches: { name: string; isDefault: boolean }[]; more: boolean };
 // config: for git fetch and push only, in the GIT_CONFIG env. It holds the token as an http.extraHeader value.
 export type RepoRemote = { url: string; config: [string, string][] };
 
@@ -271,6 +277,26 @@ export function createBitbucketProvider(opts: ClientOptions) {
     },
 
     listOpenPullRequests,
+
+    // spec.md section 6.16.10, Gate G13: the default branch name without refs/heads/. A repository without one gives 404 (ForgeError).
+    async defaultBranch(project: string, repo: string): Promise<string> {
+      const { data } = await client.get(`${repoPath(project, repo)}/default-branch`, defaultBranch);
+      return data.id.startsWith(HEADS) ? data.id.slice(HEADS.length) : data.displayId;
+    },
+
+    // spec.md section 6.16.3, Gate G14: one page of the branch search, newest change first. An empty filter lists the newest branches.
+    async listBranches(project: string, repo: string, filter: string): Promise<BranchPage> {
+      const q = filter ? `filterText=${encodeURIComponent(filter)}&boostMatches=true&` : "";
+      const path = `${repoPath(project, repo)}/branches?${q}orderBy=MODIFICATION&limit=${BRANCH_PAGE}`;
+      const { data } = await client.get(path, page(branch));
+      return {
+        branches: data.values.map((b) => ({
+          name: b.id.startsWith(HEADS) ? b.id.slice(HEADS.length) : b.displayId,
+          isDefault: (b.isDefault ?? b.default) === true,
+        })),
+        more: !data.isLastPage,
+      };
+    },
 
     // One POST, never repeated (spec.md section 6.9, Gate G2: HTTP 201 with the PR).
     // A 409 or an unknown outcome reads the open PRs of the branch first. Other errors throw a ForgeError.

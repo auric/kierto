@@ -81,6 +81,7 @@ describe("settings API", () => {
       jira: { baseUrl: null, caFile: null, tokenStored: false },
       sessions: false,
       askAttachments: true,
+      taskBranchPrefixes: ["feature/", "bugfix/", "hotfix/"],
     });
     expect(existsSync(dir)).toBe(false);
   });
@@ -107,6 +108,7 @@ describe("settings API", () => {
       jira: { baseUrl: null, caFile: null, tokenStored: false },
       sessions: false,
       askAttachments: true,
+      taskBranchPrefixes: ["feature/", "bugfix/", "hotfix/"],
     };
     expect(await res.json()).toEqual(expected);
     expect(await s.get()).toEqual(expected);
@@ -178,6 +180,31 @@ describe("settings API", () => {
     const again = setup();
     expect(await again.get()).toMatchObject({ markAi: false, notifications: true });
     expect(again.settings.config()?.markAi).toBe(false);
+  });
+
+  test("AC-B24 (server): the branch prefix list saves in order, persists, and refuses a bad list with its sentence", async () => {
+    const s = setup();
+    expect((await s.put({ baseUrl: fake.url, token: FAKE_TOKEN })).status).toBe(200);
+    const list = ["task/", "feature/", "users/me/"];
+    const res = await s.put({ baseUrl: fake.url, taskBranchPrefixes: list });
+    expect(res.status).toBe(200);
+    expect((await res.json()).taskBranchPrefixes).toEqual(list);
+    // A PUT without the list keeps it.
+    expect((await s.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
+    for (const [bad, error] of [
+      [[], "Keep at least one prefix."],
+      [["a/", "a/"], "This prefix is already in the list."],
+      [Array.from({ length: 11 }, (_, i) => `p${i}/`), "At most 10 prefixes."],
+      [["bad.."], "Invalid branch prefix."],
+      [[""], "Invalid branch prefix."],
+      [[`${"x".repeat(40)}/`], "Invalid branch prefix."],
+    ] as const) {
+      const r = await s.put({ baseUrl: fake.url, taskBranchPrefixes: bad });
+      expect(r.status).toBe(400);
+      expect(await r.json()).toEqual({ error });
+    }
+    s.settings.close();
+    expect((await setup().get()).taskBranchPrefixes).toEqual(list);
   });
 
   test("markSeverity saves without a Bitbucket request and persists across a restart", async () => {
