@@ -10,12 +10,15 @@ export const liveEvents = new EventTarget();
 
 // The queries that one "changed" event makes stale.
 // The diff keys stay out: diffRefresh refetches them when the source head changes. A review run fills the missing code, so an index that asks for it refetches.
-export function changedFilters(data: { prs?: number[]; runs?: number[] }): InvalidateQueryFilters[] {
+// tasks: the tasks of docs/plans/review-v2/spec.md section 6.11. A task change alone leaves the PR list as it is.
+export function changedFilters(data: { prs?: number[]; runs?: number[]; tasks?: number[] }): InvalidateQueryFilters[] {
   const prs = data.prs ?? [];
   const runs = data.runs ?? [];
+  const tasks = data.tasks ?? [];
   const out: InvalidateQueryFilters[] = [];
   // A run event without PRs is a log update. The PR list does not change with it.
-  if (prs.length || !runs.length) out.push({ queryKey: ["prs"] }, { queryKey: ["status"] });
+  if (prs.length || (!runs.length && !tasks.length)) out.push({ queryKey: ["prs"] }, { queryKey: ["status"] });
+  if (tasks.length) out.push({ queryKey: ["tasks"] }, ...tasks.map((id) => ({ queryKey: ["task", id] })));
   for (const id of prs)
     out.push(
       {
@@ -44,7 +47,10 @@ export const diffRefresh = (
   before !== undefined && head !== undefined && before !== head ? { queryKey: ["pr", pr, "diff"] } : null;
 
 // resync: the stream reconnected or moved to another tab. Messages in the gap are lost.
-export type LiveMessage = { type: "changed"; data: { prs?: number[]; runs?: number[] } } | { type: "events" } | { type: "resync" };
+export type LiveMessage =
+  | { type: "changed"; data: { prs?: number[]; runs?: number[]; tasks?: number[] } }
+  | { type: "events" }
+  | { type: "resync" };
 
 export function applyLive(qc: Pick<QueryClient, "invalidateQueries">, m: LiveMessage) {
   if (m.type === "changed") for (const f of changedFilters(m.data)) qc.invalidateQueries(f);
@@ -77,7 +83,7 @@ export function connectLive(qc: Pick<QueryClient, "invalidateQueries">, env: Liv
       };
       let opened = false;
       es.addEventListener("changed", (e) => {
-        let data: { prs?: number[]; runs?: number[] } = {};
+        let data: { prs?: number[]; runs?: number[]; tasks?: number[] } = {};
         try {
           data = JSON.parse((e as MessageEvent<string>).data);
         } catch {}

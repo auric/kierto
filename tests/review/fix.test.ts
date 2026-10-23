@@ -416,7 +416,7 @@ describe("thread selection and refusals", () => {
       // A start with the key of the running run gets that run. Fix anyway has its own key, so the slot refuses it instead.
       const anyway = await h.json<Started>(`/api/prs/${h.pr}/fix-run`, { body: { threads: [101], anyway: true } });
       expect(anyway.status).toBe(409);
-      expect(anyway.body.running).toEqual({ run: plain.body.id, pr: h.pr });
+      expect(anyway.body.running).toEqual({ run: plain.body.id, pr: h.pr, kind: "fix" });
       expect((await h.start([101])).body.id).toBe(plain.body.id);
       expect((await h.json(`/api/runs/${plain.body.id}/cancel`, { method: "POST" })).status).toBe(202);
       await h.finish(plain.body.id);
@@ -529,7 +529,7 @@ describe("injection guard and runner flags", () => {
       expect(again.body.id).toBe(a.body.id);
       const other = await h.start([101]);
       expect(other.status).toBe(409);
-      expect(other.body.running).toEqual({ run: a.body.id, pr: h.pr });
+      expect(other.body.running).toEqual({ run: a.body.id, pr: h.pr, kind: "fix" });
       const review = await h.json<RunConflict>(`/api/prs/${h.pr}/review`, { method: "POST" });
       expect(review.status).toBe(409);
       expect(review.body.running.run).toBe(a.body.id);
@@ -552,7 +552,7 @@ describe("injection guard and runner flags", () => {
       expect(r.status).toBe(202);
       const fix = await h.start([101]);
       expect(fix.status).toBe(409);
-      expect(fix.body.running).toEqual({ run: r.body.id, pr: h.pr });
+      expect(fix.body.running).toEqual({ run: r.body.id, pr: h.pr, kind: "review" });
       await h.json(`/api/runs/${r.body.id}/cancel`, { method: "POST" });
       await h.review.wait();
     },

@@ -355,6 +355,28 @@ export const RUN_TEXT: Record<RunKind, { running: string; failed: string; cancel
     doing: "answering about a finding on",
     now: "answering about a finding",
   },
+  // The runs of a task. A PR view never lists them, but a busy line can name one.
+  interview: {
+    running: "Reading the task…",
+    failed: "The questions failed.",
+    cancelled: "the questions",
+    doing: "preparing questions for",
+    now: "preparing questions",
+  },
+  spec: {
+    running: "Writing the plan…",
+    failed: "The plan failed.",
+    cancelled: "the plan",
+    doing: "writing the plan for",
+    now: "writing a plan",
+  },
+  implement: {
+    running: "Building…",
+    failed: "The build step failed.",
+    cancelled: "the build step",
+    doing: "building",
+    now: "building a task",
+  },
 };
 
 // R14: GET /api/prs/:id/runs mixes the kinds, newest first. The newest review run drives the drafts, the summary, the brief,
@@ -386,6 +408,9 @@ export const KIND_LABEL: Record<RunKind, string> = {
   session: "Session",
   explain: "Explain",
   discuss: "Ask about a finding",
+  interview: "Questions",
+  spec: "Plan",
+  implement: "Build step",
 };
 
 // The newest run of each kind, newest first. runs: newest first.

@@ -36,7 +36,7 @@ import type { FileRef } from "../lib/route";
 import { Markdown } from "../pr/Markdown";
 import { agoLong } from "../pr/threads";
 import { Inline } from "../review/Drafts";
-import { useBrief, useCancelRun, useRuns } from "../review/data";
+import { useBrief, useCancelRun } from "../review/data";
 import { notChecked } from "../review/model";
 import { Hint } from "../shell/Hint";
 import { failText, prKey } from "../shell/model";
@@ -101,7 +101,6 @@ export function ExplainPage(props: {
   const qc = useQueryClient();
   const q = useExplain(pr.id);
   const brief = useBrief(pr.id).data;
-  const runs = useRuns().data;
   const start = useStartExplain(pr.id);
   const cancel = useCancelRun();
   const v = explainView(q.data, runner);
@@ -127,7 +126,8 @@ export function ExplainPage(props: {
     if (first || lost) (primary.current ?? head.current)?.focus({ preventScroll: true });
   }, [kind]);
 
-  const where = (id: number) => {
+  const where = (id: number | null) => {
+    if (id === null) return "a task";
     if (id === pr.id) return "this pull request";
     const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === id);
     return other ? prKey(other) : "another pull request";
@@ -137,7 +137,7 @@ export function ExplainPage(props: {
     start.mutate(picker ? pick : null, {
       onSuccess: (r) => {
         if ("conflict" in r) {
-          const k: RunKind = runs?.find((x) => x.id === r.conflict.running.run)?.kind ?? "review";
+          const k: RunKind = r.conflict.running.kind;
           toast.add({ title: "The walkthrough did not start", description: busyText(runner, k, where(r.conflict.running.pr)) });
           return;
         }

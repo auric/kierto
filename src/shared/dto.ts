@@ -41,7 +41,9 @@ import {
   TASK_DOCS,
   TASK_SIZES,
   type TaskBlocked,
+  type TaskCommand,
   type TaskDoc,
+  type TaskRunKind,
   type TaskSettings,
   type TaskSize,
   type TaskState,
@@ -461,7 +463,8 @@ export type RunSummary = Pick<ValidatedResult, "summary" | "risks" | "coverage" 
 
 // session: a direct consult of the user's own session (docs/plans/session-consult.md part C).
 // explain: an Explain this PR run. discuss: one turn of a talk about a finding (docs/plans/review-v2/spec.md sections 2 and 3).
-export type RunKind = "review" | "reply" | "ask" | "fix" | "session" | "explain" | "discuss";
+// interview, spec, implement: the runs of a task (spec.md section 6.2). They have pr NULL, so no PR route gives them.
+export type RunKind = "review" | "reply" | "ask" | "fix" | "session" | "explain" | "discuss" | TaskRunKind;
 
 export type RunDto = {
   id: number;
@@ -1063,7 +1066,8 @@ export type InstructionPreviewDto = {
 export type RunDetail = { run: RunDto; events: RunEvent[]; items: ReviewItemDto[] };
 
 // POST /api/prs/:id/review gives 409 with this body while another review runs (A14).
-export type RunConflict = ApiError & { running: { run: number; pr: number } };
+// pr null: a task run holds the slot.
+export type RunConflict = ApiError & { running: { run: number; pr: number | null; kind: RunKind } };
 
 // sure: false when the source has a precedence that the runner docs do not state.
 export type SettingValue = { value: string; sure: boolean };
@@ -1303,8 +1307,30 @@ export type TaskRowDto = {
   closedAt: number | null;
 };
 
-// GET /api/tasks/:id. docs: the plan files before their first push, null before the spec run.
+// The newest interview result (spec.md section 6.5) of round round. done false: the answers start round 2 when it is left.
+export type TaskInterviewDto = { round: number; summary: string; unknowns: string[]; done: boolean };
+
+// The checked plan of the newest spec run (spec.md sections 6.1 and 6.4). proposed: the size of Claude. minimum: the lowest size that
+// the app rules allow; rules gives their lines. missing: the map entries that name no code at base. commands: the proposed commands,
+// then the saved ones of the repository. warning: the approval needs the first-use warning. approved: a medium or large plan waits
+// for its spec PR.
+export type TaskPlanDto = {
+  proposed: TaskSize;
+  minimum: TaskSize;
+  rules: string[];
+  budget: number;
+  missing: number;
+  base: string;
+  commands: (TaskCommand & { saved: boolean })[];
+  warning: boolean;
+  approved: boolean;
+};
+
+// GET /api/tasks/:id. docs: the plan files before their first push, null before the spec run. strip: the step strip (stepStrip).
 export type TaskDto = TaskRowDto & {
+  interview: TaskInterviewDto | null;
+  plan: TaskPlanDto | null;
+  strip: { steps: string[]; current: number };
   originPr: number | null;
   stoppedFrom: TaskState | null;
   sizeBy: SizeSource | null;

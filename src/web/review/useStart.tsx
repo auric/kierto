@@ -58,7 +58,8 @@ export function useStart(
 
   const state = briefState(brief.data, active, pr.id, meta.profiles);
 
-  const where = (id: number) => {
+  const where = (id: number | null) => {
+    if (id === null) return "a task";
     if (id === pr.id) return "this pull request";
     const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === id);
     return other ? prKey(other) : "another pull request";
@@ -66,10 +67,7 @@ export function useStart(
   // The run that holds the only slot, as words. The brief cannot start until it ends.
   const busy = active ? busyText(meta.runner.short, active.kind, where(active.pr)) : null;
 
-  const slotTaken = (c: RunConflict) => {
-    const kind = active?.id === c.running.run ? active.kind : "review";
-    toast.add({ title: busyText(meta.runner.short, kind, where(c.running.pr)) });
-  };
+  const slotTaken = (c: RunConflict) => toast.add({ title: busyText(meta.runner.short, c.running.kind, where(c.running.pr)) });
 
   // A review runs the stored brief. Its profile becomes the last used one (decision D2).
   const runNow = () =>

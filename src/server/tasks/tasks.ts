@@ -5,9 +5,93 @@
 // Each write runs in a transaction, and a caller transaction makes it a savepoint: the caller writes its step row in the same commit.
 // The caller runs every effect (a run start, a push, a notification) after the commit, from the new state.
 import type { Database } from "bun:sqlite";
-import { transition } from "xstate";
-import { PART_STATE_TEXT, type PartState, TASK_STATE_TEXT, type TaskSize, type TaskState } from "../../shared/task";
+import { initialTransition, transition } from "xstate";
+import type { z } from "zod";
+import { oneLine } from "../../shared/consult";
+import type {
+  IssueContext,
+  RepoTaskSettingsDto,
+  RepoTaskSettingsInput,
+  RunConflict,
+  RunUsage,
+  TaskAnswersInput,
+  TaskCreateInput,
+  TaskDto,
+  TaskInterviewDto,
+  TaskPartDto,
+  TaskPlanDto,
+  TaskPlanInput,
+  TaskQuestionDto,
+  TaskRowDto,
+  TaskStepDto,
+  taskDocInput,
+  taskSizeInput,
+} from "../../shared/dto";
+import {
+  INTERVIEW_QUESTIONS,
+  INTERVIEW_TURNS,
+  type InterviewResult,
+  interviewJsonSchema,
+  interviewResult,
+  PART_STATE_TEXT,
+  type PartState,
+  type SizeSource,
+  SPEC_TURNS,
+  specJsonSchema,
+  specResult,
+  stepDetail,
+  stepStrip,
+  TASK_DEFAULTS,
+  TASK_DOCS,
+  TASK_STATE_TEXT,
+  type TaskBlocked,
+  type TaskCommand,
+  type TaskSettings,
+  type TaskSize,
+  type TaskState,
+  taskBlocked,
+  taskSettings,
+} from "../../shared/task";
+import { NoCloneLink } from "../bitbucket/errors";
+import { FAILED as JIRA_FAILED } from "../context/routes";
+import { ContextError, type ContextSource } from "../context/source";
+import { issueFile, taskContext } from "../context/task-file";
+import type { Live } from "../live";
+import { log } from "../log";
+import { DEFAULT_PROFILE, interviewAgent, profileOf, specAgent } from "../review/catalog";
+import { gitEnv } from "../review/git";
+import type { ReviewJobs, TaskRunStart } from "../review/jobs";
+import { type Ending, judgeTask } from "../review/judge";
+import { buildInterviewPrompt, buildSpecPrompt } from "../review/prompt";
+import { noUrl, remoteHead } from "../review/workspace";
+import type { Settings } from "../settings";
+import {
+  type Answer,
+  afterAnswers,
+  afterInterview,
+  answerProblem,
+  answersFile,
+  checkQuestions,
+  type QuestionRow,
+  recommendedAnswer,
+} from "./interview";
 import { type PartEvent, partMachine, type TaskEvent, taskMachine } from "./machine";
+import {
+  atLeast,
+  checkMap,
+  convertDocs,
+  type Docs,
+  docNames,
+  NEW_COMMAND,
+  type Plan,
+  parsePlan,
+  parseTasks,
+  renderDocs,
+  sizeFloor,
+  toPlan,
+} from "./plan";
+
+type TaskSizeInput = z.infer<typeof taskSizeInput>;
 
 export type Advanced<S> =
   | { status: 200; state: S; version: number }
@@ -34,7 +118,7 @@ const SQL = {
     WHERE state = 'running' AND run IN (SELECT id FROM review_run WHERE status = 'running' AND task IS NOT NULL)`,
 };
 
-type TaskRow = { state: TaskState; stopped_from: TaskState | null; size: TaskSize | null; version: number };
+type StateRow = { state: TaskState; stopped_from: TaskState | null; size: TaskSize | null; version: number };
 
 function write(db: Database, sql: string, params: Record<string, string | number | null>) {
   // The version check of the same statement. The read in the same transaction already saw this version.
@@ -43,7 +127,7 @@ function write(db: Database, sql: string, params: Record<string, string | number
 
 export function advance(db: Database, ref: TaskRef, event: TaskEvent, facts: Facts = {}, now = Date.now()): Advanced<TaskState> {
   return db.transaction((): Advanced<TaskState> => {
-    const row = db.query(SQL.task).get({ id: ref.task }) as TaskRow | null;
+    const row = db.query(SQL.task).get({ id: ref.task }) as StateRow | null;
     if (!row) return { status: 404, error: "Task not found." };
     if (row.version !== ref.version) return { status: 409, error: TASK_CHANGED, state: row.state, version: row.version };
     const snapshot = taskMachine.resolveState({
@@ -89,4 +173,796 @@ export function recoverTasks(db: Database, now = Date.now()) {
     // A done or failed task refuses STOP and keeps its state.
     for (const t of tasks) advance(db, { task: t.id, version: t.version }, { type: "STOP" }, {}, now);
   })();
+}
+
+// ---------- The task service (spec.md sections 6.1 to 6.5 and 6.11) ----------
+
+export type TaskRow = {
+  id: number;
+  project: string;
+  repo: string;
+  key: string;
+  title: string;
+  origin_pr: number | null;
+  state: TaskState;
+  stopped_from: TaskState | null;
+  size: TaskSize | null;
+  size_by: SizeSource | null;
+  target_branch: string;
+  base_commit: string | null;
+  spec_dir: string;
+  spec_branch: string | null;
+  issue_json: string | null;
+  docs_json: string | null;
+  estimate_json: string | null;
+  settings_json: string;
+  blocked_json: string | null;
+  version: number;
+  created_at: number;
+  updated_at: number;
+  closed_at: number | null;
+};
+
+const Q = {
+  row: "SELECT * FROM task WHERE id = $id",
+  open: "SELECT * FROM task WHERE project = $project AND repo = $repo AND key = $key AND state NOT IN ('done', 'failed')",
+  list: "SELECT * FROM task WHERE $all OR state NOT IN ('done', 'failed') ORDER BY updated_at DESC, id DESC LIMIT 200",
+  insert: `INSERT INTO task (project, repo, key, title, origin_pr, state, target_branch, spec_dir, issue_json, created_at, updated_at)
+    VALUES ($project, $repo, $key, $title, $origin, $state, $target, $spec_dir, $issue, $now, $now) RETURNING id`,
+  pr: "SELECT id, project, repo, target_branch FROM pull_request WHERE id = $id",
+  prTask: "SELECT 1 FROM pr_task WHERE pr = $pr AND key = $key",
+  context: "SELECT json FROM task_context WHERE pr = $pr AND key = $key",
+  storeContext: `INSERT INTO task_context (pr, key, source, json, fetched_at) VALUES ($pr, $key, 'jira', $json, $at)
+    ON CONFLICT (pr, key) DO UPDATE SET source = excluded.source, json = excluded.json, fetched_at = excluded.fetched_at`,
+  parts: "SELECT * FROM task_part WHERE task = $id ORDER BY ord",
+  questions: "SELECT * FROM task_question WHERE task = $id ORDER BY round, ord, id",
+  steps: "SELECT * FROM task_step WHERE task = $id ORDER BY id DESC LIMIT 50",
+  busy: "SELECT 1 FROM task_step WHERE task = $id AND state IN ('waiting', 'running')",
+  stepInsert: `INSERT INTO task_step (task, kind, run, state, ord, started_at)
+    VALUES ($task, $kind, $run, 'running', (SELECT COALESCE(MAX(ord), 0) + 1 FROM task_step WHERE task = $task), $now) RETURNING id`,
+  stepEnd: "UPDATE task_step SET state = $state, ended_at = $now WHERE run = $run AND state = 'running' RETURNING id",
+  question: `INSERT INTO task_question (task, source, round, ord, text, why, kind, options_json, recommended, step, asked_at)
+    VALUES ($task, 'interview', $round, $ord, $text, $why, $kind, $options, $recommended, $step, $now)`,
+  answer: "UPDATE task_question SET answer_json = $answer, answered_at = $now WHERE id = $id AND answer_json IS NULL",
+  // The newest interview result: the answer column of its run (judgeTask).
+  interview: `SELECT r.answer FROM task_step s JOIN review_run r ON r.id = s.run
+    WHERE s.task = $id AND s.kind = 'interview' AND r.answer IS NOT NULL ORDER BY s.id DESC LIMIT 1`,
+  settings: "SELECT * FROM repo_task_settings WHERE project = $project AND repo = $repo",
+  approve: `INSERT INTO repo_task_settings (project, repo, commands_json, warned_at, updated_at) VALUES ($project, $repo, $commands, $warned, $now)
+    ON CONFLICT (project, repo) DO UPDATE SET commands_json = excluded.commands_json,
+      warned_at = COALESCE(repo_task_settings.warned_at, excluded.warned_at), updated_at = excluded.updated_at`,
+  saveSettings: `INSERT INTO repo_task_settings (project, repo, spec_dir, branch_prefix, line_budget, max_open, approvals, commands_json,
+      test_globs_json, exclude_globs_json, isolate_home, updated_at)
+    VALUES ($project, $repo, $spec_dir, $prefix, $budget, $max_open, $approvals, $commands, $tests, $excludes, $isolate, $now)
+    ON CONFLICT (project, repo) DO UPDATE SET spec_dir = excluded.spec_dir, branch_prefix = excluded.branch_prefix,
+      line_budget = excluded.line_budget, max_open = excluded.max_open, approvals = excluded.approvals, commands_json = excluded.commands_json,
+      test_globs_json = excluded.test_globs_json, exclude_globs_json = excluded.exclude_globs_json, isolate_home = excluded.isolate_home,
+      updated_at = excluded.updated_at`,
+};
+
+type SettingsRow = {
+  spec_dir: string;
+  branch_prefix: string;
+  line_budget: number;
+  max_open: number;
+  approvals: number;
+  commands_json: string;
+  test_globs_json: string | null;
+  exclude_globs_json: string | null;
+  isolate_home: number;
+  warned_at: number | null;
+};
+
+export const taskRow = (db: Database, id: number) => db.query(Q.row).get({ id }) as TaskRow | null;
+
+// The settings of a repository, with the defaults of spec.md section 6.3 when no row exists (AC-UX4: no setup first).
+export function repoSettings(db: Database, project: string, repo: string): RepoTaskSettingsDto {
+  const r = db.query(Q.settings).get({ project, repo }) as SettingsRow | null;
+  const json = <T>(s: string | null, fallback: T): T => (s === null ? fallback : (JSON.parse(s) as T));
+  return {
+    project,
+    repo,
+    specDir: r?.spec_dir ?? TASK_DEFAULTS.specDir,
+    branchPrefix: r?.branch_prefix ?? TASK_DEFAULTS.branchPrefix,
+    lineBudget: r?.line_budget ?? TASK_DEFAULTS.lineBudget,
+    maxOpen: r?.max_open ?? TASK_DEFAULTS.maxOpen,
+    approvals: r?.approvals ?? TASK_DEFAULTS.approvals,
+    commands: json<TaskCommand[]>(r?.commands_json ?? null, []),
+    testGlobs: json<string[] | null>(r?.test_globs_json ?? null, null),
+    excludeGlobs: json<string[] | null>(r?.exclude_globs_json ?? null, null),
+    isolateHome: (r?.isolate_home ?? 1) === 1,
+    warnedAt: r?.warned_at ?? null,
+  };
+}
+
+export function saveRepoSettings(db: Database, project: string, repo: string, s: RepoTaskSettingsInput, now = Date.now()) {
+  db.query(Q.saveSettings).run({
+    project,
+    repo,
+    spec_dir: s.specDir,
+    prefix: s.branchPrefix,
+    budget: s.lineBudget,
+    max_open: s.maxOpen,
+    approvals: s.approvals,
+    commands: JSON.stringify(s.commands),
+    tests: s.testGlobs === null ? null : JSON.stringify(s.testGlobs),
+    excludes: s.excludeGlobs === null ? null : JSON.stringify(s.excludeGlobs),
+    isolate: s.isolateHome ? 1 : 0,
+    now,
+  });
+}
+
+const settingsOf = (t: TaskRow): TaskSettings => {
+  const r = taskSettings.safeParse(JSON.parse(t.settings_json));
+  return r.success ? r.data : {};
+};
+export const budgetOf = (db: Database, t: TaskRow) => settingsOf(t).lineBudget ?? repoSettings(db, t.project, t.repo).lineBudget;
+export const docsOf = (t: TaskRow): Docs | null => (t.docs_json === null ? null : (JSON.parse(t.docs_json) as Docs));
+
+type Patch = Partial<Record<"blocked_json" | "docs_json" | "estimate_json" | "size" | "size_by" | "base_commit", string | null>>;
+
+// A version-checked write of task fields that are no state. Returns the new version.
+function patch(db: Database, id: number, version: number, p: Patch, now: number): number {
+  const keys = Object.keys(p) as (keyof Patch)[];
+  const set = keys.map((k) => `${k} = $${k}`).join(", ");
+  write(db, `UPDATE task SET ${set}${set ? ", " : ""}version = version + 1, updated_at = $now WHERE id = $id AND version = $version`, {
+    ...p,
+    id,
+    version,
+    now,
+  });
+  return version + 1;
+}
+
+const blocked = (b: TaskBlocked | null) => (b === null ? null : JSON.stringify(b));
+
+// Throws out of a transaction so that it rolls back. The caller maps it to 409.
+class Refused extends Error {
+  constructor(
+    message: string,
+    readonly running?: RunConflict,
+  ) {
+    super(message);
+  }
+}
+
+function interviewOf(db: Database, id: number): TaskInterviewDto | null {
+  const r = db.query(Q.interview).get({ id }) as { answer: string } | null;
+  return r ? (JSON.parse(r.answer) as TaskInterviewDto) : null;
+}
+
+const interviewRows = (db: Database, id: number) =>
+  (db.query(Q.questions).all({ id }) as (QuestionRow & { source: string })[]).filter((q) => q.source === "interview");
+
+const openQuestions = (db: Database, id: number) => {
+  const rows = interviewRows(db, id).filter((q) => q.answer_json === null);
+  const round = Math.max(0, ...rows.map((q) => q.round));
+  return rows.filter((q) => q.round === round);
+};
+
+type PartRow = {
+  id: number;
+  ord: number;
+  kind: TaskPartDto["kind"];
+  title: string;
+  branch: string;
+  base_branch: string;
+  pr: number | null;
+  remote_pr: number | null;
+  state: PartState;
+  head: string | null;
+  pushed: string | null;
+  lines: number | null;
+  usage_json: string | null;
+};
+type StepRow = {
+  id: number;
+  part: number | null;
+  ord: number;
+  kind: TaskStepDto["kind"];
+  run: number | null;
+  state: TaskStepDto["state"];
+  attempt: number;
+  item: string | null;
+  detail_json: string;
+  started_at: number;
+  ended_at: number | null;
+};
+type FullQuestionRow = QuestionRow & {
+  source: TaskQuestionDto["source"];
+  step: number | null;
+  asked_at: number;
+  answered_at: number | null;
+};
+
+const rowDto = (t: TaskRow): TaskRowDto => {
+  const b = t.blocked_json === null ? null : taskBlocked.safeParse(JSON.parse(t.blocked_json));
+  return {
+    id: t.id,
+    project: t.project,
+    repo: t.repo,
+    key: t.key,
+    title: t.title,
+    state: t.state,
+    size: t.size,
+    blocked: b?.success ? b.data : null,
+    version: t.version,
+    updatedAt: t.updated_at,
+    closedAt: t.closed_at,
+  };
+};
+
+// The commands of the plan screen: the proposed ones, then the saved ones of the repository. A proposal with the argv of a saved
+// command is the same command, so it shows once.
+function commandsOf(p: Plan, saved: TaskCommand[]): (TaskCommand & { saved: boolean })[] {
+  const same = (a: TaskCommand, b: TaskCommand) => JSON.stringify(a.argv) === JSON.stringify(b.argv);
+  return [
+    ...p.testing.commands.filter((c) => !saved.some((s) => same(s, c))).map((c) => ({ ...c, saved: false })),
+    ...saved.map((c) => ({ ...c, saved: true })),
+  ];
+}
+
+function planDto(db: Database, t: TaskRow, docs: Docs): TaskPlanDto {
+  const repo = repoSettings(db, t.project, t.repo);
+  const budget = settingsOf(t).lineBudget ?? repo.lineBudget;
+  const floor = sizeFloor(docs.parsed.estimate, budget);
+  return {
+    proposed: docs.parsed.proposed,
+    minimum: floor.minimum,
+    rules: floor.rules,
+    budget,
+    missing: docs.parsed.map.filter((e) => e.missing).length,
+    base: docs.parsed.base,
+    commands: commandsOf(docs.parsed, repo.commands),
+    warning: repo.warnedAt === null,
+    approved: docs.approved,
+  };
+}
+
+export function taskDto(db: Database, t: TaskRow): TaskDto {
+  const parts = (db.query(Q.parts).all({ id: t.id }) as PartRow[]).map(
+    (p): TaskPartDto => ({
+      id: p.id,
+      ord: p.ord,
+      kind: p.kind,
+      title: p.title,
+      branch: p.branch,
+      baseBranch: p.base_branch,
+      pr: p.pr,
+      remotePr: p.remote_pr,
+      state: p.state,
+      head: p.head,
+      pushed: p.pushed,
+      lines: p.lines,
+      usage: p.usage_json === null ? null : (JSON.parse(p.usage_json) as RunUsage),
+    }),
+  );
+  const docs = docsOf(t);
+  return {
+    ...rowDto(t),
+    originPr: t.origin_pr,
+    stoppedFrom: t.stopped_from,
+    sizeBy: t.size_by,
+    targetBranch: t.target_branch,
+    baseCommit: t.base_commit,
+    specDir: t.spec_dir,
+    specBranch: t.spec_branch,
+    estimate: t.estimate_json === null ? null : (JSON.parse(t.estimate_json) as TaskDto["estimate"]),
+    settings: settingsOf(t),
+    docs: docs
+      ? { ...Object.fromEntries(TASK_DOCS.flatMap((d) => (docs[d] === undefined ? [] : [[d, docs[d]]]))), version: docs.version }
+      : null,
+    parts,
+    questions: (db.query(Q.questions).all({ id: t.id }) as FullQuestionRow[]).map((q) => ({
+      id: q.id,
+      source: q.source,
+      round: q.round,
+      ord: q.ord,
+      text: q.text,
+      why: q.why,
+      kind: q.kind,
+      options: JSON.parse(q.options_json) as TaskQuestionDto["options"],
+      recommended: q.recommended,
+      answer: q.answer_json === null ? null : (JSON.parse(q.answer_json) as Answer),
+      step: q.step,
+      askedAt: q.asked_at,
+      answeredAt: q.answered_at,
+    })),
+    steps: (db.query(Q.steps).all({ id: t.id }) as StepRow[]).map((s) => ({
+      id: s.id,
+      part: s.part,
+      ord: s.ord,
+      kind: s.kind,
+      run: s.run,
+      state: s.state,
+      attempt: s.attempt,
+      item: s.item,
+      detail: stepDetail.parse(JSON.parse(s.detail_json)),
+      startedAt: s.started_at,
+      endedAt: s.ended_at,
+    })),
+    createdAt: t.created_at,
+    interview: interviewOf(db, t.id),
+    plan: docs ? planDto(db, t, docs) : null,
+    strip: stepStrip({ size: t.size, state: t.state, stoppedFrom: t.stopped_from, parts }),
+  };
+}
+
+export type TaskResult =
+  | { status: 200 | 201 | 202; task: TaskDto }
+  | { status: 400 | 404 | 502; error: string }
+  | { status: 422; error: string; line: number }
+  | { status: 409; error: string; task?: TaskDto; running?: RunConflict["running"] };
+
+export type TaskServiceOptions = {
+  review: ReviewJobs;
+  settings: Settings;
+  live: Live;
+  now?: () => number;
+};
+
+export function createTaskService(opts: TaskServiceOptions) {
+  const { review, settings, live } = opts;
+  const now = opts.now ?? Date.now;
+  const changed = (id: number, pr?: number) => live.broadcast("changed", { ...(pr !== undefined && { prs: [pr] }), tasks: [id] });
+  const conflict = (db: Database, t: TaskRow, error: string): TaskResult => ({
+    status: 409,
+    error,
+    task: taskDto(db, (taskRow(db, t.id) ?? t) as TaskRow),
+  });
+  const busyResult = (c: RunConflict): TaskResult => ({ status: 409, error: c.error, running: c.running });
+  const profile = () => profileOf(settings.profiles(), DEFAULT_PROFILE);
+
+  // task.md of a task: the one task of its origin PR with its attachments, else the fetched issue with its attachments listed.
+  function taskFiles(db: Database, t: TaskRow) {
+    if (t.origin_pr !== null) return taskContext(db, t.origin_pr, review.dataDir, t.key);
+    if (t.issue_json === null) return { files: [], attachments: [] };
+    return { files: [issueFile(t.key, JSON.parse(t.issue_json) as IssueContext, t.created_at)], attachments: [] };
+  }
+
+  function insertStep(db: Database, task: number, kind: "interview" | "spec", run: number) {
+    db.query(Q.stepInsert).get({ task, kind, run, now: now() });
+  }
+
+  function endStep(db: Database, run: number, e: Ending): number | null {
+    const state = e.status === "cancelled" ? "cancelled" : e.status === "failed" ? "failed" : "ok";
+    return (db.query(Q.stepEnd).get({ run, state, now: now() }) as { id: number } | null)?.id ?? null;
+  }
+
+  // A failed or cancelled run stops the task. Resume (WP-B4) runs the step again. The usage limit stops it too, with the CLI text.
+  function stopTask(db: Database, t: TaskRow, step: number | null, e: Ending) {
+    const r = advance(db, { task: t.id, version: t.version }, { type: "STOP" }, {}, now());
+    if (r.status !== 200) return;
+    const text = e.status === "cancelled" ? "The run was cancelled." : (e.text ?? "The run failed.");
+    patch(db, t.id, r.version, { blocked_json: blocked({ kind: "error", step, text }) }, now());
+  }
+
+  // The effect after a run end: the next run of the task. A refused start stops the task with the reason.
+  function startNext(db: Database, id: number, next: (t: TaskRow) => TaskRunStart) {
+    return () => {
+      const t = taskRow(db, id);
+      if (!t) return;
+      const r = review.taskRun(db, next(t));
+      if (r.status !== 202)
+        db.transaction(() => {
+          const cur = taskRow(db, id);
+          if (cur) stopTask(db, cur, null, { status: "failed", kind: null, text: `${r.conflict.error} Resume when it ends.`, raw: "" });
+        })();
+      changed(id);
+    };
+  }
+
+  function interviewRun(db: Database, t: TaskRow, round: number): TaskRunStart {
+    const p = profile();
+    const { files, attachments } = taskFiles(db, t);
+    const answers = round > 1 ? answersFile(interviewRows(db, t.id), interviewOf(db, t.id)) : null;
+    const max = INTERVIEW_QUESTIONS[Math.min(round, INTERVIEW_QUESTIONS.length) - 1] ?? 0;
+    return {
+      task: t.id,
+      kind: "interview",
+      key: `task:${t.id}:interview:${round}`,
+      project: t.project,
+      repo: t.repo,
+      branch: t.target_branch,
+      profile: p,
+      files,
+      attachments,
+      own: answers ? [answers] : [],
+      maxTurns: INTERVIEW_TURNS,
+      schema: interviewJsonSchema(),
+      agent: interviewAgent(p, round),
+      prompt: (head, instructions) =>
+        buildInterviewPrompt({
+          key: t.key,
+          project: t.project,
+          repo: t.repo,
+          branch: t.target_branch,
+          head,
+          taskFile: files.length > 0,
+          attachments: attachments.length > 0,
+          answers: answers !== null,
+          instructions,
+          round,
+          max,
+        }),
+      judge: (o, _ws, servers, gaps) =>
+        judgeTask(o, interviewResult, "interview", servers, gaps, async (r) => {
+          const c = checkQuestions(r.questions, round);
+          const answer: TaskInterviewDto = { round, summary: r.summary, unknowns: r.unknowns, done: r.done };
+          return { result: { ...r, questions: c.questions }, skipped: c.skipped, answer: JSON.stringify(answer) };
+        }),
+      started: (d, run) => insertStep(d, t.id, "interview", run),
+      finish: (d, run, e) => {
+        const step = endStep(d, run.id, e);
+        const cur = taskRow(d, t.id);
+        if (cur?.state !== "interview") return undefined;
+        const r = e.result?.task as InterviewResult | undefined;
+        if (!r) {
+          stopTask(d, cur, step, e);
+          return undefined;
+        }
+        const q = d.query(Q.question);
+        for (const [ord, x] of r.questions.entries())
+          q.run({
+            task: t.id,
+            round,
+            ord,
+            text: x.text,
+            why: x.why,
+            kind: x.kind,
+            options: JSON.stringify(x.options),
+            recommended: x.recommended,
+            step,
+            now: now(),
+          });
+        if (afterInterview(round, r.questions.length) === "ask") {
+          const a = advance(d, { task: t.id, version: cur.version }, { type: "ASKED" }, {}, now());
+          if (a.status !== 200) return undefined;
+          const n = r.questions.length;
+          const text = `Claude has ${n} ${n === 1 ? "question" : "questions"} before it writes the plan.`;
+          patch(d, t.id, a.version, { blocked_json: blocked({ kind: "question", step, text }) }, now());
+          return undefined;
+        }
+        const a = advance(d, { task: t.id, version: cur.version }, { type: "ANSWERED" }, {}, now());
+        if (a.status !== 200) return undefined;
+        patch(d, t.id, a.version, { blocked_json: null }, now());
+        return startNext(d, t.id, (x) => specRun(d, x));
+      },
+    };
+  }
+
+  function specRun(db: Database, t: TaskRow): TaskRunStart {
+    const p = profile();
+    const budget = budgetOf(db, t);
+    const { files, attachments } = taskFiles(db, t);
+    const answers = answersFile(interviewRows(db, t.id), interviewOf(db, t.id));
+    let plan: Plan | null = null;
+    return {
+      task: t.id,
+      kind: "spec",
+      key: `task:${t.id}:spec`,
+      project: t.project,
+      repo: t.repo,
+      branch: t.target_branch,
+      profile: p,
+      files,
+      attachments,
+      own: answers ? [answers] : [],
+      maxTurns: SPEC_TURNS,
+      schema: specJsonSchema(),
+      agent: specAgent(p, budget),
+      prompt: (head, instructions) =>
+        buildSpecPrompt({
+          key: t.key,
+          project: t.project,
+          repo: t.repo,
+          branch: t.target_branch,
+          head,
+          taskFile: files.length > 0,
+          attachments: attachments.length > 0,
+          answers: answers !== null,
+          instructions,
+          budget,
+        }),
+      judge: (o, ws, servers, gaps) =>
+        judgeTask(o, specResult, "spec", servers, gaps, async (r) => {
+          const base = ws.sourceHead;
+          const missing = await checkMap(r.map, base, ws.cache, gitEnv("/dev/null"));
+          const skipped = r.map.flatMap((e, i) =>
+            missing[i]
+              ? [`Map line ${i + 1}: ${oneLine(e.path)}${e.line === null ? "" : `:${e.line}`} is not found at ${base.slice(0, 12)}.`]
+              : [],
+          );
+          plan = toPlan(r, base, missing, skipped);
+          return { result: r, skipped };
+        }),
+      started: (d, run) => insertStep(d, t.id, "spec", run),
+      finish: (d, run, e) => {
+        const step = endStep(d, run.id, e);
+        const cur = taskRow(d, t.id);
+        if (cur?.state !== "spec_draft") return undefined;
+        if (!plan || !e.result) {
+          stopTask(d, cur, step, e);
+          return undefined;
+        }
+        const size = atLeast(plan.proposed, sizeFloor(plan.estimate, budgetOf(d, cur)).minimum);
+        const docs: Docs = {
+          ...renderDocs(cur.key, cur.title, size, plan),
+          version: (docsOf(cur)?.version ?? 0) + 1,
+          parsed: plan,
+          approved: false,
+        };
+        patch(
+          d,
+          t.id,
+          cur.version,
+          {
+            docs_json: JSON.stringify(docs),
+            estimate_json: JSON.stringify(plan.estimate),
+            size,
+            size_by: size === plan.proposed ? "claude" : "rule",
+            base_commit: run.head,
+            blocked_json: null,
+          },
+          now(),
+        );
+        return undefined;
+      },
+      keep: "base",
+    };
+  }
+
+  // POST /api/tasks (spec.md section 6.11): the open task of the key, or a new task with its interview run.
+  async function create(input: TaskCreateInput): Promise<TaskResult> {
+    const db = review.open();
+    if (!db) return { status: 409, error: "Configure the Bitbucket URL and token first." };
+    const open = () => db.query(Q.open).get({ project: input.project, repo: input.repo, key: input.key }) as TaskRow | null;
+    const found = open();
+    if (found) return { status: 200, task: taskDto(db, found) };
+    type Pr = { id: number; project: string; repo: string; target_branch: string | null };
+    let pr: Pr | null = null;
+    if (input.originPr !== undefined) {
+      pr = db.query(Q.pr).get({ id: input.originPr }) as Pr | null;
+      if (!pr) return { status: 404, error: "Pull request not found." };
+      if (pr.project !== input.project || pr.repo !== input.repo)
+        return { status: 400, error: "The pull request is in another repository." };
+      if (!db.query(Q.prTask).get({ pr: pr.id, key: input.key }))
+        return { status: 404, error: "This pull request does not name that task." };
+    }
+    const busy = review.busy();
+    if (busy) return busyResult(busy);
+    // The task text: the fetched text of the origin PR, else one Jira fetch on this click (BRIEF 3.6, decision Q4).
+    const stored = pr ? (db.query(Q.context).get({ pr: pr.id, key: input.key }) as { json: string } | null) : null;
+    let issue: IssueContext;
+    if (stored) issue = JSON.parse(stored.json) as IssueContext;
+    else {
+      let source: ContextSource | null;
+      try {
+        source = await settings.jira();
+      } catch {
+        return { status: 502, error: "Cannot read the Jira CA file." };
+      }
+      if (!source) return { status: 409, error: "Set up Jira in Settings first." };
+      try {
+        issue = await source.fetchIssue(input.key);
+      } catch (e) {
+        if (!(e instanceof ContextError)) throw e;
+        log(`Jira fetch for a task failed: ${e.message}`);
+        return { status: 502, error: JIRA_FAILED[e.kind] };
+      }
+    }
+    let target = input.target ?? pr?.target_branch ?? null;
+    if (!target)
+      try {
+        target = await remoteHead(review.dataDir, await review.taskRemote(input.project, input.repo));
+      } catch (e) {
+        if (e instanceof NoCloneLink) return { status: 409, error: e.message };
+        return { status: 502, error: `Cannot read the default branch of ${input.project}/${input.repo}. ${noUrl((e as Error).message)}` };
+      }
+    const branch = target;
+    const fetchedAt = now();
+    let id: number;
+    let status: 200 | 201 = 201;
+    try {
+      id = db.transaction(() => {
+        const again = open();
+        if (again) {
+          status = 200;
+          return again.id;
+        }
+        if (pr && !stored) db.query(Q.storeContext).run({ pr: pr.id, key: input.key, json: JSON.stringify(issue), at: fetchedAt });
+        const repo = repoSettings(db, input.project, input.repo);
+        const row = db.query(Q.insert).get({
+          project: input.project,
+          repo: input.repo,
+          key: input.key,
+          title: oneLine(issue.summary).slice(0, 200) || input.key,
+          origin: pr?.id ?? null,
+          state: String(initialTransition(taskMachine)[0].value),
+          target: branch,
+          spec_dir: repo.specDir.replaceAll("{key}", input.key),
+          issue: pr ? null : JSON.stringify(issue),
+          now: fetchedAt,
+        }) as { id: number };
+        const r = review.taskRun(db, interviewRun(db, taskRow(db, row.id) as TaskRow, 1));
+        if (r.status !== 202) throw new Refused(r.conflict.error, r.conflict);
+        return row.id;
+      })();
+    } catch (e) {
+      if (e instanceof Refused && e.running) return busyResult(e.running);
+      throw e;
+    }
+    changed(id, pr && !stored ? pr.id : undefined);
+    return { status, task: taskDto(db, taskRow(db, id) as TaskRow) };
+  }
+
+  // The checks of every mutation: the task, its version, its state, and no running step.
+  function load(db: Database, id: number, version: number, state: TaskState): TaskRow | TaskResult {
+    const t = taskRow(db, id);
+    if (!t) return { status: 404, error: "Task not found." };
+    if (t.version !== version) return conflict(db, t, TASK_CHANGED);
+    if (t.state !== state) return conflict(db, t, TASK_STATE_TEXT[t.state]);
+    if (db.query(Q.busy).get({ id })) return conflict(db, t, "Claude is still working on this task. Wait for the step to end.");
+    return t;
+  }
+
+  // POST /api/tasks/:id/answers: stores the answers, then starts round 2 or the spec run (spec.md section 6.2).
+  function answers(db: Database, id: number, input: TaskAnswersInput): TaskResult {
+    const t = load(db, id, input.version, "interview");
+    if ("status" in t) return t;
+    const open = openQuestions(db, id);
+    if (!open.length) return conflict(db, t, "No question waits for an answer.");
+    const given = new Map(input.answers.map((a) => [a.question, a]));
+    if (given.size !== input.answers.length) return { status: 400, error: "Each question takes one answer." };
+    for (const q of given.keys())
+      if (!open.some((x) => x.id === q)) return { status: 400, error: `Question ${q} does not wait for an answer.` };
+    for (const q of open) {
+      const a = given.get(q.id);
+      if (!a && !input.recommended) return { status: 400, error: "Answer each question, or use the recommended answers." };
+      const problem = a && answerProblem(q, a);
+      if (problem) return { status: 400, error: problem };
+    }
+    const busy = review.busy();
+    if (busy) return busyResult(busy);
+    const round = (open[0] as QuestionRow).round;
+    const last = interviewOf(db, id);
+    const next = afterAnswers(round, last?.round === round ? last.done : true);
+    try {
+      db.transaction(() => {
+        const at = now();
+        for (const q of open) {
+          const a = given.get(q.id);
+          const answer: Answer = a ? { choice: a.choice ?? null, text: a.text?.trim() ?? "" } : recommendedAnswer(q);
+          db.query(Q.answer).run({ id: q.id, answer: JSON.stringify(answer), now: at });
+        }
+        const v = patch(db, id, t.version, { blocked_json: null }, at);
+        if (next === "spec") {
+          const r = advance(db, { task: id, version: v }, { type: "ANSWERED" }, {}, at);
+          if (r.status !== 200) throw new Refused(r.error);
+        }
+        const cur = taskRow(db, id) as TaskRow;
+        const r = review.taskRun(db, next === "spec" ? specRun(db, cur) : interviewRun(db, cur, round + 1));
+        if (r.status !== 202) throw new Refused(r.conflict.error, r.conflict);
+      })();
+    } catch (e) {
+      if (!(e instanceof Refused)) throw e;
+      return e.running ? busyResult(e.running) : conflict(db, t, e.message);
+    }
+    changed(id);
+    return { status: 202, task: taskDto(db, taskRow(db, id) as TaskRow) };
+  }
+
+  // The plan screen actions need the plan of the spec run.
+  function loadPlan(db: Database, id: number, version: number): { t: TaskRow; docs: Docs } | TaskResult {
+    const t = load(db, id, version, "spec_draft");
+    if ("status" in t) return t;
+    const docs = docsOf(t);
+    return docs ? { t, docs } : conflict(db, t, "The plan is not ready yet.");
+  }
+
+  // A size under the minimum of the app rules is refused with the rule lines (spec.md section 6.1, AC-B4).
+  function sizeProblem(db: Database, t: TaskRow, docs: Docs, size: TaskSize): string | null {
+    const floor = sizeFloor(docs.parsed.estimate, budgetOf(db, t));
+    return atLeast(size, floor.minimum) === size ? null : floor.rules.join(" ");
+  }
+
+  // The fields of a size change: the files of the plan move to the files of the new size.
+  function resized(t: TaskRow, docs: Docs, size: TaskSize, approved: boolean): Patch {
+    const from = t.size ?? docs.parsed.proposed;
+    if (from === size) return { docs_json: JSON.stringify({ ...docs, approved }), size, size_by: t.size_by };
+    const next: Docs = { ...convertDocs(t.key, t.title, from, size, docs), version: docs.version + 1, parsed: docs.parsed, approved };
+    return { docs_json: JSON.stringify(next), size, size_by: "user" };
+  }
+
+  // POST /api/tasks/:id/size.
+  function size(db: Database, id: number, input: TaskSizeInput): TaskResult {
+    const l = loadPlan(db, id, input.version);
+    if ("status" in l) return l;
+    const problem = sizeProblem(db, l.t, l.docs, input.size);
+    if (problem) return conflict(db, l.t, problem);
+    if (l.t.size === input.size) return { status: 200, task: taskDto(db, l.t) };
+    patch(db, id, l.t.version, resized(l.t, l.docs, input.size, false), now());
+    changed(id);
+    return { status: 200, task: taskDto(db, taskRow(db, id) as TaskRow) };
+  }
+
+  // PUT /api/tasks/:id/docs: stores an edit of one plan file. The tasks grammar parses back into the stored parts. A parse error keeps
+  // the old text (spec.md section 6.14).
+  function docs(db: Database, id: number, input: z.infer<typeof taskDocInput>): TaskResult {
+    const l = loadPlan(db, id, input.version);
+    if ("status" in l) return l;
+    const size = l.t.size ?? l.docs.parsed.proposed;
+    if (!docNames(size).includes(input.doc)) return conflict(db, l.t, `A ${size} plan has no ${input.doc}.md.`);
+    const text = input.text.replaceAll("\r\n", "\n");
+    const parsed =
+      input.doc === "tasks" ? parseTasks(text, l.docs.parsed.parts) : input.doc === "plan" ? parsePlan(text, l.docs.parsed.parts) : null;
+    if (parsed && "error" in parsed) return { status: 422, error: parsed.error, line: parsed.line };
+    const next: Docs = {
+      ...l.docs,
+      [input.doc]: text,
+      version: l.docs.version + 1,
+      parsed: parsed ? { ...l.docs.parsed, parts: parsed.parts } : l.docs.parsed,
+    };
+    patch(db, id, l.t.version, { docs_json: JSON.stringify(next) }, now());
+    changed(id);
+    return { status: 200, task: taskDto(db, taskRow(db, id) as TaskRow) };
+  }
+
+  // POST /api/tasks/:id/plan: the plan approval with the size and the picked commands. The first plan of a repository needs the warning.
+  function plan(db: Database, id: number, input: TaskPlanInput): TaskResult {
+    const l = loadPlan(db, id, input.version);
+    if ("status" in l) return l;
+    const { t, docs } = l;
+    const problem = sizeProblem(db, t, docs, input.size);
+    if (problem) return conflict(db, t, problem);
+    const repo = repoSettings(db, t.project, t.repo);
+    const offered = commandsOf(docs.parsed, repo.commands);
+    if (new Set(input.commands).size !== input.commands.length) return { status: 400, error: "Each command is picked once." };
+    const picked: TaskCommand[] = [];
+    for (const cid of input.commands) {
+      const c = offered.find((x) => x.id === cid);
+      if (!c) return { status: 400, error: `Command ${cid} is not in the plan.` };
+      const { saved: _, ...cmd } = c;
+      picked.push(cmd);
+    }
+    if (repo.warnedAt === null && !input.warning) return { status: 409, error: "Accept the warning first", task: taskDto(db, t) };
+    // A picked proposal gets the first free ID cmd<n>, so the IDs of the repository stay unique.
+    const used = new Set(picked.filter((c) => !c.id.startsWith(NEW_COMMAND)).map((c) => c.id));
+    let n = 1;
+    const stored = picked.map((c) => {
+      if (!c.id.startsWith(NEW_COMMAND)) return c;
+      while (used.has(`cmd${n}`)) n++;
+      used.add(`cmd${n}`);
+      return { ...c, id: `cmd${n}` };
+    });
+    try {
+      db.transaction(() => {
+        const at = now();
+        db.query(Q.approve).run({ project: t.project, repo: t.repo, commands: JSON.stringify(stored), warned: at, now: at });
+        const v = patch(db, id, t.version, resized(t, docs, input.size, true), at);
+        const r = advance(db, { task: id, version: v }, { type: "APPROVE" }, {}, at);
+        if (r.status !== 200) throw new Refused(r.error);
+      })();
+    } catch (e) {
+      if (!(e instanceof Refused)) throw e;
+      return conflict(db, t, e.message);
+    }
+    changed(id);
+    return { status: 200, task: taskDto(db, taskRow(db, id) as TaskRow) };
+  }
+
+  return {
+    create,
+    answers,
+    size,
+    docs,
+    plan,
+    get(db: Database, id: number): TaskDto | null {
+      const t = taskRow(db, id);
+      return t && taskDto(db, t);
+    },
+    list(db: Database, state: "open" | "all"): TaskRowDto[] {
+      return (db.query(Q.list).all({ all: state === "all" ? 1 : 0 }) as TaskRow[]).map(rowDto);
+    },
+  };
 }

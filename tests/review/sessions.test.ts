@@ -717,7 +717,7 @@ describe("session routes and runs", () => {
       expect((await h.call<Start>(`/api/prs/${h.pr}/consult/session`, { body })).status).toBe(200);
       const review = await h.call<Start>(`/api/prs/${h.pr}/review`, { body: undefined, method: "POST" });
       expect(review.status).toBe(409);
-      expect(review.body.running).toEqual({ run: first.body.id, pr: h.pr });
+      expect(review.body.running).toEqual({ run: first.body.id, pr: h.pr, kind: "session" });
       expect(await waitFor(h.hung)).toBe(true);
       expect((await h.call(`/api/runs/${first.body.id}/cancel`, { method: "POST" })).status).toBe(202);
       const d = await h.finish(first.body.id);

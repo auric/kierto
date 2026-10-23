@@ -27,8 +27,8 @@ import type { Settings } from "../settings";
 import { openFolder, RASTER_TYPE, type Raster, rasterOfFile, resolveFile, safeName, store, taskDir } from "./attachments";
 import { ContextError, type ContextErrorKind, type ContextSource } from "./source";
 
-// Fixed texts. A Jira answer body never reaches the client.
-const FAILED: Record<ContextErrorKind, string> = {
+// Fixed texts. A Jira answer body never reaches the client. The task routes use them too.
+export const FAILED: Record<ContextErrorKind, string> = {
   auth: "Jira rejected the token. Check the Jira settings.",
   forbidden: "Jira refused access to this issue.",
   not_found: "Jira has no such issue, or the token may not see it.",

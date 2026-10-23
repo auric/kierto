@@ -235,6 +235,13 @@ export const SQL = {
       SELECT parent_run FROM review_run WHERE id = $run AND parent_run IS NOT NULL
       UNION SELECT r.parent_run FROM review_run r JOIN up ON r.id = up.id WHERE r.parent_run IS NOT NULL)
     SELECT r.id, r.status, r.source_head, r.question, r.answer FROM up JOIN review_run r ON r.id = up.id ORDER BY r.id DESC`,
+  // docs/plans/review-v2/spec.md section 6.3: a task run has pr NULL. Its heads are known only after the fetch (taskHeads).
+  taskInsert: `INSERT INTO review_run (task, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head,
+      status, started_at, model, effort, effort_default)
+    VALUES ($task, $kind, $profile, $profile_name, $profile_revision, 0, '', $key, '', '', 'running', $now, $model, $effort, $effort_default)
+    RETURNING id`,
+  taskHeads: `UPDATE review_run SET source_head = $head, target_head = $head, merge_base = $head, range_base = $head, fetch_via = 'branch'
+    WHERE id = $id`,
   // A session run uses no profile and no --model or --effort flag.
   sessionInsert: `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, started_at, effort, consult_json)
     VALUES ($pr, 'session', '', '', $key, $source, $target, 'running', $now, 'default', $consult) RETURNING id`,

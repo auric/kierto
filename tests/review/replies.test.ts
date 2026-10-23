@@ -370,7 +370,7 @@ describe("R11 injection guard", () => {
       expect(again.body.id).toBe(a.body.id);
       const other = await h.start([101]);
       expect(other.status).toBe(409);
-      expect(other.body.running).toEqual({ run: a.body.id, pr: h.pr });
+      expect(other.body.running).toEqual({ run: a.body.id, pr: h.pr, kind: "reply" });
       const review = await h.json<RunConflict>(`/api/prs/${h.pr}/review`, { method: "POST" });
       expect(review.status).toBe(409);
       expect(review.body.running.run).toBe(a.body.id);

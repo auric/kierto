@@ -172,7 +172,8 @@ export function Talk({ it, onClose, ctx }: { it: ReviewItemDto; onClose: () => v
     if (full && (!a || a === document.body)) fullRef.current?.focus({ preventScroll: true });
   }, [full]);
 
-  const where = (pr: number) => {
+  const where = (pr: number | null) => {
+    if (pr === null) return "a task";
     if (pr === ctx.pr) return "this pull request";
     const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === pr);
     return other ? prKey(other) : "another pull request";
@@ -200,7 +201,7 @@ export function Talk({ it, onClose, ctx }: { it: ReviewItemDto; onClose: () => v
       {
         onSuccess: (r) => {
           if ("conflict" in r) {
-            const kind: RunKind = runs?.find((x) => x.id === r.conflict.running.run)?.kind ?? "review";
+            const kind: RunKind = r.conflict.running.kind;
             setRefused({ text: busyLine(kind, where(r.conflict.running.pr)), run: r.conflict.running.run });
             return;
           }

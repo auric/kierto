@@ -23,6 +23,7 @@ import { discoverSkills, skillDto } from "./review/skills";
 import { discoverMcpServers, listUserTools, McpListError, readServers } from "./review/user-mcp";
 import { createSettings, type Settings } from "./settings";
 import { createSyncEngine, type SyncEngine } from "./sync/engine";
+import { createTaskRoutes } from "./tasks/routes";
 
 export const TOKEN_PLACEHOLDER = "__RL_SESSION__";
 
@@ -110,7 +111,8 @@ export function createApp(opts: AppOptions) {
     .route("/api", createConsultRoutes({ review, settings, live: opts.live }))
     .route("/api", createFixRoutes({ review, settings, live: opts.live, openFolder: opts.openFolder }))
     .route("/api", createContextRoutes({ settings, review, live: opts.live, openFolder: opts.openFolder }))
-    .route("/api", createPublishRoutes({ review, settings, outbox }));
+    .route("/api", createPublishRoutes({ review, settings, outbox }))
+    .route("/api", createTaskRoutes({ review, settings, live: opts.live }));
 
   if (opts.assets) app.use("/assets/*", opts.assets);
   if (page !== undefined) {

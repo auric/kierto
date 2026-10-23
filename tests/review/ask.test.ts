@@ -158,7 +158,7 @@ describe("ask runs", () => {
       expect(again.body.id).toBe(first.body.id);
       const other = await h.ask("Something else?");
       expect(other.status).toBe(409);
-      expect(other.body.running).toEqual({ run: first.body.id, pr: h.pr });
+      expect(other.body.running).toEqual({ run: first.body.id, pr: h.pr, kind: "ask" });
       expect((await h.json<Start>(`/api/prs/${h.pr}/review`, { method: "POST" })).status).toBe(409);
 
       expect(await waitFor(() => h.calls().some((c) => c.childPid))).toBe(true);

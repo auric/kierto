@@ -698,7 +698,7 @@ describe("acceptance", () => {
       await h.brief(NOTE, "explain");
       const other = await h.json<RunConflict>(`/api/prs/${h.pr}/review`, { method: "POST" });
       expect(other.status).toBe(409);
-      expect(other.body.running).toEqual({ run: a.body.id, pr: h.pr });
+      expect(other.body.running).toEqual({ run: a.body.id, pr: h.pr, kind: "review" });
 
       await h.call(`/api/runs/${a.body.id}/cancel`, { method: "POST" });
       await h.finish(a.body.id);
@@ -1225,7 +1225,7 @@ describe("editable profiles (M4)", () => {
       expect((await putProfiles(h, [{ ...edited, prompt: "Another prompt." }])).status).toBe(200);
       const other = await h.json<RunConflict>(`/api/prs/${h.pr}/review`, { method: "POST" });
       expect(other.status).toBe(409);
-      expect(other.body.running).toEqual({ run: a.body.id, pr: h.pr });
+      expect(other.body.running).toEqual({ run: a.body.id, pr: h.pr, kind: "review" });
 
       await h.call(`/api/runs/${a.body.id}/cancel`, { method: "POST" });
       expect((await h.finish(a.body.id)).run.profileName).toBe("General v2");

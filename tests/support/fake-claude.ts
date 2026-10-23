@@ -38,6 +38,10 @@ export type FakeScenario = {
   verify?: unknown;
   explain?: unknown;
   discuss?: unknown;
+  // Part 6 (spec.md section 6.5): interview (properties.done and properties.questions) and spec (properties.map) results. Absent: the
+  // echo.
+  interview?: unknown;
+  spec?: unknown;
   // docs/plans/review-v2/spec.md section 2.9: the notes of the echo reply result, and the cites of its first reply. Absent: none.
   notes?: unknown;
   cites?: unknown;
@@ -45,7 +49,7 @@ export type FakeScenario = {
   bySchema?: Partial<Record<SchemaKind, Partial<Omit<FakeScenario, "record" | "auth" | "bySchema">>>>;
 };
 
-export type SchemaKind = "verify" | "explain" | "discuss";
+export type SchemaKind = "verify" | "explain" | "discuss" | "interview" | "spec";
 // The review v2 run kind that a --json-schema shape names, else null.
 export const schemaKind = (props: Record<string, unknown>): SchemaKind | null =>
   props.verdicts !== undefined
@@ -54,7 +58,11 @@ export const schemaKind = (props: Record<string, unknown>): SchemaKind | null =>
       ? "explain"
       : props.verdict !== undefined && props.answer !== undefined
         ? "discuss"
-        : null;
+        : props.done !== undefined && props.questions !== undefined
+          ? "interview"
+          : props.map !== undefined && props.estimate !== undefined
+            ? "spec"
+            : null;
 
 // Each complete record ends with "\n". The last part can be a record that the fake still writes, so it is dropped.
 export function readRecords<T = Record<string, unknown>>(path: string): T[] {
@@ -191,6 +199,59 @@ export const echoDiscuss = (stdin: string) => ({
   coverage: NO_COVERAGE,
 });
 
+// An interview result. The "- Round: N" line of the stdin picks it: round 1 asks a choice and a text question, a later round is done.
+export function echoInterview(stdin: string) {
+  const round = Number(/^- Round: (\d+)$/m.exec(stdin)?.[1] ?? 1);
+  if (round > 1) return { done: true, summary: "Echo: the answers settle the plan.", questions: [], unknowns: [], coverage: NO_COVERAGE };
+  return {
+    done: true,
+    summary: "Echo: the task asks for a small change.",
+    questions: [
+      {
+        id: "q1",
+        text: "Echo: keep the old behavior?",
+        why: "Echo: it changes the tests.",
+        kind: "choice",
+        options: [
+          { label: "Keep it", detail: "No change for callers." },
+          { label: "Drop it", detail: "Simpler code." },
+        ],
+        recommended: 0,
+      },
+      { id: "q2", text: "Echo: anything else?", why: "Echo: the scope.", kind: "text", options: [], recommended: null },
+    ],
+    unknowns: [],
+    coverage: NO_COVERAGE,
+  };
+}
+
+// A small plan with one part, one task, and a map entry on README.md line 1, which the test remotes hold.
+export const echoSpec = () => ({
+  title: "Echo plan",
+  size: "small",
+  estimate: { parts: 1, lines: 20, files: 1, modules: ["docs"], db: false, api: false, unknowns: [] },
+  map: [{ path: "README.md", line: 1, symbol: "", kind: "change", what: "Echo: the title line." }],
+  change: "Echo: change the title line.",
+  design: null,
+  spec: null,
+  parts: [
+    {
+      n: 1,
+      kind: "part",
+      title: "Echo part",
+      goal: "Echo: the title says more.",
+      lines: 20,
+      acceptance: [{ id: "A1", text: "Echo: the title line names the app." }],
+      tests: [{ test: "tests/readme.test.ts", proves: ["A1"] }],
+      tasks: [{ id: "T1", title: "Echo task", files: ["README.md"], run: ["tests/readme.test.ts"], done: "Echo: the test passes." }],
+    },
+  ],
+  testing: { commands: [{ name: "test", kind: "test", argv: ["bun", "test"] }], services: [], notes: "" },
+  flag: null,
+  questions: [],
+  coverage: NO_COVERAGE,
+});
+
 // A session answer (docs/plans/session-consult.md part C): one reject per item tag with status open in the stdin.
 // fix: the schema asks for fixes too (part D). A reject needs no fix, so the fix has no note and no edit.
 export function echoConsult(stdin: string, fix = false) {
@@ -264,6 +325,8 @@ async function main() {
     }
     if (kind === "explain") return s.explain ?? echoExplain();
     if (kind === "discuss") return s.discuss ?? echoDiscuss(stdin);
+    if (kind === "interview") return s.interview ?? echoInterview(stdin);
+    if (kind === "spec") return s.spec ?? echoSpec();
     if (props.replies !== undefined) return s.replies ?? echoReplies(stdin, { notes: s.notes, cites: s.cites });
     if (props.earlier !== undefined) return s.rereview ?? echoRereview(stdin, fixture);
     if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);

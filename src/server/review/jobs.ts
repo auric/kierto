@@ -51,6 +51,7 @@ import {
   verifyJsonSchema,
 } from "../../shared/review";
 import { CHECK_EVENT, type RunEvent } from "../../shared/run-log";
+import type { TaskRunKind } from "../../shared/task";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
 import type { PrRef } from "../../shared/types";
 import { dataDir as defaultDataDir } from "../config";
@@ -90,7 +91,7 @@ import {
   withSkills,
   withVerifyDelegation,
 } from "./catalog";
-import { createClaudeRunner, RUN_TIMEOUT_MS, type RunnerCheck } from "./claude";
+import { type AgentSpec, createClaudeRunner, RUN_TIMEOUT_MS, type RunnerCheck, type RunOutcome } from "./claude";
 import { codegraphEntry, codegraphIndex, indexCodegraph } from "./codegraph";
 import {
   askConversation,
@@ -168,7 +169,18 @@ import {
 import { alwaysProblems, claudeConfigDir, copySkills } from "./skills";
 import { claudeJsonPath, userServers } from "./user-mcp";
 import type { AskedThread } from "./validate";
-import { type GitRemote, noUrl, prepareWorkspace, pruneWorkspaces, UNTRUSTED, type Workspace } from "./workspace";
+import {
+  type AttachmentFile,
+  type BranchRemote,
+  type ContextFile,
+  type GitRemote,
+  noUrl,
+  prepareTaskWorkspace,
+  prepareWorkspace,
+  pruneWorkspaces,
+  UNTRUSTED,
+  type Workspace,
+} from "./workspace";
 
 // The entry point of the review modules. The routes, the tests, and the scripts import these names from here.
 export { fixStateFile, HISTORY_ASK_BYTES, HISTORY_FINDING_BYTES, historyFile, QUESTIONS_BYTES, questionsFile } from "./context-files";
@@ -199,6 +211,8 @@ export type ReviewJobsOptions = {
   runnerCommand?: string[];
   // Absent: the forge provider. The tests pass a file remote.
   gitRemote?: (ref: PrRef) => Promise<GitRemote>;
+  // The remote of a repository for a task run. Absent: the forge provider. The tests pass a file remote.
+  repoRemote?: (project: string, repo: string) => Promise<BranchRemote>;
   // Absent: tools/list over the network. The tests pass a stub.
   listTools?: ListTools;
   // The Claude Code config folder for profile skills and MCP servers. Absent: CLAUDE_CONFIG_DIR or the default, read at each run.
@@ -240,6 +254,50 @@ type Job = {
   discuss?: DiscussStart;
 };
 
+// docs/plans/review-v2/spec.md section 6.2: one interview or spec run of a task. src/server/tasks builds it.
+// files: context files with the UNTRUSTED banner. own: files that the user wrote or picked, without the banner (answers.md).
+// prompt: the stdin, from the head of the snapshot and the project instructions. judge: the ending of the outcome.
+// started: runs in the transaction of the run insert. finish: runs in the transaction of the run end, with the head of the snapshot.
+// It returns the effect to run after the commit, with the slot free: the next run of the task. keep: the task ref of a result head.
+export type TaskRunStart = {
+  task: number;
+  kind: Extract<TaskRunKind, "interview" | "spec">;
+  key: string;
+  project: string;
+  repo: string;
+  branch: string;
+  profile: Profile;
+  files: ContextFile[];
+  attachments: AttachmentFile[];
+  own: ContextFile[];
+  maxTurns: number;
+  schema: Record<string, unknown>;
+  agent: AgentSpec;
+  prompt: (head: string, instructions: string) => string;
+  judge: (o: RunOutcome, ws: Workspace, servers: string[], gaps: string[]) => Promise<Ending>;
+  started: (db: Database, run: number) => void;
+  finish: (db: Database, run: { id: number; head: string | null }, e: Ending) => (() => void) | undefined;
+  keep?: string;
+};
+
+// A task run in the slot. It has no PR.
+type TaskJob = {
+  id: number;
+  pr: null;
+  kind: RunKind;
+  key: string;
+  db: Database;
+  profile: Profile;
+  cancelled: boolean;
+  done: Promise<void>;
+  phase?: RunDto["phase"];
+  candidates?: number;
+  abort?: AbortController;
+  t: TaskRunStart;
+};
+
+export type TaskStartResult = { status: 202; run: number } | { status: 409; conflict: RunConflict };
+
 export type StartResult =
   | { status: 200 | 202; run: RunDto }
   | { status: 409; conflict: RunConflict }
@@ -260,7 +318,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   const improve = createImprover({ command: opts.runnerCommand, now });
   const docServers = createDocServers(opts.listTools);
   const recovered = new WeakSet<Database>();
-  let job: Job | null = null;
+  let job: Job | TaskJob | null = null;
   let checked: RunnerCheck | null = null;
   let pruned: Promise<void> | null = null;
 
@@ -290,7 +348,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   }
 
   // ---------- SSE ----------
-  const pending = { prs: new Set<number>(), runs: new Set<number>() };
+  const pending = { prs: new Set<number>(), runs: new Set<number>(), tasks: new Set<number>() };
   let timer: ReturnType<typeof setTimeout> | null = null;
   let sentAt = 0;
   // Each resolves after the next broadcast.
@@ -298,14 +356,17 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   function flush() {
     timer = null;
     sentAt = Date.now();
-    live.broadcast("changed", { prs: [...pending.prs], runs: [...pending.runs] });
+    const tasks = [...pending.tasks];
+    live.broadcast("changed", { prs: [...pending.prs], runs: [...pending.runs], ...(tasks.length && { tasks }) });
     pending.prs.clear();
     pending.runs.clear();
+    pending.tasks.clear();
     for (const r of flushed.splice(0)) r();
   }
-  function notify(run: number, pr?: number) {
+  function notify(run: number, pr?: number, task?: number) {
     pending.runs.add(run);
     if (pr !== undefined) pending.prs.add(pr);
+    if (task !== undefined) pending.tasks.add(task);
     if (!timer) timer = setTimeout(flush, Math.max(0, sentAt + NOTIFY_MS - Date.now()));
   }
 
@@ -474,6 +535,74 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     return ok;
   }
 
+  // The run reads every source again. The text goes to the prompts and the run folder. SQLite and the log get the paths and sizes only.
+  // paths: the changed files, whose folders can add a CLAUDE.md.
+  async function loadInstructions(j: Job | TaskJob, ws: Workspace, ref: { project: string; repo: string }, paths: string[]) {
+    const instructions = await projectInstructions(
+      j.db,
+      { project: ref.project, repo: ref.repo },
+      { cache: ws.cache, env: gitEnv("/dev/null"), commit: ws.targetHead, paths },
+      settings.globalInstructions() ? (opts.claudeConfigDir ?? claudeConfigDir()) : null,
+    );
+    if (instructions.text) writeFileSync(join(ws.work, "CLAUDE.md"), instructions.text);
+    j.db
+      .query(SQL.instructions)
+      .run({ id: j.id, json: JSON.stringify({ files: instructions.files, bytes: instructions.bytes, notLoaded: instructions.notLoaded }) });
+    for (const g of instructions.notLoaded) log(`Review run ${j.id}: project instructions not loaded: ${g}.`);
+    if (instructions.files.length)
+      log(
+        `Review run ${j.id} project instructions: ${instructions.files
+          .map((f) => `${f.source === "settings" ? "settings text" : `${f.path} from ${f.source}`} (${f.bytes} bytes)`)
+          .join(", ")}.`,
+      );
+    return instructions;
+  }
+
+  // The docs servers and the user servers of the profile. A picked codegraph server indexes the snapshot first. null: Cancel came.
+  async function profileServers(j: Job | TaskJob, profile: Profile, ws: Workspace, ref: { project: string; repo: string }) {
+    const [docs, user] = await Promise.all([
+      docServers(profile),
+      userServers(
+        profile.mcp,
+        claudeJsonPath(opts.claudeConfigDir ?? process.env.CLAUDE_CONFIG_DIR),
+        opts.claudeConfigDir ?? claudeConfigDir(),
+      ),
+    ]);
+    if (j.cancelled) return null;
+    // One index serves every picked codegraph server. A failed index keeps the servers out of the run.
+    const graphs = Object.entries(user.servers).filter(([, s]) => codegraphIndex(s.user) >= 0);
+    const first = graphs[0]?.[1].user;
+    if (first?.type === "stdio") {
+      j.phase = "indexing";
+      j.abort = new AbortController();
+      notify(j.id);
+      const started = now();
+      const failed = await indexCodegraph({
+        entry: first,
+        repo: ws.repo,
+        dataDir,
+        cacheDb: join(dataDir, "cache", "codegraph", ref.project, ref.repo, "codegraph.db"),
+        signal: j.abort.signal,
+      });
+      j.phase = undefined;
+      j.abort = undefined;
+      notify(j.id);
+      if (j.cancelled) return null;
+      log(`Review run ${j.id}: codegraph index: ${failed ?? "ready"} after ${now() - started} ms.`);
+      for (const [key, s] of graphs)
+        if (failed) {
+          delete user.servers[key];
+          user.gaps.push(`MCP server ${key}: no codegraph index (${failed})`);
+        } else if (s.user.type === "stdio") user.servers[key] = { ...s, user: codegraphEntry(s.user, ws.repo) };
+    }
+    for (const g of user.gaps) log(`Review run ${j.id}: ${g}.`);
+    const used = Object.entries(user.servers).map(([server, s]) => ({ server, tools: s.tools, remote: s.user.type !== "stdio" }));
+    if (used.length) log(`Review run ${j.id} MCP servers: ${used.map((u) => `${u.server} (${u.tools.length} tools)`).join(", ")}.`);
+    const unmarked = user.unmarked.length ? `Unmarked MCP tools allowed: ${user.unmarked.join(", ")}.` : null;
+    if (unmarked) log(`Review run ${j.id}: ${unmarked}`);
+    return { servers: { ...docs.servers, ...user.servers }, used, unmarked, gaps: [...docs.unavailable, ...user.gaps] };
+  }
+
   async function steps(j: Job, pr: Heads, brief: BriefInput, held: { ws?: Workspace }) {
     const cancelled = cancelledEnding;
     const c = await check();
@@ -566,73 +695,19 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (ctx?.notes) writeFileSync(join(ws.context, ctx.notes.name), ctx.notes.text);
 
     const changed = parseDiff(ws.diff);
-    // The run reads every source again. The text goes to the prompts and the run folder. SQLite and the log get the paths and sizes only.
-    const instructions = await projectInstructions(
-      j.db,
-      { project: pr.project, repo: pr.repo },
-      {
-        cache: ws.cache,
-        env: gitEnv("/dev/null"),
-        commit: ws.targetHead,
-        paths: changed.flatMap((f) => [f.path, f.oldPath].filter((p): p is string => p !== null)),
-      },
-      settings.globalInstructions() ? (opts.claudeConfigDir ?? claudeConfigDir()) : null,
+    const instructions = await loadInstructions(
+      j,
+      ws,
+      pr,
+      changed.flatMap((f) => [f.path, f.oldPath].filter((p): p is string => p !== null)),
     );
-    if (instructions.text) writeFileSync(join(ws.work, "CLAUDE.md"), instructions.text);
-    j.db
-      .query(SQL.instructions)
-      .run({ id: j.id, json: JSON.stringify({ files: instructions.files, bytes: instructions.bytes, notLoaded: instructions.notLoaded }) });
-    for (const g of instructions.notLoaded) log(`Review run ${j.id}: project instructions not loaded: ${g}.`);
-    if (instructions.files.length)
-      log(
-        `Review run ${j.id} project instructions: ${instructions.files
-          .map((f) => `${f.source === "settings" ? "settings text" : `${f.path} from ${f.source}`} (${f.bytes} bytes)`)
-          .join(", ")}.`,
-      );
     if (j.cancelled) return cancelled();
 
     const profile = j.profile;
-    const [docs, user] = await Promise.all([
-      docServers(profile),
-      userServers(
-        profile.mcp,
-        claudeJsonPath(opts.claudeConfigDir ?? process.env.CLAUDE_CONFIG_DIR),
-        opts.claudeConfigDir ?? claudeConfigDir(),
-      ),
-    ]);
-    if (j.cancelled) return cancelled();
-    // One index serves every picked codegraph server. A failed index keeps the servers out of the run.
-    const graphs = Object.entries(user.servers).filter(([, s]) => codegraphIndex(s.user) >= 0);
-    const first = graphs[0]?.[1].user;
-    if (first?.type === "stdio") {
-      j.phase = "indexing";
-      j.abort = new AbortController();
-      notify(j.id);
-      const started = now();
-      const failed = await indexCodegraph({
-        entry: first,
-        repo: ws.repo,
-        dataDir,
-        cacheDb: join(dataDir, "cache", "codegraph", pr.project, pr.repo, "codegraph.db"),
-        signal: j.abort.signal,
-      });
-      j.phase = undefined;
-      j.abort = undefined;
-      notify(j.id);
-      if (j.cancelled) return cancelled();
-      log(`Review run ${j.id}: codegraph index: ${failed ?? "ready"} after ${now() - started} ms.`);
-      for (const [key, s] of graphs)
-        if (failed) {
-          delete user.servers[key];
-          user.gaps.push(`MCP server ${key}: no codegraph index (${failed})`);
-        } else if (s.user.type === "stdio") user.servers[key] = { ...s, user: codegraphEntry(s.user, ws.repo) };
-    }
-    const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...docs.servers, ...user.servers };
-    for (const g of user.gaps) log(`Review run ${j.id}: ${g}.`);
-    const used = Object.entries(user.servers).map(([server, s]) => ({ server, tools: s.tools, remote: s.user.type !== "stdio" }));
-    if (used.length) log(`Review run ${j.id} MCP servers: ${used.map((u) => `${u.server} (${u.tools.length} tools)`).join(", ")}.`);
-    const unmarked = user.unmarked.length ? `Unmarked MCP tools allowed: ${user.unmarked.join(", ")}.` : null;
-    if (unmarked) log(`Review run ${j.id}: ${unmarked}`);
+    const tools = await profileServers(j, profile, ws, pr);
+    if (!tools) return cancelled();
+    const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...tools.servers };
+    const { used, unmarked } = tools;
     const skills = copySkills(profile.skills, join(ws.work, "skills"), opts.claudeConfigDir ?? claudeConfigDir());
     for (const g of skills.gaps) log(`Review run ${j.id}: ${g}.`);
     const isAlways = (id: string) => profile.alwaysSkills.includes(id);
@@ -673,7 +748,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       prContext: !!ctx,
       notes: !!ctx?.notes,
     };
-    const gaps = [...docs.unavailable, ...user.gaps, ...skills.gaps];
+    const gaps = [...tools.gaps, ...skills.gaps];
     const input = {
       mergeBase: ws.mergeBase,
       head: ws.sourceHead,
@@ -927,6 +1002,145 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     }
   }
 
+  // ---------- Task runs (docs/plans/review-v2/spec.md section 6.2) ----------
+
+  async function taskRemote(project: string, repo: string): Promise<BranchRemote> {
+    if (opts.repoRemote) return opts.repoRemote(project, repo);
+    const provider = await settings.provider();
+    if (!provider) throw new Error("Configure the Bitbucket URL and token first.");
+    return provider.repoRemote(project, repo);
+  }
+
+  // A read-only snapshot of the newest target head, the profile servers, and one CLI process with no subagents.
+  async function taskSteps(j: TaskJob, held: { ws?: Workspace }): Promise<Ending> {
+    const c = await check();
+    if (!c.ok) return failure(c.kind === "auth" ? "auth" : "process", c.message);
+    if (j.cancelled) return cancelledEnding();
+    await prune();
+    const t = j.t;
+    j.abort = new AbortController();
+    try {
+      if (j.cancelled) return cancelledEnding();
+      held.ws = await prepareTaskWorkspace({
+        dataDir,
+        runId: String(j.id),
+        project: t.project,
+        repo: t.repo,
+        task: t.task,
+        branch: t.branch,
+        remote: await taskRemote(t.project, t.repo),
+        files: t.files,
+        attachments: t.attachments,
+        long: { signal: j.abort.signal, timeoutMs: RUN_TIMEOUT_MS },
+      });
+    } catch (e) {
+      if (j.cancelled) return cancelledEnding();
+      return failure("workspace", noUrl((e as Error).message));
+    } finally {
+      j.abort = undefined;
+    }
+    const ws = held.ws;
+    j.db.query(SQL.taskHeads).run({ id: j.id, head: ws.sourceHead });
+    notify(j.id, undefined, t.task);
+    if (j.cancelled) return cancelledEnding();
+    for (const f of t.own) writeFileSync(join(ws.context, f.name), f.text);
+    const instructions = await loadInstructions(j, ws, t, []);
+    if (j.cancelled) return cancelledEnding();
+    const tools = await profileServers(j, j.profile, ws, t);
+    if (!tools) return cancelledEnding();
+    const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...tools.servers };
+    log(`Task run ${j.id}: ${t.kind} of task ${t.task} at ${ws.sourceHead.slice(0, 12)}.`);
+    // No await between this check and run(), so a later Cancel reaches the process.
+    if (j.cancelled) return cancelledEnding();
+    const o = await runner.run(
+      {
+        cwd: ws.work,
+        appDir: ws.app,
+        prompt: t.prompt(ws.sourceHead, instructions.text),
+        schema: t.schema,
+        main: withMcp(t.agent, tools.used),
+        maxTurns: t.maxTurns,
+        model: j.profile.model,
+        effort: j.profile.effort,
+        agents: {},
+        mcpServers,
+      },
+      (events) => {
+        j.db.transaction(() => upsertEvents(j.db, j.id, events))();
+        notify(j.id, undefined, t.task);
+      },
+    );
+    if (j.cancelled) return cancelledEnding(o);
+    const e = await t.judge(o, ws, Object.keys(mcpServers), tools.gaps);
+    if (!tools.unmarked) return e;
+    e.result?.summary.coverage.notChecked.push(tools.unmarked);
+    return { ...e, raw: `${tools.unmarked}\n\n${e.raw}` };
+  }
+
+  // One transaction for the run, its log, and the finish of the task. Returns the effect of the finish.
+  function endTask(j: TaskJob, e: Ending, head: string | null): (() => void) | undefined {
+    const o = e.outcome;
+    const r = o?.result;
+    const usage = e.usage !== undefined ? e.usage : o ? usageOf(o) : null;
+    const flagged = j.profile.effort;
+    const effect = j.db.transaction(() => {
+      if (o) upsertEvents(j.db, j.id, o.events);
+      const summary = e.result?.summary;
+      const done = j.db.query(SQL.end).run({
+        id: j.id,
+        status: e.status,
+        kind: e.kind,
+        text: e.text,
+        session: o?.init?.session_id ?? r?.session_id ?? null,
+        cli: o?.init?.claude_code_version ?? null,
+        model: o?.init?.model ?? null,
+        init_effort: !flagged && !!o?.init?.model,
+        effort_default: !flagged && o?.init?.model ? runEffort(o.init.model) : null,
+        usage: usage ? JSON.stringify(usage) : null,
+        summary: summary ? JSON.stringify(summary) : null,
+        answer: e.result?.answer ?? null,
+        fix: null,
+        explain: null,
+        raw: e.raw,
+        now: now(),
+      });
+      // Restart recovery can end the row first. Then the task stays as recoverTasks left it.
+      if (!done.changes) return undefined;
+      return j.t.finish(j.db, { id: j.id, head }, e);
+    })();
+    notify(j.id, undefined, j.t.task);
+    return effect;
+  }
+
+  async function executeTask(j: TaskJob) {
+    const held: { ws?: Workspace } = {};
+    let e: Ending;
+    try {
+      e = await taskSteps(j, held);
+      if (e.result && j.t.keep)
+        await held.ws?.keep(j.t.keep).catch((err) => log(`Could not keep the head of task run ${j.id}: ${noUrl((err as Error).message)}`));
+    } catch (err) {
+      const message = (err as Error).message;
+      log(`Task run ${j.id} failed: ${message}`);
+      e = failure("process", message);
+    }
+    const head = held.ws?.sourceHead ?? null;
+    await held.ws?.remove().catch((err) => log(`Could not remove the workspace of task run ${j.id}: ${noUrl((err as Error).message)}`));
+    // The slot frees before the end write, so the effect can start the next run of the task.
+    if (job === j) job = null;
+    let effect: (() => void) | undefined;
+    try {
+      effect = endTask(j, e, head);
+    } catch (e2) {
+      log(`Could not end task run ${j.id}: ${(e2 as Error).message}`);
+    }
+    try {
+      effect?.();
+    } catch (e3) {
+      log(`Task run ${j.id}: the next step did not start: ${(e3 as Error).message}`);
+    }
+  }
+
   const withPhase = (db: Database, r: RunDto): RunDto =>
     job?.phase && job.id === r.id && job.db === db && r.status === "running"
       ? { ...r, phase: job.phase, ...(job.phase === "checking" && job.candidates !== undefined && { candidates: job.candidates }) }
@@ -945,12 +1159,17 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     cancelActive();
   });
 
+  const busyConflict = (j: Job | TaskJob): RunConflict => ({
+    error: "Another review is running.",
+    running: { run: j.id, pr: j.pr, kind: j.kind },
+  });
+
   // The one run slot (A14). The same key returns the running run. null: the slot is free.
   function taken(db: Database, key: string): StartResult | null {
     if (!job) return null;
     const running = runRow(job.db, job.id);
     if (job.key === key && job.db === db && running) return { status: 200, run: toRunDto(running) };
-    return { status: 409, conflict: { error: "Another review is running.", running: { run: job.id, pr: job.pr } } };
+    return { status: 409, conflict: busyConflict(job) };
   }
 
   // Takes the slot and starts the run in the background.
@@ -1481,6 +1700,41 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     cancel(db: Database, run: number): "cancelled" | "not_running" | null {
       if (!runRow(db, run)) return null;
       return job?.id === run && job.db === db && cancelActive() ? "cancelled" : "not_running";
+    },
+
+    // The run that holds the one slot, or null.
+    busy: (): RunConflict | null => (job ? busyConflict(job) : null),
+
+    taskRemote,
+
+    // docs/plans/review-v2/spec.md section 6.2: starts an interview or spec run of a task in the one slot. The row has pr NULL.
+    taskRun(db: Database, t: TaskRunStart): TaskStartResult {
+      if (job) return { status: 409, conflict: busyConflict(job) };
+      const p = t.profile;
+      const id = db.transaction(() => {
+        const row = db.query(SQL.taskInsert).get({
+          task: t.task,
+          kind: t.kind,
+          profile: p.id,
+          profile_name: p.name,
+          profile_revision: profileRevision(p),
+          key: t.key,
+          now: now(),
+          model: p.model,
+          effort: p.effort ?? "default",
+          effort_default: p.effort ? null : runEffort(p.model),
+        }) as { id: number };
+        t.started(db, row.id);
+        return row.id;
+      })();
+      const j: TaskJob = { id, pr: null, kind: t.kind, key: t.key, db, profile: p, cancelled: false, done: Promise.resolve(), t };
+      job = j;
+      j.done = executeTask(j).finally(() => {
+        if (job === j) job = null;
+        if (timer) return new Promise<void>((r) => flushed.push(r));
+      });
+      notify(id, undefined, t.task);
+      return { status: 202, run: id };
     },
 
     // pr: the runs of one PR. null: the runs of all PRs. Newest first. A consult run (session-consult.md part C) and the fix run of a

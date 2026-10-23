@@ -30,14 +30,59 @@ type FileRow = {
   include: number;
 };
 
+// The section of one issue. lines: the attachment lines. body: the text of a description or a comment.
+function issueSection(r: Omit<TaskRow, "json">, i: IssueContext, lines: string[], body: (s: string) => string): string[] {
+  const out = [
+    `## Task ${r.key}: ${oneLine(i.summary)}`,
+    "",
+    `- Source: ${SOURCES[r.source] ?? r.source}`,
+    `- Status: ${oneLine(i.status ?? "(none)")}`,
+    `- Fetched: ${new Date(r.fetched_at).toISOString()}`,
+    ...(i.truncated ? ["- The app cut this text at its size limits."] : []),
+    "",
+    "### Description",
+    "",
+    body(i.description?.trim() || "(none)"),
+    "",
+    `### Comments (${i.comments.length} of ${i.commentsTotal})`,
+    "",
+  ];
+  for (const c of i.comments) out.push(`#### ${oneLine(c.author)}, ${oneLine(c.created)}`, "", body(c.body), "");
+  if (!i.comments.length) out.push("(none)", "");
+  if (lines.length) out.push(`### Attachments (${lines.length})`, "", ...lines, "");
+  return out;
+}
+
+const attachmentLine = (a: AttachmentMeta, state: string) =>
+  `- ${oneLine(a.filename)}: ${a.size} bytes, ${oneLine(a.mimeType ?? "unknown type")}. ${state}`;
+
+// task.md of a task without a PR (docs/plans/review-v2/spec.md section 6.3, task.issue_json). design.md section 10 Q22: the run lists
+// its attachments by name only.
+export function issueFile(key: string, issue: IssueContext, fetchedAt: number): ContextFile {
+  const lines = (issue.attachments ?? []).map((a) => attachmentLine(a, "Listed only: a task without a pull request gets no files."));
+  // Without downloaded files, an image reference keeps its name only.
+  const body = (s: string) => (issue.format === "markdown" ? s.replace(ATTACHMENT_IMAGE, (_, name: string) => `(image: ${name})`) : s);
+  return { name: TASK_FILE, text: issueSection({ key, source: "jira", fetched_at: fetchedAt }, issue, lines, body).join("\n") };
+}
+
 // The task files of a run and its attachments for context/attachments/. dataDir: the data folder of the run.
-// Without dataDir, no attachment is included.
-export function taskContext(db: Database, pr: number, dataDir: string | null): { files: ContextFile[]; attachments: AttachmentFile[] } {
-  const rows = db.query("SELECT key, source, json, fetched_at FROM task_context WHERE pr = $pr ORDER BY key").all({ pr }) as TaskRow[];
+// Without dataDir, no attachment is included. key: only this task of the PR (a task with an origin PR).
+export function taskContext(
+  db: Database,
+  pr: number,
+  dataDir: string | null,
+  key: string | null = null,
+): { files: ContextFile[]; attachments: AttachmentFile[] } {
+  const rows = db
+    .query("SELECT key, source, json, fetched_at FROM task_context WHERE pr = $pr AND ($key IS NULL OR key = $key) ORDER BY key")
+    .all({ pr, key }) as TaskRow[];
   if (!rows.length) return { files: [], attachments: [] };
   const downloaded = db
-    .query("SELECT key, att_id, filename, mime, size, file, image, text, include FROM task_attachment WHERE pr = $pr ORDER BY key, att_id")
-    .all({ pr }) as FileRow[];
+    .query(
+      `SELECT key, att_id, filename, mime, size, file, image, text, include FROM task_attachment
+        WHERE pr = $pr AND ($key IS NULL OR key = $key) ORDER BY key, att_id`,
+    )
+    .all({ pr, key }) as FileRow[];
   const attachments: AttachmentFile[] = [];
   let images = 0;
   let textBytes = 0;
@@ -84,13 +129,15 @@ export function taskContext(db: Database, pr: number, dataDir: string | null): {
         .filter((d) => !i.attachments?.some((a) => a.id === d.att_id))
         .map((d) => ({ id: d.att_id, filename: d.filename, mimeType: d.mime, size: d.size, created: null })),
     ];
-    const lines = listed.map((a) => {
-      const state = include(
-        a.id,
-        mine.find((d) => d.att_id === a.id),
-      );
-      return `- ${oneLine(a.filename)}: ${a.size} bytes, ${oneLine(a.mimeType ?? "unknown type")}. ${state}`;
-    });
+    const lines = listed.map((a) =>
+      attachmentLine(
+        a,
+        include(
+          a.id,
+          mine.find((d) => d.att_id === a.id),
+        ),
+      ),
+    );
     const shown = new Map(attachments.filter((a) => !a.text).map((a) => [a.name.split(".")[0], a.name]));
     // Rows without a format hold plain text.
     const body = (s: string) =>
@@ -100,24 +147,7 @@ export function taskContext(db: Database, pr: number, dataDir: string | null): {
             return file ? `![${name}](./attachments/${file})` : `(image: ${name})`;
           })
         : s;
-    out.push(
-      `## Task ${r.key}: ${oneLine(i.summary)}`,
-      "",
-      `- Source: ${SOURCES[r.source] ?? r.source}`,
-      `- Status: ${oneLine(i.status ?? "(none)")}`,
-      `- Fetched: ${new Date(r.fetched_at).toISOString()}`,
-      ...(i.truncated ? ["- The app cut this text at its size limits."] : []),
-      "",
-      "### Description",
-      "",
-      body(i.description?.trim() || "(none)"),
-      "",
-      `### Comments (${i.comments.length} of ${i.commentsTotal})`,
-      "",
-    );
-    for (const c of i.comments) out.push(`#### ${oneLine(c.author)}, ${oneLine(c.created)}`, "", body(c.body), "");
-    if (!i.comments.length) out.push("(none)", "");
-    if (lines.length) out.push(`### Attachments (${lines.length})`, "", ...lines, "");
+    out.push(...issueSection(r, i, lines, body));
   }
   return { files: [{ name: TASK_FILE, text: out.join("\n") }], attachments };
 }

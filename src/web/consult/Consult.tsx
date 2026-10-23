@@ -613,7 +613,6 @@ function SessionPicker({
   const [choice, setChoice] = useState<string | null>(null);
   const [mode, setMode] = useState(loadMode);
   const start = useStartSession(pr.id);
-  const runs = usePrRuns(pr.id).data;
   const t = useMemo(() => q.data && consultText(q.data, groups, "session"), [q.data, groups]);
   const sessions = list.data?.sessions ?? [];
   // The first session is the best match: in the clone, else the newest.
@@ -631,8 +630,9 @@ function SessionPicker({
       {
         onSuccess: (r) => {
           if ("conflict" in r) {
-            const kind = runs?.find((x) => x.id === r.conflict.running.run)?.kind ?? "review";
-            toast.add({ title: "The session was not asked", description: busyText(runner, kind, "a pull request") });
+            const { kind, pr: other } = r.conflict.running;
+            const where = other === null ? "a task" : "a pull request";
+            toast.add({ title: "The session was not asked", description: busyText(runner, kind, where) });
             return;
           }
           announce(`Asked ${titleOf(pick.title)}. Your session is answering${mode === "fix" ? " and proposing fixes" : ""}.`);

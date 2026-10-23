@@ -234,7 +234,7 @@ describe("ask follow-ups", () => {
       expect(moved.status).toBe(409);
       expect(moved.body as object).toEqual({ error: MOVED_ON, moved: { run: follow.body.id } });
       const busy = await h.ask("Who calls it?", { parent: follow.body.id });
-      expect([busy.status, busy.body.running]).toEqual([409, { run: follow.body.id, pr: h.pr }]);
+      expect([busy.status, busy.body.running]).toEqual([409, { run: follow.body.id, pr: h.pr, kind: "ask" }]);
       expect(await waitFor(() => h.hung() > 0)).toBe(true);
       expect((await h.json(`/api/runs/${follow.body.id}/cancel`, { method: "POST" })).status).toBe(202);
       expect((await h.finish(follow.body.id)).run.status).toBe("cancelled");

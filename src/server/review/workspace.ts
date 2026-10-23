@@ -305,6 +305,32 @@ export function locked<T>(key: string, f: () => Promise<T>): Promise<T> {
   return run;
 }
 
+// The long path of the data folder, created when missing.
+function longData(dataDir: string) {
+  mkdirSync(dataDir, { recursive: true });
+  return realpathSync.native(dataDir);
+}
+
+// Makes the bare cache clone and its fixed config. Call it inside locked(cache).
+async function initCache(cache: string, env: Record<string, string>) {
+  const g = (args: string[]) => git([`--git-dir=${cache}`, ...args], { env });
+  // git init and git config replace <cache>/config. On Windows, a parallel reader of the cache then fails
+  // with "unable to access '<cache>/config': Permission denied". So each write runs only when its value is missing.
+  // diff.ts reads the cache only after info/attributes exists, so this file is written last.
+  const local = await g(["config", "--local", "--list"]).catch(() => null);
+  if (local === null) {
+    mkdirSync(cache, { recursive: true });
+    await git(["init", "-q", "--bare", "--template=", cache], { env });
+  }
+  const set = new Set(local?.split("\n"));
+  for (const [k, v] of CONFIG) if (!set.has(`${k}=${v}`)) await g(["config", k, v]);
+  const attributes = join(cache, "info", "attributes");
+  if (!existsSync(attributes) || readFileSync(attributes, "utf8") !== ATTRIBUTES) {
+    mkdirSync(join(cache, "info"), { recursive: true });
+    writeFileSync(attributes, ATTRIBUTES);
+  }
+}
+
 export type SyncedCache = {
   // The long path of the data folder.
   dataDir: string;
@@ -327,29 +353,13 @@ export async function syncCache(input: {
   if (!Number.isSafeInteger(pr.ref.id) || pr.ref.id < 1) throw new WorkspaceError(`Invalid pull request ID: ${pr.ref.id}`);
   for (const h of [pr.sourceHead, pr.targetHead]) if (!HEAD.test(h)) throw new WorkspaceError(`Invalid commit hash: ${h}`);
   for (const r of [remote.sourceRef, remote.targetRef]) if (!REF.test(r)) throw new WorkspaceError(`Invalid ref: ${r}`);
-  mkdirSync(input.dataDir, { recursive: true });
   // Gate B9: the CLI cwd must be the long path, not the 8.3 short path. The lock key needs one spelling too.
-  const dataDir = realpathSync.native(input.dataDir);
+  const dataDir = longData(input.dataDir);
   const cache = cachePath(dataDir, pr.ref);
   return locked(cache, async () => {
     const { empty, env } = gitSetup(dataDir);
     const g = (args: string[]) => git([`--git-dir=${cache}`, ...args], { env });
-    // git init and git config replace <cache>/config. On Windows, a parallel reader of the cache then fails
-    // with "unable to access '<cache>/config': Permission denied". So each write runs only when its value is missing.
-    // diff.ts reads the cache only after info/attributes exists, so this file is written last.
-    const local = await g(["config", "--local", "--list"]).catch(() => null);
-    if (local === null) {
-      mkdirSync(cache, { recursive: true });
-      await git(["init", "-q", "--bare", "--template=", cache], { env });
-    }
-    const set = new Set(local?.split("\n"));
-    for (const [k, v] of CONFIG) if (!set.has(`${k}=${v}`)) await g(["config", k, v]);
-    const attributes = join(cache, "info", "attributes");
-    if (!existsSync(attributes) || readFileSync(attributes, "utf8") !== ATTRIBUTES) {
-      mkdirSync(join(cache, "info"), { recursive: true });
-      writeFileSync(attributes, ATTRIBUTES);
-    }
-
+    await initCache(cache, env);
     const via = await fetchHeads(cache, empty, pr.ref.id, remote, input.long ?? {});
     const pinned = async (side: "source" | "target", want: string) => {
       const got = (await g(["rev-parse", "--verify", "--quiet", `refs/rl/${pr.ref.id}/${side}^{commit}`])).trim();
@@ -459,6 +469,125 @@ export async function prepareWorkspace(input: WorkspaceInput): Promise<Workspace
     if (attachments.length) await copyAttachments(join(dataDir, "attachments"), join(context, "attachments"), attachments);
     const heads = { sourceHead: pr.sourceHead, targetHead: pr.targetHead };
     return { run, work, repo, context, app, cache, ...heads, mergeBase, rangeBase, via, diff, keep, remove };
+  } catch (e) {
+    await remove();
+    throw e;
+  }
+}
+
+// ---------- Task runs (docs/plans/review-v2/spec.md section 6.2) ----------
+
+// The remote of a repository without a PR: the http clone link and the fetch config (provider.ts RepoRemote).
+export type BranchRemote = { url: string; config: [string, string][] };
+
+const fetchError = (e: unknown, config: [string, string][]) => {
+  let m = noUrl((e as Error).message);
+  for (const [, v] of config) if (v) m = m.replaceAll(v, "[redacted]");
+  return new WorkspaceError(m, e instanceof GitError && e.stopped);
+};
+
+// The default branch of a repository without a PR (design.md section 5.5, "Remote HEAD"): `git ls-remote --symref <url> HEAD`.
+export async function remoteHead(dataDir: string, remote: BranchRemote, long: LongGit = {}): Promise<string> {
+  const { empty } = gitSetup(longData(dataDir));
+  let out: string;
+  try {
+    out = await git(["ls-remote", "--symref", "--end-of-options", remote.url, "HEAD"], { env: gitEnv(empty, remote.config), ...long });
+  } catch (e) {
+    throw fetchError(e, remote.config);
+  }
+  const branch = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(out)?.[1];
+  if (!branch || !REF.test(`refs/heads/${branch}`)) throw new WorkspaceError("The repository names no default branch.");
+  return branch;
+}
+
+export type TaskWorkspaceInput = {
+  dataDir: string;
+  runId: string;
+  project: string;
+  repo: string;
+  // The task ID. The fetched head stays at refs/rl/task/<task>/target.
+  task: number;
+  branch: string;
+  remote: BranchRemote;
+  files?: ContextFile[];
+  attachments?: AttachmentFile[];
+  long?: LongGit;
+};
+
+// A task run reads the newest head of the target branch (spec.md section 6.14). HEAD, BASE, and TARGET of the git tools are all
+// that commit. The run folder has the layout of prepareWorkspace, with no pr.md and an empty diff.
+export async function prepareTaskWorkspace(input: TaskWorkspaceInput): Promise<Workspace> {
+  const runId = name(input.runId, "run ID");
+  if (!Number.isSafeInteger(input.task) || input.task < 1) throw new WorkspaceError(`Invalid task ID: ${input.task}`);
+  const branchRef = `refs/heads/${input.branch}`;
+  if (!REF.test(branchRef) || input.branch.startsWith("-")) throw new WorkspaceError(`Invalid branch: ${input.branch}`);
+  const files = input.files ?? [];
+  for (const f of files) if (!FILE_NAME.test(f.name)) throw new WorkspaceError(`Invalid context file name: ${f.name}`);
+  const attachments = input.attachments ?? [];
+  for (const a of attachments)
+    if (!ATTACHMENT_NAME.test(a.name) || a.text !== a.name.endsWith(".txt")) throw new WorkspaceError(`Invalid attachment name: ${a.name}`);
+  const dataDir = longData(input.dataDir);
+  const cache = cachePath(dataDir, { project: input.project, repo: input.repo, id: input.task });
+  const { empty, env } = gitSetup(dataDir);
+  const g = (args: string[]) => git([`--git-dir=${cache}`, ...args], { env });
+  const target = `refs/rl/task/${input.task}/target`;
+  const head = await locked(cache, async () => {
+    await initCache(cache, env);
+    try {
+      await git(
+        [
+          `--git-dir=${cache}`,
+          "fetch",
+          "--no-tags",
+          "--no-write-fetch-head",
+          "--quiet",
+          "--end-of-options",
+          input.remote.url,
+          `+${branchRef}:${target}`,
+        ],
+        {
+          env: gitEnv(empty, input.remote.config),
+          ...input.long,
+        },
+      );
+    } catch (e) {
+      throw fetchError(e, input.remote.config);
+    }
+    return (await g(["rev-parse", "--verify", "--quiet", `${target}^{commit}`])).trim();
+  });
+  if (!HEAD.test(head)) throw new WorkspaceError(`The branch ${input.branch} has no commit.`);
+  const keep = async (ref = "base") => {
+    const full = `refs/rl/task/${input.task}/${ref}`;
+    if (!REF.test(full)) throw new WorkspaceError(`Invalid ref: ${full}`);
+    await locked(cache, () => g(["update-ref", full, head]));
+  };
+  const run = join(dataDir, "runs", runId);
+  const work = join(run, "work");
+  const repo = join(work, "repo");
+  const context = join(work, "context");
+  const app = join(run, "app");
+  const remove = async () => {
+    try {
+      await rm(run, RM_TREE);
+      await g(["worktree", "prune"]);
+    } catch (e) {
+      log(`Could not remove the run folder ${run}: ${(e as Error).message}`);
+    }
+  };
+  await remove();
+  try {
+    mkdirSync(context, { recursive: true });
+    mkdirSync(app, { recursive: true });
+    await git([`--git-dir=${cache}`, "worktree", "add", "--detach", repo, head], { env, ...input.long });
+    const links = (await g(["ls-tree", "-r", "-z", "--full-tree", head]))
+      .split("\0")
+      .filter((r) => r.startsWith("120000 "))
+      .map((r) => r.slice(r.indexOf("\t") + 1));
+    await sanitize(repo, links);
+    for (const f of files) writeFileSync(join(context, f.name), UNTRUSTED + f.text);
+    if (attachments.length) await copyAttachments(join(dataDir, "attachments"), join(context, "attachments"), attachments);
+    const at = { sourceHead: head, targetHead: head, mergeBase: head, rangeBase: head };
+    return { run, work, repo, context, app, cache, ...at, via: "branch" as const, diff: "", keep, remove };
   } catch (e) {
     await remove();
     throw e;

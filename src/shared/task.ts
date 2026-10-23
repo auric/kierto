@@ -79,6 +79,42 @@ export type TaskDoc = (typeof TASK_DOCS)[number];
 // Round 1 asks at most 8 questions, round 2 at most 4.
 export const INTERVIEW_ROUNDS = 2;
 export const INTERVIEW_QUESTIONS = [8, 4] as const;
+// spec.md section 0, STEP_TURNS: the turn caps of the interview and spec runs.
+export const INTERVIEW_TURNS = 30;
+export const SPEC_TURNS = 80;
+// spec.md section 6.3: the defaults of repo_task_settings. CHECK_TIMEOUT in seconds.
+export const TASK_DEFAULTS = { specDir: "specs/{key}/", branchPrefix: "feature/", lineBudget: 400, maxOpen: 2, approvals: 1 } as const;
+export const CHECK_TIMEOUT_SEC = 600;
+
+export const sizeRank = (s: TaskSize) => TASK_SIZES.indexOf(s);
+
+// spec.md section 6.12: the step strip of the Task view. current: the index of the current step, -1 for a failed task.
+// A task without a size shows the small strip. Large counts the code parts: the first one that did not merge is the current one.
+export function stepStrip(t: {
+  size: TaskSize | null;
+  state: TaskState;
+  stoppedFrom: TaskState | null;
+  parts: { kind: PartKind; state: PartState }[];
+}): { steps: string[]; current: number } {
+  const code = t.parts.filter((p) => p.kind !== "spec");
+  const left = code.findIndex((p) => p.state !== "merged" && p.state !== "abandoned");
+  const build = t.size === "large" && code.length ? `Build parts (${left < 0 ? code.length : left + 1} of ${code.length})` : "Build";
+  const review = t.size === "medium" || t.size === "large";
+  const steps = ["Questions", "Plan", ...(review ? ["Spec review"] : []), build, "Done"];
+  const state = t.state === "stopped" ? t.stoppedFrom : t.state;
+  const at: Record<TaskState, number> = {
+    interview: 0,
+    spec_draft: 1,
+    spec_pr_open: 2,
+    spec_approved: 2,
+    implementing: steps.length - 2,
+    ready: steps.length - 2,
+    done: steps.length - 1,
+    failed: -1,
+    stopped: -1,
+  };
+  return { steps, current: state === null ? -1 : at[state] };
+}
 
 // One plain sentence per state. A refused state change returns it with 409.
 export const TASK_STATE_TEXT: Record<TaskState, string> = {
@@ -196,6 +232,7 @@ export const interviewResult = z.object({
   coverage,
 });
 export type InterviewResult = z.infer<typeof interviewResult>;
+export const interviewJsonSchema = (): Record<string, unknown> => z.toJSONSchema(interviewResult, { target: "draft-07" });
 
 const specPart = z.object({
   n: z.number().int().min(1),
@@ -273,6 +310,7 @@ export const specResult = z.object({
   coverage,
 });
 export type SpecResult = z.infer<typeof specResult>;
+export const specJsonSchema = (): Record<string, unknown> => z.toJSONSchema(specResult, { target: "draft-07" });
 
 export const implementResult = z.object({
   summary: z.string().max(1000),

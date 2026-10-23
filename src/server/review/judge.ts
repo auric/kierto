@@ -6,6 +6,7 @@
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
+import type { ZodType } from "zod";
 import { acceptedTargets, consultOutput } from "../../shared/consult";
 import { MAX_NOTE, type RunPhase, type RunSummary, type RunUsage, type VerifySummary, type Volume } from "../../shared/dto";
 import {
@@ -94,6 +95,8 @@ export type Ending = {
     notes?: NoteProposal[];
     explain?: ExplainResult;
     discuss?: DiscussResult;
+    // A task run (docs/plans/review-v2/spec.md section 6.5): the parsed result. The finish of the task run applies it.
+    task?: unknown;
   };
 };
 
@@ -721,6 +724,31 @@ export function judgeDiscuss(o: RunOutcome, servers: string[], gaps: string[]): 
     answer: r.answer,
     notes: r.notes,
     discuss: { ...r, revision: r.verdict === "revised" ? r.revision : null },
+  });
+}
+
+// docs/plans/review-v2/spec.md section 6.5: an interview or spec run makes no items. check: the app checks of the parsed result. It
+// gives the result to store and the coverage lines that it skipped. answer: the text for the answer column of the run.
+export async function judgeTask<T extends { summary?: string; title?: string; coverage: RunSummary["coverage"] }>(
+  o: RunOutcome,
+  schema: ZodType<T>,
+  what: string,
+  servers: string[],
+  gaps: string[],
+  check: (r: T) => Promise<{ result: T; skipped: string[]; answer?: string }>,
+): Promise<Ending> {
+  const raw = rawOutput(o);
+  if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
+  const parsed = schema.safeParse(o.result?.structured_output);
+  if (!parsed.success) return schemaFailure(parsed.error.issues, what, raw, o);
+  const c = await check(parsed.data);
+  const cov = c.result.coverage;
+  const coverage = { ...cov, skipped: [...cov.skipped, ...c.skipped], unavailable: [...cov.unavailable, ...unavailable(o, servers, gaps)] };
+  return ended(raw, o, {
+    summary: { summary: firstLine(c.result.summary ?? c.result.title ?? ""), risks: [], coverage, dropped: [] },
+    items: [],
+    ...(c.answer !== undefined && { answer: c.answer }),
+    task: { ...c.result, coverage },
   });
 }
 

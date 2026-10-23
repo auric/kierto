@@ -110,7 +110,8 @@ export function AskPanel(props: {
     forge: meta.forge.name,
   });
 
-  const where = (id: number) => {
+  const where = (id: number | null) => {
+    if (id === null) return "a task";
     if (id === pr.id) return "this pull request";
     const other = qc.getQueryData<PrRow[]>(["prs"])?.find((p) => p.id === id);
     return other ? prKey(other) : "another pull request";
@@ -136,7 +137,7 @@ export function AskPanel(props: {
       {
         onSuccess: (r) => {
           if ("conflict" in r) {
-            const kind: RunKind = runs?.find((x) => x.id === r.conflict.running.run)?.kind ?? "review";
+            const kind: RunKind = r.conflict.running.kind;
             toast.add({ title: "The question was not sent", description: busyText(runner, kind, where(r.conflict.running.pr)) });
             return;
           }

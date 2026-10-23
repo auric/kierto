@@ -535,7 +535,7 @@ describe("discuss runs", () => {
       const again = await h.discuss(next, " Why? ");
       expect([again.status, again.body.id]).toEqual([200, run]);
       const busy = await h.discuss(next, "Something else?");
-      expect([busy.status, busy.body.running]).toEqual([409, { run, pr: h.pr }]);
+      expect([busy.status, busy.body.running]).toEqual([409, { run, pr: h.pr, kind: "discuss" }]);
       await h.cancel(run);
     },
     SLOW,

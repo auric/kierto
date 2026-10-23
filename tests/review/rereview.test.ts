@@ -452,7 +452,7 @@ describe("re-review runs", () => {
       expect([again.status, again.body.id]).toEqual([200, a.body.id]);
       const slot = await h.post<RunConflict>(`/api/prs/${h.pr}/review`);
       expect(slot.status).toBe(409);
-      expect(slot.body.running).toEqual({ run: a.body.id, pr: h.pr });
+      expect(slot.body.running).toEqual({ run: a.body.id, pr: h.pr, kind: "review" });
 
       expect(await waitFor(() => h.runCalls().length === 3)).toBe(true);
       const c = h.runCalls()[2] as Call;

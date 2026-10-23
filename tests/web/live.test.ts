@@ -38,6 +38,18 @@ describe("live event keys", () => {
     expect(await stale(f ? [f] : [])).toEqual(['["pr",1,"diff"]', '["pr",1,"diff","src/a.ts",0]']);
   });
 
+  test("a task event refetches the task list and that task only, never the PR list (spec.md section 6.11)", () => {
+    const keys = changedFilters({ tasks: [3] }).map((f) => JSON.stringify(f.queryKey));
+    expect(keys).toEqual(['["tasks"]', '["task",3]']);
+    // A task run event names the run and the task.
+    expect(changedFilters({ prs: [], runs: [9], tasks: [3] }).map((f) => JSON.stringify(f.queryKey))).toEqual([
+      '["tasks"]',
+      '["task",3]',
+      '["runs"]',
+      '["run",9]',
+    ]);
+  });
+
   test("the first head and an equal head refetch no diff", () => {
     expect(diffRefresh(1, undefined, "aaa")).toBeNull();
     expect(diffRefresh(1, "aaa", "aaa")).toBeNull();
