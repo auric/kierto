@@ -22,6 +22,8 @@ async function connect(page: Page) {
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByLabel("Access token")).toBeHidden();
   await control("state", { resolved: true });
+  // The open detail refetches after the sync. A row open jumps to the cause in the data it has.
+  await expect(page.getByRole("button", { name: "Show 2 resolved" })).toBeVisible();
   await page.locator("[data-row]", { hasText: TITLE }).first().click();
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(TITLE);
 }
