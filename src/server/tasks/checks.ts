@@ -8,10 +8,11 @@ import type { Database } from "bun:sqlite";
 import { mkdtempSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { extname, isAbsolute, join, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { type CommandKind, OUTPUT_TAIL, type StepDetail, type TaskCommand } from "../../shared/task";
 import { log } from "../log";
 import { childEnv, killTree } from "../review/claude";
+import { repoPath } from "../review/validate";
 import { endStep, insertStep } from "./implement";
 import { repoSettings } from "./tasks";
 import { inside, tasksRoot, type Worktree } from "./worktree";
@@ -142,6 +143,81 @@ export async function runCommand(
   return done(timedOut || stopped ? null : code, out.text() + note, timedOut, stopped);
 }
 
+// The scoped check of one task (spec.md section 6.4, Run line). run: the Run entries of the task. later: the Run entries of the later
+// tasks of its plan part, whose tests the tests step wrote too and which stay red until their task.
+export type Scope = { run: readonly string[]; later: readonly string[] };
+
+// bun test (https://bun.sh/docs/cli/test): a filter that starts with "./" names one file, -t takes a regex of test names, and
+// --path-ignore-patterns takes a glob of test files to skip. A positional argument in the approved argv is a path filter that adds
+// files back, so only flags may follow "test".
+const bunTest = (argv: readonly string[]) =>
+  /^bun(\.exe)?$/i.test(basename(argv[0] ?? "")) && argv[1] === "test" && argv.slice(2).every((a) => a.startsWith("-"));
+const GLOB_CHARS = /[*?[\]{}!]/;
+const regexQuote = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Splits Run entries into test files and test names. A Run entry is a value for a filter of the runner, never a program or a flag.
+// A file: a repository path of a file in cwd. A name: no path separator, no leading "-", no control character, and its first word is
+// not a program on PATH. Any other entry refuses the whole Run line.
+export function runEntries(
+  run: readonly string[],
+  cwd: string,
+  env: Record<string, string>,
+): { files: string[]; names: string[] } | { error: string } {
+  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+  const files: string[] = [];
+  const names: string[] = [];
+  for (const raw of run) {
+    const x = raw.trim();
+    const p = repoPath(x);
+    if (p && statSync(join(cwd, p), { throwIfNoEntry: false })?.isFile()) files.push(p);
+    else if (/[\\/]/.test(x)) return { error: `"${x}" names no file in the repository.` };
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the rule refuses control characters.
+    else if (!x || x.startsWith("-") || /[\u0000-\u001f\u007f]/.test(x)) return { error: `"${x}" is not a test file or a test name.` };
+    else {
+      const word = x.split(/\s+/)[0] as string;
+      if (Bun.which(word, { PATH: env[pathKey] ?? "", cwd }))
+        return { error: `"${x}" starts with the program ${word}. A Run line names tests, never a command.` };
+      names.push(x);
+    }
+  }
+  return { files, names };
+}
+
+// The commands of a scoped check: the approved test command narrowed to the tests of the task. A refused Run line runs the approved
+// command without the test files of the later tasks. No command: the app cannot narrow, and the full checks at the end of the part
+// gate the tests. Each note says why.
+export function scopedCommands(
+  tests: readonly TaskCommand[],
+  scope: Scope,
+  cwd: string,
+  env: Record<string, string>,
+): { commands: TaskCommand[]; notes: string[] } {
+  const cmd = tests[0];
+  const end = "The full checks run at the end of the part.";
+  if (!cmd || tests.length > 1 || !bunTest(cmd.argv))
+    return {
+      commands: [],
+      notes: [`The app narrows only one approved "bun test" command with flags only, so it cannot run only the tests of this task. ${end}`],
+    };
+  const r = runEntries(scope.run, cwd, env);
+  if (!("error" in r)) {
+    const out: TaskCommand[] = [];
+    if (r.files.length)
+      out.push({ ...cmd, name: `${cmd.name}: test files of the task`, argv: [...cmd.argv, ...r.files.map((f) => `./${f}`)] });
+    if (r.names.length)
+      out.push({ ...cmd, name: `${cmd.name}: tests of the task`, argv: [...cmd.argv, "-t", r.names.map(regexQuote).join("|")] });
+    return { commands: out, notes: [] };
+  }
+  const refused = `The app refused the Run line of the task: ${r.error}`;
+  const later = runEntries(scope.later, cwd, env);
+  if ("error" in later || later.names.length || later.files.some((f) => GLOB_CHARS.test(f)))
+    return { commands: [], notes: [`${refused} The later tasks name tests that the app cannot skip. ${end}`] };
+  return {
+    commands: [{ ...cmd, argv: [...cmd.argv, ...later.files.map((f) => `--path-ignore-patterns=${f}`)] }],
+    notes: [`${refused} The check runs ${cmd.name} without the test files of the later tasks.`],
+  };
+}
+
 export type ChecksInput = {
   db: Database;
   dataDir: string;
@@ -150,12 +226,16 @@ export type ChecksInput = {
   wt: Worktree;
   // setup runs once per worktree. build, test, and lint are the checks after a step.
   kinds: readonly CommandKind[];
+  // Set: only the test commands run, narrowed to the tests of one task (scopedCommands).
+  scope?: Scope;
   // The isolate_home setting of the repository. Absent: the stored setting.
   isolateHome?: boolean;
   signal?: AbortSignal;
 };
 
-export type ChecksResult = { status: "ran"; green: boolean; commands: CommandResult[] } | { status: "refused"; reason: string };
+export type ChecksResult =
+  | { status: "ran"; green: boolean; commands: CommandResult[]; notes: string[] }
+  | { status: "refused"; reason: string };
 
 // Runs the approved commands of the kinds in the order of repo_task_settings.commands_json. Green: every command exited with 0. The
 // run stops at a stopped command. The commands come only from the stored settings, never from a caller.
@@ -164,9 +244,17 @@ export async function runChecks(i: ChecksInput): Promise<ChecksResult> {
   if (s.warnedAt === null) return { status: "refused", reason: "Accept the warning about app-run commands first." };
   if (!inside(tasksRoot(i.dataDir), i.wt.repo) || !inside(i.wt.dir, i.wt.repo))
     return { status: "refused", reason: "The app runs commands only in a task folder." };
-  const list = s.commands.filter((c) => i.kinds.includes(c.kind));
   const home = (i.isolateHome ?? s.isolateHome) ? mkdtempSync(join(tmpdir(), "rl-home-")) : null;
   const env = checkEnv(home);
+  const scoped = i.scope
+    ? scopedCommands(
+        s.commands.filter((c) => c.kind === "test"),
+        i.scope,
+        i.wt.repo,
+        env,
+      )
+    : null;
+  const list = scoped?.commands ?? s.commands.filter((c) => i.kinds.includes(c.kind));
   const commands: CommandResult[] = [];
   try {
     for (const c of list) {
@@ -178,7 +266,12 @@ export async function runChecks(i: ChecksInput): Promise<ChecksResult> {
   } finally {
     if (home) await rm(home, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
   }
-  return { status: "ran", green: commands.length === list.length && commands.every((c) => c.exit === 0), commands };
+  return {
+    status: "ran",
+    green: commands.length === list.length && commands.every((c) => c.exit === 0),
+    commands,
+    notes: scoped?.notes ?? [],
+  };
 }
 
 // The checks with their step row (kind check) for the Log tab: each command with argv, exit code, time, and the output tail.
@@ -193,8 +286,8 @@ export async function checkStep(
     endStep(
       i.db,
       step,
-      r.green ? "ok" : r.commands.some((c) => c.stopped) ? "cancelled" : "failed",
-      { commands: r.commands.map(({ name, argv, exit, ms, tail }) => ({ name, argv, exit, ms, tail })) },
+      !r.commands.length && i.scope ? "skipped" : r.green ? "ok" : r.commands.some((c) => c.stopped) ? "cancelled" : "failed",
+      { commands: r.commands.map(({ name, argv, exit, ms, tail }) => ({ name, argv, exit, ms, tail })), notes: r.notes },
       now(),
     );
   return { ...r, step };

@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { writeConfig } from "../../src/server/config";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
-import { CHECK_KINDS, checkEnv, checkStep, runChecks, runCommand } from "../../src/server/tasks/checks";
+import { CHECK_KINDS, checkEnv, checkStep, runChecks, runCommand, runEntries, scopedCommands } from "../../src/server/tasks/checks";
 import { saveRepoSettings } from "../../src/server/tasks/tasks";
 import { openWorktree, type Worktree } from "../../src/server/tasks/worktree";
 import type { TaskCommand } from "../../src/shared/task";
@@ -328,5 +328,56 @@ describe("app-run checks", () => {
     expect(Buffer.byteLength(r.tail)).toBeGreaterThan(60 * 1024);
     expect(r.tail.endsWith("END")).toBe(true);
     expect(r.tail).toContain("ERR");
+  });
+});
+
+describe("scoped checks (spec.md section 6.4, Run line)", () => {
+  const BUN_TEST = { id: "t", name: "test", kind: "test" as const, argv: [BUN, "test", "--bail"], timeoutSec: 60 };
+  const repo = () => {
+    const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "rl-scope-")));
+    dirs.push(dir);
+    mkdirSync(join(dir, "tests"));
+    for (const n of ["one", "two"]) writeFileSync(join(dir, "tests", `${n}.test.ts`), "");
+    return dir;
+  };
+
+  test("a Run line names test files and test names, never a program or a flag", () => {
+    const dir = repo();
+    const env = checkEnv(null);
+    expect(runEntries(["tests/one.test.ts", "./tests\\two.test.ts", "adds a+b"], dir, env)).toEqual({
+      files: ["tests/one.test.ts", "tests/two.test.ts"],
+      names: ["adds a+b"],
+    });
+    // A different program, a flag, a missing file, and a path outside the repository.
+    expect(runEntries(["git log"], dir, env)).toEqual({
+      error: '"git log" starts with the program git. A Run line names tests, never a command.',
+    });
+    expect(runEntries(["--watch"], dir, env)).toEqual({ error: '"--watch" is not a test file or a test name.' });
+    expect(runEntries(["tests/none.test.ts"], dir, env)).toEqual({ error: '"tests/none.test.ts" names no file in the repository.' });
+    expect(runEntries(["../x/one.test.ts"], dir, env)).toEqual({ error: '"../x/one.test.ts" names no file in the repository.' });
+  });
+
+  test("the approved bun test command gets the filters of the task; a refused Run line skips the tests of the later tasks", () => {
+    const dir = repo();
+    const env = checkEnv(null);
+    const later = ["tests/two.test.ts"];
+    expect(scopedCommands([BUN_TEST], { run: ["tests/one.test.ts", "adds a+b"], later }, dir, env)).toEqual({
+      commands: [
+        { ...BUN_TEST, name: "test: test files of the task", argv: [BUN, "test", "--bail", "./tests/one.test.ts"] },
+        { ...BUN_TEST, name: "test: tests of the task", argv: [BUN, "test", "--bail", "-t", "adds a\\+b"] },
+      ],
+      notes: [],
+    });
+    const refused = scopedCommands([BUN_TEST], { run: ["git log"], later }, dir, env);
+    expect(refused.commands.map((c) => c.argv)).toEqual([[BUN, "test", "--bail", "--path-ignore-patterns=tests/two.test.ts"]]);
+    expect(refused.notes[0]).toStartWith('The app refused the Run line of the task: "git log" starts with the program git.');
+    // A later task that names a test by name cannot be skipped: no scoped command, and the full checks gate the part.
+    expect(scopedCommands([BUN_TEST], { run: ["git log"], later: ["two works"] }, dir, env).commands).toEqual([]);
+    // Another runner, a path filter in the approved argv, or two test commands: the app does not narrow.
+    for (const tests of [[{ ...BUN_TEST, argv: ["npm", "test"] }], [{ ...BUN_TEST, argv: [BUN, "test", "tests"] }], [BUN_TEST, BUN_TEST]]) {
+      const r = scopedCommands(tests, { run: ["tests/one.test.ts"], later }, dir, env);
+      expect(r.commands).toEqual([]);
+      expect(r.notes[0]).toContain("The full checks run at the end of the part.");
+    }
   });
 });

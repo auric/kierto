@@ -33,7 +33,7 @@ import type { Ending } from "../review/judge";
 import { repoPath } from "../review/validate";
 import { type ContextFile, cachePath, longPath, noUrl } from "../review/workspace";
 import type { Settings } from "../settings";
-import { CHECK_KINDS, type ChecksResult, checkStep } from "./checks";
+import { CHECK_KINDS, type ChecksResult, checkStep, type Scope } from "./checks";
 import { commitTask, endStep, insertStep, type PathProblem, partBudget, runningStep, type StepOutcome, startStep } from "./implement";
 import { type Answer, answerProblem, type QuestionRow } from "./interview";
 import { partMachine } from "./machine";
@@ -145,7 +145,7 @@ export function checkFailure(r: Extract<ChecksResult, { status: "ran" }>): Conte
   const out = [
     "# Check output",
     "",
-    "The app ran the approved commands after your step. These commands failed. Each shows the end of its output.",
+    "The app ran the approved commands after your step. After a task, the test command runs only the tests of the task. These commands failed. Each shows the end of its output.",
     "",
   ];
   for (const c of failed) {
@@ -422,7 +422,7 @@ export function createLoop(opts: LoopOptions) {
   }
 
   // The approved checks with their step row. A stop kills the commands (AC-B19).
-  async function checks(c: Ctx, item: string, kinds = CHECK_KINDS) {
+  async function checks(c: Ctx, item: string, kinds = CHECK_KINDS, scope?: Scope) {
     guard(c);
     const ac = new AbortController();
     aborts.set(c.id, ac);
@@ -435,6 +435,7 @@ export function createLoop(opts: LoopOptions) {
         repo: c.t.repo,
         wt: c.wt,
         kinds,
+        scope,
         signal: ac.signal,
         task: c.id,
         part: c.part.id,
@@ -479,9 +480,10 @@ export function createLoop(opts: LoopOptions) {
     await sizeCheck(c);
   }
 
-  // Red checks start at most TEST_FIX_TRIES fix steps (AC-B11).
-  async function greenOrFix(c: Ctx, item: string, allow: string[], step: (attempt: number) => ContextFile) {
-    let k = await checks(c, item);
+  // Red checks start at most TEST_FIX_TRIES fix steps (AC-B11). scope: the scoped check of one task instead of all approved checks.
+  async function greenOrFix(c: Ctx, item: string, allow: string[], step: (attempt: number) => ContextFile, scope?: Scope) {
+    const run = () => checks(c, item, scope ? ["test"] : CHECK_KINDS, scope);
+    let k = await run();
     for (let tries = 0; !k.green; tries++) {
       if (tries >= TEST_FIX_TRIES)
         block(c, {
@@ -490,7 +492,7 @@ export function createLoop(opts: LoopOptions) {
           text: `Needs you: the tests of part ${c.part.ord} stay red after ${TEST_FIX_TRIES} tries.`,
         });
       await claude(c, "fix", item, { allow, step, failure: checkFailure(k) });
-      k = await checks(c, item);
+      k = await run();
     }
   }
 
@@ -533,11 +535,13 @@ export function createLoop(opts: LoopOptions) {
     }
   }
 
-  // One task: the implement step, the checks with their fixes, the tick, and the commit.
-  async function taskStep(c: Ctx, task: PlanTask) {
+  // One task: the implement step, the scoped check of its Run line with the fixes, the tick, and the commit. The tests of the later
+  // tasks of the part stay red until their own task, so they never gate this one.
+  async function taskStep(c: Ctx, pp: PlanPart, task: PlanTask) {
     const step = (a: number) => stepFile(c.plan, task.id, a) as ContextFile;
+    const later = pp.tasks.slice(pp.tasks.findIndex((t) => t.id === task.id) + 1).flatMap((t) => t.run);
     await claude(c, "implement", task.id, { allow: task.files, step });
-    await greenOrFix(c, task.id, task.files, step);
+    await greenOrFix(c, task.id, task.files, step, { run: task.run, later });
     const name = c.size === "small" ? "plan" : "tasks";
     const p = onDisk(c.wt, specPath(c.t.spec_dir, name));
     const ticked = existsSync(p) ? tickTask(readFileSync(p, "utf8"), task.id) : null;
@@ -738,8 +742,12 @@ export function createLoop(opts: LoopOptions) {
       if (!open.length) continue;
       const done = open.length < pp.tasks.length || c.db.query(Q.committed).get({ part: part.id, item: `P${pp.n}` }) !== null;
       if (!done) await testsStep(c, pp);
-      for (const task of open) await taskStep(c, task);
+      for (const task of open) await taskStep(c, pp, task);
     }
+    // All approved checks once before the own review: the scoped checks of the tasks did not run build, lint, or the other tests.
+    const allow = c.plan.parts.flatMap((x) => x.tasks.flatMap((t) => t.files));
+    await greenOrFix(c, "checks", allow, (a) => partStepFile(c.plan, c.plan.parts, "checks", a));
+    await commit(c, "checks", `${t.key}: Fix the checks of part ${part.ord}`, allow);
     await ownReview(c);
     db.transaction(() => {
       const cur = taskRow(db, t.id);

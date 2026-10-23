@@ -133,6 +133,9 @@ type Setup = {
   budget?: number;
   testGlobs?: string[] | null;
   settings?: Record<string, unknown>;
+  spec?: typeof SPEC;
+  // The approved test command. Default: the bun script CHECK.
+  argv?: string[];
 };
 
 async function setup(o: Setup = {}) {
@@ -187,7 +190,7 @@ async function setup(o: Setup = {}) {
   writeFileSync(join(root, "check.ts"), CHECK);
   const mode = (m: string) => writeFileSync(join(root, "check-mode.txt"), m);
   mode(o.mode ?? "feature");
-  const commands = [{ id: "t", name: "test", kind: "test", argv: [process.execPath, join(root, "check.ts")], timeoutSec: 60 }];
+  const commands = [{ id: "t", name: "test", kind: "test", argv: o.argv ?? [process.execPath, join(root, "check.ts")], timeoutSec: 60 }];
   db.query(
     `INSERT INTO repo_task_settings (project, repo, commands_json, line_budget, test_globs_json, warned_at, updated_at)
     VALUES ('PROJ', 'repo', $commands, $budget, $globs, 1, 1)`,
@@ -197,7 +200,7 @@ async function setup(o: Setup = {}) {
     globs: o.testGlobs === undefined || o.testGlobs === null ? null : JSON.stringify(o.testGlobs),
   });
   const addTask = (key: string, title: string) => {
-    const plan = toPlan(SPEC, base, [false], []);
+    const plan = toPlan(o.spec ?? SPEC, base, [false], []);
     const docs = { ...renderDocs(key, title, "small", plan), version: 1, parsed: plan, approved: true };
     const now = Date.now();
     return (
@@ -294,43 +297,49 @@ const until = async (f: () => boolean, ms = 60_000) => {
 
 describe("the loop of one part (spec.md section 6.7)", () => {
   test(
-    "red then green: the plan commit, the failing tests, the implement step, one fix, the tick, the own review, and a ready part",
+    "red then green: the plan commit, the failing tests, the implement step, the tick, the full checks with one fix, the own review, and a ready part",
     async () => {
       const s = await setup();
       await s.build();
       expect(s.blocked()).toBeNull();
       expect(s.t().state).toBe("implementing");
       expect(s.part().state).toBe("self_reviewed");
+      // The bun script is no runner that the app can narrow, so the scoped check of T1.1 skips, and the full checks gate the part.
       expect(s.flow()).toEqual([
         "commit:plan:ok",
         "tests:P1:ok",
         "check:P1:failed",
         "commit:P1:ok",
         "implement:T1.1:ok",
-        "check:T1.1:failed",
-        "fix:T1.1:ok",
-        "check:T1.1:ok",
+        "check:T1.1:skipped",
         "commit:T1.1:ok",
+        "check:checks:failed",
+        "fix:checks:ok",
+        "check:checks:ok",
+        "commit:checks:ok",
         "review:review:ok",
       ]);
+      const skipped = s.steps().find((x) => x.kind === "check" && x.item === "T1.1") as Step;
+      expect(JSON.parse(skipped.detail_json)).toMatchObject({ commands: [], notes: [expect.stringContaining('"bun test"')] });
       expect(s.runCalls().map(s.modeOf)).toEqual(["tests", "implement", "fix", "review"]);
       // One commit per step, with the user's name and email, and the tick in the commit that finishes the task.
       expect(await s.log()).toEqual([
         `Ada Example <ada@example.invalid>|${KEY}: Add the plan`,
         `Ada Example <ada@example.invalid>|${KEY} P1: Add the failing tests of part 1`,
         `Ada Example <ada@example.invalid>|${KEY} T1.1: Write the feature`,
+        `Ada Example <ada@example.invalid>|${KEY}: Fix the checks of part 1`,
       ]);
       const w = await s.wt();
       expect(readFileSync(join(w.repo, "specs", KEY, "plan.md"), "utf8")).toContain("### [x] T1.1 Write the feature");
       expect(readFileSync(join(w.repo, "src", "feature.ts"), "utf8")).toContain("works");
       expect(await status(w)).toEqual([]);
       // The check output of the red run is in the step row (the Log tab) and in failure.md of the fix step.
-      const red = s.steps().find((x) => x.kind === "check" && x.item === "T1.1" && x.state === "failed") as Step;
+      const red = s.steps().find((x) => x.kind === "check" && x.item === "checks" && x.state === "failed") as Step;
       const cmd = (JSON.parse(red.detail_json) as { commands: { exit: number; tail: string; argv: string[] }[] }).commands[0];
       expect(cmd?.exit).toBe(1);
       expect(cmd?.tail).toContain("FAIL: src/feature.ts does not work yet");
       const fix = s.runCalls()[2] as Call;
-      expect(fix.context["step.md"] ?? "").toContain("- Task: T1.1 Write the feature");
+      expect(fix.context["step.md"] ?? "").toContain("- Task: fix the failed checks of the whole part in ./context/failure.md.");
       // The own review: kind review, task set, pr NULL, base..head of the part, the finder and the verify phase.
       const run = s.db
         .query("SELECT kind, pr, task, status, source_head, merge_base FROM review_run WHERE kind = 'review'")
@@ -353,6 +362,70 @@ describe("the loop of one part (spec.md section 6.7)", () => {
   );
 
   test(
+    "scoped checks: task 1 passes its Run line while the test of task 2 is still red; the full approved command runs at the part end",
+    async () => {
+      const unit = (n: string) => ({
+        path: `repo/tests/${n}.test.ts`,
+        text: `import { expect, test } from "bun:test";\nimport { ${n} } from "../src/${n}";\ntest("${n} works", () => expect(${n}).toBe("${n}"));\n`,
+      });
+      const code = (n: string) => ({ path: `repo/src/${n}.ts`, text: `export const ${n} = "${n}";\n` });
+      const task = (n: string) => ({ id: n, title: `Write ${n}`, files: [`src/${n}.ts`], run: [`tests/${n}.test.ts`], done: "It passes." });
+      const spec = specResult.parse({
+        ...SPEC,
+        parts: [
+          {
+            ...SPEC.parts[0],
+            tests: [
+              { test: "tests/one.test.ts", proves: ["A1"] },
+              { test: "tests/two.test.ts", proves: ["A1"] },
+            ],
+            tasks: [task("one"), task("two")],
+          },
+        ],
+      });
+      const s = await setup({
+        spec,
+        argv: [process.execPath, "test"],
+        seq: {
+          "implement:tests": [{ writes: [unit("one"), unit("two")] }],
+          "implement:implement": [{ writes: [code("one")] }, { writes: [code("two")] }],
+        },
+      });
+      await s.build();
+      expect(s.blocked()).toBeNull();
+      expect(s.part().state).toBe("self_reviewed");
+      expect(s.flow()).toEqual([
+        "commit:plan:ok",
+        "tests:P1:ok",
+        "check:P1:failed",
+        "commit:P1:ok",
+        "implement:T1.1:ok",
+        "check:T1.1:ok",
+        "commit:T1.1:ok",
+        "implement:T1.2:ok",
+        "check:T1.2:ok",
+        "commit:T1.2:ok",
+        "check:checks:ok",
+        "review:review:ok",
+      ]);
+      // No fix step: the red test of T1.2 never gated T1.1.
+      expect(s.runCalls().map(s.modeOf)).toEqual(["tests", "implement", "implement", "review"]);
+      const argv = (item: string) =>
+        s
+          .steps()
+          .filter((x) => x.kind === "check" && x.item === item)
+          .map((x) => (JSON.parse(x.detail_json) as { commands: { argv: string[] }[] }).commands.map((c) => c.argv));
+      expect(argv("T1.1")).toEqual([[[process.execPath, "test", "./tests/one.test.ts"]]]);
+      expect(argv("T1.2")).toEqual([[[process.execPath, "test", "./tests/two.test.ts"]]]);
+      expect(argv("checks")).toEqual([[[process.execPath, "test"]]]);
+      // The red-first check of the tests step ran the full command, and both new tests failed there.
+      const red = s.steps().find((x) => x.kind === "check" && x.item === "P1") as Step;
+      expect(JSON.parse(red.detail_json).commands[0].argv).toEqual([process.execPath, "test"]);
+    },
+    SLOW,
+  );
+
+  test(
     "AC-B11: red three times, then blocked red; every command keeps its exit code and output tail",
     async () => {
       const s = await setup({ mode: "red" });
@@ -364,7 +437,7 @@ describe("the loop of one part (spec.md section 6.7)", () => {
       const b = s.blocked();
       expect(b?.kind).toBe("red");
       expect(b?.text).toBe("Needs you: the tests of part 1 stay red after 3 tries.");
-      const checks = s.steps().filter((x) => x.kind === "check" && x.item === "T1.1");
+      const checks = s.steps().filter((x) => x.kind === "check" && x.item === "checks");
       expect(checks.length).toBe(4);
       for (const c of checks) {
         const cmd = (JSON.parse(c.detail_json) as { commands: { exit: number; tail: string }[] }).commands[0];
@@ -433,8 +506,9 @@ describe("the loop of one part (spec.md section 6.7)", () => {
       await s.build();
       expect(s.blocked()).toBeNull();
       expect(s.part().state).toBe("self_reviewed");
-      expect(s.flow().slice(-6)).toEqual([
+      expect(s.flow().slice(-7)).toEqual([
         "commit:T1.1:ok",
+        "check:checks:ok",
         "review:review:ok",
         "fix:review:ok",
         "check:review:ok",
