@@ -19,7 +19,7 @@ import { failText, prKey } from "../shell/model";
 import { BriefComposer, ReviewButton } from "./Brief";
 import { type DraftCtx, Drafts } from "./Drafts";
 import { useCancelRun, usePrRuns, useReplyDrafts, useRun } from "./data";
-import { kindRuns, latestReview, replyMap } from "./model";
+import { kindRuns, latestExplain, latestReview, replyMap, withQuestions } from "./model";
 import { DraftRepliesButton, type ReplyCtx } from "./ReplyDraft";
 import { RunRecord } from "./RunLine";
 import { RunLog } from "./RunLog";
@@ -107,6 +107,8 @@ export function useReview(
     onProfile: (id: string) => void;
     // Focuses the line of a draft or a thread in the diff.
     showInDiff: (card: Card) => void;
+    // Opens the Explain page: "Open the walkthrough" on the Explain row of the run record.
+    openExplain: () => void;
   },
 ): ReviewUi {
   const meta = useMeta().data as MetaDto;
@@ -116,6 +118,9 @@ export function useReview(
   const latest = latestReview(prRuns);
   const kinds = kindRuns(prRuns);
   const run = useRun(latest?.id ?? null);
+  // docs/plans/review-v2/spec.md section 3.1: the questions of the newest explain run with a result join the Drafts, marked From Explain.
+  const explainRun = latestExplain(prRuns);
+  const explained = useRun(explainRun?.id ?? null);
   const replies = useReplyDrafts(pr.id);
   const cancel = useCancelRun();
   const { focusAfter } = o;
@@ -124,7 +129,9 @@ export function useReview(
   const { log, openLog, closeLog } = runLog;
 
   const detail = detailOf(latest, run.data);
-  const items = detail?.items ?? NO_ITEMS;
+  const reviewItems = detail?.items ?? NO_ITEMS;
+  const explainItems = explained.data?.run.id === explainRun?.id ? explained.data?.items : undefined;
+  const items = useMemo(() => withQuestions(reviewItems, explainItems), [reviewItems, explainItems]);
   const replyItems = replies.data ?? NO_ITEMS;
   const summary = detail?.run.summary;
   const tr = useTriage(pr, { meta, items, summary, replyItems, threads: o.threads, announce: o.announce, focusAfter });
@@ -143,18 +150,20 @@ export function useReview(
   const asker = pr.role === "AUTHOR" ? "the author" : ((pr.authorName ?? pr.authorSlug ?? "the author").split(/\s+/)[0] ?? "the author");
   const { toggleDraft } = tr;
   const checked = groups.checked;
+  const explainId = explainRun?.id ?? null;
   const draftCtx = useMemo<DraftCtx>(
     () => ({
       meta,
       asker,
       checked,
+      explainRun: explainId,
       onToggle: toggleDraft,
       onFrom: (agent) => onLog.current(agent, false, "review"),
       onShowInDiff: (id) => onShow.current({ kind: "draft", id }),
       onFix: author ? (id) => onFix.current(id) : null,
       triage: triageCtx,
     }),
-    [meta, asker, checked, toggleDraft, triageCtx, author],
+    [meta, asker, checked, explainId, toggleDraft, triageCtx, author],
   );
 
   // ---------- Fix it (plan r3 UI-FIX) ----------
@@ -289,6 +298,7 @@ export function useReview(
     meta,
     kinds,
     review: run.data,
+    explain: explained.data,
     pinned: runLog.pinned.data,
     groups,
     items,
@@ -357,6 +367,7 @@ export function useReview(
         onLog={(id, raw) => openLog(null, raw, id)}
         onCancel={(id) => cancel.mutate(id, { onError: (e) => toast.add({ title: "Cancel failed", description: failText(e) }) })}
         onAnswer={(id) => consult.session("session-answer-btn", id)}
+        onExplain={o.openExplain}
       />
     ),
     reviewed: latest !== null,

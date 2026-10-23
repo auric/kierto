@@ -133,6 +133,12 @@ describe("buildImprovePrompt", () => {
     const p = buildImprovePrompt({ ...INPUT, explain: true });
     expect(section(p, "Rules")).toContain("This is an Explain profile. Keep the new prompt explain-only");
     expect(section(p, "Profile")).toContain("Explain only.");
+    // spec.md section 3.3: the walkthrough lines of an Explain prompt stay. The old text named only a summary, risks, and questions.
+    expect(section(p, "Rules")).toContain(
+      "Keep each line about the walkthrough, the reading order, the risks, the diagrams, and the questions.",
+    );
+    expect(section(p, "Profile")).toContain("a walkthrough of the change by theme with links to the code, the reading order of the files");
+    expect(p).not.toContain("a summary, risks, and questions");
     for (const l of rubric({ volume: "balanced", verifier: DEFAULT_VERIFIER })) expect(p).not.toContain(l);
     expect(section(p, "Language checks")).toBe("# Language checks\n\nExplain runs get no language checklist.\n");
   });

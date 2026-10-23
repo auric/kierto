@@ -15,6 +15,13 @@
 - The app checks each link of the walkthrough into the diff. A link to a file or a line that the diff does not show becomes plain text, and the run says how many links did not match. The same check removes paths outside the change from the reading order and the file list.
 - A walkthrough keeps at most 3 Mermaid diagrams. Other diagram blocks show as code. Diagram lines with a `%%{` directive are removed.
 - An Explain run reads no notes, no PR context, no earlier review, and no posted questions, and it uses no reviewer agents. A second start for the same head and profile gives the stored walkthrough and starts no run.
+- The PR view has an "Explain this PR" button, and the key `w` opens the same page. The page has its own address, and Back or `Esc` returns to the pull request at its place.
+- The Explain page shows the summary, the reading order, the walkthrough with its diagrams, the risks, the files with their roles, and the words used. Opening the page starts no run. Its one button starts the run, and the page says what Claude does while it runs.
+- A link in the walkthrough, a risk, or a file path opens the Files diff at that file and line. A link that does not match the change shows as plain text.
+- When the pull request changes after a walkthrough, the page says so and offers "Explain again". A walkthrough that runs, failed, or was cancelled keeps the earlier one on the page. With two or more Explain profiles, the page lets you pick one.
+- The questions of the newest walkthrough show in Drafts again, marked "From Explain". The run record has an Explain row with "Open the walkthrough".
+- "Copy as Markdown" under More on the Explain page copies the whole walkthrough.
+- "Improve prompt" on an Explain profile now keeps the lines of the walkthrough prompt.
 
 ### PR notes and PR context
 

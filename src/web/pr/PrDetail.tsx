@@ -3,9 +3,22 @@
 
 // PR detail (plan v3 WP5, r2 UI-ASK, r2 UI-DIFF, pr-view-v4 section 2): header, status strip, and the panel slot (the brief or Ask),
 // then one column of the run record, Description, Notes, Drafts, Threads, Files, and Commits. The run record goes after the Description
-// until a review exists (decision D3). Notes: docs/plans/review-v2/spec.md section 2.7.
+// until a review exists (decision D3). Notes: docs/plans/review-v2/spec.md section 2.7. The Explain page (spec.md section 3.1)
+// replaces the view and keeps the PR mounted, so Back finds the PR as it was.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  lazy,
+  type Ref,
+  Suspense,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommentDto, PrRow } from "../../shared/dto";
@@ -35,6 +48,9 @@ import { type ThreadCtx, useSettled } from "./Thread";
 import { Threads } from "./ThreadList";
 import { buildThreads, mergeHighlights, newMessages, ordered, type Person, passes, reveal, shownThreads, summary } from "./threads";
 import { useAck } from "./useAck";
+
+// The Explain page, its Markdown, and its diagram code load with the first open.
+const ExplainPage = lazy(() => import("../explain/ExplainPage").then((m) => ({ default: m.ExplainPage })));
 
 // The shell calls these for the detail keys (keys.ts effects).
 export type DetailApi = {
@@ -68,6 +84,7 @@ export type DetailApi = {
 
 // The URL state that the detail restores on mount and on each Back or Forward (plan pr-view-v4 section 5).
 // key: the PR (prKeyOf). close: the file of the entry that Back or Forward left. scroll: the saved scrollTop, null for none.
+// explain: an entry of the Explain page. It restores only the scroll position.
 export type DetailAt = {
   key: string;
   thread: number | null;
@@ -75,6 +92,7 @@ export type DetailAt = {
   close: string | null;
   scroll: number | null;
   n: number;
+  explain?: boolean;
 };
 export type DetailPatch = { thread?: number | null; file?: FileRef | null };
 
@@ -104,14 +122,19 @@ function markJump(el: HTMLElement) {
 // onTaskIds: a header task chip without a link opens Settings, Task IDs. onProfile: "Edit <profile>" in the brief opens the
 // settings at one profile. onRestore: the Archive view brings the PR back.
 // at: the URL state to restore. file: the file path in the URL. onRoute: the current thread and the opened file go to the URL.
+// explain: the Explain page shows. onExplain: opens it, or goes back to the PR; push: a step to the PR that pushes a history entry.
+// onDiff: goes from the Explain page to the Files diff at a file or a line, with a history entry.
 export function PrDetail({
   pr: row,
   me,
   at,
   file,
   full,
+  explain,
   onFull,
   onRoute,
+  onExplain,
+  onDiff,
   onLeave,
   onSettings,
   onTaskIds,
@@ -124,8 +147,11 @@ export function PrDetail({
   at: DetailAt | null;
   file: string | null;
   full: boolean;
+  explain: boolean;
   onFull: () => void;
   onRoute: (patch: DetailPatch) => void;
+  onExplain: (open: boolean, push?: boolean) => void;
+  onDiff: (to: FileRef) => void;
   onLeave: () => void;
   onSettings: () => void;
   onTaskIds: () => void;
@@ -312,6 +338,7 @@ export function PrDetail({
     onTaskIds,
     onProfile,
     showInDiff: (card) => showDiff.current(card),
+    openExplain: () => onExplain(true),
   });
   draftReply.current = review.api.draftReply;
   fixRef.current = { open: review.api.fix, copy: review.fix.copyPrompt };
@@ -368,10 +395,38 @@ export function PrDetail({
   useLayoutEffect(() => {
     want.current = at;
   }, [at]);
+  // The Explain page shares the scroll box with the PR. It opens at the top. The PR keeps its scroll position for a Back that is no
+  // history step (the Back of a restored entry restores it). The focus goes back to "Explain this PR".
+  const wasExplain = useRef(explain);
+  const prTop = useRef(0);
+  const wantDrafts = useRef(false);
+  useLayoutEffect(() => {
+    if (wasExplain.current === explain) return;
+    wasExplain.current = explain;
+    const box = body.current?.closest<HTMLElement>("[data-scroll]");
+    const restoring = !!want.current;
+    if (explain) {
+      if (box && !restoring) {
+        prTop.current = box.scrollTop;
+        box.scrollTop = 0;
+      }
+      return;
+    }
+    if (box && !restoring && !wantDrafts.current) box.scrollTop = prTop.current;
+    document.getElementById("explain-btn")?.focus({ preventScroll: true });
+  });
   useLayoutEffect(() => {
     const a = want.current;
     if (!a || !data) return;
     want.current = null;
+    if (a.explain) {
+      const box = body.current?.closest<HTMLElement>("[data-scroll]");
+      if (box) {
+        stopRestore.current();
+        stopRestore.current = restoreScroll(box, a.scroll ?? 0);
+      }
+      return;
+    }
     if (bar.api.isOpen) bar.api.close();
     const l = review.api.layer(null);
     if (l) review.api.close(l);
@@ -387,6 +442,20 @@ export function PrDetail({
       stopRestore.current = restoreScroll(box, a.scroll ?? 0);
     }
   });
+  // "Go to the drafts" on the Explain page: the PR shows first, then key 2 does its move.
+  useLayoutEffect(() => {
+    if (explain || !wantDrafts.current) return;
+    wantDrafts.current = false;
+    review.api.drafts();
+  });
+  const goDrafts = () => {
+    wantDrafts.current = true;
+    onExplain(false, true);
+  };
+  // Markdown keeps its links while this stays the same.
+  const diffTo = useRef(onDiff);
+  diffTo.current = onDiff;
+  const openDiff = useCallback((to: FileRef) => diffTo.current(to), []);
   // Thread focus replaces the URL. The first value is the one of the route, so it is not sent.
   const sentCur = useRef(cur);
   useEffect(() => {
@@ -562,7 +631,9 @@ export function PrDetail({
     },
     // prototype/v3 Esc order: an edit, the brief, the post confirm, the run log. Ask comes after the dialogs (plan pr-view-v4 4.4).
     // Ask uses the "brief" layer of keys.ts: both are the panel slot, and only one is open.
+    // The Explain page hides the brief, Ask, and the post confirm. Only the run log shows over it.
     layer(target) {
+      if (explain) return review.sheet ? "log" : null;
       const l = review.api.layer(target);
       if (l === "brief") return l;
       if (bar.api.isOpen) return "confirm";
@@ -574,6 +645,27 @@ export function PrDetail({
       else review.api.close(layer);
     },
   }));
+  const explainPage = explain && meta && (
+    <Suspense
+      fallback={
+        <div role="status" aria-busy="true" aria-label="Loading the walkthrough" className="grid max-w-[72ch] gap-3 px-6 pt-6">
+          <Skeleton className="h-6 w-3/5" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      }
+    >
+      <ExplainPage
+        pr={pr}
+        meta={meta}
+        now={now}
+        announce={announce}
+        onBack={() => onExplain(false)}
+        onDiff={openDiff}
+        onLog={review.api.openRunLog}
+        onDrafts={goDrafts}
+      />
+    </Suspense>
+  );
 
   const openSec = (id: string) => (on: boolean) => setSecs((s) => (on === s.has(id) ? s : toggled(s, id)));
   const fresh = comments.filter((c) => next.has(c.id) && !c.deleted).length;
@@ -581,124 +673,128 @@ export function PrDetail({
   const sum = summary(threads);
   return (
     <>
-      <Header
-        pr={pr}
-        strip={
-          data && diffCtx ? (
-            <Strip
-              your={sum.your}
-              fresh={fresh}
-              since={since}
-              now={now}
-              threads={threads.length}
-              open={sum.unresolved}
-              drafts={review.draftCount}
-              files={files}
-              answering={answering && !askOpen}
-              onYour={nextYour}
-              onNew={() => nextNew(1)}
-              onThreads={goThreads}
-              onDrafts={review.api.drafts}
-              onFiles={diff.firstRow}
-              onAnswering={openAsk}
-            />
-          ) : null
-        }
-        onLeave={onLeave}
-        askOpen={askOpen}
-        onAsk={() => (askOpen ? closeAsk() : openAsk())}
-        full={full}
-        onFull={onFull}
-        onTaskIds={onTaskIds}
-        announce={announce}
-        consult={review.consult}
-        action={review.action}
-        slot={
-          askOpen && meta ? (
-            <AskPanel pr={pr} meta={meta} now={now} onClose={closeAsk} onLog={review.api.openRunLog} announce={announce} />
-          ) : (
-            review.brief
-          )
-        }
-      />
-      <div ref={body} data-mounting={!steady || undefined} className="px-6 pb-16 max-[759px]:px-4">
-        {archived(pr) && <ArchiveNotice pr={pr} now={now} onRestore={() => onRestore(pr)} />}
-        {data ? (
-          <>
-            {review.reviewed && review.run}
-            <Description detail={data} me={me} />
-            <Notes pr={row.id} own={pr} threads={threads} jump={jump} announce={announce} focusAfter={focusAfter} />
-            {!review.reviewed && review.run}
-            {review.drafts}
-            <Threads
-              threads={threads}
-              needMe={needMe}
-              showResolved={showResolved}
-              isOpen={isOpen}
-              cur={cur}
-              spines={spines}
-              branches={branches}
-              ctx={ctx}
-              posts={outbox.threads}
-              targets={targets}
-              cards={review.cards}
-              drafted={review.drafted}
-              outbox={<PostsGroup posts={outbox.rest} comments={comments} forge={forge} web={web} hints={hints} ctx={outbox.ctx} />}
-              onNeedMe={setNeedMe}
-              onShowResolved={() => {
-                setShowResolved(true);
-                const first = threads.find((t) => t.turn === "resolved");
-                if (first) focusAfter({ id: `t-${first.id}`, block: "nearest", flash: false });
-              }}
-            />
-            {diffCtx && (
-              <DiffSection
-                files={data.files}
-                open={secs.has("files")}
-                onOpen={openSec("files")}
-                web={web}
-                forge={forge}
-                branches={pr.sourceBranch && pr.targetBranch ? [pr.sourceBranch, pr.targetBranch] : null}
-                view={diff}
-                ctx={diffCtx}
-              />
-            )}
-            {data.commits?.length ? (
-              <CommitsFold
-                commits={data.commits}
-                detail={data}
-                me={me}
-                open={secs.has("commits")}
-                onOpen={openSec("commits")}
+      <div hidden={explain}>
+        <Header
+          pr={pr}
+          strip={
+            data && diffCtx ? (
+              <Strip
+                your={sum.your}
+                fresh={fresh}
+                since={since}
                 now={now}
-                hints={hints}
+                threads={threads.length}
+                open={sum.unresolved}
+                drafts={review.draftCount}
+                files={files}
+                answering={answering && !askOpen}
+                onYour={nextYour}
+                onNew={() => nextNew(1)}
+                onThreads={goThreads}
+                onDrafts={review.api.drafts}
+                onFiles={diff.firstRow}
+                onAnswering={openAsk}
               />
-            ) : null}
-          </>
-        ) : q.error ? (
-          <Calm title={notFound ? "Cannot find this pull request" : "Cannot load this pull request"}>
-            <p className="m-0">{notFound ? "PR Review Inbox has no data for it. Select another pull request." : q.error.message}</p>
-          </Calm>
-        ) : (
-          <div role="status" aria-busy="true" aria-label="Loading the pull request" className="grid max-w-[86ch] gap-3 pt-6">
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
+            ) : null
+          }
+          onLeave={onLeave}
+          askOpen={askOpen}
+          onAsk={() => (askOpen ? closeAsk() : openAsk())}
+          onExplain={() => onExplain(true)}
+          full={full}
+          onFull={onFull}
+          onTaskIds={onTaskIds}
+          announce={announce}
+          consult={review.consult}
+          action={review.action}
+          slot={
+            askOpen && meta ? (
+              <AskPanel pr={pr} meta={meta} now={now} onClose={closeAsk} onLog={review.api.openRunLog} announce={announce} />
+            ) : (
+              review.brief
+            )
+          }
+        />
+        <div ref={body} data-mounting={!steady || undefined} className="px-6 pb-16 max-[759px]:px-4">
+          {archived(pr) && <ArchiveNotice pr={pr} now={now} onRestore={() => onRestore(pr)} />}
+          {data ? (
+            <>
+              {review.reviewed && review.run}
+              <Description detail={data} me={me} />
+              <Notes pr={row.id} own={pr} threads={threads} jump={jump} announce={announce} focusAfter={focusAfter} />
+              {!review.reviewed && review.run}
+              {review.drafts}
+              <Threads
+                threads={threads}
+                needMe={needMe}
+                showResolved={showResolved}
+                isOpen={isOpen}
+                cur={cur}
+                spines={spines}
+                branches={branches}
+                ctx={ctx}
+                posts={outbox.threads}
+                targets={targets}
+                cards={review.cards}
+                drafted={review.drafted}
+                outbox={<PostsGroup posts={outbox.rest} comments={comments} forge={forge} web={web} hints={hints} ctx={outbox.ctx} />}
+                onNeedMe={setNeedMe}
+                onShowResolved={() => {
+                  setShowResolved(true);
+                  const first = threads.find((t) => t.turn === "resolved");
+                  if (first) focusAfter({ id: `t-${first.id}`, block: "nearest", flash: false });
+                }}
+              />
+              {diffCtx && (
+                <DiffSection
+                  files={data.files}
+                  open={secs.has("files")}
+                  onOpen={openSec("files")}
+                  web={web}
+                  forge={forge}
+                  branches={pr.sourceBranch && pr.targetBranch ? [pr.sourceBranch, pr.targetBranch] : null}
+                  view={diff}
+                  ctx={diffCtx}
+                />
+              )}
+              {data.commits?.length ? (
+                <CommitsFold
+                  commits={data.commits}
+                  detail={data}
+                  me={me}
+                  open={secs.has("commits")}
+                  onOpen={openSec("commits")}
+                  now={now}
+                  hints={hints}
+                />
+              ) : null}
+            </>
+          ) : q.error ? (
+            <Calm title={notFound ? "Cannot find this pull request" : "Cannot load this pull request"}>
+              <p className="m-0">{notFound ? "PR Review Inbox has no data for it. Select another pull request." : q.error.message}</p>
+            </Calm>
+          ) : (
+            <div role="status" aria-busy="true" aria-label="Loading the pull request" className="grid max-w-[86ch] gap-3 pt-6">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          )}
+        </div>
+        {/* Plan pr-view-v4 2.11: one bar at the bottom of the pane for the fix run and the post. The post confirm opens in it. */}
+        {data && (review.fix.bar || bar.part || bar.confirm) && (
+          <div data-postbar className="sticky bottom-0 z-[2] border-t border-rule-strong bg-pane px-6 text-sm max-[759px]:px-4">
+            {(review.fix.bar || bar.part) && (
+              // A wide pane keeps the parts in one row, with a rule between them. A narrow pane wraps them without the rule.
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-2.5 @min-[800px]/detail:[&>*+*]:border-l @min-[800px]/detail:[&>*+*]:pl-4">
+                {review.fix.bar}
+                {bar.part}
+              </div>
+            )}
+            {bar.confirm}
           </div>
         )}
       </div>
-      {/* Plan pr-view-v4 2.11: one bar at the bottom of the pane for the fix run and the post. The post confirm opens in it. */}
-      {data && (review.fix.bar || bar.part || bar.confirm) && (
-        <div data-postbar className="sticky bottom-0 z-[2] border-t border-rule-strong bg-pane px-6 text-sm max-[759px]:px-4">
-          {(review.fix.bar || bar.part) && (
-            // A wide pane keeps the parts in one row, with a rule between them. A narrow pane wraps them without the rule.
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-2.5 @min-[800px]/detail:[&>*+*]:border-l @min-[800px]/detail:[&>*+*]:pl-4">
-              {review.fix.bar}
-              {bar.part}
-            </div>
-          )}
-          {bar.confirm}
-        </div>
-      )}
+      {explainPage}
       {review.fix.dialog}
       {review.consult.dialog}
       <SharedHint hints={hints} />

@@ -6,6 +6,7 @@
 // Rule 2.1: each name of a server object opens that object. The key "PROJ/repo #id" opens the PR (decision D1).
 import {
   Archive,
+  BookOpenText,
   Check,
   ClipboardCopy,
   Copy,
@@ -394,13 +395,14 @@ export function Strip(p: {
 
 // action: the run buttons (plan v3 WP11). slot: the panel slot under the strip, the brief or Ask (plan pr-view-v4 2.4).
 // strip: the parts of the status strip, null while the PR loads. askOpen, onAsk: Ask in the slot. full, onFull: full width
-// (plan 4.3, the z key). onTaskIds: opens Settings, Task IDs.
+// (plan 4.3, the z key). onTaskIds: opens Settings, Task IDs. onExplain: opens the Explain page (review-v2 spec.md section 3.1).
 export function Header(props: {
   pr: PrRow;
   strip: ReactNode;
   onLeave: () => void;
   askOpen: boolean;
   onAsk: () => void;
+  onExplain: () => void;
   full: boolean;
   onFull: () => void;
   onTaskIds: () => void;
@@ -529,6 +531,12 @@ export function Header(props: {
           >
             <MessageCircleQuestionMark aria-hidden data-icon="inline-start" />
             Ask
+          </Button>
+        </Hint>
+        <Hint label={`${runner} explains the change in plain words: what to read first, the risks, and diagrams. Key: w`}>
+          <Button id="explain-btn" size="sm" variant="outline" aria-keyshortcuts="w" onClick={props.onExplain}>
+            <BookOpenText aria-hidden data-icon="inline-start" />
+            Explain this PR
           </Button>
         </Hint>
         {props.action}

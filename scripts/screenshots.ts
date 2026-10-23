@@ -211,6 +211,22 @@ async function shots(browser: Browser) {
   await night.waitForTimeout(500);
   await save(night, "inbox-dark");
   await dark.close();
+
+  // Explain this PR (docs/plans/review-v2/spec.md section 3.1), after the inbox shots, so both of them show the same run record.
+  // w opens the page, and its one button starts the run. The page shows the walkthrough with its diagram (scripts/demo.ts EXPLAIN).
+  for (const scheme of ["light", "dark"] as const) {
+    const c = await browser.newContext({ viewport: WIDE, colorScheme: scheme, reducedMotion: "reduce" });
+    const p = await c.newPage();
+    await p.goto(`${BASE}/`);
+    await openPr(p, "Take the cache lock");
+    await p.keyboard.press("w");
+    // The dark page finds the stored walkthrough of the same head. Opening the page starts no run.
+    if (scheme === "light") await p.locator("[data-explain] [data-primary]").click();
+    await p.locator("[data-explain] figure[data-diagram='image'] img").waitFor({ timeout: RUN_MS });
+    await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await save(p, `explain-${scheme}`);
+    await c.close();
+  }
 }
 
 mkdirSync(OUT, { recursive: true });

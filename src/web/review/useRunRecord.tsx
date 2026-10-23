@@ -15,8 +15,9 @@ export function useRunRecord(
     meta: MetaDto;
     // The newest run of each kind.
     kinds: RunDto[];
-    // The details of the newest review run and of the run that the log sheet pins.
+    // The details of the newest review run, of the newest explain run with a result, and of the run that the log sheet pins.
     review: RunDetail | undefined;
+    explain: RunDetail | undefined;
     pinned: RunDetail | undefined;
     // The finding drafts of the newest review run by display group.
     groups: DraftGroups;
@@ -41,7 +42,7 @@ export function useRunRecord(
   const reviewRun = useRun(newestOf("review"));
   const fetched = useTaskContext(pr).data;
 
-  const details = [o.review, reviewRun.data, replyRun.data, fixRun.data, askRun.data, sessionRun.data, o.pinned];
+  const details = [o.review, reviewRun.data, replyRun.data, fixRun.data, askRun.data, sessionRun.data, o.explain, o.pinned];
   const tracker = trackerOf(meta);
   // The task text that a run read, as the run setup names it.
   const taskText = (r: RunDto) => {

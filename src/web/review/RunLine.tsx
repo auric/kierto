@@ -203,6 +203,8 @@ type RowProps = {
   onCancel: (run: number) => void;
   // A session run (docs/plans/session-consult.md part C): opens its answer in the preview.
   onAnswer: (run: number) => void;
+  // An explain run (docs/plans/review-v2/spec.md section 3.1): opens the Explain page.
+  onExplain: () => void;
 };
 
 export function RunRecord({ rows, ...props }: RowProps & { rows: KindRun[] }) {
@@ -293,7 +295,7 @@ const revealList = "m-0 grid list-none gap-1.5 p-0";
 const revealItem = "grid grid-cols-[16px_minmax(0,1fr)] gap-2 [overflow-wrap:anywhere]";
 
 // first: the newest run. Only it can run, so only its state is a live region. Key 3 opens its log.
-function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }: RowProps & { row: KindRun; first: boolean }) {
+function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer, onExplain }: RowProps & { row: KindRun; first: boolean }) {
   const { run, state: s } = row;
   const review = run.kind === "review";
   const [open, setOpen] = useState<ReadonlyMap<string, boolean>>(new Map());
@@ -358,6 +360,13 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }
           <button id="session-answer-btn" type="button" className={linkish} onClick={() => onAnswer(run.id)}>
             Show the answer
           </button>
+        ) : run.kind === "explain" ? (
+          <>
+            <button type="button" className={linkish} aria-keyshortcuts="w" onClick={onExplain}>
+              Open the walkthrough
+            </button>
+            {ncButton}
+          </>
         ) : (
           !review && ncButton
         );

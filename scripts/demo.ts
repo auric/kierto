@@ -121,12 +121,63 @@ const VERIFY = {
   ],
   coverage: { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] },
 };
+// The result of each Explain run (docs/plans/review-v2/spec.md section 3.3). Its links and risks name lines of the flush.ts diff of
+// the source commit (tests/support/review-fixture.ts), so the app keeps them on every PR with that commit.
+const EXPLAIN = {
+  summary: "flush() now takes the cache lock once for each entry, not once for the whole batch.",
+  walkthrough: [
+    "## The lock moves into the loop",
+    "",
+    "Before the change, `flush()` took the cache lock before the loop and released it after the last entry ([old lines 2 to 6](diff:src/cache/flush.ts#O2-O6)).",
+    "Now each entry takes the lock, writes, and releases it ([new lines 3 to 5](diff:src/cache/flush.ts#N3-N5)).",
+    "",
+    "```mermaid",
+    "flowchart TD",
+    '  A["flush(cache)"] --> B["Next dirty entry"]',
+    '  B --> C["cache.lock()"]',
+    '  C --> D["write(entry)"]',
+    '  D --> E["lock.release()"]',
+    "  E --> B",
+    "```",
+    "",
+    "## What this means for readers",
+    "",
+    "A writer can now run between two entries, so a reader can see a partly flushed batch. The write call itself stays the same ([line 4](diff:src/cache/flush.ts#N4)).",
+  ].join("\n"),
+  order: [{ path: "src/cache/flush.ts", why: "The only changed file. Read the loop first, then the lock calls inside it." }],
+  files: [{ path: "src/cache/flush.ts", role: "core", summary: "Takes the lock for each entry instead of for the whole batch." }],
+  risks: [
+    {
+      text: "A reader can see a partial batch between two entries.",
+      path: "src/cache/flush.ts",
+      side: "new",
+      line: 3,
+      lineEnd: 5,
+      anchorText: "const lock = cache.lock();",
+    },
+    {
+      text: "`lock.release()` does not run when `write()` throws.",
+      path: "src/cache/flush.ts",
+      side: "new",
+      line: 5,
+      lineEnd: null,
+      anchorText: "lock.release();",
+    },
+  ],
+  glossary: [
+    { term: "Dirty entry", meaning: "A cache entry with changes that the store does not have yet." },
+    { term: "Batch", meaning: "All dirty entries of one flush." },
+  ],
+  questions: [{ text: "Must readers see each batch as a whole?", why: "The description does not say if a partial batch is allowed." }],
+  coverage: { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] },
+};
 // The verify phase of a review run gets one tool call and no subagent (docs/plans/review-v2/spec.md section 1.6).
 runner.write({
   fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT),
   fix: FIX,
   answered: ANSWERED,
   verify: VERIFY,
+  explain: EXPLAIN,
   bySchema: { verify: { fixture: claudeStream(claudeDir, "check", "claude/b6-hostile-repo.jsonl") } },
 });
 const SOURCE_PRS = [1001, 1002, 31, 210, 212, 77, 74, 33, 215, 9, 5, 2, 1004];

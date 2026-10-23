@@ -211,10 +211,18 @@ export function useDiffView(
     } catch {
       return;
     }
-    if ("fetch" in index) return;
+    // With focus, as for a link of the Explain page, the user waits for the file. Say why it does not show.
+    if ("fetch" in index) {
+      if (!focus) return;
+      toast.add({ title: `Get the code from ${o.forge} first. Then the diff shows.` });
+      return o.focusAfter({ id: "diff-get", block: "center", flash: true });
+    }
     const i = fileOf(index.files, path);
     const f = index.files[i];
-    if (!f) return;
+    if (!f) {
+      if (focus) toast.add({ title: `${path} is not in the diff.` });
+      return;
+    }
     const name = fileName(f);
     openFile(name);
     if (!focus) return;

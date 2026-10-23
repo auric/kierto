@@ -206,6 +206,29 @@ describe("detail keys", () => {
     expect(reduceKey({ ...S, selected: 20 }, "n", { ...C, typing: true }).handled).toBe(false);
     expect(reduceKey({ ...S, selected: 20, settings: true }, "n", { ...C, settingsLocked: true }).handled).toBe(false);
   });
+
+  // docs/plans/review-v2/spec.md section 3.1 (AC-X1): w opens the Explain page. w had no other use (prototype/v3 keyboard model).
+  test("w opens the Explain page; it does nothing while typing, in the help, or without a PR", () => {
+    expect(reduceKey({ ...S, selected: 20 }, "w", C)).toMatchObject({ effect: "explain", state: { focus: "detail", mobile: "detail" } });
+    expect(reduceKey({ ...S, selected: 20 }, "w", { ...C, typing: true }).handled).toBe(false);
+    expect(reduceKey({ ...S, selected: 20, help: true }, "w", C).handled).toBe(false);
+    expect(reduceKey(S, "w", C).handled).toBe(false);
+    expect(HELP_KEYS.flatMap((g) => g.keys).find((x) => x.keys[0] === "w")?.text).toContain("Explain this PR");
+  });
+
+  test("on the Explain page, Esc goes back to the PR and the keys of the hidden PR do nothing", () => {
+    const ex = { ...C, explain: true };
+    const detail = { ...S, selected: 20, focus: "detail" as const, mobile: "detail" as const };
+    expect(reduceKey(detail, "Escape", ex)).toMatchObject({ effect: "explain-back", handled: true });
+    // The run log over the page closes first, then the page. Esc in the list does not close the page.
+    expect(reduceKey(detail, "Escape", { ...ex, layer: "log" }).effect).toBe("close-log");
+    expect(reduceKey({ ...S, selected: 20 }, "Escape", ex).effect).not.toBe("explain-back");
+    for (const k of ["w", "n", "j", "r", "q", "a", "x", "g", "Enter", "2"]) expect([k, reduceKey(detail, k, ex).effect]).toEqual([k, null]);
+    // The list keys, the help, and full width still work.
+    expect(reduceKey({ ...S, selected: 20 }, "j", ex).state.selected).toBe(30);
+    expect(reduceKey(detail, "z", ex).effect).toBe("full-on");
+    expect(reduceKey(detail, "?", ex).state.help).toBe(true);
+  });
 });
 
 // Plan v3 WP14a, prototype/v3 2744-2745: a, e, d, and p. Esc closes the post confirm after the brief.

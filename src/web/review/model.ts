@@ -259,7 +259,7 @@ function doneText(r: RunDto, items: ReviewItemDto[] | undefined, edits: number |
   if (r.kind === "session") return r.summary?.summary ?? "";
   if (r.kind === "fix") return edits === undefined ? "" : edits ? plural(edits, "edit") : "No edits";
   // The flag stored at the start wins over the current profile. null falls back to the current profile.
-  if (r.kind === "review" && (r.explain ?? profiles.find((p) => p.id === r.profile)?.explain)) {
+  if (r.kind === "explain" || (r.kind === "review" && (r.explain ?? profiles.find((p) => p.id === r.profile)?.explain))) {
     const q = items?.filter((i) => i.kind === "question").length ?? 0;
     return ["Explained the change", q ? plural(q, "question") : ""].filter(Boolean).join(", ");
   }
@@ -363,6 +363,18 @@ export const latestReview = (runs: RunDto[] | undefined) =>
   runs?.find((r) => r.kind === "review" && r.status !== "cancelled" && r.status !== "failed") ??
   runs?.find((r) => r.kind === "review") ??
   null;
+
+// docs/plans/review-v2/spec.md section 3.2: the newest explain run with a result, as the Explain page shows it. Its questions join
+// the Drafts.
+export const latestExplain = (runs: RunDto[] | undefined) =>
+  runs?.find((r) => r.kind === "explain" && (r.status === "completed" || r.status === "incomplete")) ?? null;
+
+// The items of the Drafts: the items of the newest review run, then the questions of the newest explain run. The same array while
+// no explain question exists.
+export function withQuestions(review: ReviewItemDto[], explain: ReviewItemDto[] | undefined): ReviewItemDto[] {
+  const qs = explain?.filter((i) => i.kind === "question") ?? [];
+  return qs.length ? [...review, ...qs] : review;
+}
 
 // ---------- One row per run kind ----------
 

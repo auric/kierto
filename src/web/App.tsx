@@ -15,11 +15,13 @@ import type { Group, PrRow } from "../shared/dto";
 import { GROUPS, VIEW_LABEL, VIEWS, type View } from "../shared/views";
 import { type Effect, type KeyState, type Layer, reduceKey } from "./keys";
 import {
+  backIsPr,
   canGoBack,
   enterEntry,
   type FileRef,
   formatRoute,
   type ListView,
+  markBack,
   navMode,
   noteScroll,
   type PrRef,
@@ -122,8 +124,9 @@ const prRef = (p: PrRow): PrRef => ({ project: p.project, repo: p.repo, id: p.pr
 const findRef = (list: PrRow[] | undefined, r: PrRef) => list?.find((p) => p.prId === r.id && p.project === r.project && p.repo === r.repo);
 const DONE: readonly Group[] = GROUPS.find((g) => g[0] === "done")?.[2] ?? [];
 
-// The thread and the file of the URL. key: the PR that they belong to (prKeyOf).
-type DetailRoute = { key: string | null; thread: number | null; file: FileRef | null };
+// The thread and the file of the URL. key: the PR that they belong to (prKeyOf). explain: the Explain page of that PR shows.
+// The PR keeps its thread and file under the Explain page.
+type DetailRoute = { key: string | null; thread: number | null; file: FileRef | null; explain: boolean };
 type SettingsPlace = { section: SettingsSection | null; profile: string | null };
 
 const EMPTY: Record<Exclude<ListView, "post">, string> = {
@@ -172,10 +175,11 @@ function Shell({ stale }: { stale: boolean }) {
     key: r0?.pr ? prKeyOf(r0.pr) : null,
     thread: r0?.thread ?? null,
     file: r0?.file ?? null,
+    explain: r0?.explain ?? false,
   });
   // The thread, file, and scroll position that the detail restores. n changes on each Back or Forward.
   const [at, setAt] = useState<DetailAt | null>(() =>
-    r0?.pr ? { key: prKeyOf(r0.pr), thread: r0.thread, file: r0.file, close: null, scroll: start.scroll, n: 0 } : null,
+    r0?.pr ? { key: prKeyOf(r0.pr), thread: r0.thread, file: r0.file, close: null, scroll: start.scroll, n: 0, explain: r0.explain } : null,
   );
   // Full width (plan pr-view-v4 4.3, decision D5): "full=1" in the URL, so Back leaves it.
   const [full, setFull] = useState(r0?.full ?? false);
@@ -269,15 +273,18 @@ function Shell({ stale }: { stale: boolean }) {
   const shown = current ? prRef(current) : pinFor;
   const shownKey = shown ? prKeyOf(shown) : null;
   const own = detail.key !== null && detail.key === shownKey;
+  const explainOn = own && detail.explain;
+  const routePr = !narrow || mobile === "detail" ? shown : null;
   const route: Route = showSettings
     ? { kind: "settings", ...settingsRoute }
     : {
         kind: "list",
         view,
-        pr: !narrow || mobile === "detail" ? shown : null,
-        thread: own ? detail.thread : null,
-        file: own ? detail.file : null,
+        pr: routePr,
+        thread: own && !explainOn ? detail.thread : null,
+        file: own && !explainOn ? detail.file : null,
         full,
+        explain: routePr !== null && explainOn,
         repo,
         q: query,
       };
@@ -291,10 +298,14 @@ function Shell({ stale }: { stale: boolean }) {
   const urlReady = !!settings.data && !!prs.data && !!meta.data && !locked;
   useLayoutEffect(() => {
     if (!urlReady) return;
-    const mode = navMode(lastRoute.current, route, opened.current);
+    const from = lastRoute.current;
+    const mode = navMode(from, route, opened.current);
     opened.current = false;
     lastRoute.current = route;
     writeUrl(formatRoute(route), mode);
+    // The Explain page entry that its PR pushed. Its Back is a step back in the history.
+    const fromPr = from.kind === "list" && !from.explain && from.pr ? prKeyOf(from.pr) : null;
+    if (mode === "push" && route.kind === "list" && route.explain && route.pr && fromPr === prKeyOf(route.pr)) markBack();
   });
 
   // Back and Forward. Dialogs, the help sheet, and the panel slot close with the location change.
@@ -325,9 +336,15 @@ function Shell({ stale }: { stale: boolean }) {
     setFull(r.full);
     if (!r.pr) return;
     const key = prKeyOf(r.pr);
-    const close = detail.key === key && detail.file && detail.file.path !== r.file?.path ? detail.file.path : null;
     setPin(r.pr);
-    setDetail({ key, thread: r.thread, file: r.file });
+    // An Explain page entry keeps the thread and the file of the PR under it.
+    if (r.explain) {
+      setDetail((d) => (d.key === key ? { ...d, explain: true } : { key, thread: null, file: null, explain: true }));
+      setAt((a) => ({ key, thread: null, file: null, close: null, scroll, n: (a?.n ?? 0) + 1, explain: true }));
+      return;
+    }
+    const close = detail.key === key && detail.file && detail.file.path !== r.file?.path ? detail.file.path : null;
+    setDetail({ key, thread: r.thread, file: r.file, explain: false });
     setAt((a) => ({ key, thread: r.thread, file: r.file, close, scroll, n: (a?.n ?? 0) + 1 }));
   };
   useEffect(() => {
@@ -349,9 +366,27 @@ function Shell({ stale }: { stale: boolean }) {
   // The detail reports its thread and file. A file open pushes a history entry (navMode).
   const onDetailRoute = useCallback(
     (key: string, patch: DetailPatch) =>
-      setDetail((d) => (d.key === key ? { ...d, ...patch } : { key, thread: null, file: null, ...patch })),
+      setDetail((d) => (d.key === key ? { ...d, ...patch } : { key, thread: null, file: null, explain: false, ...patch })),
     [],
   );
+
+  // docs/plans/review-v2/spec.md section 3.1: the Explain page of the shown PR. Open pushes a history entry. Back is a history step
+  // when the PR pushed the page, else it goes to the PR in place. push: a step to the PR that pushes, such as "Go to the drafts".
+  const explainTo = (open: boolean, push = false) => {
+    const key = shownKey;
+    if (key === null) return;
+    if (!open && !push && backIsPr()) return history.back();
+    if (push) opened.current = true;
+    setDetail((d) => (d.key === key ? { ...d, explain: open } : { key, thread: null, file: null, explain: open }));
+  };
+  // A diff link of the Explain page: the PR at that file and line, with a history entry. The detail opens the file as on a restore.
+  const explainDiff = (to: FileRef) => {
+    const key = shownKey;
+    if (key === null) return;
+    opened.current = true;
+    setDetail((d) => ({ key, thread: d.key === key ? d.thread : null, file: to, explain: false }));
+    setAt((a) => ({ key, thread: null, file: to, close: null, scroll: null, n: (a?.n ?? 0) + 1 }));
+  };
 
   // A notification click opens its PR in a view that holds it. A digest opens Needs you.
   useClaims(claimEvents, !!s?.baseUrl, !!s?.notifications, (id) => {
@@ -385,9 +420,11 @@ function Shell({ stale }: { stale: boolean }) {
   }, [pin, pinRow, ks.selected]);
 
   // The restore request belongs to one PR. Another selection drops it, so a later visit opens that PR fresh.
+  // The Explain page belongs to one PR too. A later visit opens the PR itself.
   useEffect(() => {
     if (at && shownKey !== null && shownKey !== at.key) setAt(null);
-  }, [at, shownKey]);
+    if (detail.explain && shownKey !== null && shownKey !== detail.key) setDetail((d) => ({ ...d, explain: false }));
+  }, [at, shownKey, detail.explain, detail.key]);
 
   useEffect(() => {
     const same =
@@ -426,7 +463,12 @@ function Shell({ stale }: { stale: boolean }) {
       if (!detailRef.current?.contains(document.activeElement)) detailRef.current?.focus({ preventScroll: true });
       const api = detailApi.current;
       if (effect === "overview") detailRef.current?.querySelector("[data-scroll]")?.scrollTo({ top: 0 });
-      else if (effect === "open-cause") api?.cause();
+      else if (effect === "open-cause") {
+        // A row open shows the PR itself, also when its Explain page shows.
+        if (explainOn) setDetail((d) => ({ ...d, explain: false }));
+        api?.cause();
+      } else if (effect === "explain") explainTo(true);
+      else if (effect === "explain-back") explainTo(false);
       else if (effect === "thread-next" || effect === "thread-prev") api?.step(effect === "thread-next" ? 1 : -1);
       else if (effect === "thread-toggle") api?.toggle();
       else if (effect === "next-new" || effect === "prev-new") api?.nextNew(effect === "next-new" ? 1 : -1);
@@ -476,6 +518,7 @@ function Shell({ stale }: { stale: boolean }) {
       narrow,
       full: fullOn,
       dialog,
+      explain: explainOn && !showSettings,
     });
     if (!r.handled) return;
     e.preventDefault();
@@ -665,13 +708,15 @@ function Shell({ stale }: { stale: boolean }) {
             <DetailSkeleton />
           ) : current ? (
             <>
-              <BackBar onBack={goBack} />
-              {/* The sticky post bar covers the bottom of the pane, so focus and scroll targets stop above it.
+              {/* The Explain page has its own Back to the PR. */}
+              {!explainOn && <BackBar onBack={goBack} />}
+              {/* The sticky post bar covers the bottom of the pane, so focus and scroll targets stop above it. The top bar of the
+                  Explain page covers its top. It wins over the inline padding of the hidden action bar.
                   The key gives each PR a new scroll box, so the next PR starts at the top. */}
               <div
                 key={current.id}
                 data-scroll
-                className="relative flex-1 overflow-auto overscroll-contain has-[[data-postbar]]:scroll-pb-16"
+                className="relative flex-1 overflow-auto overscroll-contain has-[[data-postbar]]:scroll-pb-16 has-[[data-explain]]:scroll-pt-12!"
                 onScroll={(e) => noteScroll(e.currentTarget.scrollTop)}
               >
                 <PrDetail
@@ -681,8 +726,11 @@ function Shell({ stale }: { stale: boolean }) {
                   at={at?.key === shownKey ? at : null}
                   file={own ? (detail.file?.path ?? null) : null}
                   full={fullOn}
+                  explain={explainOn}
                   onFull={() => setFull(!fullOn)}
                   onRoute={(patch) => shownKey && onDetailRoute(shownKey, patch)}
+                  onExplain={explainTo}
+                  onDiff={explainDiff}
                   onSettings={() => openSettings()}
                   onTaskIds={() => openSettings("task-ids")}
                   onProfile={(id) => openSettings("profiles", id)}

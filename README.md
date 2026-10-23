@@ -25,6 +25,7 @@ The name says what the app does. It is one inbox for the pull requests that you 
 - Runs a Claude Code review on a sanitized snapshot of the pull request. The review reads the whole repository, not only the diff.
 - Turns findings into drafts with a severity. You accept, edit, or discard each one, then post them as inline comments.
 - Drafts replies to the threads where it is your turn. On your own pull request, it proposes fixes that you review before they touch your clone.
+- Explains a pull request on its own page: what to read first, a walkthrough with links into the diff and diagrams, and the risks on their code.
 - Lists what the review did not check, so a gap never looks like a pass.
 
 ## Safety model
@@ -159,6 +160,15 @@ Press `q` to ask a question about the pull request. The answer stays in PR Revie
 
 After an answer, the box is "Follow up". Claude then sees the last three questions and answers of the conversation, so a question such as "and its callers?" works. A follow-up uses the profile of the answer that it follows. "New question" starts a new conversation that does not see the earlier answers. Earlier conversations stay below under "Earlier questions". An answer from an older head says "The head changed since this answer."
 
+### Explain this PR
+
+Press `w`, or click "Explain this PR", to open the walkthrough page of the pull request. The page starts nothing by itself. Its one button starts a run with the Explain profile. While the run runs, the page says what Claude does. The result gives the change in one line and the files in the order to read them. Then it gives a walkthrough by theme with Mermaid diagrams, the risks, the role of each file, and the project terms. A link in the walkthrough or a risk opens the Files diff at that line. Back returns to the page. A link that does not match the change shows as plain text. Questions for the author go to Drafts, marked "From Explain". When the pull request changes, the page says so and offers "Explain again". "Copy as Markdown" under More copies the page. `Esc` or "Back to the pull request" returns to the pull request where you left it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/explain-dark.webp">
+  <img alt="The Explain page: the summary, the reading order, and the walkthrough with links into the diff and a flowchart" src="docs/screenshots/explain-light.webp">
+</picture>
+
 ### Project instructions
 
 Each run can read the CLAUDE.md files of your clone, extra text from Settings, and your global CLAUDE.md. CLAUDE.md files in the pull request do not load as instructions. Settings shows the full text that a run gets.
@@ -195,6 +205,7 @@ Press `?` in the app for the full list.
 | `r` | Open the review brief |
 | `c` | Review only the commits since the last review |
 | `q` | Ask a question |
+| `w` | Open the Explain page. `Esc` goes back to the pull request. |
 | `Ctrl+Enter` | Start the review from the brief, or send the question |
 | `a` `e` `d` | Accept, edit, or discard the current draft |
 | `p` | Post the accepted items |

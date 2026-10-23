@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Drafts section (plan pr-view-v4 2.7, prototype pr-view-v4 drafts()): the findings and questions of the newest review run in one
-// list of rows, with triage (WP14a). Only you see drafts until you post them. On your own PR, an open finding has Fix and its fix
-// card (docs/plans/fix-ux.md phase 2).
+// list of rows, with triage (WP14a), then the questions of the newest explain run. Only you see drafts until you post them. On your
+// own PR, an open finding has Fix and its fix card (docs/plans/fix-ux.md phase 2).
 import { Check, ChevronRight, CircleAlert, FileCode, GitCommitHorizontal, MessageCircleQuestionMark, Wrench } from "lucide-react";
 import { Fragment, memo, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -100,10 +100,12 @@ export function CheckChip({ label }: { label: string }) {
 
 // asker: the person that the questions ask, as the question rows name them.
 // checked: the run of the drafts had the check step, so each finding card shows its check chip.
+// explainRun: the explain run whose questions are in the list (docs/plans/review-v2/spec.md section 3.1). They show "From Explain".
 export type DraftCtx = {
   meta: MetaDto;
   asker: string;
   checked: boolean;
+  explainRun: number | null;
   onToggle: (id: number) => void;
   onFrom: (agent: string) => void;
   // Plan r2 UI-DIFF: focuses the line of the draft in the diff.
@@ -148,10 +150,11 @@ export const Draft = memo(function Draft({
   const carried = carriedNote(it);
   const restored = fixedNote(it) ?? restoredNote(it);
   const chip = f ? checkChip(it, ctx.checked) : null;
+  const explained = !f && it.run === ctx.explainRun;
   const label = !f
     ? closed
-      ? "Discarded question"
-      : `Question from ${short}${accepted ? ", accepted" : ""}`
+      ? `Discarded question${explained ? ", from Explain" : ""}`
+      : `Question from ${short}${explained ? ", from Explain" : ""}${accepted ? ", accepted" : ""}`
     : closed
       ? closed === "Discarded"
         ? `Discarded draft. ${where}.`
@@ -189,7 +192,16 @@ export const Draft = memo(function Draft({
           )}
         </span>
         <span className="grid min-w-0">
-          <span className={cn("truncate", closed && "text-muted-foreground line-through")}>{snippet(draftTitle(it), 160)}</span>
+          {explained ? (
+            <span className="flex min-w-0 items-center gap-2">
+              <span className={cn("truncate", closed && "text-muted-foreground line-through")}>{snippet(draftTitle(it), 160)}</span>
+              <Badge variant="quiet" data-from-explain className="shrink-0">
+                From Explain
+              </Badge>
+            </span>
+          ) : (
+            <span className={cn("truncate", closed && "text-muted-foreground line-through")}>{snippet(draftTitle(it), 160)}</span>
+          )}
           {path && (
             <span className="flex min-w-0 items-center gap-2">
               <span translate="no" className="min-w-0 truncate font-mono text-xs text-muted-foreground">

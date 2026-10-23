@@ -38,6 +38,8 @@ export type KeyContext = {
   full?: boolean;
   // Focus is in a dialog, or a modal dialog is open. x then does nothing.
   dialog?: boolean;
+  // The Explain page shows in the detail (docs/plans/review-v2/spec.md section 3.1). The keys of the hidden PR then do nothing.
+  explain?: boolean;
 };
 
 export type Layer = "brief" | "confirm" | "log" | null;
@@ -69,6 +71,9 @@ export type Effect =
   | "fix"
   | "fix-list"
   | "resolve"
+  // The Explain page opens, or goes back to its PR.
+  | "explain"
+  | "explain-back"
   | "close-brief"
   | "close-confirm"
   | "close-log"
@@ -112,6 +117,8 @@ const DETAIL: Record<string, Effect> = {
   // Plan pr-view-v4 section 6: f fixes the current thread, F opens the Fix list. A reviewer PR gives a toast.
   f: "fix",
   F: "fix-list",
+  // docs/plans/review-v2/spec.md section 3.1: w opens the Explain page.
+  w: "explain",
 };
 // Plan r2 UI-DIFF: g d shows the current inline thread or draft in the diff.
 const CHORD: Record<string, Effect> = { f: "files", c: "commits", d: "show-in-diff" };
@@ -121,6 +128,8 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
   const chord = state.chord !== null && ctx.now - state.chord < CHORD_MS;
   const s = state.chord === null ? state : { ...state, chord: null };
   const hasPr = s.selected !== null && ctx.ids.includes(s.selected) && !(s.settings && ctx.settingsLocked);
+  // The keys that act on the PR in the detail. The Explain page hides the PR, so they wait until Back.
+  const prKeys = hasPr && !ctx.explain;
   const inDetail = { ...s, focus: "detail" as const, mobile: "detail" as const, settings: false };
 
   // Plan pr-view-v4 section 6. An open menu or popover and the other dialogs keep Esc, so the shell never sees it.
@@ -130,14 +139,16 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
     if (ctx.full) return done({ ...s, focus: "detail" }, "full-off");
     if (ctx.typing) return done({ ...s, focus: "list" }, "focus-list");
     if (s.mobile === "side") return done({ ...s, mobile: "list", focus: "list" }, "focus-list");
+    // The Explain page goes back to its PR first, as a layer of the detail does.
+    if (ctx.explain && (s.focus === "detail" || s.mobile === "detail")) return done({ ...s, focus: "detail" }, "explain-back");
     return back(s, ctx);
   }
   if (ctx.typing) return ignore(s);
   if (key === "?") return done({ ...s, help: !s.help });
   if (s.help) return ignore(s);
   // The second key of "g f", "g c", or "g d". Any other key ends the chord.
-  if (chord) return hasPr && CHORD[key] ? done(inDetail, CHORD[key]) : done(s);
-  if (key === "Enter" && s.focus === "detail") return ctx.onButton || !hasPr ? ignore(s) : done(s, "thread-toggle");
+  if (chord) return prKeys && CHORD[key] ? done(inDetail, CHORD[key]) : done(s);
+  if (key === "Enter" && s.focus === "detail") return ctx.onButton || !prKeys ? ignore(s) : done(s, "thread-toggle");
 
   switch (key) {
     case "/":
@@ -145,8 +156,8 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
     case "j":
     case "k": {
       const d = key === "j" ? 1 : -1;
-      // plan v3 I14: the detail moves between threads.
-      if (s.focus === "detail") return done(s, d > 0 ? "thread-next" : "thread-prev");
+      // plan v3 I14: the detail moves between threads. The Explain page has no threads.
+      if (s.focus === "detail") return ctx.explain ? ignore(s) : done(s, d > 0 ? "thread-next" : "thread-prev");
       if (!ctx.ids.length) return done(s);
       const i = s.selected === null ? -1 : ctx.ids.indexOf(s.selected);
       const next = i < 0 ? 0 : Math.max(0, Math.min(ctx.ids.length - 1, i + d));
@@ -160,15 +171,15 @@ export function reduceKey(state: KeyState, key: string, ctx: KeyContext): KeyRes
     case "ArrowLeft":
       return back(s, ctx);
     case "g":
-      return hasPr ? done({ ...s, chord: ctx.now }) : ignore(s);
+      return prKeys ? done({ ...s, chord: ctx.now }) : ignore(s);
     // x resolves the current thread, or reopens it when it is resolved. It never acts behind a dialog or the post confirm.
     case "x":
-      return hasPr && !ctx.dialog && ctx.layer !== "confirm" ? done(inDetail, "resolve") : ignore(s);
+      return prKeys && !ctx.dialog && ctx.layer !== "confirm" ? done(inDetail, "resolve") : ignore(s);
     case "z":
       return hasPr && !ctx.narrow ? done(inDetail, ctx.full ? "full-off" : "full-on") : ignore(s);
     default: {
       const effect = DETAIL[key];
-      return effect && hasPr ? done(inDetail, effect) : ignore(s);
+      return effect && prKeys ? done(inDetail, effect) : ignore(s);
     }
   }
 }
@@ -215,6 +226,7 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
       { keys: ["r"], text: "Open the review brief: task, your note, profile, and run setup. The review starts only from there." },
       { keys: ["c"], text: "Open the review brief for only the commits since the last review. Its open drafts carry over." },
       { keys: ["q"], text: "Ask a question about this pull request. The answer stays here. Nothing posts." },
+      { keys: ["w"], text: "Open the walkthrough of this pull request: Explain this PR. Esc goes back to the pull request." },
       { keys: ["Ctrl", "Enter"], text: "Start the review from the brief, or send the question from the Ask box" },
       { keys: ["Esc"], text: "Close an edit, the review brief, the post confirm, or the run log" },
     ],

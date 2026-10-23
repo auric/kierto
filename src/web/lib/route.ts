@@ -32,10 +32,12 @@ export type ListRoute = {
   kind: "list";
   view: ListView;
   pr: PrRef | null;
-  // thread, file, and full need a PR.
+  // thread, file, full, and explain need a PR. explain: the Explain page of the PR (docs/plans/review-v2/spec.md section 3.1).
+  // The Explain page URL has no thread and no file.
   thread: number | null;
   file: FileRef | null;
   full: boolean;
+  explain: boolean;
   // "project/repo": the repository filter.
   repo: string | null;
   q: string;
@@ -50,6 +52,7 @@ export const listRoute = (view: ListView = "needs"): ListRoute => ({
   thread: null,
   file: null,
   full: false,
+  explain: false,
   repo: null,
   q: "",
 });
@@ -78,17 +81,22 @@ export function parseRoute(pathname: string, search: string): Route {
   const out = listRoute(has(LIST_VIEWS, seg[0]) ? seg[0] : "needs");
   out.repo = q.get("repo") || null;
   out.q = q.get("q") ?? "";
-  const [, project, repo, num] = seg;
+  const [, project, repo, num, page] = seg;
   const id = count(num);
-  if (seg.length !== 4 || !project || !repo || id === null) return out;
+  const explain = seg.length === 5 && page === "explain";
+  if ((seg.length !== 4 && !explain) || !project || !repo || id === null) return out;
   out.pr = { project, repo, id };
+  out.full = q.get("full") === "1";
+  if (explain) {
+    out.explain = true;
+    return out;
+  }
   out.thread = count(q.get("thread"));
   const path = q.get("file");
   if (path) {
     const line = count(q.get("line"));
     out.file = { path, line, side: line !== null && q.get("side") === "old" ? "old" : "new" };
   }
-  out.full = q.get("full") === "1";
   return out;
 }
 
@@ -100,11 +108,13 @@ export function formatRoute(r: Route): string {
     const tail = r.section === "profiles" && r.profile ? `/${encodeURIComponent(r.profile)}` : "";
     return `/settings${r.section ? `/${r.section}` : ""}${tail}`;
   }
-  const path = r.pr ? `/${r.view}/${encodeURIComponent(r.pr.project)}/${encodeURIComponent(r.pr.repo)}/${r.pr.id}` : `/${r.view}`;
+  const path = r.pr
+    ? `/${r.view}/${encodeURIComponent(r.pr.project)}/${encodeURIComponent(r.pr.repo)}/${r.pr.id}${r.explain ? "/explain" : ""}`
+    : `/${r.view}`;
   const q: [string, string][] = [];
   if (r.pr) {
-    if (r.thread !== null) q.push(["thread", String(r.thread)]);
-    if (r.file) {
+    if (r.thread !== null && !r.explain) q.push(["thread", String(r.thread)]);
+    if (r.file && !r.explain) {
       q.push(["file", r.file.path]);
       if (r.file.line !== null) {
         q.push(["line", String(r.file.line)]);
@@ -119,8 +129,9 @@ export function formatRoute(r: Route): string {
 }
 
 // Plan pr-view-v4 section 5. Push: a view change, a PR open by click or Enter (opened), Settings open, a settings section or
-// profile, a file open, full width on or off. Everything else replaces: j and k, thread focus, filter text, the repository
-// chip, a file close, Settings close.
+// profile, a file open, full width on or off, the Explain page open, and a step from it to the PR by a link (opened).
+// Everything else replaces: j and k, thread focus, filter text, the repository chip, a file close, Settings close, and Back from
+// an Explain page that has no earlier entry.
 export function navMode(from: Route, to: Route, opened: boolean): "push" | "replace" {
   if (to.kind === "settings")
     return from.kind !== "settings" || from.section !== to.section || from.profile !== to.profile ? "push" : "replace";
@@ -128,6 +139,7 @@ export function navMode(from: Route, to: Route, opened: boolean): "push" | "repl
   if (from.view !== to.view || (to.repo !== null && from.repo !== to.repo)) return "push";
   const samePr = (from.pr && prKeyOf(from.pr)) === (to.pr && prKeyOf(to.pr));
   if (!samePr) return opened && to.pr ? "push" : "replace";
+  if (from.explain !== to.explain) return to.explain || opened ? "push" : "replace";
   if (from.full !== to.full) return "push";
   if (to.file && from.file?.path !== to.file.path) return "push";
   return "replace";
@@ -203,6 +215,16 @@ export function enterEntry(): number | null {
 
 // False for the first entry of the app, for example a link opened in a new tab.
 export const canGoBack = () => entry().idx > 0;
+
+// The Explain page entry that the entry of its PR pushed. A replace, for example a Settings close, gives an entry without the mark.
+export function markBack() {
+  try {
+    history.replaceState({ ...history.state, back: true }, "");
+  } catch {
+    // Back then goes to the PR without a history step.
+  }
+}
+export const backIsPr = () => (history.state as { back?: unknown } | null)?.back === true;
 
 const USER_INPUT = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
 const RESTORE_MS = 2000;

@@ -25,6 +25,9 @@ const RESULT = improveResult.extend({ prompt: profilePrompt.describe("The new pr
 export const improveJsonSchema = (): Record<string, unknown> => z.toJSONSchema(RESULT, { target: "draft-07" });
 
 const REVIEW_TOOLS = "Read, Grep, Glob, and the rl-git tools git_log, git_blame, git_show, and git_diff";
+// docs/plans/review-v2/spec.md section 3.3: the parts of an explain result.
+const EXPLAIN_KIND =
+  "Its runs give a walkthrough of the change by theme with links to the code, the reading order of the files, the role of each file, the risks with their code, up to 3 diagrams, a glossary, and questions. They give no findings.";
 
 // CommonMark: a backtick fence closes only at a run at least as long as the opening one. The text cannot close this fence.
 function fenced(text: string): string[] {
@@ -55,7 +58,7 @@ export function buildImprovePrompt(i: ImproveInput): string {
     "",
     `- Name: ${i.name || "(none)"}`,
     `- Note: ${i.note || "(none)"}`,
-    `- Kind: ${i.explain ? "Explain only. Its runs give a summary, risks, and questions, and no findings." : "Review. Its runs give findings, risks, and questions."}`,
+    `- Kind: ${i.explain ? `Explain only. ${EXPLAIN_KIND}` : "Review. Its runs give findings, risks, and questions."}`,
     `- Documentation tools: ${i.docs ? "on" : "off"}`,
     `- Language checks: ${i.languageChecks ? "on" : "off"}`,
     "",
@@ -103,7 +106,7 @@ export function buildImprovePrompt(i: ImproveInput): string {
     "- Never repeat a shared rule, a check section, or a language check. The app adds them to the runs.",
     "- Keep the purpose of the profile. The name, the note, and the current prompt show it.",
     i.explain
-      ? "- This is an Explain profile. Keep the new prompt explain-only: a summary, risks, and questions. Never ask for findings or severities."
+      ? "- This is an Explain profile. Keep the new prompt explain-only. Keep each line about the walkthrough, the reading order, the risks, the diagrams, and the questions. Never ask for findings or severities."
       : "- The shared rules define the severity levels. Never define them again.",
     `- A review run has these tools: ${REVIEW_TOOLS}${i.docs ? ", and the learn and deepwiki documentation tools" : ""}. Name no other tool, unless the current prompt names it.`,
     `- Keep the new prompt at ${MAX_NOTE.toLocaleString("en")} characters or fewer. Prefer a short prompt.`,

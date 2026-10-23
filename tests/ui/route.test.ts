@@ -33,6 +33,8 @@ describe("route round trip", () => {
       pr({ file: { path: "docs/a b#c?d&e+f%.md", line: null, side: "new" } }),
     ],
     ["/following?repo=~JDOE/sample-repo-1&q=cache%20lock", { ...listRoute("following"), repo: "~JDOE/sample-repo-1", q: "cache lock" }],
+    ["/needs/PROJ1/sample-repo-2/1001/explain", pr({ explain: true })],
+    ["/mine/PROJ1/sample-repo-2/1001/explain?full=1&q=lock", pr({ view: "mine", explain: true, full: true, q: "lock" })],
     ["/settings", { kind: "settings", section: null, profile: null }],
     ["/settings/task-ids", { kind: "settings", section: "task-ids", profile: null }],
     ["/settings/profiles/over%20engineering", { kind: "settings", section: "profiles", profile: "over engineering" }],
@@ -58,6 +60,16 @@ describe("route round trip", () => {
 
   test("a new-side line has no side in the URL", () => {
     expect(formatRoute(pr({ file: { path: "a.ts", line: 3, side: "new" } }))).toBe("/needs/PROJ1/sample-repo-2/1001?file=a.ts&line=3");
+  });
+
+  test("the Explain page URL has no thread and no file; it needs a PR", () => {
+    const r = pr({ explain: true, thread: 5, file: { path: "a.ts", line: 3, side: "new" } });
+    expect(formatRoute(r)).toBe("/needs/PROJ1/sample-repo-2/1001/explain");
+    expect(parse("/needs/PROJ1/sample-repo-2/1001/explain?thread=5&file=a.ts&line=3")).toEqual(pr({ explain: true }));
+    expect(parse("/needs/PROJ1/sample-repo-2/explain")).toEqual(listRoute());
+    expect(parse("/needs/PROJ1/sample-repo-2/1001/other")).toEqual(listRoute());
+    expect(parse("/needs/PROJ1/sample-repo-2/1001/explain/x")).toEqual(listRoute());
+    expect(formatRoute({ ...listRoute(), explain: true })).toBe("/needs");
   });
 });
 
@@ -126,6 +138,15 @@ describe("push or replace (plan pr-view-v4 section 5)", () => {
     expect(navMode(file, a, false)).toBe("replace");
     expect(navMode(a, { ...a, full: true }, false)).toBe("push");
     expect(navMode({ ...a, full: true }, a, false)).toBe("push");
+  });
+
+  test("the Explain page open pushes. Back without an earlier entry replaces; a link to the PR (opened) pushes.", () => {
+    const explain = { ...a, explain: true };
+    expect(navMode(a, explain, false)).toBe("push");
+    expect(navMode(explain, a, false)).toBe("replace");
+    expect(navMode(explain, { ...a, file: { path: "a.ts", line: 3, side: "new" } }, true)).toBe("push");
+    expect(navMode(explain, { ...explain, q: "lock" }, false)).toBe("replace");
+    expect(navMode(explain, b, true)).toBe("push");
   });
 
   test("Settings open and each section push. Close replaces.", () => {

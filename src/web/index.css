@@ -993,3 +993,19 @@ button.rl-ll:hover {
   font-weight: 600;
   color: var(--ink-2);
 }
+/* The walkthrough of the Explain page is a page to read, not a comment: more line space and clearer theme headings. */
+.rl-read .rl-md {
+  line-height: 1.6;
+}
+.rl-read .rl-md :where(p, ul, ol, pre, blockquote, figure) {
+  margin-bottom: 0.85em;
+}
+.rl-read .rl-md :where(h1, h2, h3) {
+  margin: 1.5em 0 0.4em;
+}
+.rl-read .rl-md :where(h1, h2) {
+  font-size: 1.12em;
+}
+.rl-read .rl-md > :first-child {
+  margin-top: 0;
+}
