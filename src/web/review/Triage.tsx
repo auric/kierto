@@ -76,8 +76,8 @@ function onEscape(e: KeyboardEvent, close: () => void) {
 
 // prototype/v3 acts(), pr-view-v4 drafts(). Each button names its key in the tooltip.
 // flush: no indent under an avatar, as in the open rows of the Drafts section. lead: a button after the triage buttons, before Move.
-// lead and children show only on an item that is not discarded. stale: an out-of-date reply draft. items.ts refuses Accept and Edit
-// for it, so only Discard or Undo accept shows.
+// lead and children show only on an item that is not discarded. always: the last control, also on a discarded item. stale: an
+// out-of-date reply draft. items.ts refuses Accept and Edit for it, so only Discard or Undo accept shows.
 export function Acts(props: {
   it: ReviewItemDto;
   busy: boolean;
@@ -86,6 +86,7 @@ export function Acts(props: {
   ctx: TriageCtx;
   lead?: ReactNode;
   children?: ReactNode;
+  always?: ReactNode;
 }) {
   const { it, busy, ctx } = props;
   const edit = !props.stale && (
@@ -104,6 +105,7 @@ export function Acts(props: {
           <Undo2 aria-hidden data-icon="inline-start" />
           Restore
         </Button>
+        {props.always}
       </div>
     );
   }
@@ -148,6 +150,7 @@ export function Acts(props: {
       {props.lead}
       {move}
       {props.children}
+      {props.always}
     </div>
   );
 }

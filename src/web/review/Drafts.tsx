@@ -3,7 +3,8 @@
 
 // Drafts section (plan pr-view-v4 2.7, prototype pr-view-v4 drafts()): the findings and questions of the newest review run in one
 // list of rows, with triage (WP14a), then the questions of the newest explain run. Only you see drafts until you post them. On your
-// own PR, an open finding has Fix and its fix card (docs/plans/fix-ux.md phase 2).
+// own PR, an open finding has Fix and its fix card (docs/plans/fix-ux.md phase 2). Each finding card has the talk with the runner
+// (docs/plans/review-v2/spec.md section 2.1).
 import { Check, ChevronRight, CircleAlert, FileCode, GitCommitHorizontal, MessageCircleQuestionMark, Wrench } from "lucide-react";
 import { Fragment, memo, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,8 @@ import type { MetaDto, ReviewItemDto, RunDto } from "../../shared/dto";
 import type { AnchoredFinding, Question } from "../../shared/review";
 import { Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
+import { FindingRevision, TalkLink } from "./Discuss";
+import { withdrawnNote } from "./discuss-model";
 import {
   anchorNote,
   CHECK_LABEL,
@@ -113,6 +116,10 @@ export type DraftCtx = {
   // Your own PR: opens the Fix list with only this finding ticked. null: a PR of another author.
   onFix: ((id: number) => void) | null;
   triage: TriageCtx;
+  // spec.md section 2.1: the link "Ask <runner> about this" opens or closes the talk under a finding card.
+  talk: { toggle: (id: number) => void };
+  // Use the new text and Keep mine of a changed finding. take: rev replaces the text of it. keep: rev goes.
+  revision: { take: (rev: ReviewItemDto, it: ReviewItemDto) => void; keep: (rev: ReviewItemDto) => void };
 };
 
 // The ID of the row element. The diff, the ledger, and the keys focus it.
@@ -120,7 +127,7 @@ export const draftDomId = (it: ReviewItemDto) => (it.kind === "question" ? `q-${
 
 // One row: kind, title, place, and state. Enter, o, or a click opens the body with the triage actions (plan pr-view-v4 2.7).
 // mode: the open editor or line field of this draft. busy: a triage request of this draft is out. fix: the fix card of the finding.
-// chips: the discard reason chips show under the row.
+// chips: the discard reason chips show under the row. talk: the open talk under the card (Discuss.tsx Talk).
 export const Draft = memo(function Draft({
   it,
   open,
@@ -128,6 +135,7 @@ export const Draft = memo(function Draft({
   busy,
   chips,
   fix,
+  talk,
   ctx,
 }: {
   it: ReviewItemDto;
@@ -136,6 +144,7 @@ export const Draft = memo(function Draft({
   busy: boolean;
   chips?: boolean;
   fix?: ReactNode;
+  talk?: ReactNode;
   ctx: DraftCtx;
 }) {
   const short = ctx.meta.runner.short;
@@ -159,7 +168,7 @@ export const Draft = memo(function Draft({
       ? closed === "Discarded"
         ? `Discarded draft. ${where}.`
         : `Draft, ${closed.toLowerCase()}. ${where}.`
-      : `Draft from ${short}. ${SEVERITY[f.severity]}. ${where}.${accepted ? " Accepted." : ""}${carried ? ` ${carried}` : ""}${restored ? ` ${restored}` : ""}${chip ? ` ${chip}.` : ""}`;
+      : `Draft from ${short}. ${SEVERITY[f.severity]}. ${where}.${accepted ? " Accepted." : ""}${carried ? ` ${carried}` : ""}${restored ? ` ${restored}` : ""}${chip ? ` ${chip}.` : ""}${it.revised ? " A new text waits." : ""}`;
   const cut = path ? path.lastIndexOf("/") + 1 : 0;
   return (
     <article
@@ -233,7 +242,7 @@ export const Draft = memo(function Draft({
       <div id={`db-${it.id}`} hidden={!open}>
         {open &&
           (f ? (
-            <FindingBody it={it} mode={mode} busy={busy} fix={fix} ctx={ctx} />
+            <FindingBody it={it} mode={mode} busy={busy} fix={fix} talk={talk} ctx={ctx} />
           ) : (
             <QuestionBody it={it} mode={mode} busy={busy} ctx={ctx} />
           ))}
@@ -246,7 +255,8 @@ export const Draft = memo(function Draft({
 const body = "pt-1 pr-1.5 pb-4 pl-[30px]";
 const note = "m-0 mt-1.5 max-w-[72ch] text-xs text-muted-foreground [overflow-wrap:anywhere]";
 
-function FindingBody({ it, mode, busy, fix, ctx }: { it: ReviewItemDto; mode: TriageMode; busy: boolean; fix: ReactNode; ctx: DraftCtx }) {
+function FindingBody(props: { it: ReviewItemDto; mode: TriageMode; busy: boolean; fix: ReactNode; talk: ReactNode; ctx: DraftCtx }) {
+  const { it, mode, busy, fix, ctx } = props;
   const f = it.payload as AnchoredFinding;
   const a = it.anchor;
   const lines = a ? draftExcerpt(a) : [];
@@ -254,6 +264,9 @@ function FindingBody({ it, mode, busy, fix, ctx }: { it: ReviewItemDto; mode: Tr
   const carried = carriedNote(it);
   const restored = fixedNote(it) ?? restoredNote(it);
   const session = sessionNote(it);
+  const withdrawn = withdrawnNote(it);
+  const short = ctx.meta.runner.short;
+  const rev = it.revised;
   const trigger = f.trigger?.trim();
   const check = checkText(it);
   const onFix = ctx.onFix;
@@ -330,16 +343,39 @@ function FindingBody({ it, mode, busy, fix, ctx }: { it: ReviewItemDto; mode: Tr
               <Inline text={session} />
             </p>
           )}
+          {withdrawn && (
+            <p className={note} data-withdrawn>
+              <Inline text={withdrawn} />
+            </p>
+          )}
           {anchored && <p className={note}>{anchored}</p>}
           {mode === "move" ? (
             <Mover it={it} busy={busy} ctx={ctx.triage} />
           ) : (
-            <Acts it={it} busy={busy} flush ctx={ctx.triage} lead={toFix}>
+            <Acts
+              it={it}
+              busy={busy}
+              flush
+              ctx={ctx.triage}
+              lead={toFix}
+              always={<TalkLink it={it} open={!!props.talk} runner={short} onClick={() => ctx.talk.toggle(it.id)} />}
+            >
               {toDiff}
             </Acts>
           )}
+          {rev && (
+            <FindingRevision
+              it={it}
+              rev={rev}
+              busy={busy}
+              runner={short}
+              onTake={() => ctx.revision.take(rev, it)}
+              onKeep={() => ctx.revision.keep(rev)}
+            />
+          )}
         </>
       )}
+      {props.talk}
       {fix}
     </div>
   );
@@ -403,6 +439,7 @@ const FOLD_ROW = "fold";
 // groups: the findings of the newest review run by display group (docs/plans/review-v2/spec.md section 1.4). questions: its questions.
 // The main findings come first, then the fold, then the questions (plan pr-view-v4 2.7: the findings, then the questions). A closed
 // fold renders no rows, so j and k skip them. ledger: the open drafts in plain words. cards: the fix card of each finding, by item ID.
+// talks: the open talk under each finding card, by item ID.
 export function Drafts({
   groups,
   questions,
@@ -412,6 +449,7 @@ export function Drafts({
   isOpen,
   triage,
   cards,
+  talks,
   ctx,
 }: {
   groups: DraftGroups;
@@ -422,6 +460,7 @@ export function Drafts({
   isOpen: (it: ReviewItemDto) => boolean;
   triage: TriageState;
   cards: ReadonlyMap<number, ReactNode>;
+  talks: ReadonlyMap<number, ReactNode>;
   ctx: DraftCtx;
 }) {
   const fold = groups.foldName ? groups.fold : [];
@@ -434,9 +473,10 @@ export function Drafts({
           it={it}
           open={isOpen(it) || mode !== null}
           mode={mode}
-          busy={triage.busy.has(it.id)}
+          busy={triage.busy.has(it.id) || (!!it.revised && triage.busy.has(it.revised.id))}
           chips={triage.chips === it.id && it.status === "discarded"}
           fix={cards.get(it.id)}
+          talk={talks.get(it.id)}
           ctx={ctx}
         />
       </li>

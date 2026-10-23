@@ -710,10 +710,12 @@ export function anchorNote(it: ReviewItemDto): string | null {
 const carriedLabel = (v: Verdict | undefined) => (v === "fixed" ? "Fixed in the new commits" : v === "outdated" ? "Outdated" : "Discarded");
 
 // Plan r2 UI-RR: a re-review discards the carried drafts that it finds fixed or outdated. docs/plans/fix-ux.md decision 3: a fix
-// commit discards the open findings that it covers. Other closed drafts are discards by you.
+// commit discards the open findings that it covers. docs/plans/review-v2/spec.md section 2.2: a talk withdraws a finding. Other closed
+// drafts are discards by you.
 export function closedLabel(it: ReviewItemDto): string {
   const f = it.payload.fixed;
   if (f) return `Fixed in ${f.short}`;
+  if (it.payload.withdrawn && !it.payload.withdrawn.restored) return "Withdrawn";
   return it.payload.session?.verdict === "reject" ? "Rejected by your session" : carriedLabel(it.payload.carried?.verdict);
 }
 
@@ -757,11 +759,12 @@ export function triageText(before: ReviewItemDto, after: ReviewItemDto, action: 
     case "plain":
       return "The draft posts as a plain reply. Accepted.";
     case "use-revision":
+      if (after.kind === "finding") return "The new text is the finding now. Accept it to post.";
       return after.status === "discarded"
         ? "The revision says no reply is needed. Your draft is discarded."
         : "The revision is your draft now. Accept it to post.";
     case "keep-mine":
-      return "Kept your draft. The revision is gone.";
+      return after.kind === "finding" ? "Kept your text. The new text is gone." : "Kept your draft. The revision is gone.";
     case "reply-to-newest":
       return "The draft answers the newest message now.";
     case "reason":

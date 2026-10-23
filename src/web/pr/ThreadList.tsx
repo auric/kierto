@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import type { PostDto } from "../../shared/dto";
 import type { Turn } from "../../shared/turn";
 import type { ReplyTarget } from "./ReplyComposer";
-import { Thread, type ThreadCtx } from "./Thread";
+import { Thread, type ThreadCtx, type ThreadTalkEntry } from "./Thread";
 import { ordered, type ThreadModel, TURN_ORDER } from "./threads";
 
 const HEAD: Record<Turn, [string, typeof Reply]> = {
@@ -35,6 +35,8 @@ export function Threads(props: {
   cards?: ReadonlyMap<number, ReactNode>;
   // The threads with a reply draft to accept, or one on the way.
   drafted: ReadonlySet<number>;
+  // The threads of posted findings, with the talk about the finding (docs/plans/review-v2/spec.md section 2.1).
+  talks?: ReadonlyMap<number, ThreadTalkEntry>;
   // The posts group above the threads.
   outbox?: ReactNode;
   onNeedMe: (on: boolean) => void;
@@ -117,6 +119,7 @@ export function Threads(props: {
                 target={props.targets.get(t.id)}
                 draft={props.cards?.get(t.id)}
                 drafted={props.drafted.has(t.id)}
+                talk={props.talks?.get(t.id)}
                 ctx={props.ctx}
               />
             )),

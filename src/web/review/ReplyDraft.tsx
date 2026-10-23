@@ -44,7 +44,7 @@ import type { MetaDto, NoteDto, ReviewItemDto } from "../../shared/dto";
 import type { Judgement, ReplyOrigin, ReplyPayload } from "../../shared/review";
 import type { Turn } from "../../shared/turn";
 import { askerSide, JUDGEMENT } from "../fix/model";
-import { wordDiff } from "../lib/textdiff";
+import { type DiffLine, wordDiff } from "../lib/textdiff";
 import { CopyButton, Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
 import { Hint, type Hints } from "../shell/Hint";
@@ -181,8 +181,9 @@ function Head({ meta, who, children }: { meta: MetaDto; who: string; children?: 
   );
 }
 
-// The writer of a draft (shared/review.ts replyOrigins). A session draft names it in the head instead.
-const ORIGIN: Record<ReplyOrigin, string> = {
+// The writer of a draft (shared/review.ts replyOrigins). A session draft names it in the head instead. A discuss draft names the
+// runner (docs/plans/review-v2/spec.md section 2.1).
+const ORIGIN: Record<Exclude<ReplyOrigin, "discuss">, string> = {
   review: "from the review",
   reply: "from the reply run",
   fix: "from your fix commit",
@@ -190,14 +191,13 @@ const ORIGIN: Record<ReplyOrigin, string> = {
   session: "from your session",
   resolve: "from the re-review",
   user: "written by you",
-  discuss: "from your talk about the finding",
 };
 // thread-outcome.md section 4: a draft stored before origin existed is "Fixed in" with fix, else a reply run.
 const originOf = (p: ReplyPayload): ReplyOrigin => p.origin ?? (p.fix ? "fix" : "reply");
 
-function Origin({ p }: { p: ReplyPayload }) {
+function Origin({ p, runner }: { p: ReplyPayload; runner: string }) {
   const o = originOf(p);
-  return <span data-origin={o}>{ORIGIN[o]}</span>;
+  return <span data-origin={o}>{o === "discuss" ? `from your talk with ${runner}` : ORIGIN[o]}</span>;
 }
 
 // The look of each outcome. The words carry the state. The icon and the color only repeat it.
@@ -416,14 +416,14 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
         className={box}
       >
         <Head meta={ctx.meta} who={who}>
-          {!session && <Origin p={p} />}
+          {!session && <Origin p={p} runner={short} />}
           {chip}
         </Head>
         <p className="rl-indent m-0 mt-px text-ink-2 [overflow-wrap:anywhere]">
           {lead}: <Inline text={p.reason} />
         </p>
-        <Cites p={p} ctx={ctx} />
-        <Suggestions it={it} card={id} ctx={ctx} />
+        <Cites cites={p.cites} ctx={ctx} />
+        <Suggestions notes={it.notes} card={id} ctx={ctx} />
         {stale}
         {code}
       </article>
@@ -453,7 +453,7 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
     >
       <Head meta={ctx.meta} who={who}>
         <span>{text ? <>Reply draft{props.to && <> to {props.to}</>}</> : "Resolve proposal"}</span>
-        {!session && <Origin p={p} />}
+        {!session && <Origin p={p} runner={short} />}
         {chip}
         {accepted && (
           <span className="rl-fade inline-flex items-center gap-1 font-medium text-ink-2">
@@ -483,8 +483,8 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
             {/* A session draft without reply text holds the reason as its body. */}
             {!(session && p.reason.trim() === it.body.trim()) && <Inline text={p.reason} />}
           </p>
-          <Cites p={p} ctx={ctx} />
-          <Suggestions it={it} card={id} ctx={ctx} />
+          <Cites cites={p.cites} ctx={ctx} />
+          <Suggestions notes={it.notes} card={id} ctx={ctx} />
           {props.waiting && (
             <p className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-2">
               <Hourglass aria-hidden className="size-[13px] shrink-0" />
@@ -529,40 +529,51 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
   );
 });
 
-// docs/plans/review-v2/spec.md section 2.7: the note suggestions of the run that made this draft, the same rows as in the Notes block.
-function Suggestions({ it, card, ctx }: { it: ReviewItemDto; card: string; ctx: ReplyCtx }) {
+// docs/plans/review-v2/spec.md section 2.7: the note suggestions of the run that made this draft or answer, the same rows as in the
+// Notes block. card: the ID of the element that keeps the focus after the choice. flush: no indent under an avatar.
+// Keep and Dismiss wrap as one unit, so a wrap never puts them on two lines.
+export function Suggestions(props: {
+  notes: readonly NoteDto[] | undefined;
+  card: string;
+  flush?: boolean;
+  ctx: Pick<ReplyCtx, "meta" | "notes">;
+}) {
+  const { card, ctx } = props;
   const short = ctx.meta.runner.short;
-  return (it.notes ?? []).map((n) => (
+  return (props.notes ?? []).map((n) => (
     <p
       key={n.id}
       data-note-suggestion={n.id}
-      className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-2"
+      className={cn("m-0 mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-2", !props.flush && "rl-indent")}
     >
       <NotebookPen aria-hidden className="size-[13px] shrink-0" />
       <span className="min-w-0 [overflow-wrap:anywhere]">
         {short} suggests a note: {n.text}
       </span>
-      <button type="button" disabled={ctx.notes.busy.has(n.id)} className={linkButton} onClick={() => ctx.notes.choose(n, "kept", card)}>
-        Keep
-      </button>
-      <button
-        type="button"
-        disabled={ctx.notes.busy.has(n.id)}
-        className={linkButton}
-        onClick={() => ctx.notes.choose(n, "dismissed", card)}
-      >
-        Dismiss
-      </button>
+      <span className="inline-flex items-center gap-x-2 whitespace-nowrap">
+        <button type="button" disabled={ctx.notes.busy.has(n.id)} className={linkButton} onClick={() => ctx.notes.choose(n, "kept", card)}>
+          Keep
+        </button>
+        <button
+          type="button"
+          disabled={ctx.notes.busy.has(n.id)}
+          className={linkButton}
+          onClick={() => ctx.notes.choose(n, "dismissed", card)}
+        >
+          Dismiss
+        </button>
+      </span>
     </p>
   ));
 }
 
-// "Based on the thread of Bob": one link per thread that the reply relies on (payload cites).
-function Cites({ p, ctx }: { p: ReplyPayload; ctx: ReplyCtx }) {
-  const cites = p.cites ?? [];
+// "Based on the thread of Bob": one link per thread that the reply or the answer relies on (cites). flush: no indent under an avatar.
+export function Cites(props: { cites: readonly number[] | undefined; flush?: boolean; ctx: Pick<ReplyCtx, "cite"> }) {
+  const { ctx } = props;
+  const cites = props.cites ?? [];
   if (!cites.length) return null;
   return (
-    <p data-cites className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-ink-2">
+    <p data-cites className={cn("m-0 mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-ink-2", !props.flush && "rl-indent")}>
       <Signpost aria-hidden className="mr-1 size-[13px] shrink-0" />
       Based on the {cites.length === 1 ? "thread" : "threads"} of
       {cites.map((t, i) => (
@@ -577,8 +588,31 @@ function Cites({ p, ctx }: { p: ReplyPayload; ctx: ReplyCtx }) {
   );
 }
 
-// docs/plans/thread-outcome.md: the revision of your draft as a word diff against your text. Struck text leaves, underlined text comes
-// in, so the state never rests on color alone. A revision without text and without a resolve says that no reply is needed.
+// A word diff. Struck text leaves, underlined text comes in, so the state never rests on color alone.
+// The screen reader words sit outside the marks: inside, they make an empty marked line fragment at a wrap.
+export function DiffText({ parts }: { parts: readonly DiffLine[] }) {
+  return parts.map((d, k) => (
+    // biome-ignore lint/suspicious/noArrayIndexKey: the parts have no ID, and the list never reorders.
+    <Fragment key={k}>
+      {d.kind === "same" ? (
+        d.text
+      ) : (
+        <>
+          <span className="sr-only">{d.kind === "del" ? "[removed: " : "[added: "}</span>
+          {d.kind === "del" ? (
+            <del className="rounded-[3px] bg-(--del) box-decoration-clone px-0.5 text-ink-2 decoration-1">{d.text}</del>
+          ) : (
+            <ins className="rounded-[3px] bg-(--add) box-decoration-clone px-0.5 underline decoration-1 underline-offset-2">{d.text}</ins>
+          )}
+          <span className="sr-only">]</span>
+        </>
+      )}
+    </Fragment>
+  ));
+}
+
+// docs/plans/thread-outcome.md: the revision of your draft as a word diff against your text. A revision without text and without a
+// resolve says that no reply is needed.
 function Revision(props: { it: ReviewItemDto; rev: ReviewItemDto; who: string; busy: boolean; ctx: ReplyCtx }) {
   const { it, rev, ctx } = props;
   const id = useId();
@@ -593,27 +627,7 @@ function Revision(props: { it: ReviewItemDto; rev: ReviewItemDto; who: string; b
       </p>
       {!none && (
         <p data-diff className="m-0 mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
-          {/* The screen reader words sit outside the marks: inside, they make an empty marked line fragment at a wrap. */}
-          {parts.map((d, k) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: the parts have no ID, and the list never reorders.
-            <Fragment key={k}>
-              {d.kind === "same" ? (
-                d.text
-              ) : (
-                <>
-                  <span className="sr-only">{d.kind === "del" ? "[removed: " : "[added: "}</span>
-                  {d.kind === "del" ? (
-                    <del className="rounded-[3px] bg-(--del) box-decoration-clone px-0.5 text-ink-2 decoration-1">{d.text}</del>
-                  ) : (
-                    <ins className="rounded-[3px] bg-(--add) box-decoration-clone px-0.5 underline decoration-1 underline-offset-2">
-                      {d.text}
-                    </ins>
-                  )}
-                  <span className="sr-only">]</span>
-                </>
-              )}
-            </Fragment>
-          ))}
+          <DiffText parts={parts} />
         </p>
       )}
       <p className="m-0 mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">

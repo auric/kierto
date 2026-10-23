@@ -216,6 +216,16 @@ describe("detail keys", () => {
     expect(HELP_KEYS.flatMap((g) => g.keys).find((x) => x.keys[0] === "w")?.text).toContain("Explain this PR");
   });
 
+  // docs/plans/review-v2/spec.md section 2.1 (AC-D9): t opens the talk about the focused finding. t had no other use.
+  test("t opens the talk; it does nothing while typing, in the help, on the Explain page, or without a PR", () => {
+    expect(reduceKey({ ...S, selected: 20 }, "t", C)).toMatchObject({ effect: "discuss", state: { focus: "detail", mobile: "detail" } });
+    expect(reduceKey({ ...S, selected: 20 }, "t", { ...C, typing: true }).handled).toBe(false);
+    expect(reduceKey({ ...S, selected: 20, help: true }, "t", C).handled).toBe(false);
+    expect(reduceKey({ ...S, selected: 20 }, "t", { ...C, explain: true }).effect).toBe(null);
+    expect(reduceKey(S, "t", C).handled).toBe(false);
+    expect(HELP_KEYS.flatMap((g) => g.keys).find((x) => x.keys[0] === "t")?.text).toContain("Esc closes the talk");
+  });
+
   test("on the Explain page, Esc goes back to the PR and the keys of the hidden PR do nothing", () => {
     const ex = { ...C, explain: true };
     const detail = { ...S, selected: 20, focus: "detail" as const, mobile: "detail" as const };

@@ -93,13 +93,11 @@ test("a push after a review: c and the button open the brief; Start reviews the 
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done");
   await expect(runLine(page)).not.toContainText("Finding problems in the changes since");
 
-  // The Explain profile gives no findings, so the brief blocks Start and says why.
+  // One review profile: the brief has no profile picker, because Explain has its own page (docs/plans/review-v2/spec.md section 1.1).
+  // tests/web/review.test.ts keeps the block of a brief that holds the Explain profile.
   await rereviewButton(page).click();
-  await brief.getByRole("radio", { name: /^Explain/ }).check();
+  await expect(brief.getByRole("radio")).toHaveCount(0);
   const go = brief.getByRole("button", { name: "Review changes" });
-  await expect(go).toHaveAttribute("aria-disabled", "true");
-  await expect(go).toHaveAccessibleDescription("The Explain profile gives no findings. Pick a review profile first.");
-  await brief.getByRole("radio", { name: /^Review/ }).check();
   await expect(go).not.toHaveAttribute("aria-disabled", "true");
 
   // A cancelled re-review keeps the drafts and the offer of the review before it.

@@ -78,6 +78,8 @@ export type DetailApi = {
   // Plan v3 WP14a: a, e, d, and p.
   triage(key: "accept" | "edit" | "discard"): void;
   post(): void;
+  // docs/plans/review-v2/spec.md section 2.1: t opens the talk about the focused finding.
+  discuss(): void;
   layer(target: EventTarget | null): Layer;
   close(layer: Exclude<Layer, null>): void;
 };
@@ -737,6 +739,7 @@ export function PrDetail({
                 targets={targets}
                 cards={review.cards}
                 drafted={review.drafted}
+                talks={review.talks}
                 outbox={<PostsGroup posts={outbox.rest} comments={comments} forge={forge} web={web} hints={hints} ctx={outbox.ctx} />}
                 onNeedMe={setNeedMe}
                 onShowResolved={() => {

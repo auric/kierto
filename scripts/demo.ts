@@ -171,6 +171,24 @@ const EXPLAIN = {
   questions: [{ text: "Must readers see each batch as a whole?", why: "The description does not say if a partial batch is allowed." }],
   coverage: { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] },
 };
+// The answer of each talk about a finding (docs/plans/review-v2/spec.md section 2.1). It changes the blocker on flush.ts line 3 of
+// REVIEW_RESULT to a major point with a new title and text, so the card shows the word diff.
+const DISCUSS = {
+  answer: [
+    "The callers of `flush()` are not part of this change, so the snapshot cannot show that each one holds the cache lock.",
+    "",
+    "Each `write()` stays whole, so no entry is lost. A reader can still see a partial batch between two entries. That is worth fixing, but it is not a blocker.",
+  ].join("\n"),
+  verdict: "revised",
+  reason: "No entry is lost, but a reader can see a partial batch.",
+  revision: {
+    severity: "major",
+    title: "A reader can see a partial batch",
+    body: "The lock now covers one entry at a time. Another writer can run between two entries, so a reader can see a partial batch. Take the lock once, before the loop, if readers need whole batches.",
+  },
+  reply: "",
+  coverage: { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] },
+};
 // The verify phase of a review run gets one tool call and no subagent (docs/plans/review-v2/spec.md section 1.6).
 runner.write({
   fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT),
@@ -178,6 +196,7 @@ runner.write({
   answered: ANSWERED,
   verify: VERIFY,
   explain: EXPLAIN,
+  discuss: DISCUSS,
   bySchema: { verify: { fixture: claudeStream(claudeDir, "check", "claude/b6-hostile-repo.jsonl") } },
 });
 const SOURCE_PRS = [1001, 1002, 31, 210, 212, 77, 74, 33, 215, 9, 5, 2, 1004];

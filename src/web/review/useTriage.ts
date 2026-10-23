@@ -133,8 +133,9 @@ export function useTriage(
       const r = await sendItem(it.id, input);
       if ("conflict" in r) {
         putItem(r.conflict.item);
-        // A conflict of a revision changes the draft that holds it, so the list loads again.
+        // A conflict of a revision changes the draft or the finding that holds it, so the list loads again.
         if (it.kind === "reply") void qc.invalidateQueries({ queryKey: replyKey(pr.id) });
+        else if ((it.payload as FindingPayload).revises !== undefined) void qc.invalidateQueries({ queryKey: ["run", it.run] });
         toast.add({ title: r.conflict.error });
         return false;
       }

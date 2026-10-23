@@ -67,6 +67,8 @@ export type Effect =
   | "accept"
   | "edit"
   | "discard"
+  // The talk about the focused finding (docs/plans/review-v2/spec.md section 2.1).
+  | "discuss"
   | "post"
   | "fix"
   | "fix-list"
@@ -119,6 +121,8 @@ const DETAIL: Record<string, Effect> = {
   F: "fix-list",
   // docs/plans/review-v2/spec.md section 3.1: w opens the Explain page.
   w: "explain",
+  // spec.md section 2.1: t opens the talk about the focused finding.
+  t: "discuss",
 };
 // Plan r2 UI-DIFF: g d shows the current inline thread or draft in the diff.
 const CHORD: Record<string, Effect> = { f: "files", c: "commits", d: "show-in-diff" };
@@ -227,7 +231,11 @@ export const HELP_KEYS: { group: string; keys: { keys: string[]; second?: string
       { keys: ["c"], text: "Open the review brief for only the commits since the last review. Its open drafts carry over." },
       { keys: ["q"], text: "Ask a question about this pull request. The answer stays here. Nothing posts." },
       { keys: ["w"], text: "Open the walkthrough of this pull request: Explain this PR. Esc goes back to the pull request." },
-      { keys: ["Ctrl", "Enter"], text: "Start the review from the brief, or send the question from the Ask box" },
+      {
+        keys: ["t"],
+        text: "Talk about the current finding, or the finding of the current posted comment. Esc closes the talk. Nothing posts.",
+      },
+      { keys: ["Ctrl", "Enter"], text: "Start the review from the brief, or send the question from the Ask box or the talk" },
       { keys: ["Esc"], text: "Close an edit, the review brief, the post confirm, or the run log" },
     ],
   },

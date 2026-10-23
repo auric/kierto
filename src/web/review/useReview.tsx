@@ -3,7 +3,7 @@
 
 // The review half of the detail (plan v3 WP11, replies.md WP18, pr-view-v4 2.6): buttons, brief, run record, drafts, questions,
 // reply drafts, and run log for one PR.
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommitDto, MetaDto, PrRow, ReviewItemDto, RunDetail, RunDto } from "../../shared/dto";
@@ -13,12 +13,16 @@ import { type FixUi, useFix } from "../fix/FixBar";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
 import { putNote, useNoteSend } from "../pr/Notes";
+import type { ThreadTalkEntry } from "../pr/Thread";
 import { ordered, type ThreadModel } from "../pr/threads";
+import { usePosts } from "../publish/data";
 import type { Hints } from "../shell/Hint";
 import { failText, prKey } from "../shell/model";
 import { BriefComposer, ReviewButton } from "./Brief";
+import { Talk, type TalkCtx, ThreadTalk } from "./Discuss";
 import { type DraftCtx, Drafts } from "./Drafts";
 import { useCancelRun, usePrRuns, useReplyDrafts, useRun } from "./data";
+import { talkThreads } from "./discuss-model";
 import { kindRuns, latestExplain, latestReview, replyMap, withQuestions } from "./model";
 import { DraftRepliesButton, type ReplyCtx } from "./ReplyDraft";
 import { RunRecord } from "./RunLine";
@@ -53,6 +57,9 @@ export type ReviewApi = {
   fixFinding(id: number, key?: boolean): void;
   // Plan r2 UI-DIFF: opens a draft and focuses it, for "Go to draft" in the diff.
   openDraft(id: number): void;
+  // Key t (docs/plans/review-v2/spec.md section 2.1): the talk about the focused finding, or about the posted finding of the focused
+  // thread, with the focus in its box.
+  discuss(): void;
   // The layer that Esc closes first, for focus at target.
   layer(target: EventTarget | null): Layer;
   close(layer: Exclude<Layer, null>): void;
@@ -69,6 +76,8 @@ export type ReviewUi = {
   drafts: ReactNode;
   // The reply draft card of each thread, keyed by thread ID.
   cards: ReadonlyMap<number, ReactNode>;
+  // The threads of posted findings: the More item that opens the talk, and the open talk.
+  talks: ReadonlyMap<number, ThreadTalkEntry>;
   // The threads with a reply draft that the user can accept, or one on the way. Their footer has no Draft reply.
   drafted: ReadonlySet<number>;
   sheet: ReactNode;
@@ -86,6 +95,16 @@ export type ReviewUi = {
 // A synced push changes only `stale`, with no run event. Then only the runs list refetches (live.ts), so `stale` comes from it.
 const detailOf = (r: RunDto | null, d: RunDetail | undefined): RunDetail | null =>
   r ? (d?.run.id === r.id ? { ...d, run: { ...d.run, stale: r.stale } } : { run: r, events: [], items: [] }) : null;
+
+// The box of the talk about a finding (Discuss.tsx Talk).
+const boxOf = (item: number) => `talk-${item}-box`;
+
+const without = (s: ReadonlySet<number>, v: number): ReadonlySet<number> => {
+  if (!s.has(v)) return s;
+  const out = new Set(s);
+  out.delete(v);
+  return out;
+};
 
 export function useReview(
   pr: PrRow,
@@ -151,20 +170,6 @@ export function useReview(
   const { toggleDraft } = tr;
   const checked = groups.checked;
   const explainId = explainRun?.id ?? null;
-  const draftCtx = useMemo<DraftCtx>(
-    () => ({
-      meta,
-      asker,
-      checked,
-      explainRun: explainId,
-      onToggle: toggleDraft,
-      onFrom: (agent) => onLog.current(agent, false, "review"),
-      onShowInDiff: (id) => onShow.current({ kind: "draft", id }),
-      onFix: author ? (id) => onFix.current(id) : null,
-      triage: triageCtx,
-    }),
-    [meta, asker, checked, explainId, toggleDraft, triageCtx, author],
-  );
 
   // ---------- Fix it (plan r3 UI-FIX) ----------
   // useConsult comes after useFix, so the Fix list footer reads it through this ref.
@@ -220,6 +225,101 @@ export function useReview(
       go: reveal,
     }),
     [o.threads, reveal],
+  );
+
+  // ---------- Talks about findings (docs/plans/review-v2/spec.md section 2.1) ----------
+  // items: the findings with an open talk under their card. threads: the threads of posted findings with an open talk under them.
+  const [talkItems, setTalkItems] = useState<ReadonlySet<number>>(() => new Set());
+  const [talkThreadIds, setTalkThreadIds] = useState<ReadonlySet<number>>(() => new Set());
+  const posts = usePosts(pr.id).data;
+  const talkable = useMemo(() => talkThreads(posts), [posts]);
+  const onBrief = useRef(st.openBrief);
+  onBrief.current = st.openBrief;
+  const talkCtx = useMemo<TalkCtx>(
+    () => ({
+      pr: pr.id,
+      meta,
+      announce,
+      onLog: (run) => onLog.current(null, false, run),
+      onBrief: () => onBrief.current(),
+      toDraft: (id) => focusAfter({ id: `rd-${id}`, block: "nearest", flash: true }),
+      notes,
+      cite,
+    }),
+    [pr.id, meta, announce, focusAfter, notes, cite],
+  );
+  const { openDraft: showDraft } = tr;
+  // openDraft opens the fold of the finding and its row. The focus then goes to the box.
+  const openTalk = useCallback(
+    (id: number) => {
+      showDraft(id);
+      setTalkItems((s) => (s.has(id) ? s : new Set(s).add(id)));
+      focusAfter({ id: boxOf(id), block: "nearest", flash: false });
+    },
+    [showDraft, focusAfter],
+  );
+  const talkOpen = useRef(talkItems);
+  talkOpen.current = talkItems;
+  // Stable, so a change of the threads or the notes renders again only the cards with an open talk.
+  const talk = useMemo<DraftCtx["talk"]>(
+    () => ({ toggle: (id) => (talkOpen.current.has(id) ? setTalkItems((s) => without(s, id)) : openTalk(id)) }),
+    [openTalk],
+  );
+  const talkCards = useMemo(() => {
+    const out = new Map<number, ReactNode>();
+    for (const id of talkItems) {
+      const it = ds.find((x) => x.id === id);
+      const close = () => {
+        setTalkItems((s) => without(s, id));
+        focusAfter({ id: `talk-link-${id}`, block: "nearest", flash: false });
+      };
+      if (it) out.set(id, <Talk it={it} onClose={close} ctx={talkCtx} />);
+    }
+    return out;
+  }, [talkItems, ds, talkCtx, focusAfter]);
+  const openThreadTalk = (thread: number) => {
+    const t = talkable.get(thread);
+    if (!t) return;
+    o.show([thread]);
+    setTalkThreadIds((s) => (s.has(thread) ? s : new Set(s).add(thread)));
+    focusAfter({ id: boxOf(t.item), block: "nearest", flash: false });
+  };
+  const onThreadTalk = useRef(openThreadTalk);
+  onThreadTalk.current = openThreadTalk;
+  // The More button of the thread stays mounted, so it takes the focus back at once.
+  const closeThreadTalk = useCallback((thread: number) => {
+    setTalkThreadIds((s) => without(s, thread));
+    document.querySelector<HTMLElement>(`#t-${thread} [data-thread-more]`)?.focus({ preventScroll: true });
+  }, []);
+  const short = meta.runner.short;
+  const talks = useMemo(() => {
+    const out = new Map<number, ThreadTalkEntry>();
+    for (const [thread, t] of talkable)
+      out.set(thread, {
+        label: `Ask ${short} about this comment`,
+        open: () => onThreadTalk.current(thread),
+        chat: talkThreadIds.has(thread) ? (
+          <ThreadTalk item={t.item} run={t.run} onClose={() => closeThreadTalk(thread)} ctx={talkCtx} />
+        ) : null,
+      });
+    return out;
+  }, [talkable, talkThreadIds, short, closeThreadTalk, talkCtx]);
+
+  const draftCtx = useMemo<DraftCtx>(
+    () => ({
+      meta,
+      asker,
+      checked,
+      explainRun: explainId,
+      onToggle: toggleDraft,
+      onFrom: (agent) => onLog.current(agent, false, "review"),
+      onShowInDiff: (id) => onShow.current({ kind: "draft", id }),
+      onFix: author ? (id) => onFix.current(id) : null,
+      triage: triageCtx,
+      talk,
+      revision: { take: (rev, it) => onTriage.current.takeRevision(rev, it), keep: (rev) => onTriage.current.keepMine(rev) },
+    }),
+    [meta, asker, checked, explainId, toggleDraft, triageCtx, author, talk, onTriage],
   );
 
   // ---------- Reply drafts (replies.md step 6) ----------
@@ -284,6 +384,18 @@ export function useReview(
     fix: (thread, key) => fix.open(thread, key),
     fixFinding: (id, key) => fix.openFinding(id, key),
     openDraft,
+    discuss() {
+      const at = document.activeElement;
+      const d = Number(at?.closest("[data-draft]")?.getAttribute("data-draft"));
+      if (d) return openTalk(d);
+      const t = Number(at?.closest("[data-thread]")?.getAttribute("data-thread"));
+      if (t && talkable.has(t)) return openThreadTalk(t);
+      toast.add({
+        title: at?.closest("[data-draft-question]")
+          ? `A question has no talk. Move to a finding. Then t asks ${short} about it.`
+          : `Move to a finding first. Then t asks ${short} about it.`,
+      });
+    },
     layer(target) {
       const inSheet = target instanceof Node && !!document.getElementById("run-log")?.contains(target);
       if (st.composer && !inSheet) return "brief";
@@ -382,10 +494,12 @@ export function useReview(
         isOpen={tr.isDraftOpen}
         triage={triage}
         cards={findingCards}
+        talks={talkCards}
         ctx={draftCtx}
       />
     ),
     cards,
+    talks,
     drafted,
     sheet: log && (
       <RunLog

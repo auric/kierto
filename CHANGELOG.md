@@ -7,6 +7,18 @@
 - Ask now keeps a conversation. The "Follow up" box under the newest answer sends the last three questions and answers with your question, so Claude knows what "it" means. "New question" starts fresh. Earlier conversations show under "Earlier questions".
 - The app now builds and runs on Bun 1.4.4. The third-party notices in Settings show the Bun 1.4.4 license. A database upgrade step that fails now stops the upgrade and keeps all data.
 - "Include in runs" on a Jira attachment asks about your company AI policy only the first time. The new switch "Ask before Claude reads a Jira attachment" in Settings, Jira, brings the question back.
+- The review brief shows the profile picker only when you have two or more review profiles. Explain has its own page.
+- "Keep" and "Dismiss" of a note suggestion on a reply draft now stay together on one line.
+
+### Ask Claude about a finding
+
+- Each finding card has "Ask Claude about this". The key `t` opens the same talk under the card, with the focus in its box. Ask why, push back, or add context. Each message is one run, and Claude reads the code again before it answers.
+- Each answer says "Claude keeps this point", "Claude changed this point", or "Claude withdrew this point", with the reason. It can suggest a note and name the threads that it relies on, as reply drafts do.
+- A changed point never replaces your text. The card shows the new text as a word diff, with "Use the new text" and "Keep mine".
+- A withdrawn point moves to the discarded drafts with "Withdrawn after your talk" and its reason. Restore brings back its earlier state and keeps the mark.
+- On a posted finding, the More menu of its thread has "Ask Claude about this comment". The answer can draft a reply in the thread, marked "from your talk with Claude". Nothing posts.
+- A talk takes up to 20 messages. When the finding changes while Claude works, the answer applies nothing and says so. While another run works, the talk names it and offers "Open it".
+- The new text of a finding is not a finding of its own. Ready to post, the post, the draft counts, and the review history leave it out.
 
 ### Explain this PR
 

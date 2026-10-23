@@ -762,9 +762,9 @@ export function BriefComposer(props: {
     void flush();
   };
   const chosen = profileOf(meta.profiles, profile);
-  // docs/plans/review-v2/spec.md section 1.1: the picker shows only for 2 or more profiles.
-  // shortcut: the Explain profile counts, because it has no button of its own yet; count review profiles only once "Explain this PR" ships.
-  const picker = meta.profiles.length >= 2;
+  // docs/plans/review-v2/spec.md section 1.1: the picker shows only for 2 or more review profiles. Explain has its own page. A brief
+  // that holds an Explain profile keeps the picker, so the user can pick a review profile again.
+  const picker = meta.profiles.filter((p) => !p.explain).length >= 2 || !!chosen?.explain;
   // The checks and the volume come from the full profile of the settings. undefined while they load.
   const setup = useSettings().data?.profiles.find((p) => p.id === chosen?.id);
   const saveProfile = useSaveProfile();

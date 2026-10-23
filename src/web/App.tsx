@@ -482,6 +482,7 @@ function Shell({ stale }: { stale: boolean }) {
       else if (effect === "ask") api?.ask();
       else if (effect === "brief") api?.brief();
       else if (effect === "accept" || effect === "edit" || effect === "discard") api?.triage(effect);
+      else if (effect === "discuss") api?.discuss();
       else if (effect === "post") api?.post();
       else if (effect === "fix" || effect === "fix-list") api?.fix(effect === "fix-list");
       else if (effect === "resolve") api?.resolve();

@@ -20,6 +20,7 @@ import {
   Link,
   LoaderCircle,
   MessageSquare,
+  MessagesSquare,
   Reply,
   RotateCcw,
   SquareCheckBig,
@@ -144,6 +145,10 @@ export type ThreadCtx = {
   onLog: (run: number) => void;
 };
 
+// docs/plans/review-v2/spec.md section 2.1: a thread that a posted finding started. label and open: the More item that opens the talk
+// about the finding. chat: the open talk under the thread, null when it is closed.
+export type ThreadTalkEntry = { label: string; open: () => void; chat: ReactNode };
+
 // False until one frame after `key` changes. Put data-mounting on a container while it is false: the motion classes of
 // index.css then skip the content that mounts with that container.
 export function useSettled(key: unknown): boolean {
@@ -225,7 +230,8 @@ const placeOf = (t: ThreadModel) =>
 
 // A collapsed thread is one line that sums it up. An open thread shows the same facts in its messages, so the line drops them.
 // posts: my replies on the way. target: the message that the reply box answers. draft: the AI reply draft card (WP18).
-// drafted: the thread has a reply draft to accept, or one on the way, so the footer has no Draft reply.
+// drafted: the thread has a reply draft to accept, or one on the way, so the footer has no Draft reply. talk: the thread of a posted
+// finding.
 export const Thread = memo(function Thread({
   t,
   open,
@@ -236,6 +242,7 @@ export const Thread = memo(function Thread({
   target,
   draft,
   drafted,
+  talk,
   ctx,
 }: {
   t: ThreadModel;
@@ -247,6 +254,7 @@ export const Thread = memo(function Thread({
   target?: ReplyTarget;
   draft?: ReactNode;
   drafted: boolean;
+  talk?: ThreadTalkEntry;
   ctx: ThreadCtx;
 }) {
   const a = t.anchor;
@@ -337,7 +345,8 @@ export const Thread = memo(function Thread({
                   />
                 )}
                 {draft}
-                <Footer t={t} drafted={drafted} target={target} ctx={ctx} />
+                {talk?.chat}
+                <Footer t={t} drafted={drafted} target={target} talk={talk} ctx={ctx} />
               </>
             }
           />
@@ -350,7 +359,9 @@ export const Thread = memo(function Thread({
 // Plan pr-view-v4 2.8: the reply box, Draft reply on a your-turn thread without a draft, Fix on an open thread of the own PR,
 // Resolve or Reopen, and More. The note after a prompt copy stays, so the user can read the next step.
 // docs/plans/thread-outcome.md section 10: More opens the thread history under the footer. Its close gives the focus back to More.
-function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean; target?: ReplyTarget; ctx: ThreadCtx }) {
+// docs/plans/review-v2/spec.md section 2.1: on the thread of a posted finding, More opens the talk about the finding.
+function Footer(props: { t: ThreadModel; drafted: boolean; target?: ReplyTarget; talk?: ThreadTalkEntry; ctx: ThreadCtx }) {
+  const { t, drafted, target, talk, ctx } = props;
   const [next, setNext] = useState<PromptCopy | null>(null);
   const [history, setHistory] = useState(false);
   const open = t.turn !== "resolved" && t.last !== null;
@@ -443,6 +454,12 @@ function Footer({ t, drafted, target, ctx }: { t: ThreadModel; drafted: boolean;
                     <Clock aria-hidden />
                     {history ? "Hide history" : "Show history"}
                   </DropdownMenuItem>
+                  {talk && (
+                    <DropdownMenuItem onClick={talk.open}>
+                      <MessagesSquare aria-hidden />
+                      {talk.label}
+                    </DropdownMenuItem>
+                  )}
                   {prompt && (
                     <DropdownMenuItem onClick={() => void ctx.copyPrompt(t.id).then((r) => r && setNext(r))}>
                       <ClipboardCopy aria-hidden />

@@ -133,6 +133,27 @@ async function shots(browser: Browser) {
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.waitForTimeout(500);
   await save(page, "inbox-light");
+  // Ask Claude about a finding (docs/plans/review-v2/spec.md section 2.1): t opens the talk under the first card. The answer changes
+  // the point, so the card shows the new text as a word diff (scripts/demo.ts DISCUSS).
+  const first = page.locator("[data-draft]").first();
+  await first.locator("[data-row-head]").focus();
+  await page.keyboard.press("t");
+  const talkBox = first.locator("[data-talk] textarea");
+  await talkBox.fill("evict() takes the cache lock before it calls flush(). Is this still a blocker?");
+  await talkBox.press("Control+Enter");
+  await first.locator("[data-talk] [data-verdict]").waitFor({ timeout: RUN_MS });
+  await first.locator("[data-revision]").waitFor();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.waitForTimeout(400);
+  // The card actions, the new text, and the talk under them.
+  await toTop(first.locator("[data-revision]"), 150);
+  await save(page, "discuss");
+  // Keep mine and Esc: the card is as before for the next shots.
+  await first.locator("[data-revision]").getByRole("button", { name: "Keep mine" }).click();
+  await first.locator("[data-revision]").waitFor({ state: "detached" });
+  await talkBox.focus();
+  await page.keyboard.press("Escape");
+  await first.locator("[data-talk]").waitFor({ state: "detached" });
   // A discard offers the reason chips on the card. One chip is picked.
   await page.locator("[data-draft]").first().getByRole("button", { name: "Discard" }).click();
   const chips = page.locator("[data-reason-chips]");

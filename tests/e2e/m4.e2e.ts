@@ -269,7 +269,8 @@ test("reset brings back the two shipped profiles", async ({ page, request }) => 
   await expect.poll(() => names(page)).toEqual(SHIPPED);
   expect((await settingsApi(request)).profiles.map((p) => p.name)).toEqual(SHIPPED);
   await closeSettings(page);
-  expect(await briefNames(page)).toEqual(SHIPPED);
+  // One review profile: the brief has no profile picker (docs/plans/review-v2/spec.md section 1.1). Explain has its own page.
+  expect(await briefNames(page)).toEqual([]);
 });
 
 // serve.ts gives the app a synthetic Claude Code config folder with the user skill test-check and the plugin skill e2e-plugin:style.

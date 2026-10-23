@@ -71,7 +71,7 @@ To try PR Review Inbox without a Bitbucket server, run `bun run demo` from sourc
 2. Enter your Bitbucket URL and access token, then click Save. PR Review Inbox tests the connection first.
 3. Optional: in Settings, Jira, connect Jira. The review brief can then fetch the task text. The first "Include in runs" on a task attachment asks you to confirm your company AI policy. "Ask before Claude reads a Jira attachment" in the same section asks again.
 4. The inbox lists the pull requests on your Bitbucket dashboard. To follow another one, paste its URL into the filter.
-5. Open a pull request and press `r` to open the review brief. Add a note and pick a profile.
+5. Open a pull request and press `r` to open the review brief. Add a note. With two or more review profiles, pick one.
 6. Click Start review, or press `Ctrl+Enter`.
 7. Triage each draft: `a` accepts, `e` edits, `d` discards.
 8. Press `p` to post the accepted drafts. PR Review Inbox shows a confirm first.
@@ -86,7 +86,7 @@ The checks add checklists to the review: Security, Threads and races, Performanc
 
 ![Settings, Review profiles: the prompt, the checks, and the volume](docs/screenshots/settings-profiles.webp)
 
-The review brief holds the task, your note, the checks, and the volume: "Only what matters", "Balanced", or "Show everything". A change of a check or of the volume saves to the profile at once. The profile picker shows when you have two or more profiles. A review starts only from the brief.
+The review brief holds the task, your note, the checks, and the volume: "Only what matters", "Balanced", or "Show everything". A change of a check or of the volume saves to the profile at once. The profile picker shows when you have two or more review profiles. Explain has its own page. A review starts only from the brief.
 
 ![The review brief with the checks and the volume](docs/screenshots/brief.webp)
 
@@ -115,6 +115,14 @@ A review and "Review changes since" also read the answers to the questions that 
 The run log shows each tool call of the review and of its subagents. The calls of the check step show under "Check".
 
 ![The run log](docs/screenshots/run-log.webp)
+
+### Ask Claude about a finding
+
+Each finding card has "Ask Claude about this". The key `t` opens the same talk under the card, with the focus in its box. Ask why, push back, or add context, then press "Ask" or `Ctrl+Enter`. Each message is one run, and Claude reads the code again before it answers. The answer starts with "Claude keeps this point", "Claude changed this point", or "Claude withdrew this point", and gives the reason.
+
+A changed point shows the new text on the card as a word diff against your text. "Use the new text" makes it the finding, not accepted. "Keep mine" drops it. A withdrawn point moves to the discarded drafts with its reason, and Restore brings it back. On a posted finding, the More menu of its thread has "Ask Claude about this comment". The answer can draft a reply in the thread, marked "from your talk with Claude". Nothing posts until you accept and post it. A talk takes up to 20 messages. When the finding changes while Claude works, the answer applies nothing and says so. `Esc` closes the talk. The talk stays for the next open.
+
+![A finding with the talk under it: the answer changed the point, and the card shows the new text as a word diff](docs/screenshots/discuss.webp)
 
 ### Replies
 
@@ -206,7 +214,8 @@ Press `?` in the app for the full list.
 | `c` | Review only the commits since the last review |
 | `q` | Ask a question |
 | `w` | Open the Explain page. `Esc` goes back to the pull request. |
-| `Ctrl+Enter` | Start the review from the brief, or send the question |
+| `t` | Ask Claude about the current finding. `Esc` closes the talk. |
+| `Ctrl+Enter` | Start the review from the brief, or send the question or the message |
 | `a` `e` `d` | Accept, edit, or discard the current draft |
 | `p` | Post the accepted items |
 | `f` `F` | Your pull request: open the Fix list |
