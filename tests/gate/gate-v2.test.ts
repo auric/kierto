@@ -19,7 +19,8 @@ afterAll(() => rmSync(NO_TOOLS, { recursive: true, force: true }));
 
 function run(script: string, args: string[], path: string) {
   const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k.toUpperCase() !== "PATH") env[k] = v;
+  // MSYSTEM without git's usr\bin on PATH crashes Git for Windows on a local fetch.
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !["PATH", "MSYSTEM"].includes(k.toUpperCase())) env[k] = v;
   // A set token keeps the OS secret store out of every test.
   Object.assign(env, { PATH: path, GATE_BITBUCKET_TOKEN: "test-token" });
   const r = Bun.spawnSync([process.execPath, script, ...args], { cwd: ROOT, env, stdout: "pipe", stderr: "pipe", timeout: 120_000 });
