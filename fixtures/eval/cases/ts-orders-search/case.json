@@ -42,5 +42,19 @@
       "lines": [20, 26],
       "why": "GET /orders drops the page parameter. The PR text names the change and the client that uses the new parameters."
     }
+  ],
+  "extras": [
+    {
+      "path": "src/orders/search.ts",
+      "side": "new",
+      "lines": [71, 71],
+      "note": "A sort value such as constructor reads an Object.prototype member, so the ORDER BY text breaks and the search answers 500."
+    },
+    {
+      "path": "src/orders/search.ts",
+      "side": "new",
+      "lines": [58, 65],
+      "note": "An impossible date such as 2026-02-30 passes the pattern. The database rejects it, and the search answers 500, not 400."
+    }
   ]
 }

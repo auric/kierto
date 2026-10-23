@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildRepo, type EvalCase, type EvalSet, FIXTURE_SUFFIX, INSTRUCTION_FILE, loadCases, SETS } from "../../scripts/eval/cases";
 import { compareText } from "../../scripts/eval/compare";
-import { DEFAULT_MODEL_WARNING, parseOptions, WARNING } from "../../scripts/eval/run";
+import { DEFAULT_MODEL_WARNING, evalProfile, type Options, parseOptions, WARNING } from "../../scripts/eval/run";
 import { type EvalResult, score } from "../../scripts/eval/score";
 import { PROFILES_VERSION } from "../../src/server/config";
 import { profileRevision, SHIPPED_PROFILES, shippedProfileAt } from "../../src/server/review/catalog";
@@ -111,6 +111,19 @@ describe("eval harness without --real (AC-M2)", () => {
     expect(parseOptions(["--effort", "ultracode"])).toHaveProperty("error");
   });
 
+  test("--verifier sets the verify mode of the run profile and keeps its verifier model and effort", () => {
+    expect(parseOptions([])).toMatchObject({ verifier: null });
+    expect(parseOptions(["--verifier", "bad"])).toHaveProperty("error");
+    const profileOf = (argv: string[]) => {
+      const p = evalProfile(parseOptions(argv) as Options);
+      if ("error" in p) throw new Error(p.error);
+      return p.profile;
+    };
+    expect(profileOf([]).verifier).toEqual(SHIPPED_PROFILES[0]?.verifier as typeof DEFAULT_VERIFIER);
+    expect(profileOf(["--verifier", "off"]).verifier).toEqual({ ...SHIPPED_PROFILES[0]?.verifier, mode: "off" } as typeof DEFAULT_VERIFIER);
+    expect(profileOf(["--verifier", "on", "--profile-version", "4"]).verifier).toEqual(DEFAULT_VERIFIER);
+  });
+
   test("an invalid --model or --effort exits 2 with the usage text", async () => {
     for (const [flag, value, message] of [
       ["--effort", "huge", "--effort must be one of"],
@@ -143,7 +156,7 @@ describe("eval cases", () => {
   let instructionFiles = 0;
 
   test(
-    "each case applies to its base, and each bug, trap, and alt range holds text on its side",
+    "each case applies to its base, and each bug, trap, alt, and extra range holds text on its side",
     async () => {
       for (const [set, all] of sets)
         for (const c of all as EvalCase[]) {
@@ -161,7 +174,8 @@ describe("eval cases", () => {
             bugs: true,
           });
           expect({ id: c.id, traps: within(c.traps.length, lim.traps) }).toEqual({ id: c.id, traps: true });
-          for (const p of [...c.bugs, ...c.traps])
+          const extras = (c.extras ?? []).map((x, n) => ({ ...x, id: `extra ${n + 1}`, alt: undefined }));
+          for (const p of [...c.bugs, ...c.traps, ...extras])
             for (const [i, s] of [p, ...(p.alt ?? [])].entries()) {
               const place = i ? `${p.id} alt ${i}` : p.id;
               const text = (await repo.show(s.side === "new" ? repo.head : repo.base, s.path)).split("\n");
@@ -281,7 +295,7 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       const file = join(out, files[0] as string);
       const result = JSON.parse(readFileSync(file, "utf8")) as EvalResult;
       expect(result).toMatchObject({ format: 1, promptVersion: REVIEW_PROMPT_VERSION, runner: "fake", repeat: 1, volume: "balanced" });
-      expect(result.requested).toEqual({ model: "default", effort: "high" });
+      expect(result.requested).toEqual({ model: "default", effort: "high", verifier: "on" });
       expect(result.profileVersion).toBe(PROFILES_VERSION);
       expect(r.stdout).toContain(DEFAULT_MODEL_WARNING);
       expect(result.cliVersion).toContain("2.1.295");
@@ -340,7 +354,7 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       const re = await bun([RESCORE, file, "--out", rescored]);
       expect(re.stderr).toBe("");
       expect(re.code).toBe(0);
-      expect(re.stdout).toContain("No case has new bugs or traps.");
+      expect(re.stdout).toContain("No case has new bugs, traps, or extras.");
       expect(re.stdout).not.toContain("the fixture head is");
       const again = JSON.parse(readFileSync(rescored, "utf8")) as EvalResult;
       expect(again.rescoredAt).toBeString();
@@ -535,11 +549,11 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
         }),
       );
       const out = join(dir, "out");
-      const args = ["--cases", c.id, "--model", "haiku", "--effort", "low", "--out", out];
+      const args = ["--cases", c.id, "--model", "haiku", "--effort", "low", "--verifier", "off", "--out", out];
       const r = await bun([RUN, ...args, "--runner", process.execPath, FAKE, scenario]);
       expect(r.stderr).toBe("");
       expect(r.code).toBe(0);
-      expect(r.stdout).toContain("model haiku, effort low");
+      expect(r.stdout).toContain("model haiku, effort low, verifier off");
       expect(r.stdout).not.toContain(DEFAULT_MODEL_WARNING);
       const argv = readRecords<{ argv: string[] }>(record).find((x) => x.argv.includes("-p"))?.argv ?? [];
       expect(argv[argv.indexOf("--model") + 1]).toBe("haiku");
@@ -547,8 +561,8 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
 
       const files = readdirSync(out).filter((f) => f.endsWith(".json"));
       const a = JSON.parse(readFileSync(join(out, files[0] as string), "utf8")) as EvalResult;
-      expect(a.requested).toEqual({ model: "haiku", effort: "low" });
-      expect(a.profile).toMatchObject({ model: "haiku", effort: "low" });
+      expect(a.requested).toEqual({ model: "haiku", effort: "low", verifier: "off" });
+      expect(a.profile).toMatchObject({ model: "haiku", effort: "low", verifier: { mode: "off" } });
       const [run] = a.runs;
       expect(run).toMatchObject({ status: "completed", effort: "low" });
       expect(run?.models?.length).toBeGreaterThan(0);
@@ -564,6 +578,10 @@ describe("eval harness with the fake CLI (AC-M3)", () => {
       expect(text).toContain("A and B used different models.");
       expect(text).not.toContain("used different efforts");
       expect(compareText(a, { ...a, requested: { model: "haiku", effort: "high" } })).toContain("A and B used different efforts.");
+      expect(compareText(a, { ...a, requested: { model: "haiku", effort: "low", verifier: "on" } })).toContain(
+        "A and B used different verify modes: off and on. The numbers do not compare.",
+      );
+      expect(text).toContain("verifier off");
     },
     SLOW,
   );

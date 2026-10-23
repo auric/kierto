@@ -51,5 +51,19 @@
       "lines": [26, 29],
       "why": "The route parameter indexes the settings object, but the route pattern allows only the four section names."
     }
+  ],
+  "extras": [
+    {
+      "path": "src/settings/store.ts",
+      "side": "new",
+      "lines": [71, 72],
+      "note": "save() writes the merged section, defaults and overrides included, into the row. Later default or overrides changes no longer apply to that section."
+    },
+    {
+      "path": "src/settings/store.ts",
+      "side": "new",
+      "lines": [66, 66],
+      "note": "A get() that started before a save() stores its old values in the cache after the save cleared it, so reads stay stale for cacheMs."
+    }
   ]
 }

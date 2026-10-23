@@ -61,13 +61,13 @@ bun run eval -- --real --set hard --repeat 2
 
 ## Re-score a result file
 
-`bun run eval:rescore <result.json> [--out <file>]` scores the runs of a result file again with the bugs and traps of the current case files. It needs no CLI and no network.
+`bun run eval:rescore <result.json> [--out <file>]` scores the runs of a result file again with the bugs, traps, and extras of the current case files. It needs no CLI and no network.
 
 - It prints the suite numbers with the stored and the current bugs and traps, and the delta. `--out` writes the re-scored result file, which `eval:compare` reads. It never changes the input file.
 - It finds each case by its ID in all sets. A case with no fixture keeps its stored bugs and traps.
 - It builds each case repository again and warns when the head commit differs from the file: the runs then reviewed other code.
 
-Re-score a baseline after you add `alt` places, then compare it with a later run:
+Re-score a baseline after you add `alt` places or `extras`, then compare it with a later run:
 
 ```
 bun run eval:rescore eval-results/<baseline>.json --out eval-results/<baseline>-rescored.json
@@ -84,7 +84,7 @@ Run the same command on the new head, then compare the two files:
 bun run eval:compare eval-results/<baseline>.json eval-results/<new>.json
 ```
 
-It prints one table per metric with the delta, for all cases and for each case. It warns when a case changed between the two files; the numbers of such a case do not compare. It also warns when the two files used different models or efforts, or profiles with different revisions. The revision hashes each profile field that changes the run, so a file without a profile version still compares by its revision.
+It prints one table per metric with the delta, for all cases and for each case. It warns when a case changed between the two files; the numbers of such a case do not compare. It also warns when the two files used different models, efforts, or verify modes, or profiles with different revisions. The revision hashes each profile field that changes the run, so a file without a profile version still compares by its revision.
 
 ## Options
 
@@ -97,6 +97,7 @@ It prints one table per metric with the delta, for all cases and for each case. 
 - The run prints `Model:` and `Effort:`: the value of the profile after `--model` and `--effort`, else the default of your Claude Code settings.
 - `--model <name>`: the model of the runs, for this eval only. A model alias such as `haiku`, `sonnet`, or `opus`, or a full model ID such as `claude-opus-5-5`. Default: the model of the profile, else your Claude Code default.
 - `--effort low|medium|high|xhigh|max`: the effort of the runs, for this eval only. Default: the effort of the profile (high for the current Review profile), else your Claude Code default.
+- `--verifier on|off`: the verify mode of the profile, for this eval only. `off` runs the finder only. The result file records the mode as `requested.verifier`, and the run prints it. `eval:compare` warns when two files used different modes. Default: the mode of the profile (on).
 - `--repeat N`: runs of each case, 1 to 10. Default: 1.
 - `--out <folder>`: the folder for the result file. Default: `eval-results/` in the repository, which git ignores.
 - `--keep`: keep the temp folders of each case for a look at the run.
@@ -111,10 +112,12 @@ It prints one table per metric with the delta, for all cases and for each case. 
 - trap rate: shown items on a trap that match no bug, over all traps.
 - noise: shown items that match no bug and no trap, per case.
 - false positives: shown items that match no bug, trap hits included, per case. For a case with no bug, it is the number of shown items.
+- extras matched: shown items on an `extras` place that match no bug, per case. Such an item counts for no other metric: not for precision, noise, false positives, or the trap rate.
 - severity ok: found bugs whose best shown match has at least the minimum severity, over found bugs.
 - candidate recall: bugs that any item matched, refuted and duplicate items included. It shows what a verify phase lost.
 - Since prompt version 2.1, each review runs a finder process and then a check process. A finding that the check refutes or marks duplicate leaves the shown items, so recall drops, but candidate recall still counts it. The result file records the verdict counts as `verify` and the time and usage of each phase as `phases`. The cost is the sum of both phases.
 - Since prompt version 2.2, the finder and the check also read `./context/pr-context.md`, and their agents get the PR context rules (spec.md section 2.10).
+- Since prompt version 2.3, a gap of the check phase goes to `notChecked` and does not make the run incomplete. The Build section of `pr-context.md` stays out of coverage. A rule finding that quotes a rule of another scope stays as a core finding.
 - Each number is the mean over the repeats, with the min and the max.
 
 ## v1 cases
@@ -156,6 +159,7 @@ Each case folder holds:
 
 - `case.json`: the PR title and text, the optional task text (it becomes `context/task.md`), the optional project rules text (it becomes the extra instructions of the repository), the bugs, and the traps. Each bug and trap names a path, a side, and a line range on that side. `scripts/eval/cases.ts` has the schema.
 - `alt` (optional, on a bug or a trap): more places of the same bug or trap, each with a path, a side, and a line range. An item on any place matches. Add one only where a fix can go too: a declaration and its definition, a caller and its changed callee, or a field that must become atomic. Each alt range must hold text, like the main range.
+- `extras` (optional): real issues of the change that are no seeded bug, each with a path, a side, a line range, and a note. A shown item on an extra counts only for `extras matched`. Add one only for an issue that you checked in the fixture source. Each extra range must hold text.
 - `base/`: the files of the base commit, which is also the target branch. A `CLAUDE.md`, `CLAUDE.local.md`, or `AGENTS.md` file is stored with the suffix `.fixture`, so Claude Code sessions in this repository never load it as instructions. The harness writes it under its real name into the temp repository. The loader refuses such a file without the suffix.
 - `head.patch`: a unified diff that `git apply` applies to `base/`. Make it with `git diff --no-renames` in a scratch repository. The app diffs with `git diff -M`, so check that a moved file does not pair as a rename (`git diff -M --summary`) when a case needs the whole move in view.
 

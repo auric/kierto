@@ -593,11 +593,12 @@ describe("verify phase in a review run", () => {
       const d = await h.done(h.start());
       expect(d.run.summary?.dropped.map((x) => [x.title, x.reason])).toEqual([
         ["Title 0", "unchanged"],
-        ["Title 3", "rule"],
         ["Title 4", "rule"],
       ]);
       const kept = h.findings(d).map((i) => h.payload(i));
-      expect(kept.map((p) => p.title)).toEqual(["Title 1", "Title 2", "Title 5", "Title 6"]);
+      expect(kept.map((p) => p.title)).toEqual(["Title 1", "Title 2", "Title 3", "Title 5", "Title 6"]);
+      // A rule quoted outside its scope keeps the finding as a core finding.
+      expect(kept[2]).toMatchObject({ module: "core", rule: "" });
       expect(kept[0]?.anchor.state).toBe("outside");
       expect(kept[0]?.cause?.anchor).toMatchObject({ state: "exact", path: "src/server/app.ts", line: 21, lineEnd: 21 });
     },

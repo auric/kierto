@@ -475,7 +475,7 @@ describe("changed lines, causes, and rules", () => {
     expect(own.findings[0]?.cause).toEqual({ ...added, line: 14, anchorText: "const a13 = 13;" });
   });
 
-  test("AC-R8: a rule finding needs its quote in an instruction file whose scope covers the path; whitespace collapses", () => {
+  test("AC-R8: a rule quote must be in the instructions; a quote from another scope keeps the finding as core; whitespace collapses", () => {
     const rules = [
       { scope: null, text: "## Root\n\nLog   no\ntokens." },
       { scope: "src", text: "Name each lock after the data it guards." },
@@ -495,11 +495,17 @@ describe("changed lines, causes, and rules", () => {
       ],
       { rules },
     );
-    expect(r.dropped.map((d) => [d.rule, d.reason])).toEqual([
-      ["Every query has a limit.", "rule"],
-      ["Never use tabs.", "rule"],
+    expect(r.dropped.map((d) => [d.rule, d.reason])).toEqual([["Never use tabs.", "rule"]]);
+    expect(r.kept).toEqual([0, 1, 2, null, 3, 4, 5]);
+    // The db rule quoted for src/a.ts is out of its scope: the finding stays with no module and no rule.
+    expect(r.findings.map((f) => [f.module, f.rule])).toEqual([
+      ["rules", "Log no tokens."],
+      ["rules", "  Name each lock\nafter the data it guards. "],
+      ["core", ""],
+      ["rules", "Every query has a limit."],
+      ["core", "Never use tabs."],
+      ["rules", "  "],
     ]);
-    expect(r.kept).toEqual([0, 1, null, null, 2, 3, 4]);
     // No instructions: every rule finding drops.
     expect(drops(run([rule({ rule: "Log no tokens." })]))).toEqual(["rule"]);
   });
@@ -513,7 +519,11 @@ describe("changed lines, causes, and rules", () => {
       ],
       { rules: [{ scope: "src/old", text: "Keep r5." }, ...rules] },
     );
-    expect(drops(r)).toEqual(["rule", "rule"]);
+    expect(drops(r)).toEqual([]);
+    expect(r.findings.map((f) => [f.module, f.rule])).toEqual([
+      ["core", ""],
+      ["core", ""],
+    ]);
     const base = run(
       [F({ path: "src/old-name.ts", side: "old", line: 5, anchorText: "const r5 = 5;", module: "rules", rule: "Keep r5." })],
       {
@@ -521,6 +531,7 @@ describe("changed lines, causes, and rules", () => {
       },
     );
     expect(drops(base)).toEqual([]);
+    expect(base.findings[0]).toMatchObject({ module: "rules", rule: "Keep r5." });
   });
 
   test("dedupe: overlapping ranges on one path and side form groups by transitivity, numbered by their first finding", () => {

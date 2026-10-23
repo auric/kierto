@@ -101,7 +101,7 @@ describe("finding v2 (AC-R14)", () => {
   });
 
   test("the review v2 prompts with the PR context rules ship as prompt version 2.2 (2.1: without them, 2.0: no verify phase)", () => {
-    expect(REVIEW_PROMPT_VERSION).toBe("2.2");
+    expect(REVIEW_PROMPT_VERSION).toBe("2.3");
   });
 });
 

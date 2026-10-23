@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Re-scores an eval result file with the bugs and traps of the current case fixtures, offline (docs/plans/review-v2/spec.md section 4.3).
+// Re-scores an eval result file with the bugs, traps, and extras of the current case fixtures, offline (docs/plans/review-v2/spec.md section 4.3).
 // Usage: bun run eval:rescore <result.json> [--out <file>]. Exit codes: 0 done, 2 a usage error or an unreadable file.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { buildRepo, type EvalBug, type EvalTrap, findCase } from "./cases";
+import { buildRepo, type EvalBug, type EvalExtra, type EvalTrap, findCase } from "./cases";
 import { readResult, suiteDelta, summaryText } from "./compare";
 import { type EvalResult, score } from "./score";
 
-export type CaseTruth = { head: string; bugs: EvalBug[]; traps: EvalTrap[] };
+export type CaseTruth = { head: string; bugs: EvalBug[]; traps: EvalTrap[]; extras: EvalExtra[] };
 
 // current: the truth of the current fixtures by case ID. A case with no fixture keeps its stored bugs and traps.
 export function rescore(r: EvalResult, current: Map<string, CaseTruth>, at: string): { result: EvalResult; notes: string[] } {
@@ -27,10 +27,10 @@ export function rescore(r: EvalResult, current: Map<string, CaseTruth>, at: stri
       notes.push(
         `Case ${c.id}: the fixture head is ${now.head.slice(0, 12)}, the runs reviewed ${c.head.slice(0, 12)}. Its numbers can be wrong.`,
       );
-    if (JSON.stringify([c.bugs, c.traps]) !== JSON.stringify([now.bugs, now.traps])) changed.push(c.id);
-    return { ...c, bugs: now.bugs, traps: now.traps };
+    if (JSON.stringify([c.bugs, c.traps, c.extras ?? []]) !== JSON.stringify([now.bugs, now.traps, now.extras])) changed.push(c.id);
+    return { ...c, bugs: now.bugs, traps: now.traps, extras: now.extras };
   });
-  notes.push(changed.length ? `Cases with new bugs or traps: ${changed.join(", ")}.` : "No case has new bugs or traps.");
+  notes.push(changed.length ? `Cases with new bugs, traps, or extras: ${changed.join(", ")}.` : "No case has new bugs, traps, or extras.");
   return { result: { ...r, cases, rescoredAt: at }, notes };
 }
 
@@ -43,7 +43,7 @@ async function currentTruth(r: EvalResult): Promise<Map<string, CaseTruth>> {
       const fx = findCase(c.id);
       if (!fx) continue;
       const repo = await buildRepo(fx, mkdtempSync(join(tmp, `${c.id}-`)));
-      out.set(c.id, { head: repo.head, bugs: fx.bugs, traps: fx.traps });
+      out.set(c.id, { head: repo.head, bugs: fx.bugs, traps: fx.traps, extras: fx.extras ?? [] });
     }
     return out;
   } finally {

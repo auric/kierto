@@ -230,6 +230,14 @@ describe("verdicts", () => {
 });
 
 describe("settle", () => {
+  test("a gap of the verify phase goes to notChecked and keeps the run complete", () => {
+    const check = outcome({ verdicts: [V(1, "confirmed")], coverage: { ...NONE, unavailable: ["x"] } });
+    const e = settle(found([C(1)]), input({ check: run(check, 1), written: 1 }));
+    expect(e.status).toBe("completed");
+    expect(e.result?.summary.coverage.unavailable).toEqual([]);
+    expect(e.result?.summary.coverage.notChecked).toEqual(["Check: x"]);
+  });
+
   test("verdicts and caps make the items, the links, the counts, the phases, and the usage of both phases", () => {
     const cands = [
       C(1, {}, { group: 1 }),

@@ -9,6 +9,8 @@
 - "Include in runs" on a Jira attachment asks about your company AI policy only the first time. The new switch "Ask before Claude reads a Jira attachment" in Settings, Jira, brings the question back.
 - The review brief shows the profile picker only when you have two or more review profiles. Explain has its own page.
 - "Keep" and "Dismiss" of a note suggestion on a reply draft now stay together on one line.
+- A review no longer shows "incomplete" only because the app could not read the build status.
+- A finding that cites a project rule from another folder now stays in the list. Only a quoted rule that no instruction file holds drops the finding.
 
 ### Build a Jira task
 

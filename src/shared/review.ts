@@ -14,7 +14,8 @@ const lineNo = z.number().int().min(1);
 
 // Raise it with each change of the review agent prompts. A run row with prompt_version NULL reads as "1".
 // "2.0": the finder prompts of review v2 without the verify phase. "2.1": with the verify phase. "2.2": with the PR context rules.
-export const REVIEW_PROMPT_VERSION = "2.2";
+// "2.3": the Build section of pr-context.md stays out of coverage, and a rule finding out of its scope stays as core.
+export const REVIEW_PROMPT_VERSION = "2.3";
 
 const place = {
   path: z.string().describe("File path relative to the repository root, with / separators."),
@@ -576,7 +577,7 @@ export type AnchoredFinding = Omit<StoredFinding, "cause"> & { cause?: (Cause & 
 
 // path: absolute, "..", or outside the snapshot. file: no such file on that side. match: the quote is not in the file.
 // size: the file or the range is above the scan limits. unchanged: neither the anchor nor the cause holds a changed line.
-// rule: no loaded instruction file whose scope covers the path holds the quoted rule.
+// rule: no loaded instruction file holds the quoted rule.
 export type DropReason = "path" | "file" | "match" | "size" | "unchanged" | "rule";
 export type DroppedFinding = StoredFinding & { reason: DropReason };
 

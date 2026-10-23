@@ -436,8 +436,7 @@ export function settle(f: Found, s: SettleInput): Ending {
       const c = parsed.data.coverage;
       coverage.skipped.push(...v.skipped);
       coverage.read = union(coverage.read, c.read);
-      coverage.notChecked.push(...[...c.skipped, ...c.notChecked].map((x) => `Check: ${x}`));
-      coverage.unavailable = union(coverage.unavailable, c.unavailable);
+      coverage.notChecked.push(...[...c.skipped, ...c.notChecked, ...c.unavailable].map((x) => `Check: ${x}`));
     }
     coverage.unavailable = union(coverage.unavailable, unavailable(o, s.servers, []));
   }

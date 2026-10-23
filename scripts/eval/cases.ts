@@ -38,6 +38,8 @@ const spot = { path: z.string().min(1), side: z.enum(["new", "old"]), lines: ran
 const place = { id: z.string().min(1), ...spot, alt: z.array(z.object(spot)).min(1).optional() };
 export const evalBug = z.object({ ...place, severityMin: z.enum(severities), module: z.enum(MODULE_IDS), note: z.string().min(1) });
 export const evalTrap = z.object({ ...place, why: z.string().min(1) });
+// A real issue that is no seeded bug. A shown item on it counts for no metric but extras.
+export const evalExtra = z.object({ ...spot, note: z.string().min(1) });
 // tests/eval/harness.test.ts checks the bug, trap, and line counts of each set.
 export const caseFile = z.object({
   id: z.string().regex(CASE_ID),
@@ -48,9 +50,11 @@ export const caseFile = z.object({
   instructions: z.string().optional(),
   bugs: z.array(evalBug).max(3),
   traps: z.array(evalTrap).min(1).max(4),
+  extras: z.array(evalExtra).optional(),
 });
 export type EvalBug = z.infer<typeof evalBug>;
 export type EvalTrap = z.infer<typeof evalTrap>;
+export type EvalExtra = z.infer<typeof evalExtra>;
 export type CaseFile = z.infer<typeof caseFile>;
 // base: the files of base/ by repository path. changedLines: added and removed lines of head.patch.
 export type EvalCase = CaseFile & { dir: string; base: Map<string, string>; patch: string; changedLines: number };

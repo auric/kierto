@@ -12,6 +12,7 @@
       "path": "src/payments/capture.ts",
       "side": "new",
       "lines": [22, 29],
+      "alt": [{ "path": "src/payments/capture.ts", "side": "new", "lines": [44, 46] }],
       "severityMin": "major",
       "module": "core",
       "note": "Non-idempotent retry: each attempt sends a new randomUUID() idempotency key. The unchanged gateway.ts says that a GatewayTimeout can follow a created charge and that only a repeated key prevents a second charge, so a retried timeout, and each later run of the failed job, charges the card again. subscriptions.ts shows the stable key."

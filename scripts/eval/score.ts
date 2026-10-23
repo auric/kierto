@@ -5,7 +5,7 @@
 import type { RunPhase, RunUsage, VerifySummary, Volume } from "../../src/shared/dto";
 import type { AnchorState, Check, Coverage, DisplayGroup, Severity, Side } from "../../src/shared/review";
 import type { RunStatus } from "../../src/shared/run-log";
-import type { EvalBug, EvalSet, EvalTrap } from "./cases";
+import type { EvalBug, EvalExtra, EvalSet, EvalTrap } from "./cases";
 
 export type { Check, Severity, Volume };
 // run.ts sets it with displayGroup of src/shared/review.ts. Scoring reads the stored group, so older result files keep their groups:
@@ -77,6 +77,8 @@ export type EvalCaseInfo = {
   head: string;
   bugs: EvalBug[];
   traps: EvalTrap[];
+  // Absent in files made before this field existed: none.
+  extras?: EvalExtra[];
 };
 
 export type EvalResult = {
@@ -92,7 +94,8 @@ export type EvalResult = {
   profile: Record<string, unknown> & { id: string; name: string; revision: string };
   volume: Volume | null;
   // The --model and --effort values of the run, or "default" for no flag. Absent in files made before this field existed.
-  requested?: { model: string; effort: string };
+  // verifier: the verify mode that ran, after --verifier. Absent in files made before the flag existed.
+  requested?: { model: string; effort: string; verifier?: string };
   // The case set. Absent in files made before this field existed: v1.
   set?: EvalSet;
   // Set by eval:rescore, which replaces the bugs and traps of each case with the current fixture.
@@ -115,6 +118,7 @@ export const METRICS = [
   "trapRate",
   "noise",
   "falsePositives",
+  "extras",
   "severityOk",
   "candidateRecall",
   "minutes",
@@ -134,6 +138,7 @@ type Tally = {
   traps: number;
   trapHits: number;
   noise: number;
+  extraHits: number;
   severityOk: number;
   candidates: number;
   minutes: number | null;
@@ -150,15 +155,19 @@ function tally(c: EvalCaseInfo, r: CaseRun): Tally {
     if (best >= RANK[b.severityMin]) severityOk++;
   }
   const bugHit = (i: EvalItem) => c.bugs.some((b) => matches(i, b));
-  const trapHit = (i: EvalItem) => c.traps.some((t) => matches(i, t));
+  // An item on an extra counts as neither a bug hit, nor noise, nor a false positive. It leaves the shown count.
+  const extraHit = (i: EvalItem) => !bugHit(i) && (c.extras ?? []).some((x) => matches(i, x));
+  const trapHit = (i: EvalItem) => !extraHit(i) && c.traps.some((t) => matches(i, t));
+  const extraHits = shown.filter(extraHit).length;
   return {
     bugs: c.bugs.length,
     found: found.length,
-    shown: shown.length,
+    shown: shown.length - extraHits,
     shownMatched: shown.filter(bugHit).length,
     traps: c.traps.length,
     trapHits: shown.filter((i) => !bugHit(i) && trapHit(i)).length,
-    noise: shown.filter((i) => !bugHit(i) && !trapHit(i)).length,
+    noise: shown.filter((i) => !bugHit(i) && !extraHit(i) && !trapHit(i)).length,
+    extraHits,
     severityOk,
     candidates: c.bugs.filter((b) => r.items.some((i) => matches(i, b))).length,
     minutes: r.minutes,
@@ -183,6 +192,7 @@ function metrics(ts: Tally[]): Record<Metric, number | null> {
     trapRate: ratio(sum(ts, "trapHits"), sum(ts, "traps")),
     noise: ratio(sum(ts, "noise"), ts.length),
     falsePositives: ratio(sum(ts, "shown") - sum(ts, "shownMatched"), ts.length),
+    extras: ratio(sum(ts, "extraHits"), ts.length),
     severityOk: ratio(sum(ts, "severityOk"), sum(ts, "found")),
     candidateRecall: ratio(sum(ts, "candidates"), sum(ts, "bugs")),
     minutes: meanOf(ts.map((t) => t.minutes)),

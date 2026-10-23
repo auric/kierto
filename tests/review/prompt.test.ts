@@ -499,10 +499,17 @@ describe("review v2 finder prompt", () => {
       .map((a) => a.prompt)
       .join("\n---\n");
     expect({ version: REVIEW_PROMPT_VERSION, finder: sha(finder), check: sha(check) }).toEqual({
-      version: "2.2",
-      finder: "181e470425a0481dd761fc36df7cfbfaee31717d38547f6456cbd6b9cb0ee886",
-      check: "9a5f5490cb6bd0ad329704be829426a3b1a8877d62cbe43cda350a023530ff94",
+      version: "2.3",
+      finder: "94ad3e1c7159338f63bbb3b7d360c77344908912743d5b244efc8e8abf08128c",
+      check: "4c91fce5912f9ddce955519e0d876c94da61486d7b79a31d5e08033bf548abda",
     });
+  });
+
+  test("the finder and the verifier keep the Build section of pr-context.md out of coverage", () => {
+    const line = "The Build section of ./context/pr-context.md comes from the app. Never list it in coverage.\n";
+    const run = { ...FULL, prContext: true };
+    for (const a of [mainAgent(allModules, run), verifyAgent(allModules, run)]) expect(a.prompt).toContain(line);
+    expect(mainAgent(allModules, FULL).prompt).not.toContain(line);
   });
 
   test("S3 and ASD-STE100: every rule sentence has at most 20 words, with no CRITICAL, MUST, or IMPORTANT", () => {

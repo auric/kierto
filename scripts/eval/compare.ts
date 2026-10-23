@@ -12,6 +12,7 @@ const LABEL: Record<Metric, string> = {
   trapRate: "trap rate: shown findings on a trap, per trap",
   noise: "noise: shown findings on no bug and no trap, per case",
   falsePositives: "false positives: shown findings on no bug, trap hits included, per case",
+  extras: "extras matched: shown findings on a known real issue that is no seeded bug, per case",
   severityOk: "severity ok: found bugs at or above their minimum severity",
   candidateRecall: "candidate recall: bugs that any finding matched, hidden ones included",
   minutes: "minutes per case",
@@ -25,6 +26,7 @@ const DIGITS: Record<Metric, number> = {
   trapRate: 1,
   noise: 2,
   falsePositives: 2,
+  extras: 2,
   severityOk: 1,
   candidateRecall: 1,
   minutes: 1,
@@ -61,12 +63,16 @@ const initModels = (r: EvalResult) => new Set(r.runs.flatMap((x) => (x.model ? [
 const usedEfforts = (r: EvalResult) =>
   new Set(r.runs.flatMap((x) => (x.effort === null ? [] : [x.effort === "default" ? (x.effortDefault ?? "default") : x.effort])));
 
+// The verify mode that ran: the recorded flag result, else the mode of the stored profile. Prompt version 1 has no verify phase.
+const verifierOf = (r: EvalResult) =>
+  r.requested?.verifier ?? (r.profile.verifier as { mode?: string } | undefined)?.mode ?? "not recorded";
+
 const header = (r: EvalResult) => {
   // A file made before "requested" existed does not record the flags. The models and efforts that ran still show.
   const q = r.requested ?? { model: "not recorded", effort: "not recorded" };
   const runs = `${r.cases.length} case${r.cases.length === 1 ? "" : "s"} x ${r.repeat}`;
   const rescored = r.rescoredAt ? `, re-scored ${r.rescoredAt}` : "";
-  return `commit ${r.commit}${r.dirty ? " (uncommitted changes)" : ""}, set ${r.set ?? "v1"}${rescored}, prompt version ${r.promptVersion}, profile ${r.profile.id}${r.profileVersion === undefined ? "" : ` of profile version ${r.profileVersion}`} (revision ${r.profile.revision.slice(0, 8)}), volume ${r.volume ?? "none"}, CLI ${r.cliVersion}, model ${q.model} (ran ${list(usedModels(r))}), effort ${q.effort} (ran ${list(usedEfforts(r))}), ${r.runner} CLI, ${runs}`;
+  return `commit ${r.commit}${r.dirty ? " (uncommitted changes)" : ""}, set ${r.set ?? "v1"}${rescored}, prompt version ${r.promptVersion}, profile ${r.profile.id}${r.profileVersion === undefined ? "" : ` of profile version ${r.profileVersion}`} (revision ${r.profile.revision.slice(0, 8)}), volume ${r.volume ?? "none"}, CLI ${r.cliVersion}, model ${q.model} (ran ${list(usedModels(r))}), effort ${q.effort} (ran ${list(usedEfforts(r))}), verifier ${verifierOf(r)}, ${r.runner} CLI, ${runs}`;
 };
 
 export function summaryText(r: EvalResult, s: Score = score(r)): string {
@@ -98,7 +104,7 @@ export function suiteDelta(a: Score, b: Score, names: [string, string]): string 
 }
 
 // Case truth that differs between two files: the numbers of that case do not compare.
-const truth = (r: EvalResult) => new Map(r.cases.map((c) => [c.id, JSON.stringify([c.head, c.bugs, c.traps])]));
+const truth = (r: EvalResult) => new Map(r.cases.map((c) => [c.id, JSON.stringify([c.head, c.bugs, c.traps, c.extras ?? []])]));
 
 export function compareText(a: EvalResult, b: EvalResult): string {
   const sa = score(a);
@@ -119,6 +125,9 @@ export function compareText(a: EvalResult, b: EvalResult): string {
   if ((qa && qb && qa.model !== qb.model) || !same(ran(a), ran(b))) out.push("A and B used different models. The numbers do not compare.");
   if ((qa && qb && qa.effort !== qb.effort) || !same(usedEfforts(a), usedEfforts(b)))
     out.push("A and B used different efforts. The numbers do not compare.");
+  const known = verifierOf(a) !== "not recorded" && verifierOf(b) !== "not recorded";
+  if (known && verifierOf(a) !== verifierOf(b))
+    out.push(`A and B used different verify modes: ${verifierOf(a)} and ${verifierOf(b)}. The numbers do not compare.`);
   // The revision hashes each profile field that changes the run, so equal revisions mean equal profiles whatever the versions say.
   if (a.profile.revision !== b.profile.revision)
     out.push(

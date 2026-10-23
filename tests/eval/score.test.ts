@@ -280,8 +280,8 @@ describe("eval:rescore", () => {
       x.id === "B2" ? { ...x, alt: [{ path: "a.ts", side: "new" as const, lines: [70, 70] as [number, number] }] } : x,
     );
     const truth = new Map([
-      ["a", { head: "h1", bugs, traps: a.traps }],
-      ["b", { head: "h9", bugs: b.bugs, traps: b.traps }],
+      ["a", { head: "h1", bugs, traps: a.traps, extras: [] }],
+      ["b", { head: "h9", bugs: b.bugs, traps: b.traps, extras: [] }],
     ]);
     const { result, notes } = rescore(RESULT, truth, "2026-10-22T01:00:00.000Z");
     expect(result.cases.map((c) => c.bugs)).toEqual([bugs, b.bugs]);
@@ -291,9 +291,32 @@ describe("eval:rescore", () => {
     expect(score(result).suite.recall).toEqual({ mean: 2 / 3, min: 1 / 3, max: 1 });
     expect(notes).toEqual([
       "Case b: the fixture head is h9, the runs reviewed h2. Its numbers can be wrong.",
-      "Cases with new bugs or traps: a.",
+      "Cases with new bugs, traps, or extras: a.",
     ]);
     expect(RESULT.cases[0]?.bugs[1]).not.toHaveProperty("alt");
+  });
+
+  test("applies the extras of the current fixture: an item on an extra counts for no metric but extras", () => {
+    // a.ts:70 holds the nit item of repeat 1. a.ts:12 overlaps the item on bug B1, which stays a bug hit.
+    const extras = [
+      { path: "a.ts", side: "new" as const, lines: [70, 70] as [number, number], note: "n" },
+      { path: "a.ts", side: "new" as const, lines: [12, 12] as [number, number], note: "n" },
+    ];
+    const truth = new Map([
+      ["a", { head: "h1", bugs: a.bugs, traps: a.traps, extras }],
+      ["b", { head: "h2", bugs: b.bugs, traps: b.traps, extras: [] }],
+    ]);
+    const { result, notes } = rescore(RESULT, truth, "2026-10-22T01:00:00.000Z");
+    expect(notes).toEqual(["Cases with new bugs, traps, or extras: a."]);
+    const s = score(result).suite;
+    // Repeat 1: 2 of 4 counted shown items match, 1 noise item and 2 false positives in 2 cases, 1 extra.
+    expect(s.recall).toEqual(score(RESULT).suite.recall);
+    expect(s.precision).toMatchObject({ min: 0.5, max: 0.5 });
+    expect(s.noise).toEqual({ mean: 0.5, min: 0.5, max: 0.5 });
+    expect(s.falsePositives).toEqual({ mean: 0.75, min: 0.5, max: 1 });
+    expect(s.extras).toEqual({ mean: 0.25, min: 0, max: 0.5 });
+    expect(score(RESULT).suite.extras).toEqual({ mean: 0, min: 0, max: 0 });
+    expect(summaryText(result)).toContain("extras matched: shown findings on a known real issue");
   });
 
   test("a case with no fixture keeps its stored bugs and traps", () => {
@@ -302,7 +325,7 @@ describe("eval:rescore", () => {
     expect(notes).toEqual([
       "Case a has no fixture now. It keeps its stored bugs and traps.",
       "Case b has no fixture now. It keeps its stored bugs and traps.",
-      "No case has new bugs or traps.",
+      "No case has new bugs, traps, or extras.",
     ]);
   });
 });

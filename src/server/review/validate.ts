@@ -217,12 +217,15 @@ export function anchorer(input: Pick<ValidateInput, "diff" | "newFiles" | "oldFi
 // The file of an anchored line: the new path on side new, the base path on side old.
 const sidePath = (a: Anchor, side: Side) => (side === "old" ? (a.oldPath ?? a.path) : a.path);
 
-// spec.md section 1.7 step 5: the rule quote, whitespace collapsed, is in a loaded file whose scope covers the path.
+// spec.md section 1.7 step 5: the rule quote, whitespace collapsed, is in a loaded file whose scope covers the path ("held"), only in
+// files of other scopes ("scope"), or in no file ("missing").
 function ruleCheck(sources: readonly RuleSource[]) {
   const flat = sources.map((s) => ({ scope: s.scope, text: collapse(s.text) }));
-  return (rule: string, path: string) => {
+  return (rule: string, path: string): "held" | "scope" | "missing" => {
     const q = collapse(rule);
-    return flat.some((s) => (s.scope === null || path.startsWith(`${s.scope}/`)) && s.text.includes(q));
+    const quoted = flat.filter((s) => s.text.includes(q));
+    if (quoted.some((s) => s.scope === null || path.startsWith(`${s.scope}/`))) return "held";
+    return quoted.length ? "scope" : "missing";
   };
 }
 
@@ -255,11 +258,14 @@ export function validate(input: ValidateInput): ValidatedResult & { kept: (numbe
       }
       cause = { ...f.cause, anchor: c };
     }
-    if (f.module === "rules" && f.rule.trim() && !holds(f.rule, sidePath(a, f.side))) {
+    const rule = f.module === "rules" && f.rule.trim() ? holds(f.rule, sidePath(a, f.side)) : "held";
+    if (rule === "missing") {
       drop(f, "rule");
       continue;
     }
-    out.kept.push(out.findings.push({ ...f, cause, anchor: a }) - 1);
+    // A rule from another scope does not apply here. The finding stays as a core finding, and the verify phase judges it.
+    const kept = rule === "scope" ? { ...f, module: "core", rule: "" } : f;
+    out.kept.push(out.findings.push({ ...kept, cause, anchor: a }) - 1);
   }
   return out;
 }

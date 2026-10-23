@@ -19,7 +19,16 @@ import { createReviewJobs, type ReviewJobs } from "../../src/server/review/jobs"
 import type { GitRemote } from "../../src/server/review/workspace";
 import { createSecrets } from "../../src/server/secrets";
 import { createSettings } from "../../src/server/settings";
-import { EFFORTS, type Effort, type IssueContext, modelName, profileList, type RunDetail } from "../../src/shared/dto";
+import {
+  EFFORTS,
+  type Effort,
+  type IssueContext,
+  modelName,
+  profileList,
+  type RunDetail,
+  VERIFIER_MODES,
+  type VerifierSetup,
+} from "../../src/shared/dto";
 import { checkOf, displayGroup, type FindingPayload, REVIEW_PROMPT_VERSION } from "../../src/shared/review";
 import { stubListTools } from "../../tests/support/review-fixture";
 import { buildRepo, type EvalCase, type EvalSet, loadCases, SETS } from "./cases";
@@ -42,7 +51,7 @@ const TASK_KEY = "EVAL-1";
 const PROMPT_VERSION = REVIEW_PROMPT_VERSION;
 
 export const USAGE = `Usage: bun run eval -- [--replies] [--real] [--set ${Object.keys(SETS).join("|")}] [--cases all|id,id] [--profile general] [--profile-version ${PROFILES_VERSION}] [--modules security,api]
-  [--volume balanced] [--model opus] [--effort ${EFFORTS.join("|")}] [--repeat 2] [--out <folder>] [--keep] [--runner <command> <args...>]
+  [--volume balanced] [--model opus] [--effort ${EFFORTS.join("|")}] [--verifier ${VERIFIER_MODES.join("|")}] [--repeat 2] [--out <folder>] [--keep] [--runner <command> <args...>]
 --real runs the claude CLI on PATH. --runner runs the given CLI instead and must come last. Without both, the plan prints and the exit code is 2.`;
 
 export type Options = {
@@ -58,6 +67,8 @@ export type Options = {
   // null: no flag, so the CLI default applies.
   model: string | null;
   effort: Effort | null;
+  // null: no flag, so the verify mode of the profile applies.
+  verifier: VerifierSetup["mode"] | null;
   repeat: number;
   out: string;
   keep: boolean;
@@ -82,6 +93,7 @@ export function parseOptions(argv: string[]): Options | { error: string } {
         volume: { type: "string" },
         model: { type: "string" },
         effort: { type: "string" },
+        verifier: { type: "string" },
         repeat: { type: "string", default: "1" },
         out: { type: "string" },
         keep: { type: "boolean", default: false },
@@ -109,6 +121,9 @@ export function parseOptions(argv: string[]): Options | { error: string } {
   const effort = v.effort ?? null;
   if (effort !== null && !(EFFORTS as readonly string[]).includes(effort))
     return { error: `--effort must be one of ${EFFORTS.join(", ")}.` };
+  const verifier = v.verifier ?? null;
+  if (verifier !== null && !(VERIFIER_MODES as readonly string[]).includes(verifier))
+    return { error: `--verifier must be one of ${VERIFIER_MODES.join(", ")}.` };
   return {
     real: v.real ?? false,
     runner,
@@ -120,13 +135,14 @@ export function parseOptions(argv: string[]): Options | { error: string } {
     volume: volume as Volume | null,
     model: model?.data ?? null,
     effort: effort as Effort | null,
+    verifier: verifier as VerifierSetup["mode"] | null,
     repeat,
     out: resolve(v.out ?? join(REPO, "eval-results")),
     keep: v.keep ?? false,
   };
 }
 
-// The profile of the run with the --modules, --volume, --model, and --effort values. A field that this app version does not know is an error, so a
+// The profile of the run with the --modules, --volume, --model, --effort, and --verifier values. A field that this app version does not know is an error, so a
 // result file never names a setup that did not run.
 export function evalProfile(o: Options) {
   const shipped = SHIPPED_PROFILES.some((p) => p.id === o.profile) && shippedProfileAt(o.profile, o.profileVersion ?? PROFILES_VERSION);
@@ -136,6 +152,7 @@ export function evalProfile(o: Options) {
     ...(o.volume && { volume: o.volume }),
     ...(o.model && { model: o.model }),
     ...(o.effort && { effort: o.effort }),
+    ...(o.verifier && shipped && { verifier: { ...shipped.verifier, mode: o.verifier } }),
   };
   const list = profileList.safeParse(SHIPPED_PROFILES.map((p) => (p.id === o.profile ? { ...shipped, ...extra } : p)));
   if (!list.success) return { error: `Invalid profile: ${list.error.issues.map((i) => i.message).join("; ")}` };
@@ -417,7 +434,7 @@ export async function main(argv: string[]): Promise<number> {
     const file = join(o.out, `${new Date().toISOString().replace(/[:.]/g, "-")}-${commit}.json`);
     const profile = p.profile;
     const volume = ((profile as { volume?: Volume }).volume ?? null) as Volume | null;
-    const requested = { model: profile.model ?? "default", effort: profile.effort ?? "default" };
+    const requested = { model: profile.model ?? "default", effort: profile.effort ?? "default", verifier: profile.verifier.mode };
     const result: EvalResult = {
       format: 1,
       createdAt: new Date().toISOString(),
@@ -449,7 +466,7 @@ export async function main(argv: string[]): Promise<number> {
       },
     };
     console.log(
-      `Eval: set ${o.set}, ${count(cases.length, "case")} x ${o.repeat}, ${profileText(o)}, model ${requested.model}, effort ${requested.effort}, prompt version ${PROMPT_VERSION}, CLI ${checked.version}.`,
+      `Eval: set ${o.set}, ${count(cases.length, "case")} x ${o.repeat}, ${profileText(o)}, model ${requested.model}, effort ${requested.effort}, verifier ${requested.verifier}, prompt version ${PROMPT_VERSION}, CLI ${checked.version}.`,
     );
     console.log(runSetup(profile));
     if (o.real) console.log(WARNING);
@@ -470,6 +487,7 @@ export async function main(argv: string[]): Promise<number> {
             head,
             bugs: c.bugs,
             traps: c.traps,
+            extras: c.extras ?? [],
           });
           result.cases = [...info.values()];
         }

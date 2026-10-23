@@ -45,5 +45,19 @@
       "lines": [62, 63],
       "why": "The ignored rename result has a lint suppression with a reason: older archives do not exist during the first rotations."
     }
+  ],
+  "extras": [
+    {
+      "path": "src/rotate.cpp",
+      "side": "new",
+      "lines": [65, 65],
+      "note": "A failed compression keeps the staged file. Its name has a timestamp, so no later rotation removes it."
+    },
+    {
+      "path": "src/rotate.cpp",
+      "side": "new",
+      "lines": [17, 17],
+      "note": "The archives are now named <path>.N.gz. The old uncompressed <path>.1 to <path>.10 archives stay on disk forever."
+    }
   ]
 }
