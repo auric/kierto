@@ -73,8 +73,9 @@ export type ReviewUi = {
   drafted: ReadonlySet<number>;
   sheet: ReactNode;
   api: ReviewApi;
-  // Plan r2 UI-DIFF: the finding drafts, the source head of their run, and the reply draft of each thread.
-  diff: { drafts: ReviewItemDto[]; head: string | null; replies: ReadonlyMap<number, ReviewItemDto> };
+  // Plan r2 UI-DIFF: the finding drafts, the source head of their run, and the reply draft of each thread. checked: the run had the
+  // check step, so each draft card shows its check chip.
+  diff: { drafts: ReviewItemDto[]; head: string | null; replies: ReadonlyMap<number, ReviewItemDto>; checked: boolean };
   // Plan pr-view-v4 2.11 and 2.12: the fix parts of the bottom bar, the Fix list and the apply dialog, and the runner prompt.
   fix: { bar: ReactNode; dialog: ReactNode; copyPrompt: FixUi["copyPrompt"] };
   // docs/plans/session-consult.md parts A to C: the More menu items, the Fix list footer link, the session run row, and their dialogs.
@@ -125,8 +126,9 @@ export function useReview(
   const detail = detailOf(latest, run.data);
   const items = detail?.items ?? NO_ITEMS;
   const replyItems = replies.data ?? NO_ITEMS;
-  const tr = useTriage(pr, { meta, items, replyItems, threads: o.threads, announce: o.announce, focusAfter });
-  const { triage, ds, list, openDraft, triageCtx, onTriage } = tr;
+  const summary = detail?.run.summary;
+  const tr = useTriage(pr, { meta, items, summary, replyItems, threads: o.threads, announce: o.announce, focusAfter });
+  const { triage, ds, groups, list, openDraft, triageCtx, onTriage } = tr;
 
   const onLog = useRef(openLog);
   onLog.current = openLog;
@@ -140,17 +142,19 @@ export function useReview(
   // The questions ask the author. On your own PR, the runner asks you as the author.
   const asker = pr.role === "AUTHOR" ? "the author" : ((pr.authorName ?? pr.authorSlug ?? "the author").split(/\s+/)[0] ?? "the author");
   const { toggleDraft } = tr;
+  const checked = groups.checked;
   const draftCtx = useMemo<DraftCtx>(
     () => ({
       meta,
       asker,
+      checked,
       onToggle: toggleDraft,
       onFrom: (agent) => onLog.current(agent, false, "review"),
       onShowInDiff: (id) => onShow.current({ kind: "draft", id }),
       onFix: author ? (id) => onFix.current(id) : null,
       triage: triageCtx,
     }),
-    [meta, asker, toggleDraft, triageCtx, author],
+    [meta, asker, checked, toggleDraft, triageCtx, author],
   );
 
   // ---------- Fix it (plan r3 UI-FIX) ----------
@@ -249,9 +253,9 @@ export function useReview(
     rereview: st.rereview,
     brief: () => st.openBrief(),
     drafts() {
-      // prototype/v3 goDrafts: the first row of the Drafts section that is not discarded.
+      // prototype/v3 goDrafts: the first row of the Drafts section that is not discarded. A fold draft counts only when no other row exists.
       // The reply drafts come next, in screen order. A press in the Drafts section goes on to them.
-      const first = list.find((i) => i.status !== "discarded") ?? list[0];
+      const first = list.find((i) => i.status !== "discarded") ?? list[0] ?? groups.fold[0];
       const rs = ordered(o.threads, false).flatMap((t) => {
         const it = byThread.get(t.id);
         return it ? [{ thread: t.id, it }] : [];
@@ -280,18 +284,20 @@ export function useReview(
   };
 
   const head = latest?.sourceHead ?? null;
-  const forDiff = useMemo(() => ({ drafts: ds, head, replies: byThread }), [ds, head, byThread]);
-  const { rows, details, qJump } = useRunRecord(pr.id, {
+  const forDiff = useMemo(() => ({ drafts: ds, head, replies: byThread, checked }), [ds, head, byThread, checked]);
+  const { rows, details, qJump, ledger } = useRunRecord(pr.id, {
     meta,
     kinds,
     review: run.data,
     pinned: runLog.pinned.data,
-    findings: ds,
+    groups,
     items,
     fixes: fix.fixes,
     commits: o.commits,
     now: o.now,
     openDraft,
+    restore: (it) => triageCtx.act(it, "restore"),
+    busy: triage.busy,
   });
   const { rr } = st;
   return {
@@ -355,7 +361,19 @@ export function useReview(
     ),
     reviewed: latest !== null,
     draftCount: ds.filter((d) => d.status !== "discarded").length + (qJump?.n ?? 0),
-    drafts: <Drafts items={list} isOpen={tr.isDraftOpen} triage={triage} cards={findingCards} ctx={draftCtx} />,
+    drafts: (
+      <Drafts
+        groups={groups}
+        questions={tr.qs}
+        ledger={ledger}
+        foldOpen={tr.foldOpen}
+        onFold={tr.toggleFold}
+        isOpen={tr.isDraftOpen}
+        triage={triage}
+        cards={findingCards}
+        ctx={draftCtx}
+      />
+    ),
     cards,
     drafted,
     sheet: log && (

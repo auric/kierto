@@ -26,6 +26,7 @@ import {
   KIND_LABEL,
   type LogNode,
   limitText,
+  logPhases,
   logTree,
   seconds,
   setupText,
@@ -150,6 +151,7 @@ export function RunLog(props: {
 
   const run = detail?.run;
   const tree = useMemo(() => (events ? logTree(events) : []), [events]);
+  const phased = useMemo(() => logPhases(tree), [tree]);
   const toggle = useCallback((e: RunEvent) => setFolds((f) => new Map(f).set(e.id, !isOpen(f, e))), []);
   const instructions = run ? instructionsText(run) : null;
   const subagents = events ? subagentText(events) : null;
@@ -201,8 +203,18 @@ export function RunLog(props: {
             atEnd.current = ol.scrollTop + ol.clientHeight >= ol.scrollHeight - 8;
           }}
         >
-          {tree.map((n) => (
-            <Row key={n.e.id} n={n} depth={0} meta={meta} folds={folds} onToggle={toggle} />
+          {/* docs/plans/review-v2/spec.md section 1.1: the events of the check phase show under "Check". */}
+          {phased.map(({ phase, nodes }) => (
+            <Fragment key={phase}>
+              {phased.length > 1 && (
+                <li className="pt-2 pb-0.5 pl-(--g) font-sans text-xs font-semibold text-ink-2 first:pt-0" data-log-phase={phase}>
+                  {phase === "check" ? "Check" : "Find"}
+                </li>
+              )}
+              {nodes.map((n) => (
+                <Row key={n.e.id} n={n} depth={0} meta={meta} folds={folds} onToggle={toggle} />
+              ))}
+            </Fragment>
           ))}
           {!detail.events.length && <li className="py-1 font-sans text-sm text-muted-foreground">No tool call yet.</li>}
         </ol>
@@ -367,7 +379,7 @@ function Foot({ detail, meta, raw, onRaw }: { detail: RunDetail; meta: MetaDto; 
       const tokens = tokenTotal(r.usage);
       const time = r.usage ? clockDur(r.usage.durationMs / 1000) : r.finishedAt ? clockDur((r.finishedAt - r.startedAt) / 1000) : "";
       // An ask run has no items. Its answer shows in Ask, in the panel slot.
-      const count = countText(detail.items, r.status === "incomplete", r.kind);
+      const count = countText(detail.items, r.status === "incomplete", r.kind, r.summary?.verify !== undefined);
       return (
         <span>
           {count ? `Result: ${count}.` : "Answered."} {[tokens === null ? "" : tokenText(tokens), time].filter(Boolean).join(", ")}

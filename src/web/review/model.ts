@@ -9,6 +9,7 @@ import type {
   ExcerptLine,
   InstructionFileDto,
   ItemActionInput,
+  ModuleId,
   ProfileDto,
   PrRow,
   ReviewerMode,
@@ -17,20 +18,26 @@ import type {
   RunDto,
   RunKind,
   RunnerDefaults,
+  RunSummary,
   RunUsage,
+  Volume,
 } from "../../shared/dto";
 import { plural, shortHash, touchedDraft } from "../../shared/outcome";
 import {
   type Anchor,
   type AnchoredFinding,
+  type Check,
   type Coverage,
+  checkOf,
   type DropReason,
+  displayGroup,
+  type FindingPayload,
   MAX_REPLY_THREADS,
   type ReplyPayload,
   type Side,
   type Verdict,
 } from "../../shared/review";
-import type { RunEvent } from "../../shared/run-log";
+import { eventPhase, type RunEvent } from "../../shared/run-log";
 import type { Turn } from "../../shared/turn";
 import { matches } from "../shell/model";
 import { sizeText } from "./tasks";
@@ -73,6 +80,15 @@ export function logTree(events: RunEvent[]): LogNode[] {
     roots.push({ e, kids: build(e.id) });
   }
   return roots;
+}
+
+// The top-level nodes of the log by phase, the finder first (docs/plans/review-v2/design.md section 5.1). A run without a check phase
+// gives one group.
+export function logPhases(tree: LogNode[]): { phase: "find" | "check"; nodes: LogNode[] }[] {
+  const check = tree.filter((n) => eventPhase(n.e) === "check");
+  if (!check.length) return [{ phase: "find", nodes: tree }];
+  const find = tree.filter((n) => eventPhase(n.e) === "find");
+  return [...(find.length ? [{ phase: "find" as const, nodes: find }] : []), { phase: "check", nodes: check }];
 }
 
 // Finished tool calls of all agents. Agent calls count as agents (prototype/v3 toolCalls, agentCount).
@@ -151,7 +167,9 @@ const answers = (items: ReviewItemDto[]) =>
 
 // Plan v3 section 7: an incomplete run says "No findings in what it read", never "No issues".
 // A reply run counts its drafts and the threads where it found no reply needed.
-export function countText(items: ReviewItemDto[], incomplete: boolean, kind: RunKind = "review") {
+// checked: a review v2 run (summary.verify). A complete one without findings names the checked areas (spec.md section 1.9).
+// Refuted and duplicate findings stay in the run record only, so they do not count.
+export function countText(items: ReviewItemDto[], incomplete: boolean, kind: RunKind = "review", checked = false) {
   // An ask run has no items. Its answer shows in the Ask panel. A fix run keeps its edits apart from the items.
   if (kind === "ask" || kind === "fix") return "";
   if (kind === "reply") {
@@ -168,10 +186,16 @@ export function countText(items: ReviewItemDto[], incomplete: boolean, kind: Run
       .join(", ");
   }
   // A re-review can add reply drafts that resolve the threads of posted findings. They show under their threads.
-  const f = items.filter((i) => i.kind === "finding").length;
+  const f = items.filter((i) => i.kind === "finding" && !isHidden(i)).length;
   const q = items.filter((i) => i.kind === "question").length;
   const a = answers(items);
-  const none = incomplete ? "No findings in what it read" : q || a ? "" : "No findings";
+  const none = incomplete
+    ? "No findings in what it read"
+    : q || a
+      ? ""
+      : checked
+        ? "No problems found in the checked areas"
+        : "No findings";
   return [f ? plural(f, "finding") : none, q ? plural(q, "question") : "", a ? plural(a, "answered thread") : ""]
     .filter(Boolean)
     .join(", ");
@@ -187,6 +211,7 @@ export function rereviewCount(items: ReviewItemDto[]): string {
   let resolve = 0;
   const a = answers(items);
   for (const i of items) {
+    if (isHidden(i)) continue;
     if (i.kind === "question") q++;
     else if (i.kind === "reply") resolve++;
     else if (!i.payload.carried) fresh++;
@@ -239,7 +264,7 @@ function doneText(r: RunDto, items: ReviewItemDto[] | undefined, edits: number |
     return ["Explained the change", q ? plural(q, "question") : ""].filter(Boolean).join(", ");
   }
   if (!items) return "";
-  return r.since ? rereviewCount(items) : countText(items, r.status === "incomplete", r.kind);
+  return r.since ? rereviewCount(items) : countText(items, r.status === "incomplete", r.kind, r.summary?.verify !== undefined);
 }
 
 // One row of the run list (R14). d: the detail of r, undefined while it loads. edits: the edit count of a fix run.
@@ -364,20 +389,6 @@ export function kindRuns(runs: RunDto[] | undefined): RunDto[] {
 }
 
 export type Severity = AnchoredFinding["severity"];
-export type Jump = { severity: Severity; n: number; first: number };
-
-// The open drafts of each severity, in severity order, with the first draft of each. ds: drafts(items), in screen order.
-export function severityJumps(ds: ReviewItemDto[]): Jump[] {
-  const by = new Map<Severity, Jump>();
-  for (const it of ds) {
-    if (it.status === "discarded") continue;
-    const severity = (it.payload as AnchoredFinding).severity;
-    const hit = by.get(severity);
-    if (hit) hit.n++;
-    else by.set(severity, { severity, n: 1, first: it.id });
-  }
-  return (Object.keys(SEVERITY) as Severity[]).flatMap((s) => by.get(s) ?? []);
-}
 
 // Plan r2 UI-RR, jobs.ts rereview(): the server takes a re-review of the newest review run only when that run ended with a result,
 // was no Explain run, and the source head moved since. The stored brief must not use the Explain profile.
@@ -522,6 +533,149 @@ export const DROP_REASON: Record<DropReason, string> = {
 
 export const drafts = (items: ReviewItemDto[]) => items.filter((i) => i.kind === "finding" && i.status !== "posted");
 export const questions = (items: ReviewItemDto[]) => items.filter((i) => i.kind === "question" && i.status !== "posted");
+
+// ---------- Review v2: checks, volume, and draft groups (docs/plans/review-v2/spec.md sections 1.1 to 1.4, 1.8, 1.9) ----------
+
+// spec.md section 1.3. tests/web/review-v2.test.ts pins them to the labels of src/server/review/catalog.ts MODULES.
+export const MODULE_LABEL: Record<ModuleId, string> = {
+  security: "Security",
+  concurrency: "Threads and races",
+  performance: "Performance",
+  tests: "Tests",
+  api: "Compatibility",
+  docs: "Docs and comments",
+  simplify: "Simplify (what to delete)",
+  rules: "Project rules",
+  intent: "Matches the task",
+};
+// spec.md section 1.1: the checks in view, then the checks under "More checks". The language checklists are the profile field
+// languageChecks, the last one under "More checks".
+export const SHOWN_CHECKS: readonly ModuleId[] = ["security", "concurrency", "performance", "tests", "api", "simplify"];
+export const MORE_CHECKS: readonly ModuleId[] = ["docs", "rules", "intent"];
+export const LANGUAGE_LABEL = "Language checklists (C++, C, Python)";
+
+// spec.md section 1.4.
+export const VOLUME_NAME: Record<Volume, string> = { quiet: "Only what matters", balanced: "Balanced", thorough: "Show everything" };
+export const VOLUME_LINE: Record<Volume, string> = {
+  quiet: "Only what matters: must-fix points. Everything else waits in a fold.",
+  balanced: "Balanced: must-fix and worth-fixing points. Unsure points wait in a fold.",
+  thorough: "Show everything: also small polish and unsure points.",
+};
+const FOLD_NAME: Record<Volume, string | null> = { quiet: "More", balanced: "Low confidence", thorough: null };
+
+export const CHECK_LABEL: Record<Check, string> = { checked: "Checked", unsure: "Low confidence", unchecked: "Not checked" };
+
+// A refuted or duplicate finding. It shows only in the run record, with Restore.
+export const isHidden = (it: ReviewItemDto) => it.kind === "finding" && (it.payload as FindingPayload).discardedBy === "verify";
+
+// The finding drafts of one run by display group, each in screen order. foldName: null when the volume has no fold.
+// checked: the run is a review v2 run (summary.verify), so each card shows its check chip. A run from before review v2 has no volume,
+// so every draft is in main.
+export type DraftGroups = {
+  main: ReviewItemDto[];
+  fold: ReviewItemDto[];
+  hidden: ReviewItemDto[];
+  foldName: string | null;
+  checked: boolean;
+};
+export function draftGroups(ds: ReviewItemDto[], summary: RunSummary | null | undefined): DraftGroups {
+  const volume = summary?.volume;
+  const g: DraftGroups = { main: [], fold: [], hidden: [], foldName: volume ? FOLD_NAME[volume] : null, checked: !!summary?.verify };
+  for (const d of ds) g[displayGroup(d.payload as FindingPayload, volume)].push(d);
+  return g;
+}
+
+// The check chip of a finding card. null: a run from before review v2.
+export const checkChip = (it: ReviewItemDto, checked: boolean) => (checked ? CHECK_LABEL[checkOf(it.payload as FindingPayload)] : null);
+
+// "Check: <reason> (path:line)". null: no verdict.
+export function checkText(it: ReviewItemDto): string | null {
+  const v = (it.payload as FindingPayload).verify;
+  if (!v?.reason.trim()) return null;
+  return `Check: ${v.reason.trim()}${v.evidence.trim() ? ` (${v.evidence.trim()})` : ""}`;
+}
+
+// spec.md section 1.8: a refuted or duplicate finding without discardedBy is one that you restored.
+export function restoredNote(it: ReviewItemDto): string | null {
+  const p = it.payload as FindingPayload;
+  if (it.kind !== "finding" || p.discardedBy || it.status === "discarded") return null;
+  const v = p.verify?.verdict;
+  return v === "refuted"
+    ? "Refuted by the check. You restored it."
+    : v === "duplicate"
+      ? "A duplicate by the check. You restored it."
+      : null;
+}
+
+// The title of a draft row. A finding from before review v2 has no title, so the row shows its body.
+export const draftTitle = (it: ReviewItemDto) => (it.kind === "finding" && (it.payload as FindingPayload).title?.trim()) || it.body;
+
+export type LedgerPart = { key: "must" | "worth" | "polish" | "fold" | "questions"; n: number; first: number; word: string };
+export const ledgerText = (p: LedgerPart) => `${p.n} ${p.word}`;
+
+// docs/plans/review-v2/design.md section 8: the open drafts in plain words, for example "2 must fix · 3 worth fixing · 4 low
+// confidence". Must fix counts blocker and major, worth fixing minor, and polish nit, all in the main list. first: the draft that
+// the part goes to. qs: questionJump of the run.
+export function ledgerParts(g: DraftGroups, qs: { n: number; first: number } | null): LedgerPart[] {
+  const open = (l: ReviewItemDto[]) => l.filter((i) => i.status !== "discarded");
+  const sev = (it: ReviewItemDto) => (it.payload as AnchoredFinding).severity;
+  const part = (key: LedgerPart["key"], l: ReviewItemDto[], word: string): LedgerPart[] =>
+    l[0] ? [{ key, n: l.length, first: l[0].id, word }] : [];
+  const main = open(g.main);
+  return [
+    ...part(
+      "must",
+      main.filter((i) => sev(i) === "blocker" || sev(i) === "major"),
+      "must fix",
+    ),
+    ...part(
+      "worth",
+      main.filter((i) => sev(i) === "minor"),
+      "worth fixing",
+    ),
+    ...part(
+      "polish",
+      main.filter((i) => sev(i) === "nit"),
+      "polish",
+    ),
+    ...(g.foldName ? part("fold", open(g.fold), g.foldName.toLowerCase()) : []),
+    ...(qs ? [{ key: "questions" as const, n: qs.n, first: qs.first, word: qs.n === 1 ? "question" : "questions" }] : []),
+  ];
+}
+
+// spec.md section 1.1: "3 refuted by the check", "1 duplicate". Empty: none.
+export function hiddenParts(hidden: ReviewItemDto[]): string[] {
+  const dup = hidden.filter((i) => (i.payload as FindingPayload).verify?.verdict === "duplicate").length;
+  const refuted = hidden.length - dup;
+  return [refuted ? `${refuted} refuted by the check` : "", dup ? plural(dup, "duplicate") : ""].filter(Boolean);
+}
+
+// spec.md section 1.1: the state of a running run. A review names its phase.
+export function runningText(r: RunDto): string {
+  if (r.phase === "indexing") return "Indexing for codegraph…";
+  if (r.kind !== "review" || r.explain) return RUN_TEXT[r.kind].running;
+  if (r.phase === "checking") return `Checking ${plural(r.candidates ?? 0, "finding")}…`;
+  return r.since ? `Finding problems in the changes since ${shortHash(r.since.head)}…` : "Finding problems…";
+}
+
+const PHASE_NAME = { find: "Finding", check: "Checking" } as const;
+const phaseDur = (ms: number) => (ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))} s` : `${Math.round(ms / 60_000)} min`);
+
+// spec.md section 1.1: "Finding 8 min", "Checking 3 min". usage: add the tokens that the CLI reported for the phase.
+export function phaseParts(s: RunSummary | null | undefined, usage = false): string[] {
+  return (s?.phases ?? []).flatMap((p) => {
+    if (p.endedAt === null) return [];
+    const tokens = usage ? tokenTotal(p.usage) : null;
+    return [`${PHASE_NAME[p.name]} ${phaseDur(p.endedAt - p.startedAt)}${tokens === null ? "" : `, ${tokenText(tokens)}`}`];
+  });
+}
+
+// spec.md section 1.9: a check phase that ended without a result. null: the check finished, was off, or never ran.
+export function checkFailedText(s: RunSummary | null | undefined): string | null {
+  const v = s?.verify;
+  if (!v?.failed) return null;
+  return `The check did not finish: ${v.unchecked} ${v.unchecked === 1 ? "finding is" : "findings are"} not checked.`;
+}
 
 // The anchored lines are the range lines that exist on the finding's side.
 export function draftExcerpt(a: Anchor & { side: Side }): ExcerptLine[] {

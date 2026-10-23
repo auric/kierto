@@ -200,6 +200,8 @@ describe("reviewStats (AC-M4)", () => {
       shown: 10,
       // The accepted one, 4 posted ones, and the source whose copy is accepted.
       accepted: 6,
+      // A run without a volume shows every finding.
+      acceptedShown: 6,
       edited: 1,
       discarded: { total: 2, byReason: { bug: 1, worth: 0, duplicate: 0, intended: 0, place: 0, none: 1 } },
       posted: 4,
@@ -218,11 +220,31 @@ describe("reviewStats (AC-M4)", () => {
       // Balanced: the confirmed major and the unchecked major. Not the nit, the unsure one, or the refuted ones.
       shown: 2,
       accepted: 0,
+      acceptedShown: 0,
       // Refuted items and a session reject are no discards by the user.
       discarded: { total: 0 },
       medianMinutes: 3,
       usage: { costUsd: 0, turns: 0 },
     });
+  });
+
+  test("accepted of shown counts only shown findings, so it never exceeds shown; fold accepts stay in accepted", () => {
+    const s = setup();
+    const r = s.run({
+      version: "2",
+      started: NOW - DAY,
+      summary: {
+        volume: "balanced",
+        verify: { candidates: 3, confirmed: 1, refuted: 0, unsure: 1, questions: 0, duplicates: 0, unchecked: 1 },
+      },
+    });
+    s.finding(r, "accepted", { verify: { verdict: "confirmed" } });
+    // Balanced folds the nit and the unsure one. The user accepts both from the fold.
+    s.finding(r, "accepted", { severity: "nit" });
+    s.finding(r, "posted", { severity: "minor", verify: { verdict: "unsure" } });
+    const row = s.row("2");
+    expect([row.shown, row.accepted, row.acceptedShown]).toEqual([1, 3, 1]);
+    expect(row.acceptedShown).toBeLessThanOrEqual(row.shown);
   });
 
   test("the window leaves out older runs", () => {

@@ -64,10 +64,10 @@ export type Draft = {
   model: string;
   effort: Effort | "";
   reviewer: { model: string; effort: Effort | ""; mode: ReviewerMode };
-  // No editor control yet. The editor keeps the saved values.
+  // docs/plans/review-v2/spec.md section 1.2. verifier "" model: the profile model. "" effort: medium.
   modules: ProfileInput["modules"];
   volume: ProfileInput["volume"];
-  verifier: ProfileInput["verifier"];
+  verifier: { mode: ProfileInput["verifier"]["mode"]; model: string; effort: Effort | "" };
 };
 
 let lastKey = 0;
@@ -80,6 +80,7 @@ export const toDrafts = (profiles: ProfileInput[]): Draft[] =>
     model: p.model ?? "",
     effort: p.effort ?? "",
     reviewer: { model: p.reviewer.model ?? "", effort: p.reviewer.effort ?? "", mode: p.reviewer.mode },
+    verifier: { mode: p.verifier.mode, model: p.verifier.model ?? "", effort: p.verifier.effort ?? "" },
   }));
 
 // The profileInput ID pattern is [a-z0-9-]{1,40}.
@@ -125,7 +126,7 @@ export function toProfiles(list: Draft[]): ProfileInput[] {
       reviewer: { model: d.reviewer.model.trim() || null, effort: d.reviewer.effort || null, mode: d.reviewer.mode },
       modules: d.modules,
       volume: d.volume,
-      verifier: d.verifier,
+      verifier: { mode: d.verifier.mode, model: d.verifier.model.trim() || null, effort: d.verifier.effort || null },
     };
   });
 }
@@ -155,7 +156,7 @@ const KEYS = [
 ];
 export const sameProfiles = (a: ProfileInput[], b: ProfileInput[]) => JSON.stringify(a, KEYS) === JSON.stringify(b, KEYS);
 
-export type Field = "name" | "note" | "prompt" | "maxTurns" | "model" | "reviewerModel";
+export type Field = "name" | "note" | "prompt" | "maxTurns" | "model" | "reviewerModel" | "verifierModel";
 export type Problems = Partial<Record<Field, string>>;
 
 const modelProblem = (text: string) =>
@@ -178,6 +179,8 @@ export function problems(d: Draft): Problems {
   if (model) out.model = model;
   const reviewer = modelProblem(d.reviewer.model);
   if (reviewer) out.reviewerModel = reviewer;
+  const verifier = modelProblem(d.verifier.model);
+  if (verifier) out.verifierModel = verifier;
   return out;
 }
 
@@ -220,6 +223,7 @@ export function toPayload(list: Draft[], saved: ProfileInput[]): ProfileInput[] 
       maxTurns: found.maxTurns ? base.maxTurns : p.maxTurns,
       model: found.model ? base.model : p.model,
       reviewer: { ...p.reviewer, model: found.reviewerModel ? base.reviewer.model : p.reviewer.model },
+      verifier: { ...p.verifier, model: found.verifierModel ? base.verifier.model : p.verifier.model },
     };
   });
 }
@@ -240,6 +244,9 @@ export type Edit = Partial<
     | "model"
     | "effort"
     | "reviewer"
+    | "modules"
+    | "volume"
+    | "verifier"
   >
 >;
 
@@ -315,6 +322,12 @@ export type Part =
   | "reviewer-model"
   | "reviewer-model-id"
   | "reviewer-effort"
+  | "checks"
+  | "volume"
+  | "verifier"
+  | "verifier-model"
+  | "verifier-model-id"
+  | "verifier-effort"
   | "setup"
   | "skills"
   | "skills-label"

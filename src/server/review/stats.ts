@@ -108,6 +108,7 @@ export function reviewStats(db: Database, days: number, now = Date.now()): Revie
           unsure: 0,
           shown: 0,
           accepted: 0,
+          acceptedShown: 0,
           edited: 0,
           discarded: { total: 0, byReason },
           posted: 0,
@@ -144,10 +145,12 @@ export function reviewStats(db: Database, days: number, now = Date.now()): Revie
     const d = run.group;
     // A run from before the check phase has no candidate count: each stored finding was a candidate.
     if (!run.checked) d.candidates++;
-    if (displayGroup(i.p, run.volume) === "main") d.shown++;
+    const shown = displayGroup(i.p, run.volume) === "main";
+    if (shown) d.shown++;
     const end = last(i);
     if (end.status === "accepted" || end.status === "posted") {
       d.accepted++;
+      if (shown) d.acceptedShown++;
       if (end.edited) d.edited++;
     }
     if (end.status === "posted") {

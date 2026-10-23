@@ -304,7 +304,7 @@ test("skills picked in the dialog save at once and are copied into the run folde
   await control("claude", { stream: "tree", hang: true });
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect(runLine(page)).toContainText("Finding problems…", { timeout: RUN_MS });
   await expect.poll(runSkills, { timeout: RUN_MS }).toEqual(["e2e-plugin+style/SKILL.md", "test-check/SKILL.md", "test-check/notes.md"]);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
   await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
@@ -337,7 +337,7 @@ test("an Always use skill shows on its chip, goes first, and blocks the review w
   await control("claude", { stream: "tree", hang: true });
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect(runLine(page)).toContainText("Finding problems…", { timeout: RUN_MS });
   await expect
     .poll(async () => (await runAgents())?.["rl-main"] ?? "", { timeout: RUN_MS })
     .toContain(
@@ -430,7 +430,7 @@ test("an MCP server picked in the dialog gets only its ticked tools in the run",
   await control("claude", { stream: "tree", hang: true });
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect(runLine(page)).toContainText("Finding problems…", { timeout: RUN_MS });
   // The record of this run names the picked tool. Then both its mcp.json and its argv are current.
   await expect
     .poll(async () => (await runMcp())?.allowed?.split(",").includes("mcp__fake-docs__search") ?? false, { timeout: RUN_MS })
@@ -669,7 +669,7 @@ test("Language checks: on for Review and Security, saved at once, and a review r
     await control("claude", { stream: "tree", hang: true });
     await page.keyboard.press("Shift+R");
     await page.getByLabel("Your note").press("Control+Enter");
-    await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+    await expect(runLine(page)).toContainText("Finding problems…", { timeout: RUN_MS });
     await expect.poll(runAgents, { timeout: RUN_MS }).not.toBeNull();
     const prompts = (await runAgents()) as Record<string, string>;
     await runLine(page).getByRole("button", { name: "Cancel" }).click();

@@ -48,8 +48,8 @@ import type { AnchoredFinding } from "../../shared/review";
 import { Err, FileRowButton, FilesFold, ForgeFiles } from "../pr/Sections";
 import { Avatar, NewMark, ResolvedMark } from "../pr/Thread";
 import { firstName, snippet, type ThreadModel } from "../pr/threads";
-import { AiAvatar, Severity } from "../review/Drafts";
-import { plural } from "../review/model";
+import { AiAvatar, CheckChip, Severity } from "../review/Drafts";
+import { checkChip, draftTitle, plural } from "../review/model";
 import type { Focus } from "../review/useReview";
 import type { Hints } from "../shell/Hint";
 import { failText } from "../shell/model";
@@ -80,9 +80,11 @@ export type DiffCtx = {
   hints: Hints;
   now: number;
   threads: ThreadModel[];
-  // The finding drafts of the newest review run, and its source head.
+  // The finding drafts of the newest review run, and its source head. checked: the run had the check step, so each draft card shows
+  // its check chip (docs/plans/review-v2/spec.md section 1.1).
   drafts: ReviewItemDto[];
   head: string | null;
+  checked: boolean;
   // The reply draft of each thread, keyed by thread ID.
   replies: ReadonlyMap<number, ReviewItemDto>;
   onThread: (id: number) => void;
@@ -610,13 +612,15 @@ function CardView({ c, ctx }: { c: Card; ctx: DiffCtx }) {
   const it = ctx.drafts.find((x) => x.id === c.id);
   if (!it) return null;
   const f = it.payload as AnchoredFinding;
+  const chip = checkChip(it, ctx.checked);
   return (
     <div className="rl-dc">
       <AiAvatar meta={ctx.meta} />
       <Severity s={f.severity} />
+      {chip && <CheckChip label={chip} />}
       <span id={text} className="min-w-0 flex-1 truncate text-ink-2">
         <span className="sr-only">Draft from {ctx.meta.runner.short}: </span>
-        {snippet(it.body, 160)}
+        {snippet(draftTitle(it), 160)}
       </span>
       {it.status === "accepted" && (
         <span className="inline-flex shrink-0 items-center gap-1 font-medium text-ink-2">

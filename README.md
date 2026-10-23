@@ -10,7 +10,7 @@ Repository: https://github.com/auric/pr-review-inbox
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/inbox-dark.webp">
-  <img alt="PR Review Inbox: the inbox, a pull request, and its AI review with a severity count and a Not checked list" src="docs/screenshots/inbox-light.webp">
+  <img alt="PR Review Inbox: the inbox, a pull request, and its AI review with a plain-word count, the refuted points, and a Not checked list" src="docs/screenshots/inbox-light.webp">
 </picture>
 
 ## Why "PR Review Inbox"
@@ -79,33 +79,39 @@ To try PR Review Inbox without a Bitbucket server, run `bun run demo` from sourc
 
 ### Review profiles
 
-A profile sets the prompt, the model, the effort, the reviewer agents, the skills, and the MCP servers of a run. PR Review Inbox ships Review and Explain. An update removes the old Security and Over-engineering profiles when you never edited them, and keeps them when you did. Skills and MCP servers come from your Claude Code config. "Improve prompt" proposes a clearer prompt, and you see the changes before you apply them.
+A profile sets the prompt, the checks, the volume, the model, the effort, the reviewer agents, the check step, the skills, and the MCP servers of a run. PR Review Inbox ships Review and Explain. An update removes the old Security and Over-engineering profiles when you never edited them, and keeps them when you did. Skills and MCP servers come from your Claude Code config. "Improve prompt" proposes a clearer prompt, and you see the changes before you apply them.
 
-![Settings, Review profiles: run setup, skills, and MCP servers](docs/screenshots/settings-profiles.webp)
+The checks add checklists to the review: Security, Threads and races, Performance, Tests, Compatibility, Simplify (what to delete), Docs and comments, Project rules, Matches the task, and the language checklists for C++, C, and Python. The check step reads the code of each finding again and confirms it, refutes it, or marks it unsure. You can turn it off or give it its own model and effort.
 
-The review brief holds the task, your note, the profile, and the run setup. A review starts only from the brief.
+![Settings, Review profiles: the prompt, the checks, and the volume](docs/screenshots/settings-profiles.webp)
 
-![The review brief](docs/screenshots/brief.webp)
+The review brief holds the task, your note, the checks, and the volume: "Only what matters", "Balanced", or "Show everything". A change of a check or of the volume saves to the profile at once. The profile picker shows when you have two or more profiles. A review starts only from the brief.
+
+![The review brief with the checks and the volume](docs/screenshots/brief.webp)
 
 ### Drafts and posting
 
-Each finding becomes a draft with its code, its severity, and its evidence. The review record counts the drafts per severity and lists what was not checked. Only you see drafts until you post them.
+A review has two steps. The run line says "Finding problems…" and then "Checking 9 findings…". A finished review shows the time of each step. Each finding becomes a draft with its title, its code, its severity, a check chip ("Checked", "Low confidence", or "Not checked"), the case that triggers it ("When:"), the reason of the check, and its evidence. Only you see drafts until you post them.
 
-![A review with its severity count and the Not checked list](docs/screenshots/review.webp)
+The Drafts header and the review record count the open drafts in plain words, for example "2 must fix · 3 worth fixing · 4 low confidence". The volume of the run decides what waits in a fold. "Balanced" puts unsure points and nits into "Low confidence". "Only what matters" puts everything but must-fix points into "More". "Show everything" has no fold. A run keeps its view after a volume change.
 
-![The Drafts list with accept, edit, and discard](docs/screenshots/drafts.webp)
+The review record lists the points that the check refuted or found twice, with the reason of the check and Restore. A restored point goes back into the Drafts list and says "You restored it". When the check does not finish, the record says how many findings are not checked. The record also lists what was not checked and why a finding was dropped.
+
+![A review with its plain-word count, the refuted points, and the Not checked list](docs/screenshots/review.webp)
+
+![The Drafts list with check chips, accept, edit, and discard, and the Low confidence fold](docs/screenshots/drafts.webp)
 
 After you discard a finding, its card offers optional reasons: Not a bug, Not worth fixing, Duplicate, Intended, and Wrong place. One click saves the reason. The reasons leave on your next triage action.
 
 ![A discarded finding with the reason chips](docs/screenshots/discard-reason.webp)
 
-Settings, Review quality, counts your triage of the last 30 days per profile and prompt version: shown findings per run, accepted, discarded by reason, posted, addressed, and outdated. Addressed means that the thread of a posted finding is resolved or has a "Fixed in" draft. Outdated means that the commented code changed after the post.
+Settings, Review quality, counts your triage of the last 30 days per profile and prompt version: shown findings per run, the accepted share of the shown findings, discarded by reason, posted, addressed, and outdated. Accepts from a fold count apart. Addressed means that the thread of a posted finding is resolved or has a "Fixed in" draft. Outdated means that the commented code changed after the post.
 
 ![Settings, Review quality](docs/screenshots/settings-quality.webp)
 
 A review and "Review changes since" also read the answers to the questions that you posted. An answer that settles a question gets a reply draft with "Resolve after posting" proposed. A partial answer gets a reply draft with the next question. An answer that shows a real problem gets a new finding and a reply draft that points to it. The general comment with several questions gets one reply, and it proposes the resolve only when every question is settled. Unanswered questions get no draft. Explain does not read the answers.
 
-The run log shows each tool call of the review and of its subagents.
+The run log shows each tool call of the review and of its subagents. The calls of the check step show under "Check".
 
 ![The run log](docs/screenshots/run-log.webp)
 
@@ -173,14 +179,14 @@ Press `?` in the app for the full list.
 
 | Keys | Action |
 |---|---|
-| `j` `k` | Next or previous pull request, draft, thread, or file |
+| `j` `k` | Next or previous pull request, draft, fold, thread, or file |
 | `Enter` `→` | Open the pull request at the thread that put it in the inbox |
 | `Esc` `←` | Back to the list |
 | `/` | Filter the list |
 | `z` | Full width on or off |
 | `n` `N` | Next or previous new message |
 | `y` | Next thread where it is your turn |
-| `o` | Open or close the current draft, thread, or file |
+| `o` | Open or close the current draft, fold, thread, or file |
 | `g` then `f` or `c` | Go to Files or Commits |
 | `g` then `d` | Show the current thread or draft in the diff |
 | `1` `2` `3` | Top of the pull request, the drafts, the run log |

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FieldError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import {
   type Effort,
@@ -18,15 +19,20 @@ import {
   type McpServerDto,
   type McpToolDto,
   type McpToolSafety,
+  MODULE_IDS,
+  type ModuleId,
   mcpToolSafety,
   type ProfileInput,
   type ReviewerMode,
   type SettingsDto,
   type SkillDto,
+  VOLUMES,
+  type Volume,
 } from "../../shared/dto";
 import { api } from "../api";
 import { dialogKeys } from "../fix/CloneDialog";
 import { useMeta, useSkills } from "../meta";
+import { MODULE_LABEL, VOLUME_LINE, VOLUME_NAME } from "../review/model";
 import { read } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { SaveStatus, TYPING_MS, useSaver } from "./autosave";
@@ -75,11 +81,11 @@ const setupLabel = "text-sm leading-[30px] text-ink-2 @max-[559px]:leading-norma
 
 const RESET_ID = "profiles-reset";
 const STATUS_ID = "profiles-status";
-const FIELD_ORDER: Field[] = ["name", "note", "prompt", "maxTurns", "model", "reviewerModel"];
+const FIELD_ORDER: Field[] = ["name", "note", "prompt", "maxTurns", "model", "reviewerModel", "verifierModel"];
 const EFFORT_NAME: Record<Effort, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
 const MODES: [ReviewerMode, string, (runner: string) => string][] = [
   ["auto", "Auto", (r) => `${r} uses reviewer agents only for a change of 1,200+ changed lines or 30+ files.`],
-  ["always", "Always", (r) => `${r} splits the changed files across reviewer agents, then checks and merges their findings.`],
+  ["always", "Always", (r) => `${r} splits the changed files across reviewer agents and merges their findings.`],
   ["off", "Off", () => "One agent reviews the whole change."],
 ];
 // An alias as a menu item: opus reads as Opus.
@@ -597,6 +603,7 @@ function ProfileRow(props: RowProps) {
           onChange={(languageChecks) => edit({ languageChecks })}
         />
       </div>
+      <ChecksField {...props} />
       <RunSetup {...props} found={found} />
       {errors.length > 0 && (
         <div className="col-span-full grid gap-1">
@@ -612,6 +619,80 @@ function ProfileRow(props: RowProps) {
   );
 }
 
+// docs/plans/review-v2/spec.md sections 1.2 to 1.4: the check sections of the review prompt and the volume of the Drafts list. The
+// review brief shows the same choices.
+function ChecksField(props: RowProps) {
+  const { d, i, onChange } = props;
+  const edit = (patch: Edit) => onChange({ act: "edit", i, patch });
+  const of = <span className="sr-only"> of profile {i + 1}</span>;
+  const head = profileId(i, "checks");
+  const off = d.explain ? "Explain only runs give no findings, so they use no checks." : null;
+  const toggle = (id: ModuleId, on: boolean) => edit({ modules: MODULE_IDS.filter((m) => (m === id ? on : d.modules.includes(m))) });
+  return (
+    <fieldset aria-labelledby={head} disabled={!!off} className="col-span-full grid min-w-0 gap-2">
+      <div className="grid gap-px">
+        <p id={head} className="m-0 text-sm font-semibold">
+          Checks{of}
+        </p>
+        <p className="m-0 text-xs text-muted-foreground">{off ?? "Each check adds a checklist to review runs of this profile."}</p>
+      </div>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-x-4 gap-y-1">
+        {MODULE_IDS.map((m) => (
+          <label key={m} className="flex min-h-6 cursor-pointer items-center gap-2 text-sm text-foreground has-disabled:cursor-default">
+            <input
+              type="checkbox"
+              id={`${head}-${m}`}
+              className="size-4 shrink-0 accent-primary"
+              checked={d.modules.includes(m)}
+              onChange={(e) => toggle(m, e.target.checked)}
+            />
+            <span>
+              {MODULE_LABEL[m]}
+              {of}
+            </span>
+          </label>
+        ))}
+      </div>
+      <div className={setupRow}>
+        <span id={profileId(i, "volume")} className={setupLabel}>
+          Show{of}
+        </span>
+        <div className="grid min-w-0 gap-1">
+          <ToggleGroup
+            aria-labelledby={profileId(i, "volume")}
+            aria-describedby={`${profileId(i, "volume")}-help`}
+            variant="outline"
+            size="sm"
+            spacing={0}
+            className="flex-wrap"
+            disabled={!!off}
+            value={[d.volume]}
+            onValueChange={(v) => v[0] && edit({ volume: v[0] as Volume })}
+          >
+            {VOLUMES.map((v) => (
+              <ToggleGroupItem
+                key={v}
+                value={v}
+                className="aria-pressed:bg-foreground aria-pressed:font-semibold aria-pressed:text-background"
+              >
+                {VOLUME_NAME[v]}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <p id={`${profileId(i, "volume")}-help`} className="m-0 text-xs text-muted-foreground">
+            {VOLUME_LINE[d.volume]}
+          </p>
+        </div>
+      </div>
+    </fieldset>
+  );
+}
+
+const VERIFIER_MODES: [Draft["verifier"]["mode"], string, (runner: string) => string][] = [
+  ["on", "On", (r) => `${r} checks each finding in a second step. Unsure points go to a fold, and refuted points leave the list.`],
+  ["off", "Off", () => "No second step. Each finding shows as Not checked."],
+];
+
 // The flags and the agents, skills, and MCP servers of each run of the profile. Always open, so each choice stays in view.
 function RunSetup(props: RowProps & { found: ReturnType<typeof problems> }) {
   const { d, i, onChange, onBlur, found } = props;
@@ -621,10 +702,14 @@ function RunSetup(props: RowProps & { found: ReturnType<typeof problems> }) {
   const type = (patch: Edit) => onChange({ act: "edit", i, patch }, TYPING_MS);
   const reviewer = (patch: Partial<Draft["reviewer"]>, delay = 0) =>
     onChange({ act: "edit", i, patch: { reviewer: { ...d.reviewer, ...patch } } }, delay);
+  const verifier = (patch: Partial<Draft["verifier"]>, delay = 0) =>
+    onChange({ act: "edit", i, patch: { verifier: { ...d.verifier, ...patch } } }, delay);
   const of = <span className="sr-only"> of profile {i + 1}</span>;
   const head = profileId(i, "setup");
   const noAgents = d.explain ? "Explain only runs use no reviewer agents." : null;
+  const noCheck = d.explain ? "Explain only runs give no findings to check." : null;
   const mode = MODES.find(([m]) => m === d.reviewer.mode);
+  const check = VERIFIER_MODES.find(([m]) => m === d.verifier.mode);
   const defaults = meta?.defaults;
   return (
     <fieldset aria-labelledby={head} className="col-span-full grid min-w-0 gap-2 rounded-lg bg-pane-2 px-3 pt-2.5 pb-3">
@@ -717,6 +802,67 @@ function RunSetup(props: RowProps & { found: ReturnType<typeof problems> }) {
                 value={d.reviewer.effort}
                 disabled={!!noAgents || d.reviewer.mode === "off"}
                 onPick={(effort) => reviewer({ effort })}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className={setupRow}>
+        <span id={profileId(i, "verifier")} className={setupLabel}>
+          Check step{of}
+        </span>
+        <div className="grid min-w-0 gap-1.5">
+          <div
+            role="radiogroup"
+            aria-labelledby={profileId(i, "verifier")}
+            aria-describedby={`${profileId(i, "verifier")}-help`}
+            className="flex w-fit flex-wrap gap-0.5 rounded-lg border bg-pane p-0.5"
+          >
+            {VERIFIER_MODES.map(([m, name]) => (
+              <label
+                key={m}
+                className="flex cursor-pointer items-center rounded-md px-2.5 py-0.5 text-sm text-ink-2 hover:text-foreground has-checked:bg-sel has-checked:font-semibold has-checked:text-foreground has-disabled:cursor-default has-disabled:opacity-50 has-focus-visible:outline-2 has-focus-visible:outline-ring"
+              >
+                <input
+                  type="radio"
+                  name={`verifier-mode-${d.key}`}
+                  value={m}
+                  className="sr-only"
+                  checked={d.verifier.mode === m}
+                  disabled={!!noCheck}
+                  onChange={() => verifier({ mode: m })}
+                />
+                {name}
+              </label>
+            ))}
+          </div>
+          <p id={`${profileId(i, "verifier")}-help`} className="m-0 text-xs text-muted-foreground">
+            {noCheck ?? check?.[2](meta?.short ?? "")}
+          </p>
+          <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+            <div className={field}>
+              <label htmlFor={profileId(i, "verifier-model")}>Check model{of}</label>
+              <ModelPick
+                id={profileId(i, "verifier-model")}
+                textId={profileId(i, "verifier-model-id")}
+                label={`Check model ID of profile ${i + 1}`}
+                value={d.verifier.model}
+                fallback="Same as the profile"
+                disabled={!!noCheck || d.verifier.mode === "off"}
+                error={found.verifierModel ? profileId(i, "verifierModel-error") : undefined}
+                onPick={(model) => verifier({ model })}
+                onText={(model) => verifier({ model }, TYPING_MS)}
+                onBlur={onBlur}
+              />
+            </div>
+            <div className={field}>
+              <label htmlFor={profileId(i, "verifier-effort")}>Check effort{of}</label>
+              <EffortPick
+                id={profileId(i, "verifier-effort")}
+                value={d.verifier.effort}
+                fallback="Medium (default)"
+                disabled={!!noCheck || d.verifier.mode === "off"}
+                onPick={(effort) => verifier({ effort })}
               />
             </div>
           </div>

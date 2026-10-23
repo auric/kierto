@@ -56,12 +56,16 @@ async function open(page: Page) {
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(TITLE);
 }
 
-// Shift+R opens the brief. Ctrl+Enter starts the review. The fake CLI gives 3 drafts and 1 question.
+// Shift+R opens the brief. Ctrl+Enter starts the review. The fake CLI gives 3 drafts and 1 question. The README nit waits in the
+// Low confidence fold between the findings and the question (docs/plans/review-v2/spec.md section 1.4). The fold opens here, so the
+// tests triage all 3 drafts.
 async function reviewed(page: Page) {
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").fill("ABC-1: check the lock scope.");
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(page.locator("#runline [data-run-kind='review']")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  await expect(drafts(page)).toHaveCount(2);
+  await page.getByRole("button", { name: "Low confidence (1)" }).click();
   await expect(drafts(page)).toHaveCount(3);
 }
 
@@ -270,7 +274,8 @@ test("an unsent triage edit survives a change of PR and Back; Save and Cancel cl
   await expect(h1).toHaveText("Drop the legacy export endpoint");
   await row(page).click();
   await expect(h1).toHaveText(TITLE);
-  await expect(drafts(page)).toHaveCount(3);
+  // The PR opens again with its fold closed.
+  await expect(drafts(page)).toHaveCount(2);
   await expect(page.getByRole("textbox", { name: /^Edit the / })).toHaveCount(0);
   expect(await posts()).toEqual([]);
 });

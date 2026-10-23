@@ -55,6 +55,10 @@ async function reviewed(page: Page): Promise<string> {
   await page.getByLabel("Your note").fill("ABC-1: check the lock scope.");
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
+  // The README nit waits in the Low confidence fold (docs/plans/review-v2/spec.md section 1.4). The fold opens here and stays open
+  // for the later runs of this page.
+  await expect(drafts(page)).toHaveCount(2);
+  await page.getByRole("button", { name: "Low confidence (1)" }).click();
   await expect(drafts(page)).toHaveCount(3);
   return (await runRow(page).locator("code").first().textContent()) ?? "";
 }
@@ -87,7 +91,7 @@ test("a push after a review: c and the button open the brief; Start reviews the 
   await brief.getByRole("button", { name: "Cancel" }).click();
   await expect(brief).toHaveCount(0);
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done");
-  await expect(runLine(page)).not.toContainText("Reviewing changes since");
+  await expect(runLine(page)).not.toContainText("Finding problems in the changes since");
 
   // The Explain profile gives no findings, so the brief blocks Start and says why.
   await rereviewButton(page).click();
@@ -102,7 +106,7 @@ test("a push after a review: c and the button open the brief; Start reviews the 
   await control("claude", { stream: "tree", hang: true });
   await go.click();
   await expect(brief).toHaveCount(0);
-  await expect(runLine(page)).toContainText(`Reviewing changes since ${head}…`);
+  await expect(runLine(page)).toContainText(`Finding problems in the changes since ${head}…`);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
   await expect(runRow(page)).toHaveAttribute("data-run-state", "cancelled", { timeout: RUN_MS });
   await expect(rereviewButton(page)).toHaveAccessibleName(`Review changes since ${head}`);
@@ -111,7 +115,7 @@ test("a push after a review: c and the button open the brief; Start reviews the 
   await control("claude", { stream: "tree" });
   await rereviewButton(page).click();
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(runLine(page)).toContainText(`Reviewing changes since ${head}…`);
+  await expect(runLine(page)).toContainText(`Finding problems in the changes since ${head}…`);
   // The arrow is hidden from screen readers. They read "to" instead.
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runRow(page)).toContainText(/[0-9a-f]{7}→ to [0-9a-f]{7}/);

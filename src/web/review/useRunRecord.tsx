@@ -4,8 +4,8 @@
 // The rows of the run record (plan r2 R14): the newest run of each kind with its state, its stale note, its ledger, and its task text.
 import type { CommitDto, FixDto, MetaDto, ReviewItemDto, RunDetail, RunDto, RunKind } from "../../shared/dto";
 import { useRun } from "./data";
-import { questionJump, runLine, severityJumps, staleText } from "./model";
-import { Ledger } from "./RunLine";
+import { type DraftGroups, ledgerParts, questionJump, runLine, staleText } from "./model";
+import { Ledger, Refuted } from "./RunLine";
 import { useTaskContext } from "./TaskChips";
 import { contextLines, trackerOf } from "./tasks";
 
@@ -18,12 +18,16 @@ export function useRunRecord(
     // The details of the newest review run and of the run that the log sheet pins.
     review: RunDetail | undefined;
     pinned: RunDetail | undefined;
-    findings: ReviewItemDto[];
+    // The finding drafts of the newest review run by display group.
+    groups: DraftGroups;
     items: ReviewItemDto[];
     fixes: FixDto[] | undefined;
     commits: CommitDto[] | undefined;
     now: number;
     openDraft: (id: number) => void;
+    // Restore of a refuted or duplicate finding, and the items with a request out.
+    restore: (it: ReviewItemDto) => void;
+    busy: ReadonlySet<number>;
   },
 ) {
   const { meta, kinds } = o;
@@ -46,20 +50,20 @@ export function useRunRecord(
     return tracker?.configured ? "No task text fetched." : "No context source is set up.";
   };
   const qJump = questionJump(o.items);
+  const ledger = ledgerParts(o.groups, qJump);
   const rows = kinds.map((r) => {
     const d = details.find((x) => x?.run.id === r.id);
     const shown = d ? { ...d.run, stale: r.stale } : r;
+    const review = r.kind === "review";
     return {
       run: shown,
       state: runLine(shown, d, meta.profiles, o.fixes?.find((f) => f.run.id === r.id)?.edits.length),
       stale: staleText(shown, o.commits),
-      // The ledger follows the drafts of latestReview. The record shows it only for a done run.
-      ledger:
-        r.kind === "review" ? (
-          <Ledger jumps={severityJumps(o.findings)} questions={qJump} onDraft={o.openDraft} onQuestion={o.openDraft} />
-        ) : null,
+      // The ledger and the refuted list follow the drafts of latestReview. The record shows them only for a done run.
+      ledger: review ? <Ledger parts={ledger} onDraft={o.openDraft} /> : null,
+      refuted: review ? <Refuted hidden={o.groups.hidden} busy={o.busy} onRestore={o.restore} /> : null,
       context: taskText(shown),
     };
   });
-  return { rows, details, qJump };
+  return { rows, details, qJump, ledger };
 }

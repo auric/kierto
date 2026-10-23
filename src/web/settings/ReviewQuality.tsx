@@ -70,7 +70,7 @@ export function ReviewQuality() {
                   Check
                 </th>
                 <th scope="col" className={th}>
-                  Accepted
+                  Accepted of shown
                 </th>
                 <th scope="col" className={th}>
                   Discarded
@@ -98,9 +98,11 @@ export function ReviewQuality() {
                       {s.refuted} refuted, {s.unsure} unsure
                     </span>
                   </td>
+                  {/* One denominator: the shown findings. Accepts from a fold count apart, so the share never exceeds 100%. */}
                   <td className={`${td} whitespace-nowrap`}>
-                    {s.accepted} of {s.shown}
-                    {pct(s.accepted, s.shown)}
+                    {s.acceptedShown} of {s.shown}
+                    {pct(s.acceptedShown, s.shown)}
+                    {s.accepted > s.acceptedShown && <span className={sub}>{s.accepted - s.acceptedShown} more from a fold</span>}
                     {s.edited > 0 && <span className={sub}>{s.edited} edited</span>}
                   </td>
                   <td className={td}>

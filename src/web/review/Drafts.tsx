@@ -5,7 +5,8 @@
 // list of rows, with triage (WP14a). Only you see drafts until you post them. On your own PR, an open finding has Fix and its fix
 // card (docs/plans/fix-ux.md phase 2).
 import { Check, ChevronRight, CircleAlert, FileCode, GitCommitHorizontal, MessageCircleQuestionMark, Wrench } from "lucide-react";
-import { memo, type ReactNode } from "react";
+import { Fragment, memo, type ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { MetaDto, ReviewItemDto, RunDto } from "../../shared/dto";
@@ -14,13 +15,21 @@ import { Text } from "../pr/Thread";
 import { snippet } from "../pr/threads";
 import {
   anchorNote,
+  CHECK_LABEL,
   carriedNote,
+  checkChip,
+  checkText,
   closedLabel,
   DROP_REASON,
+  type DraftGroups,
   draftExcerpt,
+  draftTitle,
   EVIDENCE,
   fixedNote,
+  type LedgerPart,
+  ledgerText,
   lineText,
+  restoredNote,
   SEVERITY,
   sessionNote,
 } from "./model";
@@ -75,10 +84,26 @@ function Lines({ lines }: { lines: ReturnType<typeof draftExcerpt> }) {
   ));
 }
 
+// The check chip (docs/plans/review-v2/spec.md section 1.1). The words carry the state, so the hue is only a hint.
+export function CheckChip({ label }: { label: string }) {
+  return (
+    <Badge
+      variant={label === CHECK_LABEL.checked ? "quiet" : label === CHECK_LABEL.unsure ? "warn" : "outline"}
+      className="h-auto rounded-sm px-1.5 py-0 text-[11px] font-semibold"
+      data-check={label}
+    >
+      {label === CHECK_LABEL.checked && <Check aria-hidden />}
+      {label}
+    </Badge>
+  );
+}
+
 // asker: the person that the questions ask, as the question rows name them.
+// checked: the run of the drafts had the check step, so each finding card shows its check chip.
 export type DraftCtx = {
   meta: MetaDto;
   asker: string;
+  checked: boolean;
   onToggle: (id: number) => void;
   onFrom: (agent: string) => void;
   // Plan r2 UI-DIFF: focuses the line of the draft in the diff.
@@ -121,7 +146,8 @@ export const Draft = memo(function Draft({
   const closed = it.status === "discarded" ? closedLabel(it) : null;
   const accepted = it.status === "accepted";
   const carried = carriedNote(it);
-  const restored = fixedNote(it);
+  const restored = fixedNote(it) ?? restoredNote(it);
+  const chip = f ? checkChip(it, ctx.checked) : null;
   const label = !f
     ? closed
       ? "Discarded question"
@@ -130,7 +156,7 @@ export const Draft = memo(function Draft({
       ? closed === "Discarded"
         ? `Discarded draft. ${where}.`
         : `Draft, ${closed.toLowerCase()}. ${where}.`
-      : `Draft from ${short}. ${SEVERITY[f.severity]}. ${where}.${accepted ? " Accepted." : ""}${carried ? ` ${carried}` : ""}${restored ? ` ${restored}` : ""}`;
+      : `Draft from ${short}. ${SEVERITY[f.severity]}. ${where}.${accepted ? " Accepted." : ""}${carried ? ` ${carried}` : ""}${restored ? ` ${restored}` : ""}${chip ? ` ${chip}.` : ""}`;
   const cut = path ? path.lastIndexOf("/") + 1 : 0;
   return (
     <article
@@ -163,11 +189,14 @@ export const Draft = memo(function Draft({
           )}
         </span>
         <span className="grid min-w-0">
-          <span className={cn("truncate", closed && "text-muted-foreground line-through")}>{snippet(it.body, 160)}</span>
+          <span className={cn("truncate", closed && "text-muted-foreground line-through")}>{snippet(draftTitle(it), 160)}</span>
           {path && (
-            <span translate="no" className="truncate font-mono text-xs text-muted-foreground">
-              {path.slice(0, cut)}
-              <span className="text-ink-2">{path.slice(cut)}</span>:{line}
+            <span className="flex min-w-0 items-center gap-2">
+              <span translate="no" className="min-w-0 truncate font-mono text-xs text-muted-foreground">
+                {path.slice(0, cut)}
+                <span className="text-ink-2">{path.slice(cut)}</span>:{line}
+              </span>
+              {chip && !closed && <CheckChip label={chip} />}
             </span>
           )}
         </span>
@@ -211,8 +240,10 @@ function FindingBody({ it, mode, busy, fix, ctx }: { it: ReviewItemDto; mode: Tr
   const lines = a ? draftExcerpt(a) : [];
   const anchored = anchorNote(it);
   const carried = carriedNote(it);
-  const restored = fixedNote(it);
+  const restored = fixedNote(it) ?? restoredNote(it);
   const session = sessionNote(it);
+  const trigger = f.trigger?.trim();
+  const check = checkText(it);
   const onFix = ctx.onFix;
   // Acts shows lead only for a draft that is not discarded. jobs.ts fixFindings also needs the anchor.
   const toFix = onFix && a && (
@@ -253,6 +284,16 @@ function FindingBody({ it, mode, busy, fix, ctx }: { it: ReviewItemDto; mode: Tr
           <div className="max-w-[72ch] [overflow-wrap:anywhere]">
             <Text text={it.body} />
           </div>
+          {trigger && (
+            <p className="m-0 mt-1.5 max-w-[72ch] text-ink-2 [overflow-wrap:anywhere]" data-trigger>
+              <span className="font-semibold">When:</span> <Inline text={trigger} />
+            </p>
+          )}
+          {check && (
+            <p className={note} data-check-reason>
+              <Inline text={check} />
+            </p>
+          )}
           <div className={note}>
             <Text text={`${EVIDENCE[f.evidenceStatus]}, ${f.confidence} confidence.${f.evidence.trim() ? ` ${f.evidence.trim()}` : ""}`} />
           </div>
@@ -326,59 +367,129 @@ export type TriageState = {
 };
 export const modeOf = (s: TriageState, id: number): TriageMode => (s.open?.id === id ? s.open.mode : null);
 
-// items: the findings, then the questions, of the newest review run. The count leaves out the discarded ones.
-// cards: the fix card of each finding, keyed by item ID.
+// Parts of one line, joined by a dot that screen readers skip. The space stays outside the dot, so the words stay apart.
+export function Dotted({ parts }: { parts: ReactNode[] }) {
+  return parts.filter(Boolean).map((p, i) => (
+    // biome-ignore lint/suspicious/noArrayIndexKey: the parts keep their order.
+    <Fragment key={i}>
+      {i > 0 && (
+        <>
+          <span aria-hidden className="text-muted-foreground">
+            {" ·"}
+          </span>{" "}
+        </>
+      )}
+      {p}
+    </Fragment>
+  ));
+}
+
+// The ID of the fold row element. j and k reach its button as a Drafts row (PrDetail.tsx DRAFT_ROWS); the keys a, e, and d find no
+// item in it.
+const FOLD_ROW = "fold";
+
+// groups: the findings of the newest review run by display group (docs/plans/review-v2/spec.md section 1.4). questions: its questions.
+// The main findings come first, then the fold, then the questions (plan pr-view-v4 2.7: the findings, then the questions). A closed
+// fold renders no rows, so j and k skip them. ledger: the open drafts in plain words. cards: the fix card of each finding, by item ID.
 export function Drafts({
-  items,
+  groups,
+  questions,
+  ledger,
+  foldOpen,
+  onFold,
   isOpen,
   triage,
   cards,
   ctx,
 }: {
-  items: ReviewItemDto[];
+  groups: DraftGroups;
+  questions: ReviewItemDto[];
+  ledger: LedgerPart[];
+  foldOpen: boolean;
+  onFold: () => void;
   isOpen: (it: ReviewItemDto) => boolean;
   triage: TriageState;
   cards: ReadonlyMap<number, ReactNode>;
   ctx: DraftCtx;
 }) {
-  if (!items.length) return null;
+  const fold = groups.foldName ? groups.fold : [];
+  if (!groups.main.length && !fold.length && !questions.length) return null;
+  const row = (it: ReviewItemDto) => {
+    const mode = modeOf(triage, it.id);
+    return (
+      <li key={it.id}>
+        <Draft
+          it={it}
+          open={isOpen(it) || mode !== null}
+          mode={mode}
+          busy={triage.busy.has(it.id)}
+          chips={triage.chips === it.id && it.status === "discarded"}
+          fix={cards.get(it.id)}
+          ctx={ctx}
+        />
+      </li>
+    );
+  };
   return (
     <section id="s-drafts" aria-labelledby="h-drafts" className="max-w-[86ch] scroll-mt-3 pt-6">
       <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 id="h-drafts" className="m-0 flex items-baseline gap-2 text-[15px] font-bold tracking-[-0.005em]">
+        <h2 id="h-drafts" className="m-0 text-[15px] font-bold tracking-[-0.005em]">
           Drafts
-          <span className="text-sm font-medium text-muted-foreground">{items.filter((i) => i.status !== "discarded").length}</span>
         </h2>
+        {ledger.length > 0 && (
+          <p className="m-0 text-sm font-medium text-ink-2" data-drafts-ledger>
+            <Dotted parts={ledger.map(ledgerText)} />
+          </p>
+        )}
         <p className="m-0 text-xs text-muted-foreground">Only you see drafts until you post them.</p>
       </div>
-      <ol className="m-0 list-none border-t p-0">
-        {items.map((it) => {
-          const mode = modeOf(triage, it.id);
-          return (
-            <li key={it.id}>
-              <Draft
-                it={it}
-                open={isOpen(it) || mode !== null}
-                mode={mode}
-                busy={triage.busy.has(it.id)}
-                chips={triage.chips === it.id && it.status === "discarded"}
-                fix={cards.get(it.id)}
-                ctx={ctx}
-              />
-            </li>
-          );
-        })}
-      </ol>
+      <div className="border-t">
+        <ol className="m-0 list-none p-0">{groups.main.map(row)}</ol>
+        {fold.length > 0 && (
+          <>
+            <div data-item={FOLD_ROW} className="border-b">
+              <button
+                id="fold-btn"
+                data-row-head
+                type="button"
+                aria-expanded={foldOpen}
+                aria-controls="d-fold"
+                onClick={onFold}
+                className="flex min-h-[38px] w-full cursor-pointer items-center gap-2 rounded px-1.5 py-[7px] text-left text-sm font-medium text-ink-2 hover:bg-hover"
+              >
+                <ChevronRight aria-hidden className={cn("rl-chev", icon)} />
+                {groups.foldName} ({fold.length})
+              </button>
+            </div>
+            <ol id="d-fold" hidden={!foldOpen} aria-label={groups.foldName ?? undefined} className="m-0 list-none p-0">
+              {foldOpen && fold.map(row)}
+            </ol>
+          </>
+        )}
+        <ol className="m-0 list-none p-0">{questions.map(row)}</ol>
+      </div>
     </section>
   );
 }
 
+// docs/plans/review-v2/spec.md section 1.7: the anchor checks drop a finding for its code reference, a place outside the change, or a
+// quoted rule that no instruction file holds. One line names each kind.
 export function Dropped({ run, meta }: { run: RunDto; meta: MetaDto }) {
   const d = run.summary?.dropped ?? [];
+  const n = (pred: (r: (typeof d)[number]["reason"]) => boolean) => d.filter((x) => pred(x.reason)).length;
+  const refs = n((r) => r !== "unchanged" && r !== "rule");
+  const outside = n((r) => r === "unchanged");
+  const rules = n((r) => r === "rule");
+  const lead = (k: number) => (k === 1 ? "1 finding dropped" : `${k} findings dropped`);
   return (
     <>
-      {d.length === 1 ? "1 finding dropped: its code reference" : `${d.length} findings dropped: their code references`} did not match the
-      snapshot.
+      {[
+        refs ? `${lead(refs)}: ${refs === 1 ? "its code reference" : "their code references"} did not match the snapshot.` : "",
+        outside ? `${lead(outside)}: not part of this change.` : "",
+        rules ? `${lead(rules)}: the quoted rule is not in the project instructions for this path.` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       <details className="mt-0.5">
         <summary className="rl-hit inline-flex rounded font-medium text-pen hover:underline">Show {d.length === 1 ? "it" : "them"}</summary>
         {d.map((x, i) => (

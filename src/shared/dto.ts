@@ -1071,8 +1071,9 @@ export type TaskPreviewError = ApiError & { rules: TaskPreviewDto["rules"] };
 // GET /api/stats/review?days=30: the review runs that started in the last `days` days.
 export const reviewStatsInput = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) });
 // One row per profile name and prompt version. A finding counts once, in the run that first found it. A re-review copy gives
-// the later outcome of its source. shown: in the main list of the run volume. accepted: accepted or posted. edited: accepted with
-// your text. discarded: by you only, not by the check, a fix commit, a re-review, or your session. byReason: per reason code;
+// the later outcome of its source. shown: in the main list of the run volume. accepted: accepted or posted. acceptedShown: the
+// accepted ones that are shown, so it never exceeds shown. edited: accepted with your text. discarded: by you only, not by the
+// check, a fix commit, a re-review, or your session. byReason: per reason code;
 // "none" counts discards without a chip. addressed: posted, and its thread is resolved or has a "Fixed in" draft. outdated: posted,
 // and its root comment turned orphaned after the post. medianMinutes: of the run time; null without an ended run.
 // usage: the sum over the runs that report it.
@@ -1085,6 +1086,7 @@ export type ReviewStatsDto = {
   unsure: number;
   shown: number;
   accepted: number;
+  acceptedShown: number;
   edited: number;
   discarded: { total: number; byReason: Record<DiscardReason | "none", number> };
   posted: number;

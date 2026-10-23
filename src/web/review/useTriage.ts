@@ -5,13 +5,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "@/components/ui/toast";
-import type { DiscardReason, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunDetail } from "../../shared/dto";
+import type { DiscardReason, ItemActionInput, MetaDto, PrRow, ReviewItemDto, RunDetail, RunSummary } from "../../shared/dto";
+import { displayGroup, type FindingPayload } from "../../shared/review";
 import type { ThreadModel } from "../pr/threads";
 import { planKey } from "../publish/data";
 import { failText } from "../shell/model";
 import { draftDomId, type TriageState } from "./Drafts";
 import { replyKey, sendItem } from "./data";
-import { drafts, questions, replyCard, replyOf, triageText } from "./model";
+import { draftGroups, drafts, questions, replyCard, replyOf, triageText } from "./model";
 import { storedEdit, type TriageAction, type TriageCtx, writeEdit } from "./Triage";
 import type { Focus } from "./useReview";
 
@@ -22,13 +23,15 @@ export function useTriage(
   o: {
     meta: MetaDto;
     items: ReviewItemDto[];
+    // The summary of the run of the items. Its volume sets the groups of the drafts.
+    summary: RunSummary | null | undefined;
     replyItems: ReviewItemDto[];
     threads: ThreadModel[];
     announce: (text: string) => void;
     focusAfter: (f: Focus) => void;
   },
 ) {
-  const { items, focusAfter } = o;
+  const { items, summary, focusAfter } = o;
   const qc = useQueryClient();
   const [openDrafts, setOpenDrafts] = useState<ReadonlyMap<number, boolean>>(new Map());
   // An unsent edit from an earlier visit opens its editor again (plan pr-view-v4 section 5).
@@ -36,17 +39,27 @@ export function useTriage(
     const id = storedEdit(pr.id);
     return { open: id === null ? null : { id, mode: "edit", quiet: true }, busy: new Set(), chips: null };
   });
+  // docs/plans/review-v2/spec.md section 1.4: the fold of the Drafts list starts closed.
+  const [foldOpen, setFoldOpen] = useState(false);
 
   // Stable while the items stay, so the diff renders again only when they change.
   const ds = useMemo(() => (items.length ? drafts(items) : NO_ITEMS), [items]);
-  // Plan pr-view-v4 2.7: one list of the findings, then the questions. The first untriaged one starts open.
-  const list = useMemo(() => (items.length ? [...ds, ...questions(items)] : NO_ITEMS), [items, ds]);
+  const groups = useMemo(() => draftGroups(ds, summary), [ds, summary]);
+  const qs = useMemo(() => (items.length ? questions(items) : NO_ITEMS), [items]);
+  // Plan pr-view-v4 2.7: one list of the findings, then the questions. The fold of findings sits between them. The first untriaged
+  // row outside the fold starts open. shown: the rows on screen. A closed fold renders no rows.
+  const list = useMemo(() => [...groups.main, ...qs], [groups, qs]);
+  const shown = useMemo(() => (foldOpen ? [...groups.main, ...groups.fold, ...qs] : list), [foldOpen, list, groups, qs]);
   const firstNew = list.find((x) => x.status === "new")?.id ?? null;
   const all = [...items, ...o.replyItems];
   const latestItems = useRef(all);
   latestItems.current = all;
-  const latestList = useRef({ list, firstNew });
-  latestList.current = { list, firstNew };
+  const latestList = useRef({ list: shown, firstNew, volume: summary?.volume });
+  latestList.current = { list: shown, firstNew, volume: summary?.volume };
+  // A draft in the closed fold opens the fold first, so its row exists before the focus moves.
+  const reveal = useCallback((it: ReviewItemDto | undefined) => {
+    if (it?.kind === "finding" && displayGroup(it.payload as FindingPayload, latestList.current.volume) === "fold") setFoldOpen(true);
+  }, []);
   const isDraftOpen = (it: ReviewItemDto) => openDrafts.get(it.id) ?? it.id === firstNew;
   const toggleDraft = useCallback(
     (id: number) => setOpenDrafts((m) => new Map(m).set(id, !(m.get(id) ?? id === latestList.current.firstNew))),
@@ -65,11 +78,12 @@ export function useTriage(
   // Opens a draft or a question and focuses it: "Go to draft" in the diff, the ledger, and key 2.
   const openDraft = useCallback(
     (id: number) => {
-      const it = latestList.current.list.find((x) => x.id === id);
+      const it = latestItems.current.find((x) => x.id === id);
+      reveal(it);
       setOpenDrafts((m) => new Map(m).set(id, true));
       focusAfter({ id: it ? draftDomId(it) : `d-${id}`, block: "start", flash: true });
     },
-    [focusAfter],
+    [focusAfter, reveal],
   );
 
   const domId = (it: ReviewItemDto) => (it.kind === "reply" ? `rd-${it.id}` : draftDomId(it));
@@ -103,6 +117,8 @@ export function useTriage(
       setOpenDrafts((m) => new Map(m).set(it.id, false).set(next.id, next !== it));
       focusAfter({ id: domId(next), block: "nearest", flash: false });
     } else {
+      // A restore from the run record list moves the focus to the draft in the Drafts list.
+      reveal(it);
       setOpenDrafts((m) => new Map(m).set(it.id, true));
       focusAfter({ id: domId(it), block: "nearest", flash: false });
     }
@@ -219,5 +235,22 @@ export function useTriage(
     else if (it.status !== "discarded") triageFns.edit(it);
   };
 
-  return { triage, ds, list, isDraftOpen, toggleDraft, showFindings, openDraft, send, onTriage, triageCtx, triageKey };
+  const toggleFold = useCallback(() => setFoldOpen((v) => !v), []);
+  return {
+    triage,
+    ds,
+    groups,
+    qs,
+    list,
+    foldOpen,
+    toggleFold,
+    isDraftOpen,
+    toggleDraft,
+    showFindings,
+    openDraft,
+    send,
+    onTriage,
+    triageCtx,
+    triageKey,
+  };
 }

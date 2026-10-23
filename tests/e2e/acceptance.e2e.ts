@@ -73,7 +73,8 @@ test("A7: a push after the review marks it stale, and the post stays blocked wit
   // The result stays tied to the reviewed commit and says that it is stale.
   await expect(runLine(page)).toContainText("New commits since");
   await expect(runRow(page).locator("code").first()).toHaveText(head);
-  await expect(drafts(page)).toHaveCount(3);
+  // The README nit waits in the closed Low confidence fold (docs/plans/review-v2/spec.md section 1.4).
+  await expect(drafts(page)).toHaveCount(2);
 
   await page.keyboard.press("p");
   const box = page.getByRole("dialog", { name: /^Post .* to PROJ1\/sample-repo-2 #1001\?$/ });

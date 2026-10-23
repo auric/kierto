@@ -133,12 +133,13 @@ async function draftReplies(page: Page) {
   await expect(draft(page, LOCK)).toHaveAccessibleName("Reply draft from Claude to Alex Smith. Valid.");
 }
 
-// Shift+R opens the brief. Ctrl+Enter starts the review. On PR 1004 the fake CLI gives 3 finding drafts and 1 question.
+// Shift+R opens the brief. Ctrl+Enter starts the review. On PR 1004 the fake CLI gives 3 finding drafts and 1 question. The README
+// nit waits in the closed Low confidence fold (docs/plans/review-v2/spec.md section 1.4).
 async function review(page: Page) {
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
-  await expect(page.locator("#s-drafts [data-draft]")).toHaveCount(3);
+  await expect(page.locator("#s-drafts [data-draft]")).toHaveCount(2);
 }
 
 // The review item ID of the finding draft with this text.
@@ -732,7 +733,7 @@ test("Fix on an accepted finding: its edit shows under it, Apply commits it, it 
   await expect(head).toContainText(`Fixed in ${again}`);
   await row.getByRole("button", { name: "Restore" }).click();
   // An accepted draft closes to its row. The row name keeps the note.
-  await expect(row).toHaveAccessibleName(`Draft from Claude. Minor. flush.ts:5. Accepted. Fixed in ${again}. You restored it.`);
+  await expect(row).toHaveAccessibleName(`Draft from Claude. Minor. flush.ts:5. Accepted. Fixed in ${again}. You restored it. Checked.`);
   await expect(head.locator(".line-through")).toHaveCount(0);
   await expect(head).toContainText("Accepted");
   await expect(post).toContainText("Ready to post: 1 inline comment");

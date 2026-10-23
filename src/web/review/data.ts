@@ -5,7 +5,19 @@
 // ['pr', pr, 'reply-drafts']. live.ts invalidates ['runs'] and ['run', id] when SSE `changed` names the run, and ['pr', pr] and
 // ['runs', 'pr', pr] when it names the PR.
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BriefDto, BriefInput, ItemActionInput, ItemConflict, ReviewItemDto, RunConflict, RunDetail, RunDto } from "../../shared/dto";
+import { useCallback, useRef } from "react";
+import type {
+  BriefDto,
+  BriefInput,
+  ItemActionInput,
+  ItemConflict,
+  ProfileInput,
+  ReviewItemDto,
+  RunConflict,
+  RunDetail,
+  RunDto,
+  SettingsDto,
+} from "../../shared/dto";
 import { api } from "../api";
 import { ApiError, read } from "../shell/data";
 
@@ -35,6 +47,38 @@ export function saveLastProfile(id: string) {
   try {
     localStorage.setItem(LAST_PROFILE, id);
   } catch {}
+}
+
+// docs/plans/review-v2/spec.md section 1.1: a check or volume change in the brief saves to the profile at once. The cache shows the
+// change at once. The saves go out one after the other, and a queued save that a newer one replaces is skipped, so the last request
+// carries every change.
+export function useSaveProfile() {
+  const qc = useQueryClient();
+  const chain = useRef(Promise.resolve());
+  const last = useRef(0);
+  return useCallback(
+    (id: string, patch: Partial<Pick<ProfileInput, "modules" | "volume" | "languageChecks">>, onError: (e: unknown) => void) => {
+      const s = qc.getQueryData<SettingsDto>(["settings"]);
+      if (!s) return;
+      qc.setQueryData<SettingsDto>(["settings"], { ...s, profiles: s.profiles.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
+      const mine = ++last.current;
+      chain.current = chain.current.then(async () => {
+        const now = qc.getQueryData<SettingsDto>(["settings"]);
+        if (!now || mine !== last.current) return;
+        try {
+          const json = { baseUrl: now.baseUrl ?? "", caFile: now.caFile ?? "", profiles: now.profiles };
+          const dto = await read<SettingsDto>(await api.api.settings.$put({ json }));
+          if (mine === last.current) qc.setQueryData(["settings"], dto);
+          // Meta never goes stale by itself. The Review button and the brief read the profiles from it.
+          void qc.invalidateQueries({ queryKey: ["meta"] });
+        } catch (e) {
+          void qc.invalidateQueries({ queryKey: ["settings"] });
+          onError(e);
+        }
+      });
+    },
+    [qc],
+  );
 }
 
 export const usePrRuns = (pr: number) =>

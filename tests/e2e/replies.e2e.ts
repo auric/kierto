@@ -142,12 +142,13 @@ test("review drafts stay after a reply run (R14), and a per-thread draft replace
   await page.getByLabel("Your note").fill("ABC-1: check the lock scope.");
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
-  await expect(drafts(page)).toHaveCount(3);
+  // The README nit waits in the closed Low confidence fold (docs/plans/review-v2/spec.md section 1.4).
+  await expect(drafts(page)).toHaveCount(2);
 
   await repliesButton(page).click();
   await expect(runRow(page, "reply")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   // The newest review run still drives the drafts, the summary, and the brief.
-  await expect(drafts(page)).toHaveCount(3);
+  await expect(drafts(page)).toHaveCount(2);
   await expect(runRow(page)).toContainText("The lock moves into the loop.");
   await expect(card(page, 1000103)).toContainText("No reply needed");
   // Key 2 goes to the review drafts, then on to the reply drafts, then back.
@@ -166,7 +167,7 @@ test("review drafts stay after a reply run (R14), and a per-thread draft replace
   await expect(card(page, 1000103)).not.toContainText("No reply needed");
   await expect(card(page, 1000101)).toHaveAttribute("id", kept ?? "");
   await expect(card(page, 1000102)).toContainText(echo(1000202));
-  await expect(drafts(page)).toHaveCount(3);
+  await expect(drafts(page)).toHaveCount(2);
 });
 
 test("a stale draft says new messages arrived; Draft again answers the newest message, and an edit posts as written", async ({ page }) => {

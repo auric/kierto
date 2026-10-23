@@ -38,9 +38,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import {
@@ -50,9 +52,14 @@ import {
   type BriefInput,
   MAX_NOTE,
   type MetaDto,
+  MODULE_IDS,
+  type ModuleId,
   type ProfileId,
+  type ProfileInput,
   type PrTask,
   type TaskContextDto,
+  VOLUMES,
+  type Volume,
 } from "../../shared/dto";
 import { api } from "../api";
 import { dialogKeys } from "../fix/CloneDialog";
@@ -61,8 +68,20 @@ import { useSkills } from "../meta";
 import { read, useSaveSettings, useSettings } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { failText } from "../shell/model";
-import { loadLastProfile, putBrief } from "./data";
-import { type BriefState, briefProfile, plural, profileOf, profileSetupText } from "./model";
+import { loadLastProfile, putBrief, useSaveProfile } from "./data";
+import {
+  type BriefState,
+  briefProfile,
+  LANGUAGE_LABEL,
+  MODULE_LABEL,
+  MORE_CHECKS,
+  plural,
+  profileOf,
+  profileSetupText,
+  SHOWN_CHECKS,
+  VOLUME_LINE,
+  VOLUME_NAME,
+} from "./model";
 import { keyParam, TaskChips, taskKey, useTaskChips } from "./TaskChips";
 import {
   type AttachmentRow,
@@ -554,6 +573,118 @@ export type BriefMode = { kind: "review" } | { kind: "rereview"; since: string; 
 
 const LAST_USED = { pr: "The last profile you used on this pull request.", any: "The last profile you used on any pull request." };
 
+type SetupPatch = Partial<Pick<ProfileInput, "modules" | "volume" | "languageChecks">>;
+
+function CheckBox(props: { id: string; label: string; checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <label htmlFor={props.id} className="flex min-h-6 cursor-pointer items-center gap-2 text-sm">
+      <input
+        id={props.id}
+        type="checkbox"
+        className="size-4 shrink-0 accent-primary"
+        checked={props.checked}
+        onChange={(e) => props.onChange(e.target.checked)}
+      />
+      {props.label}
+    </label>
+  );
+}
+
+// docs/plans/review-v2/spec.md sections 1.1 and 1.4: the checks and the volume of the chosen profile. Each change saves to the profile
+// at once. profile undefined: the settings still load. explain: the profile gives no findings, so it has no checks.
+function Setup({
+  profile: saved,
+  explain,
+  onChange,
+}: {
+  profile: ProfileInput | undefined;
+  explain: boolean;
+  onChange: (patch: SetupPatch) => void;
+}) {
+  // The query cache tells its readers after the input event, so a controlled checkbox would spring back for a moment. The local
+  // patch shows the change until the cache gives a new profile: the saved one, or the server state after a failed save.
+  const [local, setLocal] = useState<{ base: ProfileInput | undefined; patch: SetupPatch }>({ base: saved, patch: {} });
+  if (explain)
+    return (
+      <p className="m-0 text-xs text-muted-foreground" data-brief-setup>
+        This profile explains the change. It gives no findings, so it has no checks.
+      </p>
+    );
+  if (!saved) return <Skeleton className="h-24 w-full" />;
+  const p = local.base === saved ? { ...saved, ...local.patch } : saved;
+  const change = (patch: SetupPatch) => {
+    setLocal({ base: saved, patch: { ...(local.base === saved ? local.patch : {}), ...patch } });
+    onChange(patch);
+  };
+  const toggle = (id: ModuleId, on: boolean) => change({ modules: MODULE_IDS.filter((m) => (m === id ? on : p.modules.includes(m))) });
+  const box = (id: ModuleId) => (
+    <CheckBox
+      key={id}
+      id={`brief-check-${id}`}
+      label={MODULE_LABEL[id]}
+      checked={p.modules.includes(id)}
+      onChange={(on) => toggle(id, on)}
+    />
+  );
+  const more = MORE_CHECKS.filter((m) => p.modules.includes(m)).length + (p.languageChecks ? 1 : 0);
+  return (
+    <div className="grid gap-3 border-t pt-3" data-brief-setup>
+      <FieldSet className="min-w-0 gap-1.5">
+        <FieldLegend variant="label" className="mb-0.5 text-sm font-semibold">
+          Checks
+        </FieldLegend>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-x-4 gap-y-0.5">{SHOWN_CHECKS.map(box)}</div>
+        <details className="group">
+          <summary className="rl-hit inline-flex cursor-pointer items-center gap-1 rounded text-sm font-medium text-ink-2 hover:text-foreground">
+            <ChevronRight aria-hidden className={cn("rl-chev", icon)} />
+            More checks{more ? ` (${more} on)` : ""}
+          </summary>
+          <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-x-4 gap-y-0.5 pl-5">
+            {MORE_CHECKS.map(box)}
+            <CheckBox
+              id="brief-check-lang"
+              label={LANGUAGE_LABEL}
+              checked={p.languageChecks}
+              onChange={(languageChecks) => change({ languageChecks })}
+            />
+          </div>
+        </details>
+      </FieldSet>
+      <div className="grid gap-1.5">
+        <span id="brief-volume-h" className="text-sm font-semibold">
+          Show
+        </span>
+        <ToggleGroup
+          aria-labelledby="brief-volume-h"
+          aria-describedby="brief-volume-line"
+          variant="outline"
+          size="sm"
+          spacing={0}
+          className="flex-wrap"
+          value={[p.volume]}
+          onValueChange={(v) => v[0] && change({ volume: v[0] as Volume })}
+        >
+          {VOLUMES.map((v) => (
+            <ToggleGroupItem
+              key={v}
+              value={v}
+              data-volume={v}
+              className="aria-pressed:bg-foreground aria-pressed:font-semibold aria-pressed:text-background"
+            >
+              {VOLUME_NAME[v]}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        {/* The line follows the pick, so a screen reader reads what the new volume does. */}
+        <p id="brief-volume-line" aria-live="polite" className="m-0 text-xs text-muted-foreground">
+          {VOLUME_LINE[p.volume]}
+        </p>
+      </div>
+      <p className="m-0 text-xs text-muted-foreground">Applies to every review with this setup.</p>
+    </div>
+  );
+}
+
 export function BriefComposer(props: {
   pr: number;
   brief: BriefDto;
@@ -631,6 +762,15 @@ export function BriefComposer(props: {
     void flush();
   };
   const chosen = profileOf(meta.profiles, profile);
+  // docs/plans/review-v2/spec.md section 1.1: the picker shows only for 2 or more profiles.
+  // shortcut: the Explain profile counts, because it has no button of its own yet; count review profiles only once "Explain this PR" ships.
+  const picker = meta.profiles.length >= 2;
+  // The checks and the volume come from the full profile of the settings. undefined while they load.
+  const setup = useSettings().data?.profiles.find((p) => p.id === chosen?.id);
+  const saveProfile = useSaveProfile();
+  const changeSetup = (patch: Partial<Pick<ProfileInput, "modules" | "volume" | "languageChecks">>) => {
+    if (chosen) saveProfile(chosen.id, patch, (e) => toast.add({ title: "The review setup was not saved", description: failText(e) }));
+  };
   // The server check is the real guard. This shows a skill that GET /api/skills already misses.
   const skillList = useSkills(!!chosen?.alwaysSkills.length).data;
   const lost = skillList && chosen?.alwaysSkills.find((id) => !skillList.has(id));
@@ -724,7 +864,7 @@ export function BriefComposer(props: {
         {/* The group name is "Profile" only. The Edit link in the legend keeps its own name. */}
         <FieldSet aria-labelledby="brief-profile-h" className="min-w-0 gap-1">
           <FieldLegend variant="label" className="mb-1 flex w-full items-baseline gap-2 text-sm font-semibold">
-            <span id="brief-profile-h">Profile</span>
+            <span id="brief-profile-h">{picker ? "Profile" : (chosen?.name ?? "Profile")}</span>
             {chosen && (
               <a
                 href={formatRoute({ kind: "settings", section: "profiles", profile: chosen.id })}
@@ -740,7 +880,8 @@ export function BriefComposer(props: {
               </a>
             )}
           </FieldLegend>
-          {meta.profiles.map((p) => (
+          {!picker && chosen?.note && <p className="m-0 text-xs text-muted-foreground">{chosen.note}</p>}
+          {(picker ? meta.profiles : []).map((p) => (
             <label
               key={p.id}
               className="-mx-1.5 grid cursor-pointer grid-cols-[auto_auto_minmax(0,1fr)] gap-x-2 rounded-[5px] px-1.5 py-[5px] hover:bg-hover"
@@ -775,9 +916,11 @@ export function BriefComposer(props: {
           </div>
         </FieldSet>
       </div>
+      {chosen && <Setup profile={setup} explain={chosen.explain} onChange={changeSetup} />}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <Button
           size="sm"
+          data-primary
           disabled={props.starting || !!blocked}
           focusableWhenDisabled
           className="aria-disabled:cursor-default aria-disabled:opacity-50"

@@ -102,11 +102,31 @@ const ANSWERED = [
     finding: null,
   },
 ];
+// The verdicts of the check phase for the REVIEW_RESULT candidates: the blocker on flush.ts line 3, the minor on line 6, and the
+// README nit (docs/plans/review-v2/spec.md section 1.6). They show a confirmed point, a refuted one, and an unsure one.
+const verdict = (candidate: number, v: string, severity: string, reason: string, evidence: string) => ({
+  candidate,
+  verdict: v,
+  severity,
+  reason,
+  evidence,
+  duplicateOf: null,
+  question: "",
+});
+const VERIFY = {
+  verdicts: [
+    verdict(1, "confirmed", "blocker", "`write()` reads the batch between two entries without the lock.", "src/cache/flush.ts:4"),
+    verdict(2, "refuted", "minor", "The caller releases the lock in a `finally` block.", "src/cache/flush.ts:9"),
+    verdict(3, "unsure", "nit", "No reader of the README depends on the flush order.", "README.md:1"),
+  ],
+  coverage: { read: ["src/cache/flush.ts"], skipped: [], unavailable: [], notChecked: [] },
+};
 // The verify phase of a review run gets one tool call and no subagent (docs/plans/review-v2/spec.md section 1.6).
 runner.write({
   fixture: claudeStream(claudeDir, "tree", "claude/b9-wp8-flags.jsonl", REVIEW_RESULT),
   fix: FIX,
   answered: ANSWERED,
+  verify: VERIFY,
   bySchema: { verify: { fixture: claudeStream(claudeDir, "check", "claude/b6-hostile-repo.jsonl") } },
 });
 const SOURCE_PRS = [1001, 1002, 31, 210, 212, 77, 74, 33, 215, 9, 5, 2, 1004];

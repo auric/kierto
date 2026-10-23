@@ -149,7 +149,7 @@ test("a 409 keeps the typed question, also after a reload, and a running answer 
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").fill("Check the lock scope.");
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect(runLine(page)).toContainText("Finding problems…", { timeout: RUN_MS });
 
   await page.keyboard.press("q");
   await expect(slot(page)).toContainText("Claude is reviewing this pull request. One review runs at a time.");

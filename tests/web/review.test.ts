@@ -39,7 +39,6 @@ import {
   runRows,
   runWhy,
   setupText,
-  severityJumps,
   staleText,
   subagentText,
   tokenTotal,
@@ -805,22 +804,6 @@ describe("one row per run kind", () => {
     expect(result(run({ kind: "reply", status: "running" }))).toBe("running");
     const since = { head: "d".repeat(40), incremental: true };
     expect(result(run({ since }), [finding(1)])).toBe("1 new, 0 carried, 0 fixed or outdated");
-  });
-
-  test("severity jumps: open drafts per severity in severity order, each with its first draft", () => {
-    const ds = [
-      finding(1, {}, { severity: "minor" }),
-      finding(2, { status: "discarded" }, { severity: "blocker" }),
-      finding(3, {}, { severity: "major" }),
-      finding(4, { status: "accepted" }, { severity: "minor" }),
-      finding(5, {}, { severity: "blocker" }),
-    ];
-    expect(severityJumps(ds)).toEqual([
-      { severity: "blocker", n: 1, first: 5 },
-      { severity: "major", n: 1, first: 3 },
-      { severity: "minor", n: 2, first: 1 },
-    ]);
-    expect(severityJumps([finding(1, { status: "discarded" })])).toEqual([]);
   });
 });
 

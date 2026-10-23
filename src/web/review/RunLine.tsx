@@ -5,26 +5,33 @@
 // The review comes first: its result, the summary, a ledger of the open drafts, and what it read and did not check.
 // Every other kind is one line. Each row opens "Not checked" and "Run setup" in place. Only Log opens the run log.
 // Failed, usage-limit, and cancelled runs are one line each. A re-review names its range (plan r2 UI-RR).
-import { Braces, Check, ChevronRight, CircleAlert, CircleStop, LoaderCircle, ScrollText, TriangleAlert } from "lucide-react";
+import { Braces, Check, ChevronRight, CircleAlert, CircleStop, LoaderCircle, ScrollText, TriangleAlert, Undo2 } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { MetaDto, RunDto } from "../../shared/dto";
+import type { MetaDto, ReviewItemDto, RunDto } from "../../shared/dto";
+import type { FindingPayload } from "../../shared/review";
 import { fullTime, useSettled } from "../pr/Thread";
-import { agoLong } from "../pr/threads";
+import { agoLong, snippet } from "../pr/threads";
 import { Hint } from "../shell/Hint";
 import { useNow } from "../shell/Sidebar";
-import { AiAvatar, Dropped, Inline } from "./Drafts";
+import { AiAvatar, Dotted, Dropped, Inline, Severity } from "./Drafts";
 import {
+  checkFailedText,
+  checkText,
   clockDur,
+  draftTitle,
+  hiddenParts,
   instructionsText,
-  type Jump,
   KIND_LABEL,
+  type LedgerPart,
   limitText,
+  lineText,
   notChecked,
+  phaseParts,
   plural,
-  RUN_TEXT,
   type RunLineState,
-  SEVERITY,
+  runningText,
   setupText,
   shortHash,
   skillsText,
@@ -85,57 +92,108 @@ export function RunStatus({ state, full, quiet, children }: { state: string; ful
   );
 }
 
-// The open drafts of the newest review run. Each count goes to the first draft of its kind.
-export function Ledger({
-  jumps,
-  questions,
-  onDraft,
-  onQuestion,
-}: {
-  jumps: Jump[];
-  questions: { n: number; first: number } | null;
-  onDraft: (draft: number) => void;
-  onQuestion: (question: number) => void;
-}) {
-  if (!jumps.length && !questions) return null;
+// The open drafts of the newest review run in plain words (docs/plans/review-v2/design.md section 8). Each part goes to its first draft.
+const GO_TO: Record<LedgerPart["key"], string> = {
+  must: "Go to the first must-fix draft",
+  worth: "Go to the first worth-fixing draft",
+  polish: "Go to the first polish draft",
+  fold: "Open the fold and go to its first draft",
+  questions: "Go to the first question",
+};
+export function Ledger({ parts, onDraft }: { parts: LedgerPart[]; onDraft: (draft: number) => void }) {
+  if (!parts.length) return null;
   const btn = "rl-hit group inline-flex cursor-pointer items-baseline gap-1.5 rounded";
   const big = "text-[18px] leading-none font-bold tracking-[-0.01em] text-foreground";
   const word = "text-ink-2 underline-offset-3 group-hover:underline";
   return (
     <ul aria-label="Open drafts" className="m-0 flex list-none flex-wrap items-center gap-x-[18px] gap-y-1.5 p-0 text-sm">
-      {jumps.map((j) => (
-        <li key={j.severity}>
-          <Hint label={`Go to the first ${SEVERITY[j.severity]} draft`}>
-            <button type="button" data-severity={j.severity} className={btn} onClick={() => onDraft(j.first)}>
-              {/* Hue rule: the error hue marks only errors and Blocker findings. The icon and the word carry the severity. */}
-              <span className={cn(big, j.severity === "blocker" && "text-destructive")}>{j.n}</span>{" "}
-              {j.severity === "blocker" ? (
-                <span className={cn(word, "inline-flex items-center gap-1 self-center font-bold text-destructive")}>
-                  <CircleAlert aria-hidden className={icon} />
-                  {SEVERITY[j.severity]}
-                </span>
-              ) : (
-                <span className={word}>{SEVERITY[j.severity]}</span>
-              )}
+      {parts.map((p) => (
+        <li key={p.key}>
+          <Hint label={GO_TO[p.key]}>
+            <button type="button" data-ledger={p.key} className={btn} onClick={() => onDraft(p.first)}>
+              <span className={big}>{p.n}</span> <span className={word}>{p.word}</span>
             </button>
           </Hint>
         </li>
       ))}
-      {questions && (
-        <li>
-          <Hint label="Go to the first question">
-            <button type="button" data-question className={btn} onClick={() => onQuestion(questions.first)}>
-              <span className={big}>{questions.n}</span> <span className={word}>{questions.n === 1 ? "question" : "questions"}</span>
-            </button>
-          </Hint>
-        </li>
-      )}
     </ul>
   );
 }
 
-// stale: staleText of the run. ledger: the open drafts of the newest review run. context: the task text that the run read.
-export type KindRun = { run: RunDto; state: RunLineState; stale: string | null; ledger: ReactNode; context: string };
+// docs/plans/review-v2/spec.md section 1.1: the refuted and duplicate findings of the newest review run, each with its reason and
+// Restore. A restore moves the focus to the draft in the Drafts list (useTriage advance).
+export function Refuted({
+  hidden,
+  busy,
+  onRestore,
+}: {
+  hidden: ReviewItemDto[];
+  busy: ReadonlySet<number>;
+  onRestore: (it: ReviewItemDto) => void;
+}) {
+  const [on, setOn] = useState(false);
+  const parts = hiddenParts(hidden);
+  if (!parts.length) return null;
+  return (
+    <div className="grid gap-1.5" data-refuted>
+      <div>
+        <Disc on={on} controls="rv-refuted" onClick={() => setOn(!on)}>
+          <span>
+            <Dotted parts={parts} />
+          </span>
+        </Disc>
+      </div>
+      <Reveal id="rv-refuted" on={on}>
+        <ul aria-label="Points that the check took out" className={revealList}>
+          {hidden.map((it) => {
+            const f = it.payload as FindingPayload;
+            const a = it.anchor ?? f.anchor;
+            const title = snippet(draftTitle(it), 160);
+            return (
+              <li key={it.id} data-hidden-item={it.id} className="grid gap-1 border-b border-rule pb-2 last:border-b-0 last:pb-0">
+                <p className="m-0 flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm">
+                  <span className="text-xs">
+                    <Severity s={f.severity} />
+                  </span>
+                  <span className="min-w-0 [overflow-wrap:anywhere]">
+                    <Inline text={title} />
+                  </span>
+                  <span translate="no" className="font-mono text-xs text-muted-foreground">
+                    {(a?.path ?? f.path).split("/").pop()}:{a ? lineText(a) : f.line}
+                  </span>
+                </p>
+                <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  {f.verify?.verdict === "duplicate" ? "The check found the same point in another draft. " : ""}
+                  <Inline text={checkText(it) ?? "The check gave no reason."} />
+                </p>
+                {/* items.ts refuses Restore for a finding without an anchor: a re-review found its code gone. */}
+                {it.anchor && (
+                  <div>
+                    <Button size="sm" variant="outline" disabled={busy.has(it.id)} onClick={() => onRestore(it)}>
+                      <Undo2 aria-hidden data-icon="inline-start" />
+                      Restore<span className="sr-only"> {title.replaceAll("`", "")}</span>
+                    </Button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </Reveal>
+    </div>
+  );
+}
+
+// stale: staleText of the run. ledger: the open drafts of the newest review run. refuted: its refuted and duplicate findings.
+// context: the task text that the run read.
+export type KindRun = {
+  run: RunDto;
+  state: RunLineState;
+  stale: string | null;
+  ledger: ReactNode;
+  refuted: ReactNode;
+  context: string;
+};
 
 type RowProps = {
   meta: MetaDto;
@@ -251,7 +309,10 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }
   const setup = part("setup");
   const read = part("read");
   const risk = part("risk");
-  const state = `${run.id}:${s.kind}`;
+  // The phase is part of the key, so the live region reads "Checking 9 findings…" when the check starts.
+  const state = `${run.id}:${s.kind}:${s.kind === "running" ? (run.phase ?? "") : ""}`;
+  const failedCheck = review && s.kind === "done" ? checkFailedText(run.summary) : null;
+  const phases = review && s.kind === "done" ? phaseParts(run.summary) : [];
   const at = run.finishedAt ?? run.startedAt;
   // The log footer also shows the tokens. Here they stay in the hint.
   const tokens =
@@ -274,11 +335,7 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }
       lead = (
         <RunStatus state={state} quiet={!first}>
           <LoaderCircle aria-hidden className={cn(icon, "animate-spin")} />
-          {run.phase === "indexing"
-            ? "Indexing for codegraph…"
-            : run.since
-              ? `Reviewing changes since ${shortHash(run.since.head)}…`
-              : RUN_TEXT[run.kind].running}
+          {runningText(run)}
         </RunStatus>
       );
       // The counters stay outside the live region, so a screen reader does not read each tick.
@@ -392,6 +449,12 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }
                     </code>
                   </span>
                 ),
+                // docs/plans/review-v2/spec.md section 1.1: the time of each phase. Run setup also names their tokens.
+                ...phases.map((p) => (
+                  <span key={p} data-phase-time>
+                    {p}
+                  </span>
+                )),
                 s.kind !== "running" && time,
               ]}
             />
@@ -425,6 +488,18 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }
           {instructions.notLoaded}
         </p>
       )}
+      {failedCheck && (
+        <p className="m-0 flex flex-wrap items-start gap-x-3 gap-y-1 font-semibold text-warn" data-check-failed>
+          <span className="inline-flex items-start gap-1.5">
+            <TriangleAlert aria-hidden className={cn(icon, "mt-0.5")} />
+            {failedCheck}
+          </span>
+          <button type="button" className={linkish} onClick={() => onLog(run.id)}>
+            <ScrollText aria-hidden className={icon} />
+            Show log<span className="sr-only"> of the review run</span>
+          </button>
+        </p>
+      )}
       {s.kind === "done" && s.subagents && (
         <p className="m-0 text-muted-foreground [overflow-wrap:anywhere]" data-run-subagents>
           Subagents: {s.subagents}
@@ -442,6 +517,7 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }
             </span>
           </p>
           {row.ledger}
+          {row.refuted}
           <div className="flex flex-wrap items-center gap-x-[18px] gap-y-1">
             {files.length > 0 && (
               <Disc on={read.on} controls={read.id} onClick={read.flip}>
@@ -508,6 +584,11 @@ function RunRow({ row, first, meta, now, cancelling, onLog, onCancel, onAnswer }
           <li data-run-setup>
             <span className="text-muted-foreground">Model and effort:</span> {setupText(run, meta.runner.defaults)}
           </li>
+          {phases.length > 0 && (
+            <li data-run-phases>
+              <span className="text-muted-foreground">Steps:</span> {phaseParts(run.summary, true).join("; ")}
+            </li>
+          )}
           {run.consult && (
             <li data-run-session className="[overflow-wrap:anywhere]">
               <span className="text-muted-foreground">Session:</span> {run.consult.title ?? "no title"}, {sizeText(run.consult.bytes)} of

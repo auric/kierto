@@ -62,12 +62,13 @@ async function connect(page: Page) {
   await expect(page.locator("section[aria-label='Details'] h1")).toHaveText(TITLE);
 }
 
-// Shift+R opens the brief. Ctrl+Enter starts the review. The fake CLI gives 3 drafts and 1 question.
+// Shift+R opens the brief. Ctrl+Enter starts the review. The fake CLI gives 3 drafts and 1 question. The README nit waits in the
+// closed Low confidence fold (docs/plans/review-v2/spec.md section 1.4).
 async function review(page: Page) {
   await page.keyboard.press("Shift+R");
   await page.getByLabel("Your note").press("Control+Enter");
   await expect(page.locator("#runline [data-run-kind='review']")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
-  await expect(drafts(page)).toHaveCount(3);
+  await expect(drafts(page)).toHaveCount(2);
 }
 
 // The fetch moves the focus to the first file. PR 1001 has no forge file list, so the note offers the fetch alone.
@@ -134,9 +135,9 @@ test("get the code, open flush.ts, cards on their lines, Show in diff and back, 
   await expect(page.locator("#dl-0-n3")).toBeFocused();
   // Plan pr-view-v4 2.7: g d also works from a closed row. A question has no line, so g d says why.
   const strip = page.getByRole("navigation", { name: "Pull request summary" });
-  const head = page.locator("#h-drafts");
+  const ledger = page.locator("[data-drafts-ledger]");
   await expect(strip.getByRole("button", { name: "4 drafts" })).toBeVisible();
-  await expect(head).toHaveText(/^Drafts\s*4$/);
+  await expect(ledger).toHaveText("1 must fix · 1 worth fixing · 1 low confidence · 1 question");
   const minor = drafts(page).nth(1).locator("[data-row-head]");
   await expect(minor).toHaveAttribute("aria-expanded", "false");
   await minor.focus();
@@ -149,11 +150,11 @@ test("get the code, open flush.ts, cards on their lines, Show in diff and back, 
   await page.keyboard.press("d");
   await expect(page.locator("[data-slot=toast-title]", { hasText: "A question has no line in the diff." })).toBeVisible();
   await expect(question).toBeFocused();
-  // d discards the question. The strip and the head count only the drafts that are not discarded.
+  // d discards the question. The strip and the ledger count only the drafts that are not discarded.
   await page.keyboard.press("d");
   await expect(page.locator("[data-draft-question]")).toHaveAccessibleName("Discarded question");
   await expect(strip.getByRole("button", { name: "3 drafts" })).toBeVisible();
-  await expect(head).toHaveText(/^Drafts\s*3$/);
+  await expect(ledger).toHaveText("1 must fix · 1 worth fixing · 1 low confidence");
 
   // Show in diff from the inline thread finds the old-side line.
   const mine = page.locator("[data-thread]", { hasText: "flush.ts" }).first();

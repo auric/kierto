@@ -106,11 +106,20 @@ async function shots(browser: Browser) {
     await page.getByLabel("Your note").fill("Check the lock order in evict(). Callers hold the cache lock today.");
     await save(page, "brief");
   });
-  // The review record: the severity ledger and the "Not checked" list. The list starts open when the run has gaps.
+  // The review record: the plain-word ledger, the refuted points with their reasons, and the "Not checked" list. The list starts
+  // open when the run has gaps.
   const gaps = runRow(page, "review").getByRole("button", { name: /^Not checked/ });
   if ((await gaps.getAttribute("aria-expanded")) !== "true") await gaps.click();
+  await runRow(page, "review")
+    .getByRole("button", { name: /refuted by the check/ })
+    .click();
   await toTop(page.locator("#runline"), 64);
   await save(page, "review");
+  // The Drafts list with its check chips and the open "Low confidence" fold.
+  await page.getByRole("button", { name: /^Low confidence \(/ }).click();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  // The rows of the fold fade in (.rl-enter).
+  await page.waitForTimeout(400);
   await toTop(page.locator("#s-drafts"), 64);
   await save(page, "drafts");
   await page.keyboard.press("3");

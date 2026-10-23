@@ -25,13 +25,21 @@
 ### Reviews
 
 - A review now checks each finding in a second step of the same run. The check runs at medium effort. The verifier setting of the review profile sets its model and effort, or turns it off.
-- A finding that the check refutes, or that repeats another finding at the same place, arrives discarded. Restore brings it back.
+- A finding that the check refutes, or that repeats another finding at the same place, leaves the Drafts list. The review record lists it with the reason of the check, and Restore brings it back. The card then says "You restored it".
+- The review brief shows the checks of the profile as checkboxes, with more under "More checks", and the volume: "Only what matters", "Balanced", or "Show everything". A change saves to the profile at once.
+- The Drafts list follows the volume of the run. "Balanced" puts unsure points and nits into a "Low confidence" fold. "Only what matters" puts everything but must-fix points into a "More" fold. "Show everything" has no fold. A run keeps its view after a volume change.
+- The Drafts header and the review record count the open drafts in plain words, for example "2 must fix · 3 worth fixing · 4 low confidence".
+- Each finding card shows a check chip ("Checked", "Low confidence", or "Not checked"), the case that triggers the problem ("When:"), and the reason of the check. The cards in the diff show the chip too.
+- While a review runs, the run line says "Finding problems…" and then "Checking 9 findings…". A finished review shows the time of each step, and Run setup adds their tokens. The run log shows the calls of the check under "Check".
+- When the check does not finish, the review record says how many findings are not checked, with "Show log". A complete review without findings says "No problems found in the checked areas".
+- Settings, Review profiles, sets the checks, the volume, and the check step with its own model and effort for each profile.
+- The dropped findings under "Not checked" now say why: a code reference that does not match, a place outside the change, or a quoted rule that the project instructions do not hold.
 - A finding that the check cannot confirm is at most minor. A finding without a concrete case becomes a question for the author.
 - A finding on code that the change does not touch is dropped, unless it names the changed line that causes it. A rule finding is dropped when the quoted rule is not in the project instructions for its path. The dropped list says why.
 - When the check does not finish, for example at a usage limit, the run is incomplete, and its findings stay unchecked.
 - "Review changes since" also checks the open findings that it carries over. A finding that you accepted or edited keeps its state.
 - After you discard a finding, its card offers the optional reasons "Not a bug", "Not worth fixing", "Duplicate", "Intended", and "Wrong place".
-- Settings has a new "Review quality" table for the last 30 days. Each row shows one profile and prompt version: runs, shown findings per run, check results, accepted, discarded by reason, posted, addressed, outdated, median time, and cost per run.
+- Settings has a new "Review quality" table for the last 30 days. Each row shows one profile and prompt version: runs, shown findings per run, check results, accepted of shown, discarded by reason, posted, addressed, outdated, median time, and cost per run. Accepts from a fold count apart, so the accepted share never exceeds 100%.
 - The "General" profile is now named "Review". It has a new prompt and runs at high effort. Its reviewer agents also run at high effort.
 - A review now reports each problem with a title, a concrete case, a severity, and a confidence. It reports only what the change adds, and it skips style, linter output, and behavior that the pull request or the task asks for.
 - "Review" checks security, threads and races, compatibility, the project rules, and the task goal. Each finding names the check that found it.

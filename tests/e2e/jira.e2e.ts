@@ -400,7 +400,7 @@ test("attachments: download all, the inline image, save, include after the polic
   // A run gets the included image only.
   await control("claude", { stream: "tree", hang: true });
   await page.getByLabel("Your note").press("Control+Enter");
-  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect(runLine(page)).toContainText("Finding problems…", { timeout: RUN_MS });
   await expect.poll(runAttachments, { timeout: RUN_MS }).toEqual(["10100.png"]);
   await runLine(page).getByRole("button", { name: "Cancel" }).click();
   await expect(runRow(page)).toContainText(/Cancelled after \d+ tool calls?/, { timeout: RUN_MS });

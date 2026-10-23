@@ -98,22 +98,26 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await expect(runRow(page)).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runLine(page)).toContainText("3 findings, 1 question");
   // Plan pr-view-v4 2.7: one Drafts section between the Description and the threads. It holds the findings, then the question.
-  // Only the first untriaged row starts open. The head and the status strip count all four.
+  // docs/plans/review-v2/spec.md section 1.4: the Balanced volume keeps the nit in the closed Low confidence fold between them.
+  // Only the first untriaged row starts open. The ledger names the open drafts in plain words. The status strip counts all four.
   const section = page.locator("#s-drafts");
   const heads = section.locator("[data-row-head]");
   await expect(page.locator("#s-overview ~ #s-drafts ~ #s-threads")).toHaveCount(1);
-  await expect(section.locator("h2")).toHaveText(/^Drafts\s*4$/);
+  await expect(section.locator("h2")).toHaveText("Drafts");
+  await expect(section.locator("[data-drafts-ledger]")).toHaveText("1 must fix · 1 worth fixing · 1 low confidence · 1 question");
   await expect(page.getByRole("navigation", { name: "Pull request summary" }).getByRole("button", { name: "4 drafts" })).toBeVisible();
   await expect(heads).toHaveCount(4);
   await expect(heads.nth(0)).toContainText("Blocker");
   await expect(heads.nth(0)).toContainText("src/cache/flush.ts:3");
+  await expect(heads.nth(2)).toHaveText("Low confidence (1)");
   await expect(heads.nth(3)).toContainText("QuestionMust flush() stay atomic for readers?");
   for (const [i, open] of [true, false, false, false].entries()) await expect(heads.nth(i)).toHaveAttribute("aria-expanded", String(open));
   await expect(page.locator("#s-threads [data-draft], #s-threads [data-draft-question]")).toHaveCount(0);
-  // One button per severity of the open drafts. Each one goes to the first draft of its severity.
-  await expect(runLine(page).locator("[data-severity]")).toHaveText(["1 Blocker", "1 Minor", "1 Nit"]);
-  await runLine(page).getByRole("button", { name: "1 Nit" }).click();
+  // One button per part of the ledger. Each one goes to its first draft. The fold part opens the fold first.
+  await expect(runLine(page).locator("[data-ledger]")).toHaveText(["1 must fix", "1 worth fixing", "1 low confidence", "1 question"]);
+  await runLine(page).getByRole("button", { name: "1 low confidence" }).click();
   await expect(page.getByRole("article", { name: /^Draft from Claude\. Nit\. README\.md:1\./ })).toBeFocused();
+  await expect(heads.nth(2)).toHaveAttribute("aria-expanded", "true");
   // Run setup opens in place with the inputs of the run.
   const setup = runRow(page).getByRole("button", { name: "Run setup of the review run" });
   await expect(page.getByText(`Your note: ${NOTE}`)).toBeHidden();
@@ -139,7 +143,7 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   // The ledger counts the question too. It opens the question row after the findings.
   await runLine(page).getByRole("button", { name: "1 question" }).click();
   await expect(page.locator("[data-draft-question]")).toBeFocused();
-  await expect(heads.nth(3)).toHaveAttribute("aria-expanded", "true");
+  await expect(heads.last()).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText("The description does not say if a reader may see a partial batch.")).toBeVisible();
 
   // The record names the subagents of the run. The run defined only rl-reviewer, so the refused others are built-in.
@@ -185,11 +189,11 @@ test("a brief with a note and a profile; drafts, summary, and the subagent tree;
   await expect(heads.nth(1)).toHaveAttribute("aria-expanded", "true");
   await page.keyboard.press("k");
   await expect(heads.nth(0)).toBeFocused();
-  await heads.nth(3).focus();
+  await heads.last().focus();
   await page.keyboard.press("j");
   await expect(page.locator("#s-threads [data-thread]").first()).toBeFocused();
   await page.keyboard.press("k");
-  await expect(heads.nth(3)).toBeFocused();
+  await expect(heads.last()).toBeFocused();
   await page.keyboard.press("r");
   await expect(page.getByLabel("Your note")).toHaveValue(NOTE);
   await expect(page.getByRole("radio", { name: /^Security/ })).toBeChecked();
@@ -218,7 +222,7 @@ test("Esc closes the brief; cancel stops a running review, and nothing from it s
   await expect(page.locator("#review-btn")).toBeFocused();
 
   await startWithBrief(page);
-  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect(runLine(page)).toContainText("Finding problems…", { timeout: RUN_MS });
   await expect(runLine(page)).toContainText(/\d+ tool calls?/, { timeout: RUN_MS });
   await page.keyboard.press("3");
   await expect(runLog(page).locator("footer")).toContainText("Running.");
@@ -275,12 +279,12 @@ test("two pages share one run: the brief of the second page cannot start while i
   await control("claude", { stream: "tree", hang: true });
   await connect(page);
   await startWithBrief(page);
-  await expect(runLine(page)).toContainText("Reviewing…", { timeout: RUN_MS });
+  await expect(runLine(page)).toContainText("Finding problems…", { timeout: RUN_MS });
 
   const other = await context.newPage();
   await other.goto("/");
   await row(other).click();
-  await expect(runLine(other)).toContainText("Reviewing…");
+  await expect(runLine(other)).toContainText("Finding problems…");
   await expect(other.locator("#nav-runs")).toHaveAccessibleName("Review runs: 1, 1 running");
   // r opens the brief. Start stays disabled while the run holds the only slot (A14), and Ctrl+Enter only says why.
   await other.keyboard.press("r");
