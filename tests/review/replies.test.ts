@@ -293,7 +293,8 @@ describe("profile for one run", () => {
       expect(refused(await review("a%20b"))).toEqual([400, "Unknown review profile."]);
       const v = await review("explain");
       expect(v.status).toBe(202);
-      expect(v.body).toMatchObject({ kind: "review", profile: "explain", explain: true });
+      // docs/plans/review-v2/spec.md section 3.2: an Explain profile makes an explain run.
+      expect(v.body).toMatchObject({ kind: "explain", profile: "explain", explain: true });
       await h.finish(v.body.id);
       expect((await h.json<{ profile: string }>(`/api/prs/${h.pr}/brief`)).body.profile).toBe("general");
     },

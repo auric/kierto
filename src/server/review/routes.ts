@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR, S-ASK, r3 S-FIX): brief, start, re-review, ask, reply drafts, fix runs, cancel, run,
-// raw output, item triage, review quality stats, and Improve prompt. Every mutation of PR data broadcasts `changed`.
+// Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR, S-ASK, r3 S-FIX, review-v2 part 3): brief, start, re-review, ask, explain,
+// reply drafts, fix runs, cancel, run, raw output, item triage, review quality stats, and Improve prompt. Every mutation of PR data
+// broadcasts `changed`.
 // Improve prompt: a new start replaces the running proposal. Nothing saves until the user applies the proposal.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
@@ -117,6 +118,30 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
         return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
       },
     )
+    .post(
+      "/prs/:id/explain",
+      prParam,
+      // docs/plans/review-v2/spec.md section 3.2. A query, as for the review start.
+      validator("query", (v, c) => {
+        const r = reviewRunInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const { profile } = c.req.valid("query");
+        if (profile && !review.hasProfile(profile)) return c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
+        const r = review.explain(db, c.req.valid("param").id, profile);
+        if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
+        if ("conflict" in r) return c.json(r.conflict, 409);
+        return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
+      },
+    )
+    .get("/prs/:id/explain", prParam, (c) => {
+      const db = review.open();
+      const r = db && review.explanation(db, c.req.valid("param").id);
+      return r ? c.json(r.explain, 200) : c.json(notFound("Pull request"), 404);
+    })
     .get("/prs/:id/asks", prParam, (c) => {
       const db = review.open();
       if (!db) return c.json([], 200);

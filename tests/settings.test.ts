@@ -364,7 +364,7 @@ describe("settings API", () => {
     }
   });
 
-  // The shipped profiles of PROFILES_VERSION 5, and the version 4 Over-engineering and Security profiles that version 5 retires.
+  // The shipped profiles of PROFILES_VERSION 6, and the version 4 Over-engineering and Security profiles that version 5 retires.
   const [general, explain] = SHIPPED_PROFILES as [Profile, Profile];
   const over = RETIRED_PROFILES.over as Profile;
   const security = RETIRED_PROFILES.security as Profile;
@@ -448,7 +448,7 @@ describe("settings API", () => {
     expect((await again.get()).profiles).toEqual(upgraded);
     // A save stamps the version, so a cap of 40 set after the update stays.
     expect((await again.put({ baseUrl: fake.url, notifications: true })).status).toBe(200);
-    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ profiles: upgraded, profilesVersion: 5 });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ profiles: upgraded, profilesVersion: PROFILES_VERSION });
     const oldGeneral = { ...general, maxTurns: 40 };
     expect((await again.put({ baseUrl: fake.url, profiles: [oldGeneral] })).status).toBe(200);
     again.settings.close();
@@ -547,7 +547,7 @@ describe("settings API", () => {
   // ---------- PROFILES_VERSION 5 (docs/plans/review-v2/spec.md section 1.2) ----------
 
   test("AC-R11: a version 4 config with unedited Security and Over-engineering profiles upgrades to two profiles; an edited one stays", async () => {
-    expect(PROFILES_VERSION).toBe(5);
+    expect(PROFILES_VERSION).toBe(6);
     const { write, load } = await oldConfig();
     write(4, [v4.general, v4.over, v4.security, v4.explain]);
     const two = await load();
@@ -575,15 +575,26 @@ describe("settings API", () => {
     expect(mine).toMatchObject({ volume: "balanced", effort: "high", reviewer: { effort: "high" }, verifier: { effort: "medium" } });
   });
 
-  // AC-X8 (the new Explain lens) moves to WP-X1. Until then the shipped Explain keeps its version 4 values.
-  test("a version 4 Explain profile keeps its version 4 values and gets the Explain verifier", async () => {
+  // ---------- PROFILES_VERSION 6 (docs/plans/review-v2/spec.md sections 1.2 and 3.4) ----------
+
+  test("AC-X8: a version 4 or 5 Explain profile with an unedited prompt gets the new lens; an edited one keeps it", async () => {
+    expect(explain).toMatchObject({ ...EXPLAIN_V2, verifier: { mode: "off" } });
+    expect(explain.prompt).toContain("In walkthrough, explain the change by theme.");
     const { write, load } = await oldConfig();
-    write(4, [v4.general, v4.explain]);
-    expect((await load())[1]).toEqual(explain);
-    expect(explain).toMatchObject({ prompt: V4_EXPLAIN, maxTurns: 50, effort: null, verifier: { mode: "off" } });
-    expect(EXPLAIN_V2.prompt).toContain("walkthrough");
-    write(4, [v4.general, { ...v4.explain, prompt: "My walkthrough" }]);
-    expect((await load())[1]).toEqual({ ...explain, prompt: "My walkthrough" });
+    // Version 5 stored the Explain verifier and the version 4 note, prompt, effort, and turn cap.
+    const v5explain = { ...explain, note: "Summary and questions only, at lower cost", prompt: V4_EXPLAIN, effort: null, maxTurns: 50 };
+    for (const [version, old] of [
+      [4, v4.explain],
+      [5, v5explain],
+    ] as const) {
+      write(version, [v4.general, old]);
+      expect((await load())[1]).toEqual(explain);
+      // Field by field: an edited prompt stays, and the unedited note, effort, and turn cap upgrade.
+      write(version, [v4.general, { ...old, prompt: "My walkthrough" }]);
+      expect((await load())[1]).toEqual({ ...explain, prompt: "My walkthrough" });
+      write(version, [v4.general, { ...old, maxTurns: 30, effort: "low" }]);
+      expect((await load())[1]).toEqual({ ...explain, maxTurns: 30, effort: "low" });
+    }
   });
 
   test("a version 4 config with every profile edited keeps all four", async () => {
@@ -602,11 +613,20 @@ describe("settings API", () => {
     ]);
   });
 
-  test("a version 5 config changes nothing, also a profile with the values of a retired one", async () => {
+  test("a version 5 config keeps every profile but Explain, also a profile with the values of a retired one", async () => {
     const { write, load } = await oldConfig();
     const mine: Profile = { ...general, name: "Mine", modules: [] };
     write(5, [mine, over, security, { ...explain, maxTurns: 50, verifier: { mode: "on" } }]);
-    expect(await load()).toEqual([mine, over, security, { ...explain, maxTurns: 50, verifier: { mode: "on", model: null, effort: null } }]);
+    // The turn cap 50 is the version 5 value, so it upgrades. The verifier was edited, so it stays.
+    expect(await load()).toEqual([mine, over, security, { ...explain, verifier: { mode: "on", model: null, effort: null } }]);
+  });
+
+  test("a version 6 config changes nothing", async () => {
+    const { write, load } = await oldConfig();
+    const mine: Profile = { ...general, name: "Mine", modules: [] };
+    const old = { ...explain, note: "Summary and questions only, at lower cost", prompt: V4_EXPLAIN, effort: null, maxTurns: 50 };
+    write(6, [mine, over, security, old]);
+    expect(await load()).toEqual([mine, over, security, old]);
   });
 
   test("no profile retires without general; an edited general.modules gets no module", async () => {

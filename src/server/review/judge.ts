@@ -3,16 +3,23 @@
 
 // The run end (jobs.ts): turns a runner outcome into the stored status, summary, items, answer, or fix notes and edits.
 // A review run ends in two steps: judge() validates the finder result, and settle() merges the verdicts of the verify phase.
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { acceptedTargets, consultOutput } from "../../shared/consult";
 import { MAX_NOTE, type RunPhase, type RunSummary, type RunUsage, type VerifySummary, type Volume } from "../../shared/dto";
 import {
   type AnchoredFinding,
   askResult,
   type Check,
+  type ExplainResult,
+  explainResult,
   type FindingPayload,
   type FixNote,
   type FixWhy,
   fixResult,
+  MAX_DIAGRAM_CHARS,
+  MAX_DIAGRAMS,
   type NoteProposal,
   type Question,
   type ReplyPayload,
@@ -39,6 +46,7 @@ import type { Carry } from "./rereview";
 import { type NewItem, NO_ANCHOR } from "./run-rows";
 import {
   type AskedThread,
+  anchorer,
   type CheckedEarlier,
   type EarlierItem,
   earlierCases,
@@ -64,7 +72,8 @@ export type CarriedMark = CandidateLink & { verify?: VerifyMark; severity: Sever
 
 // checked: the earlier findings of a re-review. fix: the notes and edits of a fix run. links, carried: the verify phase of a review run.
 // notes: the note proposals of a reply run, before the checks of notes.ts proposeNotes (docs/plans/review-v2/spec.md section 2.9).
-// usage: the sum of both phases of a review run. Absent: the usage of outcome.
+// explain: the checked result of an explain run (spec.md section 3.3). usage: the sum of both phases of a review run. Absent: the
+// usage of outcome.
 export type Ending = {
   status: Exclude<RunStatus, "running">;
   kind: RunErrorKind | null;
@@ -81,6 +90,7 @@ export type Ending = {
     links?: Map<NewItem, CandidateLink>;
     carried?: Map<number, CarriedMark>;
     notes?: NoteProposal[];
+    explain?: ExplainResult;
   };
 };
 
@@ -181,8 +191,10 @@ function ended(raw: string, o: RunOutcome, result: NonNullable<Ending["result"]>
   return { status: c.skipped.length || c.unavailable.length ? "incomplete" : "completed", kind: null, text: null, raw, outcome: o, result };
 }
 
+type Placed = Pick<StoredFinding, "path" | "side">;
+
 // Reads the finding files from the cache clone, never from the sanitized worktree. The lookup matches validate().
-async function readBlobs(ws: Workspace, findings: StoredFinding[]) {
+async function readBlobs(ws: Workspace, findings: Placed[]) {
   const byNew = new Map<string, DiffFile>();
   const byOld = new Map<string, DiffFile>();
   for (const f of parseDiff(ws.diff)) {
@@ -192,7 +204,7 @@ async function readBlobs(ws: Workspace, findings: StoredFinding[]) {
   const newFiles = new Map<string, string>();
   const oldFiles = new Map<string, string>();
   const big = new Set<string>();
-  const blobOf = (f: StoredFinding) => {
+  const blobOf = (f: Placed) => {
     const p = repoPath(f.path);
     if (p === null) return null;
     const file = byNew.get(p) ?? byOld.get(p);
@@ -214,7 +226,7 @@ async function readBlobs(ws: Workspace, findings: StoredFinding[]) {
       // No such file on that side. The validator drops the finding with reason "file".
     }
   }
-  const oversized = (f: StoredFinding) => {
+  const oversized = (f: Placed) => {
     const b = blobOf(f);
     return b !== null && big.has(b.object);
   };
@@ -507,12 +519,157 @@ export function markCopy(it: NewItem, m: CarriedMark): NewItem {
   return { ...it, payload_json: JSON.stringify(next), status: m.discard ? "discarded" : "new" };
 }
 
-// An Explain run gives no candidates and has no verify phase.
-export function settleExplain(f: Found): Ending {
-  return ended(f.raw, f.outcome, {
-    summary: f.summary,
-    items: [...f.questions.map(questionItem), ...f.replies.map(replyItem)],
-    ...(f.checked && { checked: f.checked }),
+// ---------- Explain this PR (docs/plans/review-v2/spec.md section 3.3) ----------
+
+// The mdast fields that the checks read. react-markdown parses the walkthrough with the same remark-parse and remark-gfm.
+type MdNode = {
+  type: string;
+  children?: MdNode[];
+  position?: { start: { offset?: number }; end: { offset?: number } };
+  url?: string;
+  identifier?: string;
+  lang?: string | null;
+  value?: string;
+};
+
+// diff:<path>#N<a>[-<b>] names lines at the head commit, #O lines at the merge base. The end can repeat the side letter.
+const DIFF_LINK = /^diff:([^#]+)#([NO])(\d+)(?:-([NO])?(\d+))?$/;
+const isDiffLink = (url: string | undefined) => /^diff:/i.test(url ?? "");
+
+// A diff link must name a changed file and lines that its diff shows on that side, so the Files diff can open there.
+export function diffLinkOk(href: string, files: readonly DiffFile[]): boolean {
+  const m = DIFF_LINK.exec(href);
+  if (!m || (m[4] !== undefined && m[4] !== m[2])) return false;
+  let path: string;
+  try {
+    path = decodeURIComponent(m[1] as string);
+  } catch {
+    return false;
+  }
+  const head = m[2] === "N";
+  const start = Number(m[3]);
+  const end = m[5] === undefined ? start : Number(m[5]);
+  const file = head
+    ? files.find((f) => f.path === path)
+    : (files.find((f) => f.oldPath === path) ?? files.find((f) => f.path === path && f.oldPath !== null));
+  const lines = head ? file?.newLines : file?.oldLines;
+  if (!lines || start < 1 || end < start || end - start >= lines.size) return false;
+  for (let k = start; k <= end; k++) if (!lines.has(k)) return false;
+  return true;
+}
+
+// One pass over the walkthrough. Edits work on the source text, so the rest of the Markdown keeps its bytes.
+function walkthroughPass(text: string, files: readonly DiffFile[]): { text: string; badLinks: number } {
+  const nodes: MdNode[] = [];
+  const walk = (n: MdNode) => {
+    nodes.push(n);
+    for (const c of n.children ?? []) walk(c);
+  };
+  walk(unified().use(remarkParse).use(remarkGfm).parse(text) as unknown as MdNode);
+  // mdast-util-to-hast resolves a reference with the first definition of its identifier.
+  const defs = new Map<string, boolean>();
+  for (const n of nodes)
+    if (n.type === "definition" && n.identifier !== undefined && !defs.has(n.identifier))
+      defs.set(n.identifier, !isDiffLink(n.url) || diffLinkOk(n.url ?? "", files));
+  const edits: { start: number; end: number; text: string }[] = [];
+  let badLinks = 0;
+  let diagrams = 0;
+  for (const n of nodes) {
+    const start = n.position?.start.offset;
+    const end = n.position?.end.offset;
+    if (start === undefined || end === undefined) continue;
+    const bad =
+      (n.type === "link" && isDiffLink(n.url) && !diffLinkOk(n.url ?? "", files)) ||
+      (n.type === "linkReference" && defs.get(n.identifier ?? "") === false);
+    if (bad) {
+      const a = n.children?.[0]?.position?.start.offset;
+      const b = n.children?.at(-1)?.position?.end.offset;
+      edits.push({ start, end, text: a === undefined || b === undefined ? "" : text.slice(a, b) });
+      badLinks++;
+    } else if (n.type === "code" && n.lang === "mermaid") {
+      // Mermaid reads a %%{ directive anywhere in a line. Line 0 is the opening fence.
+      const source = text.slice(start, end);
+      const lines = source.split("\n").filter((l, i) => i === 0 || !l.includes("%%{"));
+      const code = (n.value ?? "")
+        .split("\n")
+        .filter((l) => !l.includes("%%{"))
+        .join("\n");
+      if (diagrams < MAX_DIAGRAMS && code.length <= MAX_DIAGRAM_CHARS) diagrams++;
+      else lines[0] = (lines[0] ?? "").replace(/^([ \t]*(?:`{3,}|~{3,}))[^\r]*/, "$1text");
+      const out = lines.join("\n");
+      if (out !== source) edits.push({ start, end, text: out });
+    }
+  }
+  let out = text;
+  for (const e of edits.sort((x, y) => y.start - x.start)) out = out.slice(0, e.start) + e.text + out.slice(e.end);
+  return { text: out, badLinks };
+}
+
+// spec.md section 3.3: a bad diff link becomes its label text. The first MAX_DIAGRAMS mermaid fences of up to MAX_DIAGRAM_CHARS stay,
+// and the others become text fences. No line with %%{ stays in a mermaid fence. A label can hold a reference that becomes a link
+// after the unwrap, so the passes repeat until none finds a bad link. Each such pass makes the text shorter.
+export function checkWalkthrough(text: string, files: readonly DiffFile[]): { text: string; badLinks: number } {
+  let r = walkthroughPass(text, files);
+  let badLinks = r.badLinks;
+  while (r.badLinks > 0) {
+    r = walkthroughPass(r.text, files);
+    badLinks += r.badLinks;
+  }
+  return { text: r.text, badLinks };
+}
+
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+// spec.md sections 3.2 and 3.3: the run end of an explain run. Its questions become question items. It gives no finding.
+export async function judgeExplain(o: RunOutcome, ws: Workspace, servers: string[], gaps: string[]): Promise<Ending> {
+  const raw = rawOutput(o);
+  if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
+  const parsed = explainResult.safeParse(o.result?.structured_output);
+  if (!parsed.success) return schemaFailure(parsed.error.issues, "explain", raw, o);
+  const r = parsed.data;
+  const files = parseDiff(ws.diff);
+  // The path of a changed file as the Files diff names it. null: the path is not in the change.
+  const changed = (raw: string) => {
+    const p = repoPath(raw);
+    const f = p === null ? undefined : (files.find((x) => x.path === p) ?? files.find((x) => x.oldPath === p));
+    return f ? ((f.path ?? f.oldPath) as string) : null;
+  };
+  const inChange = <T extends { path: string }>(list: T[]) =>
+    list.flatMap((x) => {
+      const path = changed(x.path);
+      return path === null ? [] : [{ ...x, path }];
+    });
+  const order = inChange(r.order);
+  const listed = inChange(r.files);
+  type Risk = ExplainResult["risks"][number];
+  const placeable = (x: Risk): x is Risk & { path: string; line: number } => x.path !== null && x.line !== null && changed(x.path) !== null;
+  const { anchor } = anchorer({ diff: ws.diff, ...(await readBlobs(ws, r.risks.filter(placeable))) });
+  const risks = r.risks.map((x): Risk => {
+    const a = placeable(x) ? anchor(x) : null;
+    // The link of a risk opens the Files diff, so its lines must be lines that the diff shows.
+    return a !== null && typeof a !== "string" && a.state !== "outside"
+      ? { ...x, path: a.path, line: a.line, lineEnd: a.lineEnd }
+      : { ...x, path: null, line: null, lineEnd: null };
+  });
+  const walk = checkWalkthrough(r.walkthrough, files);
+  const coverage = {
+    ...r.coverage,
+    skipped: [
+      ...r.coverage.skipped,
+      ...(walk.badLinks ? [`${count(walk.badLinks, "link", "links")} did not match the change.`] : []),
+      ...(r.order.length > order.length
+        ? [`${count(r.order.length - order.length, "path of the reading order is", "paths of the reading order are")} not in the change.`]
+        : []),
+      ...(r.files.length > listed.length
+        ? [`${count(r.files.length - listed.length, "path of the file list is", "paths of the file list are")} not in the change.`]
+        : []),
+    ],
+    unavailable: [...r.coverage.unavailable, ...unavailable(o, servers, gaps)],
+  };
+  return ended(raw, o, {
+    summary: { summary: r.summary, risks: [], coverage, dropped: [] },
+    items: r.questions.map(questionItem),
+    explain: { ...r, walkthrough: walk.text, order, files: listed, risks, coverage },
   });
 }
 

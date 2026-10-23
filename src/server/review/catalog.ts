@@ -57,7 +57,7 @@ export const TOOL_LABELS: Record<string, string> = {
   mcp__deepwiki__read_wiki_structure: "DeepWiki structure",
 };
 
-// prompt: the profile part of both agent prompts. 100 turns for reviews, 50 for Explain. docs: the run gets DOC_SERVERS.
+// prompt: the profile part of both agent prompts. 100 turns for reviews, 60 for Explain. docs: the run gets DOC_SERVERS.
 export type Profile = ProfileInput;
 
 // The shipped prompts before PROFILES_VERSION 3 (src/server/config.ts).
@@ -65,7 +65,7 @@ const V2_GENERAL =
   "Find defects in the change: wrong logic, missed edge cases, races and lock order, resource leaks, error handling, and effects on callers outside the diff.";
 const V2_OVER =
   "Find code that the change can delete or simplify: abstractions with one use, code that the standard library or the platform already gives, unneeded dependencies, settings for fixed values, and dead code.";
-// The shipped prompts of PROFILES_VERSION 3 and 4. V4_EXPLAIN is also the current one until WP-X1 (EXPLAIN_V2).
+// The shipped prompts of PROFILES_VERSION 3 and 4. V4_EXPLAIN stayed the shipped Explain prompt until version 6.
 const V4_GENERAL = [
   V2_GENERAL,
   "When the change fixes a bug in one place, Grep the other callers of the same code. A caller with the same bug is a finding.",
@@ -73,7 +73,8 @@ const V4_GENERAL = [
 const V4_EXPLAIN =
   "Explain the change for a reviewer: what it does, why, and which parts need attention. Ask a question where the intent is not clear. Report no findings.";
 
-// docs/plans/review-v2/spec.md sections 1.5 and 3.4: the Review lens and the Explain lens.
+// docs/plans/review-v2/spec.md sections 1.5 and 3.4: the Review lens and the Explain lens. The third Explain line splits the spec
+// line, which has 22 words, into two sentences (ASD-STE100: at most 20 words).
 const REVIEW_LENS = [
   "Find problems that this change adds: wrong logic, missed edge cases, wrong error handling, resource leaks, and effects on callers outside the diff.",
   "When the change fixes a bug in one place, Grep the other callers of the same code. A caller with the same bug is a finding.",
@@ -82,11 +83,19 @@ const REVIEW_LENS = [
 const EXPLAIN_LENS = [
   "Explain the change to a reviewer who has not seen it.",
   "Start with what the change does and why, from ./context/pr.md and ./context/task.md.",
-  "Give the files in the order that makes the change easy to follow: entry points and data first, then callers, then tests.",
+  "Give the files in the order that makes the change easy to follow. Put entry points and data first, then callers, then tests.",
   "In walkthrough, explain the change by theme. Under each theme, name the files and link the key lines.",
   "Name the parts that need a careful look, and say why. Link each one to its code in risks.",
   "Ask a question where the intent is not clear.",
 ].join("\n");
+// docs/plans/review-v2/spec.md section 1.2: the Explain values of the explainResult schema (PROFILES_VERSION 6). FORMER[5] holds the
+// version 5 values.
+export const EXPLAIN_V2: Pick<Profile, "note" | "maxTurns" | "effort" | "prompt"> = {
+  note: "A readable walkthrough of the change",
+  maxTurns: 60,
+  effort: "medium",
+  prompt: EXPLAIN_LENS,
+};
 
 export const SHIPPED_PROFILES: Profile[] = [
   {
@@ -111,32 +120,20 @@ export const SHIPPED_PROFILES: Profile[] = [
   {
     id: "explain",
     name: "Explain",
-    note: "Summary and questions only, at lower cost",
     explain: true,
-    maxTurns: 50,
     docs: false,
     languageChecks: false,
     skills: [],
     alwaysSkills: [],
     mcp: [],
     model: null,
-    effort: null,
     reviewer: { ...DEFAULT_REVIEWER },
     modules: [],
     volume: "balanced",
     verifier: { mode: "off", model: null, effort: null },
-    prompt: V4_EXPLAIN,
+    ...EXPLAIN_V2,
   },
 ];
-// docs/plans/review-v2/tasks.md WP-X1: the Explain values for the explainResult schema. The current Explain run has no walkthrough
-// field, so the shipped Explain keeps its version 4 values. WP-X1 spreads these into it, bumps PROFILES_VERSION, and adds
-// FORMER[5].explain with the version 4 note, prompt, maxTurns, and effort.
-export const EXPLAIN_V2: Pick<Profile, "note" | "maxTurns" | "effort" | "prompt"> = {
-  note: "A readable walkthrough of the change",
-  maxTurns: 60,
-  effort: "medium",
-  prompt: EXPLAIN_LENS,
-};
 
 // The prompt of the shipped Over-engineering profile of PROFILES_VERSION 4. The simplify module reuses its lines.
 const OVER_PROMPT = [
@@ -259,6 +256,7 @@ const FORMER: Record<number, Record<string, Former>> = {
     },
     explain: { verifier: { ...DEFAULT_VERIFIER } },
   },
+  5: { explain: { note: "Summary and questions only, at lower cost", prompt: V4_EXPLAIN, maxTurns: 50, effort: null } },
 };
 const FORMER_VERSIONS = Object.keys(FORMER)
   .map(Number)
@@ -595,7 +593,27 @@ const DELEGATE: Record<"auto" | "always", string[]> = {
 export const withDelegation = (a: AgentSpec, mode: "auto" | "always" | null): AgentSpec =>
   mode ? { ...a, prompt: [a.prompt, ...DELEGATE[mode]].join("\n") } : a;
 
-const EXPLAIN_RULES = [...TRUST, "Put open points into questions, not into findings.", COVERAGE_RULE];
+// docs/plans/review-v2/spec.md section 3.4: the Explain agent lines after the lens. judge.ts judgeExplain checks the links, the risk
+// anchors, and the mermaid fences. Parse checks with mermaid 12.1.0: a quoted participant name keeps its quotes, a semicolon in a
+// message, an unquoted label with brackets, and a node ID "end" fail.
+export const EXPLAIN_RULES = [
+  "You are a read-only reviewer. You cannot change files, and you post nothing.",
+  "Read each file that you explain. Base each claim on code that you read.",
+  "Give each path from the repository root, for example src/app.ts, not repo/src/app.ts.",
+  "Link a line of the change as [label](diff:path#N12) for line 12 at the head commit, or #N12-N15 for a range.",
+  "Use #O for a removed line, with its line number at the merge base.",
+  "Link only lines that git_diff shows. The app turns any other link into plain text.",
+  "In risks, give the place of the code: path, side, line, lineEnd, and anchorText.",
+  "Copy anchorText exactly from those lines. Set path, line, and lineEnd to null for a risk with no single place.",
+  "Add at most 3 Mermaid diagrams in ```mermaid fences, where a picture helps: flowchart TD, sequenceDiagram, or classDiagram.",
+  "In a diagram, use node IDs of letters and digits only. Never use end as a node ID.",
+  "In a flowchart, put each label in double quotes, and use no double quote inside a label.",
+  "Use no style, classDef, click, or %%{ lines. Use at most 25 nodes per diagram.",
+  "In sequenceDiagram, declare each participant as participant A as Name, with no quotes. Use no semicolon in a message.",
+  "Write in plain words with short sentences. Explain each project term in glossary.",
+  ...TRUST,
+  COVERAGE_RULE,
+];
 
 // The lines that every run of the profile adds after the profile prompt. Improve prompt shows them to the model with every context
 // file present. The module sections and the answer rules depend on the profile and the run.
@@ -634,27 +652,29 @@ export const ANSWERED_RULES = [
 ];
 
 // spec.md section 1.5: the agent prompt order of rl-main. The caller adds languages, skills, MCP tools, and the delegation lines.
-// An Explain run gives no findings and judges no answer.
+// An Explain profile gets the Explain agent: it gives no findings and judges no answer.
 export function mainAgent(p: Profile, c: ReviewContext = NO_CONTEXT): AgentSpec {
-  const opening = "You are a read-only code reviewer. You cannot change files, and you post nothing.";
+  if (p.explain) return explainAgent(p);
   return {
     description: "Read-only review of one pull request.",
-    prompt: (p.explain
-      ? [opening, p.prompt, ...EXPLAIN_RULES, ...docsRule(p)]
-      : [
-          opening,
-          p.prompt,
-          ...contextBlock(c),
-          ...finderRules(p, true),
-          ...doNotFlag(p),
-          ...rubric(p),
-          ...moduleSections(p, c),
-          ...(c.questions ? ANSWERED_RULES : []),
-          COVERAGE_RULE,
-          ...docsRule(p),
-        ]
-    ).join("\n"),
+    prompt: [
+      "You are a read-only code reviewer. You cannot change files, and you post nothing.",
+      p.prompt,
+      ...contextBlock(c),
+      ...finderRules(p, true),
+      ...doNotFlag(p),
+      ...rubric(p),
+      ...moduleSections(p, c),
+      ...(c.questions ? ANSWERED_RULES : []),
+      COVERAGE_RULE,
+      ...docsRule(p),
+    ].join("\n"),
   };
+}
+
+// spec.md sections 3.2 and 3.4: an explain run gets no subagents, no PR context, and no history. The caller adds skills and MCP tools.
+export function explainAgent(p: Profile): AgentSpec {
+  return { description: "Read-only walkthrough of one pull request.", prompt: [p.prompt, ...EXPLAIN_RULES, ...docsRule(p)].join("\n") };
 }
 
 // Plan replies.md R11: a reply run gets no subagents, so the caller passes agents {} and the CLI gets no Agent tool.

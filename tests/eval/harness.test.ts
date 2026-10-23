@@ -93,7 +93,8 @@ describe("eval harness without --real (AC-M2)", () => {
   test("--profile-version rebuilds the shipped general profile of the first baseline", () => {
     expect(parseOptions([])).toMatchObject({ profileVersion: null });
     expect(parseOptions(["--profile-version", "4"])).toMatchObject({ profileVersion: 4 });
-    for (const bad of ["0", "6", "4.5", "x"]) expect(parseOptions(["--profile-version", bad])).toHaveProperty("error");
+    for (const bad of ["0", String(PROFILES_VERSION + 1), "4.5", "x"])
+      expect(parseOptions(["--profile-version", bad])).toHaveProperty("error");
     const v4 = shippedProfileAt("general", 4);
     expect(v4).toMatchObject({ name: "General", effort: null, modules: [], volume: "balanced", verifier: DEFAULT_VERIFIER });
     // The revision of the first baseline file (commit 9391ec4, prompt version 1).

@@ -718,8 +718,12 @@ export type AskDto = { run: RunDto; answer: string | null };
 
 // ---------- Review v2: Explain and Discuss (docs/plans/review-v2/spec.md sections 2.3 and 3.2) ----------
 
-// GET /api/prs/:id/explain: the newest explain run. result: null until the run ends with a valid result.
-export type ExplainDto = { run: RunDto; result: ExplainResult | null };
+// GET /api/prs/:id/explain: the newest explain run. result: null until the run ends with a valid result. previous: the newest run
+// with a result, when the newest run has none (it runs, failed, or was cancelled). run.stale: the PR heads moved after the run.
+// The server checked the result (src/server/review/judge.ts judgeExplain): each walkthrough link diff:<path>#N<a>[-<b>] or #O names a
+// changed file (path percent-decoded) and lines that its diff shows on that side. A risk with a path has the lines of its code.
+// POST /api/prs/:id/explain takes reviewRunInput and gives RunDto: 202 for a new run, 200 for the running run or a stored result.
+export type ExplainDto = { run: RunDto; result: ExplainResult | null; previous?: { run: RunDto; result: ExplainResult } };
 // GET /api/items/:id/discuss gives DiscussTurnDto[], oldest first. run: the discuss run. message: the user message. at: ms of the start.
 // answer, verdict, reason, revision: null until the run ends with a valid result. error: the error text of a failed run.
 export type DiscussTurnDto = {

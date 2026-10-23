@@ -32,7 +32,7 @@ import type {
 } from "../../src/shared/dto";
 import { REVIEW_PROMPT_VERSION } from "../../src/shared/review";
 import { FAKE_TOKEN, FAKE_USER, type FakeBitbucket, key, startFakeBitbucket } from "../support/fake-bitbucket";
-import { type FakeScenario, readRecords } from "../support/fake-claude";
+import { echoExplain, type FakeScenario, readRecords } from "../support/fake-claude";
 
 const SLOW = 120_000;
 const FAKE = join(import.meta.dir, "../support/fake-claude.ts");
@@ -451,18 +451,20 @@ describe("run pipeline", () => {
   );
 
   test(
-    "the Explain profile keeps only questions, runs no subagent, and caps turns at 50",
+    "the Explain profile makes an explain run that keeps only questions, runs no subagent, and caps turns at 60",
     async () => {
       const h = await setup();
-      h.scenario({ fixture: derive(join(REAL, "b6-hostile-repo.jsonl"), { tools: EXPLAIN_TOOLS, structured: RESULT }) });
+      const explain = { ...echoExplain(), questions: RESULT.questions };
+      h.scenario({ fixture: derive(join(REAL, "b6-hostile-repo.jsonl"), { tools: EXPLAIN_TOOLS, structured: RESULT }), explain });
       await h.brief("", "explain");
       const { body } = await h.start();
+      expect(body.kind).toBe("explain");
       const d = await h.finish(body.id);
       expect(d.run.status).toBe("completed");
       expect(d.items.map((i) => i.kind)).toEqual(["question"]);
       expect(d.run.summary?.dropped).toEqual([]);
       const argv = h.runCall()?.argv ?? [];
-      expect(flag(argv, "--max-turns")).toBe("50");
+      expect(flag(argv, "--max-turns")).toBe("60");
       expect(flag(argv, "--tools")).toBe("Read,Grep,Glob");
       expect(flag(argv, "--allowedTools")).toBe("Read,Grep,Glob,mcp__rl-git");
       expect(h.runCall()?.stdin).not.toContain(DOCS_RULE);
@@ -890,7 +892,7 @@ describe("brief and meta", () => {
     });
     expect(meta.profiles.map((p) => [p.id, p.name, p.explain, p.maxTurns])).toEqual([
       ["general", "Review", false, 100],
-      ["explain", "Explain", true, 50],
+      ["explain", "Explain", true, 60],
     ]);
     expect(meta.tools["mcp__rl-git__git_log"]).toBe("Git log");
     expect(meta.context).toEqual([{ id: "jira", name: "Jira", configured: false }]);
@@ -1536,7 +1538,7 @@ describe("language checks", () => {
       expect(explain.agents["rl-main"]?.prompt).not.toContain("Set severity by what the merge must wait for.");
       // AC-R15: every run row of these kinds stores the prompt version.
       expect(h.db.query("SELECT kind, prompt_version FROM review_run ORDER BY id").all()).toEqual(
-        ["ask", "reply", "fix", "review", "review"].map((kind) => ({ kind, prompt_version: REVIEW_PROMPT_VERSION })),
+        ["ask", "reply", "fix", "review", "explain"].map((kind) => ({ kind, prompt_version: REVIEW_PROMPT_VERSION })),
       );
 
       const ts = await setup();

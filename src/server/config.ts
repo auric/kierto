@@ -48,8 +48,9 @@ export type Config = z.infer<typeof config>;
 // Version 3: General and Security got language checks. General and Over-engineering got new prompts.
 // Version 4: no shipped value changed. The upgrade goes field by field, so profiles with other edits also get the version 3 values.
 // Version 5: review v2 (docs/plans/review-v2/spec.md section 1.2). General became Review with modules, a volume, a verify phase, and
-// efforts. Explain got a new prompt, effort, and turn cap. Unedited Security and Over-engineering profiles retire.
-export const PROFILES_VERSION = 5;
+// efforts. Unedited Security and Over-engineering profiles retire.
+// Version 6: Explain this PR (spec.md section 3). Explain got the walkthrough prompt, a note, effort medium, and a turn cap of 60.
+export const PROFILES_VERSION = 6;
 
 export function dataDir(): string {
   const env = process.env;

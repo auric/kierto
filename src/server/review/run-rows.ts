@@ -167,7 +167,8 @@ export const SQL = {
   instructions: "UPDATE review_run SET instructions_json = $json WHERE id = $id",
   skills: "UPDATE review_run SET skills_json = $json WHERE id = $id",
   end: `UPDATE review_run SET status = $status, error_kind = $kind, error_text = $text, session_id = $session, cli_version = $cli, model = COALESCE($model, model),
-      effort_default = CASE WHEN $init_effort THEN $effort_default ELSE effort_default END, usage_json = $usage, summary_json = $summary, answer = $answer, fix_json = $fix, raw_output = $raw, finished_at = $now
+      effort_default = CASE WHEN $init_effort THEN $effort_default ELSE effort_default END, usage_json = $usage, summary_json = $summary, answer = $answer, fix_json = $fix,
+      explain_json = $explain, raw_output = $raw, finished_at = $now
     WHERE id = $id AND status = 'running'`,
   fixEdit: `INSERT INTO fix_edit (run, ord, thread, item, path, old, new, start, rows_json)
     VALUES ($run, $ord, $thread, $item, $path, $old, $new, $start, $rows)`,
@@ -211,6 +212,11 @@ export const SQL = {
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr`,
   raw: "SELECT raw_output FROM review_run WHERE id = $id",
   asks: "WHERE r.pr = $pr AND r.kind = 'ask' ORDER BY r.id DESC LIMIT 20",
+  // docs/plans/review-v2/spec.md section 3.2: the newest explain run, and the newest one with a result. $key: any key, or one run key.
+  explainNewest: "WHERE r.pr = $pr AND r.kind = 'explain' ORDER BY r.id DESC LIMIT 1",
+  explainDone: `WHERE r.pr = $pr AND r.kind = 'explain' AND r.status IN ('completed', 'incomplete') AND r.explain_json IS NOT NULL
+    AND ($key IS NULL OR r.idem_key = $key) ORDER BY r.id DESC LIMIT 1`,
+  explainJson: "SELECT explain_json FROM review_run WHERE id = $id",
   historyAsks:
     "WHERE r.pr = $pr AND r.kind = 'ask' AND r.status IN ('completed', 'incomplete') AND r.answer IS NOT NULL ORDER BY r.id DESC",
   historyItems: "SELECT * FROM review_item WHERE run = $run AND kind = 'finding' ORDER BY id",

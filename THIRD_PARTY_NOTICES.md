@@ -30,6 +30,7 @@ The web bundle and the compiled binary include these packages.
 | ajv-formats | 3.0.1 | MIT |
 | bail | 2.0.2 | MIT |
 | ccount | 2.0.1 | MIT |
+| character-entities | 2.0.2 | MIT |
 | chevrotain | 13.2.0 | Apache-2.0 |
 | class-variance-authority | 0.7.1 | Apache-2.0 |
 | clsx | 2.1.1 | MIT |
@@ -67,7 +68,9 @@ The web bundle and the compiled binary include these packages.
 | d3-zoom | 3.0.0 | ISC |
 | dagre-d3-es | 7.0.14 | MIT |
 | dayjs | 1.11.23 | MIT |
+| debug | 4.4.3 | MIT |
 | decode-named-character-reference | 1.3.0 | MIT |
+| devlop | 1.1.0 | MIT |
 | dompurify | 3.4.17 | (MPL-2.0 OR Apache-2.0) |
 | es-toolkit | 1.52.0 | MIT |
 | escape-string-regexp | 5.0.0 | MIT |
@@ -133,6 +136,8 @@ The web bundle and the compiled binary include these packages.
 | micromark-util-resolve-all | 2.0.1 | MIT |
 | micromark-util-sanitize-uri | 2.0.1 | MIT |
 | micromark-util-subtokenize | 2.1.0 | MIT |
+| micromark-util-symbol | 2.0.1 | MIT |
+| ms | 2.1.3 | MIT |
 | path-key | 3.1.1 | MIT |
 | pkce-challenge | 5.0.1 | MIT |
 | property-information | 7.2.0 | MIT |
@@ -1311,7 +1316,7 @@ SOFTWARE.
 
 ### bail 2.0.2
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -1342,7 +1347,38 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### ccount 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
+
+license:
+
+```text
+(The MIT License)
+
+Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+'Software'), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### character-entities 2.0.2
+
+License: MIT. Ships in the compiled binary.
 
 license:
 
@@ -2758,9 +2794,37 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### debug 4.4.3
+
+License: MIT. Ships in the compiled binary.
+
+LICENSE:
+
+```text
+(The MIT License)
+
+Copyright (c) 2014-2017 TJ Holowaychuk <tj@vision-media.ca>
+Copyright (c) 2018-2021 Josh Junon
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+and associated documentation files (the 'Software'), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
 ### decode-named-character-reference 1.3.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -2768,6 +2832,37 @@ license:
 (The MIT License)
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+'Software'), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### devlop 1.1.0
+
+License: MIT. Ships in the compiled binary.
+
+license:
+
+```text
+(The MIT License)
+
+Copyright (c) 2023 Titus Wormer <tituswormer@gmail.com>
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -3454,7 +3549,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### escape-string-regexp 5.0.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -3564,7 +3659,7 @@ SOFTWARE.
 
 ### extend 3.0.2
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 LICENSE:
 
@@ -3826,7 +3921,7 @@ THIS SOFTWARE.
 
 ### is-plain-obj 4.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4074,7 +4169,7 @@ terms above.
 
 ### longest-streak 3.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4157,7 +4252,7 @@ SOFTWARE.
 
 ### markdown-table 3.0.4
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4241,7 +4336,7 @@ This software is provided by the copyright holders and contributors “as is” 
 
 ### mdast-util-find-and-replace 3.0.2
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4272,7 +4367,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### mdast-util-from-markdown 2.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4303,7 +4398,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### mdast-util-gfm 3.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4334,7 +4429,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### mdast-util-gfm-autolink-literal 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4365,7 +4460,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### mdast-util-gfm-footnote 2.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4396,7 +4491,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### mdast-util-gfm-strikethrough 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4427,7 +4522,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### mdast-util-gfm-table 2.0.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4458,7 +4553,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### mdast-util-gfm-task-list-item 2.0.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4489,7 +4584,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### mdast-util-phrasing 4.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4552,7 +4647,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### mdast-util-to-markdown 2.2.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4583,7 +4678,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### mdast-util-to-string 4.0.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4644,7 +4739,7 @@ SOFTWARE.
 
 ### micromark 4.0.3
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4675,7 +4770,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-core-commonmark 2.0.4
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4706,7 +4801,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-extension-gfm 3.0.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4737,7 +4832,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-extension-gfm-autolink-literal 2.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4768,7 +4863,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-extension-gfm-footnote 2.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4799,7 +4894,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-extension-gfm-strikethrough 2.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4830,7 +4925,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-extension-gfm-table 2.1.2
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4861,7 +4956,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-extension-gfm-task-list-item 2.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4892,7 +4987,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-factory-destination 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4923,7 +5018,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-factory-label 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4954,7 +5049,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-factory-space 2.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -4985,7 +5080,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-factory-title 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5016,7 +5111,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-factory-whitespace 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5047,7 +5142,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-character 2.1.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5078,7 +5173,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-chunked 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5109,7 +5204,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-classify-character 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5140,7 +5235,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-combine-extensions 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5171,7 +5266,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-decode-numeric-character-reference 2.0.2
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5202,7 +5297,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-decode-string 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5233,7 +5328,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-edit-map 1.0.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5264,7 +5359,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-html-tag-name 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5295,7 +5390,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-normalize-identifier 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5326,7 +5421,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-resolve-all 2.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5388,7 +5483,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### micromark-util-subtokenize 2.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5415,6 +5510,67 @@ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
 CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### micromark-util-symbol 2.0.1
+
+License: MIT. Ships in the compiled binary.
+
+license:
+
+```text
+(The MIT License)
+
+Copyright (c) Titus Wormer <tituswormer@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+'Software'), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### ms 2.1.3
+
+License: MIT. Ships in the compiled binary.
+
+license.md:
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2020 Vercel, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ### path-key 3.1.1
@@ -5588,7 +5744,7 @@ SOFTWARE.
 
 ### remark-gfm 4.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5619,7 +5775,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### remark-parse 11.0.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -5990,7 +6146,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### trough 2.2.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -6110,7 +6266,7 @@ SOFTWARE.
 
 ### unified 11.0.5
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -6140,7 +6296,7 @@ THE SOFTWARE.
 
 ### unist-util-is 6.0.1
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -6202,7 +6358,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### unist-util-stringify-position 4.0.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -6233,7 +6389,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### unist-util-visit 5.1.0
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -6264,7 +6420,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### unist-util-visit-parents 6.0.2
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -6343,7 +6499,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### vfile 6.0.3
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 
@@ -6373,7 +6529,7 @@ THE SOFTWARE.
 
 ### vfile-message 4.0.3
 
-License: MIT. Ships in the web bundle.
+License: MIT. Ships in the web bundle, compiled binary.
 
 license:
 

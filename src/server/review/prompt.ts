@@ -118,6 +118,17 @@ export function buildPrompt(i: PromptInput): string {
   ].join("\n");
 }
 
+// docs/plans/review-v2/spec.md section 3.4: an explain run. The caller passes an empty note.
+export function buildExplainPrompt(i: PromptInput): string {
+  return [
+    "# Task",
+    "",
+    `Explain the change ${i.mergeBase}..${i.head} in ./repo for a reviewer. Give the summary, the walkthrough, the reading order, the files, the risks, the glossary, and your questions.`,
+    "",
+    ...common(i),
+  ].join("\n");
+}
+
 // Plan r2 S-RR: the earlier findings appear as IDs only. Their text stays in ./context/findings.md.
 export function buildRereviewPrompt(i: RereviewInput): string {
   const full = i.rangeBase === i.mergeBase;

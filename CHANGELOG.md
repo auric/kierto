@@ -7,6 +7,14 @@
 - The app now builds and runs on Bun 1.4.4. The third-party notices in Settings show the Bun 1.4.4 license. A database upgrade step that fails now stops the upgrade and keeps all data.
 - "Include in runs" on a Jira attachment asks about your company AI policy only the first time. The new switch "Ask before Claude reads a Jira attachment" in Settings, Jira, brings the question back.
 
+### Explain this PR
+
+- An Explain run now writes a walkthrough of the change: a one-line summary, the files in reading order, the role of each file, the risks with their code, a glossary, and questions for the author. It gives no findings.
+- The shipped Explain profile has the new walkthrough prompt, runs at medium effort, and stops after 60 turns. An Explain profile keeps each field that you edited. The other fields get the new values.
+- The app checks each link of the walkthrough into the diff. A link to a file or a line that the diff does not show becomes plain text, and the run says how many links did not match. The same check removes paths outside the change from the reading order and the file list.
+- A walkthrough keeps at most 3 Mermaid diagrams. Other diagram blocks show as code. Diagram lines with a `%%{` directive are removed.
+- An Explain run reads no notes, no PR context, no earlier review, and no posted questions, and it uses no reviewer agents. A second start for the same head and profile gives the stored walkthrough and starts no run.
+
 ### PR notes and PR context
 
 - The PR view has a new Notes block under the description. Add a note, edit it, or delete it with Undo. A note can wait for another PR, and its chip shows when that PR is open, merged, declined, or not found.

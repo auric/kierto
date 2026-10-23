@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Review jobs (plan v3 WP10), re-reviews (r2 S-RR), ask runs (r2 S-ASK), reply-draft jobs (replies.md WP17), fix runs (r3 S-FIX), and
-// session runs (session-consult.md part C): one run from the stored brief to stored drafts, edits, or answers. One run at a time.
+// Review jobs (plan v3 WP10), re-reviews (r2 S-RR), ask runs (r2 S-ASK), reply-draft jobs (replies.md WP17), fix runs (r3 S-FIX),
+// session runs (session-consult.md part C), and explain runs (review-v2 spec.md section 3): one run from the stored brief to stored
+// drafts, edits, answers, or a walkthrough. One run at a time.
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -13,6 +14,7 @@ import {
   alwaysSkillError,
   type BriefDto,
   type BriefInput,
+  type ExplainDto,
   type FixDto,
   type PrTask,
   type ReviewItemDto,
@@ -27,6 +29,8 @@ import { isMe } from "../../shared/me";
 import {
   askJsonSchema,
   type Carried,
+  explainJsonSchema,
+  explainResult,
   type FixedMark,
   fixJsonSchema,
   MAX_EARLIER,
@@ -52,6 +56,7 @@ import {
   createDocServers,
   DEFAULT_PROFILE,
   delegation,
+  explainAgent,
   fixAgent,
   GIT_SERVER,
   type ListTools,
@@ -105,12 +110,12 @@ import {
   failure,
   judge,
   judgeAsk,
+  judgeExplain,
   judgeFix,
   judgeReplies,
   judgeSession,
   markCopy,
   settle,
-  settleExplain,
   unreadAlways,
   usageOf,
 } from "./judge";
@@ -119,6 +124,7 @@ import { liveThreads, proposalContext, proposeNotes, storeProposals, suggestions
 import { loadPrContext } from "./pr-context";
 import {
   buildAskPrompt,
+  buildExplainPrompt,
   buildFixPrompt,
   buildPrompt,
   buildReplyPrompt,
@@ -303,7 +309,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   // ---------- PR context and notes (docs/plans/review-v2/spec.md sections 2.7 to 2.9) ----------
   // Every run kind but Explain gets the file, right before its workspace. Reply and fix runs name their threads as focus.
   async function prContext(j: Job, pr: Heads) {
-    if (j.kind === "review" && j.profile.explain) return null;
+    if (j.kind === "explain") return null;
     j.abort = new AbortController();
     try {
       const provider = await settings.provider().catch(() => null);
@@ -360,6 +366,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         summary: summary ? JSON.stringify(coverage ? { ...summary, coverage } : summary) : null,
         answer: e.result?.answer ?? null,
         fix: e.result?.fix ? JSON.stringify(e.result.fix.threads) : null,
+        explain: e.result?.explain ? JSON.stringify(e.result.explain) : null,
         raw: e.raw,
         now: now(),
       });
@@ -442,13 +449,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const carry = j.carry;
     const earlier = carry?.items.filter((r) => r.kind === "finding") ?? [];
     const posted = new Set(carry?.posted.map((r) => r.id));
-    // A re-review gets findings.md instead. An explain run gets no history.
+    // A re-review gets findings.md instead. An explain run gets no history (docs/plans/review-v2/spec.md section 3.2).
     const history =
-      j.kind !== "review"
-        ? historyFile(j.db, j.pr, pr.source_head)
-        : carry || j.profile.explain
-          ? null
-          : historyFile(j.db, j.pr, pr.source_head, true);
+      j.kind === "explain"
+        ? null
+        : j.kind !== "review"
+          ? historyFile(j.db, j.pr, pr.source_head)
+          : carry || j.profile.explain
+            ? null
+            : historyFile(j.db, j.pr, pr.source_head, true);
     const fixState =
       j.kind === "reply" && j.threads
         ? fixStateFile(
@@ -641,6 +650,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const reply = j.kind === "reply" ? j.threads : null;
     const fix = j.kind === "fix" ? j.threads : null;
     const question = j.question;
+    const explain = j.kind === "explain";
     const spec = reply
       ? { prompt: buildReplyPrompt({ ...input, threads: reply }), schema: replyJsonSchema(), main: replyAgent(profile, context) }
       : fix
@@ -663,7 +673,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
                 schema: rereviewJsonSchema(),
                 main: mainAgent(profile, context),
               }
-            : { prompt: buildPrompt(input), schema: reviewJsonSchema(profile.explain), main: mainAgent(profile, context) };
+            : explain
+              ? { prompt: buildExplainPrompt(input), schema: explainJsonSchema(), main: explainAgent(profile) }
+              : { prompt: buildPrompt(input), schema: reviewJsonSchema(profile.explain), main: mainAgent(profile, context) };
     // docs/plans/review-v2/spec.md section 1.9: a review run shows phase finding, then checking.
     const finder = j.kind === "review" && !profile.explain;
     if (finder) {
@@ -717,10 +729,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (reply) return noted(judgeReplies(o, reply, servers, gaps, new Set(liveThreads(j.db, j.pr, null).keys())));
     if (fix) return noted(await judgeFix(o, ws, fix, j.findings, servers, gaps));
     if (question !== null) return noted(judgeAsk(o, servers, gaps));
+    if (explain) return noted(await judgeExplain(o, ws, servers, gaps));
     const rereview = carry && { carry, items: [...current(j.db, earlier), ...carry.posted].map(earlierItem) };
     const found = await judge(o, ws, profile, servers, gaps, rereview, j.asked, instructions.sources);
     if (!("candidates" in found)) return noted(found);
-    if (!finder) return noted(settleExplain(found));
 
     // docs/plans/review-v2/spec.md section 1.6: the verify phase in the same workspace, run row, and run slot.
     const verify = profile.verifier.mode === "on";
@@ -1040,6 +1052,40 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     return b ? { note: b.note, profile, updatedAt: b.updated_at } : { note: "", profile, updatedAt: null };
   }
 
+  // docs/plans/review-v2/spec.md section 3.2: Explain this PR. profileId: a profile for this run only. Absent: the brief profile when it
+  // is an Explain profile, else the first Explain profile. One result per heads and profile revision: a second start returns it, so
+  // only a new head or a profile change starts a new run. A failed or cancelled run leaves no result, so a start runs again.
+  function startExplain(db: Database, id: number, profileId?: string): StartResult {
+    const pr = prRow(db, id);
+    if (!pr) return { status: 404, error: "Pull request not found." };
+    const { source_head, target_head } = pr;
+    if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
+    const brief = briefOf(db, id);
+    const list = settings.profiles();
+    const profile =
+      profileId !== undefined
+        ? profileOf(list, profileId)
+        : (list.find((p) => p.id === brief.profile && p.explain) ?? list.find((p) => p.explain));
+    if (!profile) return { status: 409, error: "No profile has Explain only on. Turn it on for a profile in Settings first." };
+    if (!profile.explain) return { status: 409, error: `The ${profile.name} profile gives findings. Pick an Explain profile.` };
+    const key = [id, "explain", source_head, target_head, profile.id, profileRevision(profile)].join(":");
+    const done = db.query(`${SQL.run} ${SQL.explainDone}`).get({ pr: id, key }) as RunRow | null;
+    if (done) return { status: 200, run: toRunDto(done) };
+    return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "explain");
+  }
+
+  // The stored result of an explain run. null: no result, or a row that no longer parses.
+  function explainOf(db: Database, r: RunRow) {
+    const row = db.query(SQL.explainJson).get({ id: r.id }) as { explain_json: string | null } | null;
+    if (!row?.explain_json || (r.status !== "completed" && r.status !== "incomplete")) return null;
+    try {
+      const parsed = explainResult.safeParse(JSON.parse(row.explain_json));
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  }
+
   return {
     open,
     dataDir,
@@ -1080,6 +1126,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
       const brief = briefOf(db, id);
       const profile = profileOf(settings.profiles(), profileId ?? brief.profile);
+      // docs/plans/review-v2/spec.md section 3.2: an Explain profile makes an explain run, never a review run.
+      if (profile.explain) return startExplain(db, id, profile.id);
       const key = [id, source_head, target_head, profile.id, profileRevision(profile), sha256(brief.note)].join(":");
       return launch(db, { ...pr, source_head, target_head }, brief, profile, key, "review");
     },
@@ -1130,6 +1178,22 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (!prRow(db, pr)) return null;
       const now = effortsNow();
       return (db.query(`${SQL.run} ${SQL.asks}`).all({ pr }) as RunRow[]).map((r) => ({ run: toRunDto(r, now), answer: r.answer }));
+    },
+
+    explain: startExplain,
+
+    // GET /api/prs/:id/explain (spec.md section 3.2). null: no such PR. explain null: the PR has no explain run. Reading starts no run.
+    explanation(db: Database, id: number): { explain: ExplainDto | null } | null {
+      if (!prRow(db, id)) return null;
+      const newest = db.query(`${SQL.run} ${SQL.explainNewest}`).get({ pr: id }) as RunRow | null;
+      if (!newest) return { explain: null };
+      const resolve = effortsNow();
+      const result = explainOf(db, newest);
+      const run = withPhase(db, toRunDto(newest, resolve));
+      if (result) return { explain: { run, result } };
+      const done = db.query(`${SQL.run} ${SQL.explainDone}`).get({ pr: id, key: null }) as RunRow | null;
+      const earlier = done && explainOf(db, done);
+      return { explain: { run, result: null, ...(done && earlier && { previous: { run: toRunDto(done, resolve), result: earlier } }) } };
     },
 
     // Starts a reply-draft run of the stored brief (plan replies.md WP17). It shares the run slot with reviews.
