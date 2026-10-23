@@ -66,6 +66,22 @@ export type ResumeSpec = {
   timeoutMs?: number;
 };
 
+// docs/plans/review-v2/spec.md section 6.7: one Claude step of a task (run kind implement). cwd: the part folder with repo/, the task
+// worktree, and context/. The run gets no agent and no MCP server. timeoutMs: lower than the runner limit.
+export type ImplementSpec = {
+  implement: true;
+  cwd: string;
+  prompt: string;
+  schema: Record<string, unknown>;
+  maxTurns: number;
+  model?: string | null;
+  effort?: Effort | null;
+  timeoutMs?: number;
+};
+
+// Gate B17 (integration-check.md U72): with these tools, --restricted keeps Edit and Write inside the cwd. No Bash, no Agent.
+export const IMPLEMENT_TOOLS = ["Read", "Grep", "Glob", "Edit", "Write"];
+
 export type RunnerCheck =
   | { ok: true; command: string[]; version: string; projectsDir: string }
   | { ok: false; kind: "unavailable" | "auth"; message: string };
@@ -282,6 +298,35 @@ export function resumeArgs(spec: ResumeSpec) {
   return { args, allowed: new Set([...READ_TOOLS, "StructuredOutput"]) };
 }
 
+// The CLI arguments of an implement run: the flags of Gate B17 (scripts/gate/claude-checks.ts b17) and the runner output flags. No
+// --permission-mode: -p denies a call without an allow rule, and --allowedTools pre-approves the five tools. No --mcp-config.
+// The init check accepts only the five tools and StructuredOutput.
+export function implementArgs(spec: ImplementSpec) {
+  const tools = IMPLEMENT_TOOLS.join(",");
+  if (spec.model != null && !modelName.safeParse(spec.model).success) throw new Error(`Invalid model name: ${spec.model}`);
+  if (spec.effort != null && !EFFORTS.includes(spec.effort)) throw new Error(`Invalid effort: ${spec.effort}`);
+  const args = [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--restricted",
+    "--strict-mcp-config",
+    "--tools",
+    tools,
+    "--allowedTools",
+    tools,
+    "--json-schema",
+    JSON.stringify(spec.schema),
+    "--max-turns",
+    String(spec.maxTurns),
+    ...(spec.model ? ["--model", spec.model] : []),
+    ...(spec.effort ? ["--effort", spec.effort] : []),
+    "--no-session-persistence",
+  ];
+  return { args, allowed: new Set([...IMPLEMENT_TOOLS, "StructuredOutput"]) };
+}
+
 export function createClaudeRunner(opts: RunnerOptions = {}) {
   let active: { cancelled: boolean; pid?: number } | undefined;
 
@@ -317,7 +362,7 @@ export function createClaudeRunner(opts: RunnerOptions = {}) {
   }
 
   // Runs one review. onEvents gets each new or changed run_event. Only one run is active at a time.
-  async function run(spec: RunSpec | ResumeSpec, onEvents: (events: RunEvent[]) => void = () => {}): Promise<RunOutcome> {
+  async function run(spec: RunSpec | ResumeSpec | ImplementSpec, onEvents: (events: RunEvent[]) => void = () => {}): Promise<RunOutcome> {
     if (active) throw new Error("A review run is active.");
     const self: { cancelled: boolean; pid?: number } = { cancelled: false };
     active = self;
@@ -341,9 +386,10 @@ export function createClaudeRunner(opts: RunnerOptions = {}) {
       // Gate B9: an 8.3 short cwd makes the CLI refuse Reads inside it.
       cwd = realpathSync.native(spec.cwd);
       projectsDir = c.projectsDir;
-      const { args, allowed } = "resume" in spec ? resumeArgs(spec) : prepare(spec);
-      const limit = Math.min(opts.timeoutMs ?? RUN_TIMEOUT_MS, ("resume" in spec ? spec.timeoutMs : undefined) ?? RUN_TIMEOUT_MS);
-      const agents = new Set("resume" in spec ? [] : [MAIN_AGENT, ...Object.keys(spec.agents)]);
+      const { args, allowed } = "implement" in spec ? implementArgs(spec) : "resume" in spec ? resumeArgs(spec) : prepare(spec);
+      const own = "implement" in spec || "resume" in spec ? spec.timeoutMs : undefined;
+      const limit = Math.min(opts.timeoutMs ?? RUN_TIMEOUT_MS, own ?? RUN_TIMEOUT_MS);
+      const agents = new Set("main" in spec ? [MAIN_AGENT, ...Object.keys(spec.agents)] : []);
       const parser = createStreamParser({ cwd, allowedTools: allowed, agents });
       const p = Bun.spawn([...c.command, ...args], {
         cwd,

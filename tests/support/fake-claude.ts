@@ -3,9 +3,9 @@
 
 // Fake `claude` CLI for tests. It replays a recorded stream-json fixture and never calls a model.
 // Usage: bun tests/support/fake-claude.ts <scenario.json> <claude arguments>
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type FakeScenario = {
   // Each call appends one JSON line: { argv, env, cwd, stdin, pid }. A hang run adds { childPid }.
@@ -42,6 +42,11 @@ export type FakeScenario = {
   // echo.
   interview?: unknown;
   spec?: unknown;
+  // Part 6 (spec.md section 6.7): the implement result (properties.specChange). Absent: the echo. writes: the files that the run
+  // writes before its stream, by path relative to the cwd. A path outside the cwd is refused, as --restricted refuses it (Gate B17), and
+  // the record gets { refused: path }. junction: a folder link to that target in place of a file.
+  implement?: unknown;
+  writes?: { path: string; text?: string; junction?: string }[];
   // docs/plans/review-v2/spec.md section 2.9: the notes of the echo reply result, and the cites of its first reply. Absent: none.
   notes?: unknown;
   cites?: unknown;
@@ -49,7 +54,7 @@ export type FakeScenario = {
   bySchema?: Partial<Record<SchemaKind, Partial<Omit<FakeScenario, "record" | "auth" | "bySchema">>>>;
 };
 
-export type SchemaKind = "verify" | "explain" | "discuss" | "interview" | "spec";
+export type SchemaKind = "verify" | "explain" | "discuss" | "interview" | "spec" | "implement";
 // The review v2 run kind that a --json-schema shape names, else null.
 export const schemaKind = (props: Record<string, unknown>): SchemaKind | null =>
   props.verdicts !== undefined
@@ -62,7 +67,9 @@ export const schemaKind = (props: Record<string, unknown>): SchemaKind | null =>
           ? "interview"
           : props.map !== undefined && props.estimate !== undefined
             ? "spec"
-            : null;
+            : props.done !== undefined && props.specChange !== undefined
+              ? "implement"
+              : null;
 
 // Each complete record ends with "\n". The last part can be a record that the fake still writes, so it is dropped.
 export function readRecords<T = Record<string, unknown>>(path: string): T[] {
@@ -252,6 +259,17 @@ export const echoSpec = () => ({
   coverage: NO_COVERAGE,
 });
 
+// An implement result of a complete step with no question and no plan change.
+export const echoImplement = () => ({
+  summary: "Echo: the step is done.",
+  done: true,
+  tests: [],
+  question: null,
+  specChange: "",
+  notes: [],
+  coverage: NO_COVERAGE,
+});
+
 // A session answer (docs/plans/session-consult.md part C): one reject per item tag with status open in the stdin.
 // fix: the schema asks for fixes too (part D). A reject needs no fix, so the fix has no note and no edit.
 export function echoConsult(stdin: string, fix = false) {
@@ -315,6 +333,18 @@ async function main() {
     record({ childPid: child.pid });
   }
 
+  for (const w of s.writes ?? []) {
+    const p = resolve(process.cwd(), w.path);
+    const r = relative(process.cwd(), p);
+    if (!r || r.startsWith("..") || isAbsolute(r)) {
+      record({ refused: w.path });
+      continue;
+    }
+    mkdirSync(dirname(p), { recursive: true });
+    if (w.junction !== undefined) symlinkSync(w.junction, p, "junction");
+    else writeFileSync(p, w.text ?? "");
+  }
+
   const agentTool = (flag("--tools") ?? "").split(",").includes("Agent");
   // code.claude.com/docs/en/cli-reference: --tools "" disables every built-in tool. No MCP server stays, so init keeps StructuredOutput only.
   const noTools = flag("--tools") === "";
@@ -327,6 +357,7 @@ async function main() {
     if (kind === "discuss") return s.discuss ?? echoDiscuss(stdin);
     if (kind === "interview") return s.interview ?? echoInterview(stdin);
     if (kind === "spec") return s.spec ?? echoSpec();
+    if (kind === "implement") return s.implement ?? echoImplement();
     if (props.replies !== undefined) return s.replies ?? echoReplies(stdin, { notes: s.notes, cites: s.cites });
     if (props.earlier !== undefined) return s.rereview ?? echoRereview(stdin, fixture);
     if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);
@@ -337,8 +368,9 @@ async function main() {
   };
   const rewrite = (l: string) => {
     const e = JSON.parse(l);
-    // A resume with --tools and --strict-mcp-config: init lists those tools and StructuredOutput. Gate B16 checks the real CLI.
-    if (e.type === "system" && e.subtype === "init" && resume !== undefined)
+    // A resume or an implement run with --tools and --strict-mcp-config: init lists those tools and StructuredOutput. Gates B16 and B17
+    // check the real CLI.
+    if (e.type === "system" && e.subtype === "init" && (resume !== undefined || kind === "implement"))
       return JSON.stringify({ ...e, tools: [...(flag("--tools") ?? "").split(",").filter(Boolean), "StructuredOutput"], mcp_servers: [] });
     // Gate B8: init lists the agent tool as Task. The real CLI lists it only when --tools names Agent.
     if (e.type === "system" && e.subtype === "init" && Array.isArray(e.tools) && noTools)

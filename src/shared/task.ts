@@ -85,6 +85,15 @@ export const SPEC_TURNS = 80;
 // spec.md section 6.3: the defaults of repo_task_settings. CHECK_TIMEOUT in seconds.
 export const TASK_DEFAULTS = { specDir: "specs/{key}/", branchPrefix: "feature/", lineBudget: 400, maxOpen: 2, approvals: 1 } as const;
 export const CHECK_TIMEOUT_SEC = 600;
+// spec.md section 0: the limits of one Claude step of a part (STEP_TIME, STEP_TURNS), the Claude time of one part (PART_TIME, in
+// minutes), and the output of one command (OUTPUT_TAIL: stored bytes; FAILURE_TAIL: bytes in context/failure.md).
+export const STEP_MODES = ["tests", "implement", "fix"] as const;
+export type StepMode = (typeof STEP_MODES)[number];
+export const STEP_TIME_MS = 20 * 60_000;
+export const STEP_TURNS: Record<StepMode, number> = { tests: 60, implement: 80, fix: 40 };
+export const PART_TIME_MIN = 120;
+export const OUTPUT_TAIL = 64 * 1024;
+export const FAILURE_TAIL = 32 * 1024;
 
 export const sizeRank = (s: TaskSize) => TASK_SIZES.indexOf(s);
 
@@ -330,6 +339,7 @@ export const implementResult = z.object({
   coverage,
 });
 export type ImplementResult = z.infer<typeof implementResult>;
+export const implementJsonSchema = (): Record<string, unknown> => z.toJSONSchema(implementResult, { target: "draft-07" });
 
 export const replanResult = z.object({
   changed: z.boolean(),

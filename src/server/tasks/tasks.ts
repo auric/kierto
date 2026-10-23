@@ -316,6 +316,19 @@ function patch(db: Database, id: number, version: number, p: Patch, now: number)
 
 const blocked = (b: TaskBlocked | null) => (b === null ? null : JSON.stringify(b));
 
+// Sets task.blocked_json (spec.md section 6.2) with the version check. Returns the new version.
+export const setBlocked = (db: Database, ref: TaskRef, b: TaskBlocked | null, now = Date.now()) =>
+  patch(db, ref.task, ref.version, { blocked_json: blocked(b) }, now);
+
+// A failed or cancelled run stops the task with its reason. Resume runs the step again. The usage limit stops it too, with the CLI
+// text. A done or failed task keeps its state.
+export function stopForRun(db: Database, ref: TaskRef, step: number | null, e: Pick<Ending, "status" | "text">, now = Date.now()) {
+  const r = advance(db, ref, { type: "STOP" }, {}, now);
+  if (r.status !== 200) return;
+  const text = e.status === "cancelled" ? "The run was cancelled." : (e.text ?? "The run failed.");
+  patch(db, ref.task, r.version, { blocked_json: blocked({ kind: "error", step, text }) }, now);
+}
+
 // Throws out of a transaction so that it rolls back. The caller maps it to 409.
 class Refused extends Error {
   constructor(
@@ -529,13 +542,8 @@ export function createTaskService(opts: TaskServiceOptions) {
     return (db.query(Q.stepEnd).get({ run, state, now: now() }) as { id: number } | null)?.id ?? null;
   }
 
-  // A failed or cancelled run stops the task. Resume (WP-B4) runs the step again. The usage limit stops it too, with the CLI text.
-  function stopTask(db: Database, t: TaskRow, step: number | null, e: Ending) {
-    const r = advance(db, { task: t.id, version: t.version }, { type: "STOP" }, {}, now());
-    if (r.status !== 200) return;
-    const text = e.status === "cancelled" ? "The run was cancelled." : (e.text ?? "The run failed.");
-    patch(db, t.id, r.version, { blocked_json: blocked({ kind: "error", step, text }) }, now());
-  }
+  const stopTask = (db: Database, t: TaskRow, step: number | null, e: Ending) =>
+    stopForRun(db, { task: t.id, version: t.version }, step, e, now());
 
   // The effect after a run end: the next run of the task. A refused start stops the task with the reason.
   function startNext(db: Database, id: number, next: (t: TaskRow) => TaskRunStart) {

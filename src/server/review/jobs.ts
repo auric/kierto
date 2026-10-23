@@ -51,7 +51,7 @@ import {
   verifyJsonSchema,
 } from "../../shared/review";
 import { CHECK_EVENT, type RunEvent } from "../../shared/run-log";
-import type { TaskRunKind } from "../../shared/task";
+import { implementJsonSchema, type TaskRunKind } from "../../shared/task";
 import { byThread, newestLive, type TurnMsg, threadTurn } from "../../shared/turn";
 import type { PrRef } from "../../shared/types";
 import { dataDir as defaultDataDir } from "../config";
@@ -60,6 +60,7 @@ import type { Live } from "../live";
 import { log } from "../log";
 import type { Settings } from "../settings";
 import { recoverTasks } from "../tasks/tasks";
+import { inside, tasksRoot } from "../tasks/worktree";
 import {
   askAgent,
   createDocServers,
@@ -174,6 +175,7 @@ import {
   type BranchRemote,
   type ContextFile,
   type GitRemote,
+  longPath,
   noUrl,
   prepareTaskWorkspace,
   prepareWorkspace,
@@ -280,6 +282,24 @@ export type TaskRunStart = {
   keep?: string;
 };
 
+// docs/plans/review-v2/spec.md section 6.7: one Claude step of a task part in its worktree. src/server/tasks/implement.ts builds it.
+// cwd: the part folder with repo/ (the task worktree) and context/. head: the worktree HEAD at the start. after: runs at every end,
+// also when the CLI did not start (o null, early: that ending). It judges the outcome and runs the path check. finish: as TaskRunStart.
+export type ImplementRunStart = {
+  task: number;
+  kind: Extract<TaskRunKind, "implement">;
+  key: string;
+  profile: Profile;
+  cwd: string;
+  head: string;
+  prompt: string;
+  maxTurns: number;
+  timeoutMs: number;
+  started: (db: Database, run: number) => void;
+  after: (o: RunOutcome | null, early: Ending | null) => Promise<Ending>;
+  finish: (db: Database, run: { id: number; head: string | null }, e: Ending) => (() => void) | undefined;
+};
+
 // A task run in the slot. It has no PR.
 type TaskJob = {
   id: number;
@@ -293,7 +313,7 @@ type TaskJob = {
   phase?: RunDto["phase"];
   candidates?: number;
   abort?: AbortController;
-  t: TaskRunStart;
+  t: TaskRunStart | ImplementRunStart;
 };
 
 export type TaskStartResult = { status: 202; run: number } | { status: 409; conflict: RunConflict };
@@ -1012,12 +1032,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   }
 
   // A read-only snapshot of the newest target head, the profile servers, and one CLI process with no subagents.
-  async function taskSteps(j: TaskJob, held: { ws?: Workspace }): Promise<Ending> {
+  async function taskSteps(j: TaskJob, t: TaskRunStart, held: { ws?: Workspace }): Promise<Ending> {
     const c = await check();
     if (!c.ok) return failure(c.kind === "auth" ? "auth" : "process", c.message);
     if (j.cancelled) return cancelledEnding();
     await prune();
-    const t = j.t;
     j.abort = new AbortController();
     try {
       if (j.cancelled) return cancelledEnding();
@@ -1077,6 +1096,49 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     return { ...e, raw: `${tools.unmarked}\n\n${e.raw}` };
   }
 
+  // An implement run: the CLI with the Gate B17 flags in the part folder, no MCP server, and no subagent. AC-B8: the cwd is a folder
+  // under <dataDir>/tasks, never the user's clone.
+  async function implementSteps(j: TaskJob, t: ImplementRunStart): Promise<Ending> {
+    let o: RunOutcome | null = null;
+    let early: Ending | null = null;
+    const c = await check();
+    const cwd = longPath(t.cwd);
+    if (!c.ok) early = failure(c.kind === "auth" ? "auth" : "process", c.message);
+    else if (j.cancelled) early = cancelledEnding();
+    else if (!inside(tasksRoot(dataDir), cwd) || cwd === tasksRoot(dataDir))
+      early = failure("workspace", "The step folder is not in the task folder of the app.");
+    if (!early) {
+      j.db.query(SQL.taskHeads).run({ id: j.id, head: t.head });
+      notify(j.id, undefined, t.task);
+      log(`Task run ${j.id}: implement step of task ${t.task} at ${t.head.slice(0, 12)}.`);
+      try {
+        // No await between the cancel check and run(), so a later Cancel reaches the process.
+        if (j.cancelled) early = cancelledEnding();
+        else
+          o = await runner.run(
+            {
+              implement: true,
+              cwd,
+              prompt: t.prompt,
+              schema: implementJsonSchema(),
+              maxTurns: t.maxTurns,
+              model: j.profile.model,
+              effort: j.profile.effort,
+              timeoutMs: t.timeoutMs,
+            },
+            (events) => {
+              j.db.transaction(() => upsertEvents(j.db, j.id, events))();
+              notify(j.id, undefined, t.task);
+            },
+          );
+        if (o && j.cancelled) early = cancelledEnding(o);
+      } catch (err) {
+        early = failure("process", (err as Error).message);
+      }
+    }
+    return t.after(o, early);
+  }
+
   // One transaction for the run, its log, and the finish of the task. Returns the effect of the finish.
   function endTask(j: TaskJob, e: Ending, head: string | null): (() => void) | undefined {
     const o = e.outcome;
@@ -1114,11 +1176,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
 
   async function executeTask(j: TaskJob) {
     const held: { ws?: Workspace } = {};
+    const t = j.t;
     let e: Ending;
     try {
-      e = await taskSteps(j, held);
-      if (e.result && j.t.keep)
-        await held.ws?.keep(j.t.keep).catch((err) => log(`Could not keep the head of task run ${j.id}: ${noUrl((err as Error).message)}`));
+      if (t.kind === "implement") e = await implementSteps(j, t);
+      else {
+        e = await taskSteps(j, t, held);
+        if (e.result && t.keep)
+          await held.ws?.keep(t.keep).catch((err) => log(`Could not keep the head of task run ${j.id}: ${noUrl((err as Error).message)}`));
+      }
     } catch (err) {
       const message = (err as Error).message;
       log(`Task run ${j.id} failed: ${message}`);
@@ -1707,8 +1773,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
 
     taskRemote,
 
-    // docs/plans/review-v2/spec.md section 6.2: starts an interview or spec run of a task in the one slot. The row has pr NULL.
-    taskRun(db: Database, t: TaskRunStart): TaskStartResult {
+    // docs/plans/review-v2/spec.md sections 6.2 and 6.7: starts an interview, spec, or implement run of a task in the one slot. The row
+    // has pr NULL.
+    taskRun(db: Database, t: TaskRunStart | ImplementRunStart): TaskStartResult {
       if (job) return { status: 409, conflict: busyConflict(job) };
       const p = t.profile;
       const id = db.transaction(() => {
