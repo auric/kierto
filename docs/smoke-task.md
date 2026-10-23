@@ -1,6 +1,6 @@
 # Build a Jira task manual smoke test
 
-This test checks "Build a Jira task" (review v2 part 6) against a real Bitbucket Server, a real Jira server, a personal test repository, and the real `claude` CLI. The user runs it. The automated suites use the fake Bitbucket, the fake Jira, the fake CLI, and a local git remote only (`tests/e2e/task-small.e2e.ts`). Part S is Gate US of docs/plans/review-v2/tasks.md: a small task from the Jira key to the pull request. Parts M (medium task) and L (large task) come with the later work packages.
+This test checks "Build a Jira task" (review v2 part 6) against a real Bitbucket Server, a real Jira server, a personal test repository, and the real `claude` CLI. The user runs it. The automated suites use the fake Bitbucket, the fake Jira, the fake CLI, and a local git remote only (`tests/e2e/task-small.e2e.ts`). Part S is Gate US of docs/plans/review-v2/tasks.md: a small task from the Jira key to the pull request. Part B is Gate UBR: the branch prefixes, the base branch, and a branch that exists on the server. Parts M (medium task) and L (large task) come with the later work packages.
 
 ## Rules
 
@@ -10,8 +10,8 @@ This test checks "Build a Jira task" (review v2 part 6) against a real Bitbucket
 - Use a new, empty data folder. Never use the data folder of your daily instance.
 - Nothing goes to Bitbucket before "Push and open PR". Check Bitbucket after each part.
 - Do not copy tokens, host names, code, task text, or file names into files, issues, or chat. Record counts, times, states, and the shape of the sentences only.
-- Expect about twenty runs on your Claude subscription quota: about six in part S, five in part P, seven in part R, and four in part D. A run is one interview, one plan, one tests step, one code step, one fix, or one own review.
-- In this document, `<BITBUCKET_URL>` is the base URL of the Bitbucket server, `<JIRA_URL>` is the base URL of the Jira server, `<REPO>` is the test repository as `<project>/<repo>`, `<TARGET>` is its default branch, and `<KEY1>` to `<KEY4>` are the keys of the four Jira tasks.
+- Expect about 35 runs on your Claude subscription quota: about six in part S, fourteen in part B, five in part P, seven in part R, and four in part D. A run is one interview, one plan, one tests step, one code step, one fix, or one own review.
+- In this document, `<BITBUCKET_URL>` is the base URL of the Bitbucket server, `<JIRA_URL>` is the base URL of the Jira server, `<REPO>` is the test repository as `<project>/<repo>`, `<TARGET>` is its default branch, `<BASE2>` is a second branch of `<REPO>`, and `<KEY1>` to `<KEY5>` are the keys of the five Jira tasks.
 
 ## Preparation
 
@@ -23,16 +23,16 @@ This test checks "Build a Jira task" (review v2 part 6) against a real Bitbucket
 6. Run `bun run start`. Expect "PR Review Inbox (source): http://127.0.0.1:7317/".
 7. Open the URL. Enter `<BITBUCKET_URL>` and your access token. Click Save. Click "Check now". Expect `<REPO>` under Repositories in the sidebar. If it is missing, open a pull request in `<REPO>` and click "Check now" again.
 8. Open Settings and go to the section "Jira". Enter `<JIRA_URL>` in "Jira URL" and your token in "Personal access token". Click "Save Jira settings". Expect "Saved. Jira accepted the token."
-9. Write four small Jira tasks for `<REPO>`: `<KEY1>` to `<KEY4>`. Each one names one source file and the behavior to change. `<REPO>` has its own test command, for example `bun test`, `npm test`, or `pytest`.
+9. Write five small Jira tasks for `<REPO>`: `<KEY1>` to `<KEY5>`. Each one names one source file and the behavior to change. Give `<KEY5>` a summary of more than 100 characters. `<REPO>` has its own test command, for example `bun test`, `npm test`, or `pytest`. Make sure that `<REPO>` has a second branch `<BASE2>` at a commit that the tasks can build on.
 
 ## S. A small task from the key to the pull request (Gate US)
 
-1. Click "Tasks" in the sidebar. Click "Build a Jira task". Type `<KEY1>` in "Jira key". Pick `<REPO>` in "Repository". Click "Build this task". Expect the Task view with the steps "Questions › Plan › Build › Done" and the Tasks row "Reading the task". A pull request that names `<KEY1>` has a "Build" button on its task chip ("Build this task: `<KEY1>`"). That button opens the same task, not a second one.
+1. Click "Tasks" in the sidebar. Click "Build a Jira task". Type `<KEY1>` in "Jira key". Pick `<REPO>` in "Main repository". Click "Build this task". Expect the Task view with the steps "Questions › Plan › Build › Done" and the Tasks row "Reading the task". A pull request that names `<KEY1>` has a "Build" button on its task chip ("Build this task: `<KEY1>`"). That button opens the same task, not a second one.
 2. Expect "Claude is reading the task and the code." Then expect "Claude has `<n>` questions before it writes the plan." with the button "Answer `<n>` questions" and the row "Needs you: answer the questions". When Claude asks nothing, go to step 4.
 3. Expect each question to say "Why it matters: …". The recommended option starts selected and has the mark "Recommended". Click "Answer `<n>` questions". Expect the focus on the first question. Click "Send answers". Record the count of questions.
 4. Expect "Claude is writing the plan." and the row "Writing the plan". Then expect "The plan is ready: small, 1 PR, about `<n>` changed lines." with the button "Approve the plan" and the row "Needs you: approve the plan". Expect "Claude proposes: small." and the option "Small: one PR with a short plan and the code." selected. The Spec tab shows `specs/<KEY1>/plan.md`. The Plan tab says "The build has not started. The plan has these tasks:". Record the line estimate and the count of tasks. If Claude proposes medium or large, record the size and the rule lines, and stop part S.
-5. In the section "Branch", expect "The change goes to `feature/<KEY1>-<slug>`". The slug is the Jira summary in lowercase ASCII letters, digits, and hyphens, at most 40 characters. Expect "If a branch with this name exists, the app adds -2, -3, and so on."
-6. Click "Change the prefix". Expect the focus in "Branch prefix". Type `bad..` and press Enter. Expect "Invalid branch prefix." Type `smoke/`. Expect the name `smoke/<KEY1>-<slug>` at once. Press Enter. Expect the field to close, the focus on "Change the prefix", and no approval. The prefix applies to this task only. If `<REPO>` has a branch named `smoke`, git cannot make `smoke/…`: use another prefix.
+5. In the section "Branch", expect "Branch type" with the chips `feature/`, `bugfix/`, `hotfix/`, and "Other…", and `feature/` selected. Expect "The change goes to `feature/<KEY1>-<slug>`". The slug is the full Jira summary in lowercase ASCII letters, digits, and hyphens. Expect "Base branch" with `<TARGET>` and "(default)" after it. Expect no line "already exists on the server.".
+6. Click the chip `feature/`, then press the right arrow key twice. Expect `hotfix/` selected and the name `hotfix/<KEY1>-<slug>` at once. Click "Other…". Type `bad..` in "Prefix". Expect "Invalid branch prefix." and no branch name. Type `smoke/`. Expect the name `smoke/<KEY1>-<slug>` at once. Press Enter. Expect no approval. The prefix applies to this task only. If `<REPO>` has a branch named `smoke`, git cannot make `smoke/…`: use another prefix.
 7. In "Commands that the app runs after each step", expect the commands of the plan. Untick every command with the mark "Test". Click "Approve the plan". Expect "Pick at least one test command. The build runs it to see failing and passing tests." Tick only the test command of `<REPO>`.
 8. Expect the box "Before the first build in this repository" with the picked command and "I understand". Click "Approve the plan". Expect "Read the warning and tick “I understand” first." Tick "I understand". Click "Approve the plan".
 9. Expect the step "Build" and the row "Building part 1 of 1". Expect sentences such as "Claude is writing the tests.", "Running the tests.", "Claude is writing the code of task T1.1.", and "Claude checks its own change." The box shows "Your change", "Tasks: `<done>` of `<n>` done", and "Lines: `<n>` of 400". Check Bitbucket: no new branch exists yet.
@@ -41,12 +41,25 @@ This test checks "Build a Jira task" (review v2 part 6) against a real Bitbucket
 12. Open the same task in a second browser tab. In the first tab, click "Open the PR". Expect the dialog "Push `<branch>` and open a PR into `<TARGET>`?" with "The app pushes only this branch, and only now. It never pushes to `<TARGET>`.", "Title: `<KEY1>`: `<summary>`", the file and line counts, and "Reviewers". Add no reviewer. Click "Push and open PR".
 13. Expect "Pushing the branch." and "Opening the PR." They can pass quickly. Then expect "Waiting for the review of your PR. Nothing to do." with the button "Go to the PR", the box "PR #`<n>` from `<branch>` into `<TARGET>`.", and the row "Waiting for review". Expect the second tab to show the same state and the same PR number without a click. The app answers each later "Open the PR" request of this part with the same PR.
 14. Open Bitbucket and check these facts:
-    - The task branch is `smoke/<KEY1>-<slug>`, or that name with `-2` when the name existed before.
+    - The task branch is `smoke/<KEY1>-<slug>`.
     - Exactly one new pull request exists. It goes from the task branch into `<TARGET>`.
     - The title is "`<KEY1>`: `<summary>`". The description has the goal, "Acceptance:", "Tests:", and "The plan: specs/`<KEY1>`/plan.md". It starts with 🤖 when Settings, Posts, has "Mark Claude-drafted comments with 🤖" on.
     - The commits are "`<KEY1>`: Add the plan", "`<KEY1>` P1: Add the failing tests of part 1", and "`<KEY1>` T1.1: `<task title>`", and a fix commit for each fix that changed files, all with your name and email.
     - `<TARGET>` has no new commit. No other branch is new.
 15. In the Task view, open "More actions" and click "Close the task". Expect "Closed. The branches and PRs stay as they are." and no main button. Expect the row "Closed" in the group "Done". Check Bitbucket: the branch and the pull request still exist.
+
+## B. Branch prefixes, base branch, and an existing branch (Gate UBR)
+
+Run this part after part S. It needs the branch `smoke/<KEY1>-<slug>` and the open pull request of part S.
+
+1. Open Settings and go to the section "Tasks". Expect "Branch prefixes" with `feature/`, `bugfix/`, and `hotfix/`, and "The first prefix starts selected on the plan screen." Click "Add a prefix". Expect the focus in "Prefix 4". Type `feature/` and press Tab. Expect "This prefix is already in the list." and "A marked prefix is not saved. Fix it to save the list." Type `smoke/` in "Prefix 4" and press Tab. Expect "Saved. New plans offer these prefixes." Click "Move prefix 4 up" three times. Expect `smoke/` first, and the focus on a move button of that row.
+2. Start `<KEY5>` as in S1. Answer the questions. On the plan screen, expect the chips `smoke/`, `feature/`, `bugfix/`, `hotfix/`, and "Other…", with `smoke/` selected. Expect the name `smoke/<KEY5>-<slug>`: it is cut at a hyphen and has at most 97 characters, so the suffix `-99` still fits in 100. Record its length.
+3. Click "Base branch". Expect a list of the branches of `<REPO>` with "(default)" after `<TARGET>`. Type a part of the name `<BASE2>`. Expect the list to change after a short wait. Type `zzzz`. Expect "No branch matches “zzzz”." Clear the field and type the name `<BASE2>`. Press the down arrow key until `<BASE2>` is marked, then press Enter.
+4. Expect the dialog "The plan was written on `<TARGET>`. Write it again on `<BASE2>`?" with "The plan starts again. Your answers stay." Click "Cancel". Expect the base `<TARGET>` and the focus in "Base branch". Pick `<BASE2>` again with the mouse, then click "Write the plan again".
+5. Expect "Claude is writing the plan.", then the plan again. Expect `<REPO> into <BASE2>` in the header, `smoke/` still selected, and your answers in the Questions tab. Open "More actions", click "Stop", then "Close the task". Check Bitbucket: no branch `smoke/<KEY5>-…` exists.
+6. Start `<KEY1>` again as in S1. The task of part S is closed, so a new task starts. Answer the questions. On the plan screen, expect `smoke/` selected and the base `<TARGET>`: the app keeps the base of the last approved plan in `<REPO>`, and the plan of `<KEY5>` was not approved. Expect "`smoke/<KEY1>-<slug>` already exists on the server." with "Continue on `smoke/<KEY1>-<slug>`" selected, "Build on top of its commits. The app never overwrites them.", "PR #`<n>` from this branch stays the PR of this task." with the number of the part S pull request, and "Start a new branch (`smoke/<KEY1>-<slug>-2`)".
+7. Keep "Continue on". Approve the plan. Expect the build to start on the commits of part S. When "Open the PR" shows, click it, then "Push and open PR". Expect "Waiting for the review of your PR. Nothing to do." Check Bitbucket: the branch `smoke/<KEY1>-<slug>` has the part S commits and the new commits after them, and no second pull request exists. Close the task.
+8. Start `<KEY1>` a third time. Answer the questions. On the plan screen, pick "Start a new branch (`smoke/<KEY1>-<slug>-2`)". Approve the plan. When the Plan tab names the part branch `smoke/<KEY1>-<slug>-2`, open "More actions" and click "Stop", then "Close the task". Check Bitbucket: no branch `smoke/<KEY1>-<slug>-2` exists, because nothing was pushed.
 
 ## P. Pause, Stop, and Resume
 
@@ -78,5 +91,6 @@ This test checks "Build a Jira task" (review v2 part 6) against a real Bitbucket
 - From part S: the count of questions, the line estimate and the real changed lines, the count of tasks, the count of "Fix" steps, and the count of own-review points by severity.
 - From part S: the time and the turns that the Plan tab shows for the part, and the time from "Build this task" to "Open the PR".
 - Every stop for a file that the app does not commit, with the path type only (for example "a CLAUDE.md file").
+- From part B: the length of the long branch name, whether the plan came back on `<BASE2>` with the answers, the pull request number after "Continue on", and the part branch after "Start a new branch".
 - From parts P, R, and D: each expected stop as seen, not seen, or not reached.
 - Clean up: delete the `smoke/` branches and the pull request on Bitbucket, close the Jira tasks, and delete the data folder.

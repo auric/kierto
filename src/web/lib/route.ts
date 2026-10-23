@@ -19,6 +19,7 @@ export const SETTINGS_SECTIONS = [
   "quality",
   "task-ids",
   "tracker",
+  "tasks",
   "clones",
   "instructions",
 ] as const;

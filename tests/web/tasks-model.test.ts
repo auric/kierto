@@ -4,10 +4,15 @@
 // docs/plans/review-v2/spec.md sections 6.12 and 7.1 (WP-B5, AC-UX1, AC-UX3, AC-UX9): one test per state row of the Task view table for
 // small tasks, the status line of a Tasks row, and the plain-word helpers.
 import { describe, expect, test } from "bun:test";
-import type { TaskDto, TaskPartDto, TaskQuestionDto, TaskRowDto, TaskStepDto } from "../../src/shared/dto";
+import type { BranchCheckDto, TaskDto, TaskPartDto, TaskQuestionDto, TaskRowDto, TaskStepDto } from "../../src/shared/dto";
 import { stepDetail } from "../../src/shared/task";
 import {
+  branchApproval,
+  branchesError,
+  branchNote,
   elapsed,
+  firstPick,
+  pickedPrefix,
   plannedBranch,
   planSentence,
   prefixProblem,
@@ -427,6 +432,63 @@ describe("the branch line of the plan (spec.md section 6.8)", () => {
     // spec.md section 6.16.1: a prefix has 1 to 40 characters.
     for (const bad of ["", "x".repeat(41), "bad..", "a b", "/task/", "-x", "x~", "a/.b", "a.lock/"])
       expect(prefixProblem(bad)).toBe("Invalid branch prefix.");
+  });
+});
+
+describe("the branch picks of the plan screen (spec.md sections 6.16.1 to 6.16.4, AC-B25, AC-B27)", () => {
+  const LIST = ["feature/", "bugfix/", "hotfix/"];
+  const check = (o: Partial<BranchCheckDto> = {}): BranchCheckDto => ({
+    name: "task/ABC-12-trim-spaces-in-user-names",
+    exists: [{ taskRepo: null, project: "PROJ", repo: "repo", head: "c".repeat(40) }],
+    openPr: null,
+    nextFree: "task/ABC-12-trim-spaces-in-user-names-2",
+    ...o,
+  });
+
+  test("the first chip starts selected; a stored prefix comes back, under Other when the list lost it", () => {
+    expect(firstPick(undefined, LIST)).toEqual({ chip: "feature/", other: "", existing: "continue" });
+    expect(firstPick("bugfix/", LIST)).toEqual({ chip: "bugfix/", other: "", existing: "continue" });
+    expect(firstPick("task/", LIST)).toEqual({ chip: null, other: "task/", existing: "continue" });
+    expect(pickedPrefix({ chip: "hotfix/", other: "task/", existing: "continue" })).toBe("hotfix/");
+    expect(pickedPrefix({ chip: null, other: "task/", existing: "continue" })).toBe("task/");
+  });
+
+  test("the approval sends the picked prefix, and the existing-branch choice only for a found name of that prefix", () => {
+    const other = { chip: null, other: "task/", existing: "new" } as const;
+    expect(branchApproval(other, { checked: "task/", data: check() })).toEqual({ prefix: "task/", existing: "new" });
+    expect(branchApproval({ ...other, existing: "continue" }, { checked: "task/", data: check() })).toEqual({
+      prefix: "task/",
+      existing: "continue",
+    });
+    // A free name, a check of an earlier prefix, and a check without an answer send no choice.
+    expect(branchApproval(other, { checked: "task/", data: check({ exists: [] }) })).toEqual({ prefix: "task/" });
+    expect(branchApproval(other, { checked: "feature/", data: check() })).toEqual({ prefix: "task/" });
+    expect(branchApproval(other, { checked: "task/", data: undefined })).toEqual({ prefix: "task/" });
+    expect(branchApproval({ chip: "feature/", other: "bad..", existing: "continue" }, { checked: null, data: undefined })).toEqual({
+      prefix: "feature/",
+    });
+  });
+
+  test("an invalid Other prefix holds the approval back with the prefix sentence", () => {
+    for (const other of ["", "bad..", "x".repeat(41)])
+      expect(branchApproval({ chip: null, other, existing: "continue" }, { checked: null, data: undefined })).toEqual({
+        problem: "Invalid branch prefix.",
+      });
+  });
+
+  test("the line under the branch list: more branches, no match, and an empty repository", () => {
+    const b = (name: string, isDefault = false) => ({ name, isDefault });
+    expect(branchNote({ branches: [b("develop", true), b("main")], more: false }, "")).toBeNull();
+    expect(branchNote({ branches: [b("develop", true)], more: true }, "")).toBe("Type to see more branches.");
+    expect(branchNote({ branches: [], more: false }, "zzz")).toBe("No branch matches “zzz”.");
+    expect(branchNote({ branches: [], more: false }, "")).toBe("The repository has no branches.");
+  });
+
+  test("a failed branch read names the repository once", () => {
+    expect(branchesError("Cannot read the branches of PROJ/repo. HTTP 500", "PROJ", "repo")).toBe(
+      "Cannot read the branches of PROJ/repo. HTTP 500",
+    );
+    expect(branchesError("Failed to fetch", "PROJ", "repo")).toBe("Cannot read the branches of PROJ/repo. Failed to fetch");
   });
 });
 

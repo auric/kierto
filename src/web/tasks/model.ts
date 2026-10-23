@@ -4,7 +4,16 @@
 // The Task view model (docs/plans/review-v2/spec.md sections 6.12 and 7): one status sentence that names who acts or what the app
 // waits for, at most one primary action, and the More actions, per state. Pure: tests/web/tasks-model.test.ts has one test per row.
 // runner: the short name of the CLI from meta, because UI code names no product (tests/ui/names.test.ts).
-import { branchPrefix, type TaskDto, type TaskPartDto, type TaskQuestionDto, type TaskRowDto, type TaskStepDto } from "../../shared/dto";
+import {
+  type BranchCheckDto,
+  type BranchSearchDto,
+  branchPrefix,
+  type TaskDto,
+  type TaskPartDto,
+  type TaskQuestionDto,
+  type TaskRowDto,
+  type TaskStepDto,
+} from "../../shared/dto";
 import { branchName, type TaskSize } from "../../shared/task";
 
 export type ActionKind =
@@ -381,6 +390,41 @@ export function prefixProblem(prefix: string): string | null {
   const r = branchPrefix.safeParse(prefix);
   return r.success ? null : (r.error.issues[0]?.message ?? "Invalid branch prefix.");
 }
+
+// spec.md sections 6.16.1 and 6.16.4: the branch picks of the plan screen. chip: a prefix of Settings > Tasks, or null for "Other…"
+// with the free prefix other. existing: the choice for a planned name that exists on the server.
+export type BranchPick = { chip: string | null; other: string; existing: "continue" | "new" };
+
+// The first chip starts selected. A stored prefix of the task comes back, under "Other…" when the list no longer has it.
+export function firstPick(stored: string | undefined, prefixes: string[]): BranchPick {
+  if (stored && !prefixes.includes(stored)) return { chip: null, other: stored, existing: "continue" };
+  return { chip: stored ?? prefixes[0] ?? null, other: "", existing: "continue" };
+}
+
+export const pickedPrefix = (p: BranchPick) => p.chip ?? p.other;
+
+// The branch part of the plan approval. existing goes only with a check of the picked prefix that found the name on the server.
+// checked: the prefix of that check.
+export function branchApproval(
+  p: BranchPick,
+  check: { checked: string | null; data: BranchCheckDto | undefined },
+): { prefix: string; existing?: BranchPick["existing"] } | { problem: string } {
+  const prefix = pickedPrefix(p);
+  const problem = prefixProblem(prefix);
+  if (problem) return { problem };
+  const found = check.checked === prefix && !!check.data?.exists.length;
+  return found ? { prefix, existing: p.existing } : { prefix };
+}
+
+// spec.md section 6.16.3: the line under the branch list. text: the filter of that page.
+export function branchNote(d: Pick<BranchSearchDto, "branches" | "more">, text: string): string | null {
+  if (!d.branches.length) return text ? `No branch matches “${text}”.` : "The repository has no branches.";
+  return d.more ? "Type to see more branches." : null;
+}
+
+// spec.md section 6.16.3: "Cannot read the branches of PROJ/repo. <reason>". The route sends that sentence; other errors get its start.
+export const branchesError = (message: string, project: string, repo: string) =>
+  message.startsWith("Cannot read the branches") ? message : `Cannot read the branches of ${project}/${repo}. ${message}`;
 
 // The step strip of the server (stepStrip), with the current step: its index, or -1 for a failed or stopped task.
 export const stripSteps = (t: Pick<TaskDto, "strip">) =>

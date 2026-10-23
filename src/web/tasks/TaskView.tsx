@@ -259,6 +259,7 @@ const Loaded = forwardRef<TaskApi, { t: TaskDto; meta: MetaDto; onPr: (ref: PrRe
         limit={limit}
         onLimit={setLimit}
         onSend={send}
+        onBase={(branch) => act.mutateAsync({ kind: "base", branch })}
         onRun={run}
       />
 
@@ -353,6 +354,8 @@ function Content(props: {
   limit: string;
   onLimit: (v: string) => void;
   onSend: (a: TaskAction, after?: () => void) => void;
+  // PUT /api/tasks/:id/base. The confirm of the base picker shows its error.
+  onBase: (branch: string) => Promise<unknown>;
   onRun: (k: ActionKind) => void;
 }) {
   const { t, runner, screen, busy } = props;
@@ -403,6 +406,7 @@ function Content(props: {
         busy={busy}
         onSize={(size) => props.onSend({ kind: "size", size })}
         onApprove={(input) => props.onSend({ kind: "plan", input })}
+        onBase={props.onBase}
       />
     );
   }

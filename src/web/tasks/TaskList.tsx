@@ -178,7 +178,7 @@ function NewTask(props: { repos: ProjectRepos[]; tracker: string; onCreate: (inp
       </div>
       <div className="grid gap-1 text-sm">
         <label htmlFor="new-task-repo" className="text-ink-2">
-          Repository
+          Main repository
         </label>
         <select
           id="new-task-repo"

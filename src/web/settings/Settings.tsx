@@ -17,6 +17,7 @@ import { useSaveSettings } from "../shell/data";
 import { Hint } from "../shell/Hint";
 import { setTheme, type Theme, useTheme } from "../theme";
 import { About } from "./About";
+import { BranchPrefixes } from "./BranchPrefixes";
 import { Clones } from "./Clones";
 import { JiraSettings } from "./JiraSettings";
 import { ProjectInstructions } from "./ProjectInstructions";
@@ -54,6 +55,7 @@ const HEADINGS: Record<SettingsSection, string> = {
   quality: "h-quality",
   "task-ids": "h-taskids",
   tracker: "h-tracker",
+  tasks: "h-tasks",
   clones: "h-clones",
   instructions: "h-instructions",
 };
@@ -182,6 +184,7 @@ export function Settings({
           ["quality", "Review quality"],
           ["task-ids", "Task IDs"],
           ...(tracker ? ([["tracker", tracker.name]] as [SettingsSection, string][]) : []),
+          ["tasks", "Tasks"],
           ["clones", "Clones"],
           ["instructions", "Project instructions"],
         ];
@@ -374,6 +377,7 @@ export function Settings({
         {settings.baseUrl !== null && <ReviewQuality />}
         {settings.baseUrl !== null && <TaskRules settings={settings} prs={prs} selected={selected} />}
         {settings.baseUrl !== null && <JiraSettings settings={settings} />}
+        {settings.baseUrl !== null && <BranchPrefixes settings={settings} />}
         {settings.baseUrl !== null && <Clones settings={settings} />}
         {settings.baseUrl !== null && <ProjectInstructions />}
         <About />

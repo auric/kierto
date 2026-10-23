@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// The plan approval (docs/plans/review-v2/spec.md sections 6.1, 6.4, 6.8, and 6.12): the size with its one-line meaning and the rule
-// lines, the branch with the prefix of the repository, the approved commands with the first-use warning, and the map check line. The
-// header button "Approve the plan" submits this form.
+// The plan approval (docs/plans/review-v2/spec.md sections 6.1, 6.4, 6.8, 6.12, and 6.16): the size with its one-line meaning and the
+// rule lines, the branch (BranchSection.tsx), the approved commands with the first-use warning, and the map check line. The header
+// button "Approve the plan" submits this form.
 // PlanParts is the Plan tab: the parts with their state in plain words, the tasks with check marks, and the lines against the limit.
 import { Check, Circle } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldError, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
+import { FieldLegend, FieldSet } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 import type { TaskDto, TaskPlanInput } from "../../shared/dto";
-import { PART_STATE_TEXT, PREFIX_MAX, sizeRank, TASK_SIZES, type TaskSize } from "../../shared/task";
+import { PART_STATE_TEXT, sizeRank, TASK_SIZES, type TaskSize } from "../../shared/task";
 import { useSettings } from "../shell/data";
-import { codeParts, plannedBranch, prefixProblem, SIZE_LINE } from "./model";
+import { BranchSection } from "./BranchSection";
+import { useBranchCheck } from "./data";
+import { type BranchPick, branchApproval, codeParts, firstPick, pickedPrefix, prefixProblem, SIZE_LINE } from "./model";
 
 export const PLAN_FORM = "task-plan";
 
@@ -33,20 +32,33 @@ export function planProblem(t: TaskDto, picked: ReadonlySet<string>, warned: boo
   return null;
 }
 
+// The branch picks per task. A base change writes the plan again, and this screen comes back with the picks.
+const branchPicks = new Map<number, BranchPick>();
+
 export function PlanApproval(props: {
   t: TaskDto;
   runner: string;
   busy: boolean;
   onSize: (size: TaskSize) => void;
   onApprove: (input: Omit<TaskPlanInput, "version">) => void;
+  onBase: (branch: string) => Promise<unknown>;
 }) {
   const { t, runner } = props;
   const plan = t.plan;
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set(plan?.commands.map((c) => c.id) ?? []));
   const [warned, setWarned] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  // null: the first prefix of Settings > Tasks, which the server also takes when the approval names none.
-  const [prefix, setPrefix] = useState<string | null>(null);
+  const settings = useSettings();
+  const prefixes = settings.data?.taskBranchPrefixes;
+  // null: no pick yet, so the first chip.
+  const [own, setOwn] = useState<BranchPick | null>(() => branchPicks.get(t.id) ?? null);
+  const pick = own ?? (prefixes ? firstPick(t.settings.branchPrefix, prefixes) : null);
+  const setPick = (p: BranchPick) => {
+    branchPicks.set(t.id, p);
+    setOwn(p);
+  };
+  const prefix = pick && pickedPrefix(pick);
+  const check = useBranchCheck(t.id, prefix !== null && prefixProblem(prefix) === null ? prefix : null);
   if (!plan) return null;
   const size = t.size ?? plan.proposed;
   const toggle = (id: string, on: boolean) =>
@@ -64,10 +76,16 @@ export function PlanApproval(props: {
       className="grid max-w-[72ch] gap-5"
       onSubmit={(e) => {
         e.preventDefault();
+        // No pick: Settings did not load, and the server takes the first prefix of Settings > Tasks.
+        const branch = pick ? branchApproval(pick, check) : null;
+        if (branch && "problem" in branch) {
+          setProblem(branch.problem);
+          return document.getElementById("task-prefix")?.focus();
+        }
         const p = planProblem(t, picked, warned);
         setProblem(p);
         if (p) return;
-        props.onApprove({ size, commands: picks.map((c) => c.id), ...(plan.warning && { warning: true }), ...(prefix && { prefix }) });
+        props.onApprove({ size, commands: picks.map((c) => c.id), ...(plan.warning && { warning: true }), ...branch });
       }}
     >
       <FieldSet className="gap-1.5">
@@ -109,7 +127,16 @@ export function PlanApproval(props: {
           );
         })}
       </FieldSet>
-      <BranchLine t={t} size={size} prefix={prefix} onPrefix={setPrefix} />
+      <BranchSection
+        t={t}
+        size={size}
+        prefixes={prefixes}
+        error={settings.error}
+        pick={pick}
+        check={check}
+        onPick={setPick}
+        onBase={props.onBase}
+      />
       {plan.missing > 0 && (
         <p className="m-0 text-sm text-ink-2">
           {plan.missing === 1 ? "1 map line names code that does not exist." : `${plan.missing} map lines name code that does not exist.`}{" "}
@@ -173,106 +200,6 @@ export function PlanApproval(props: {
         </p>
       )}
     </form>
-  );
-}
-
-// spec.md section 6.16.1: the plan approval carries the prefix of this task. It starts at the first prefix of Settings > Tasks. Enter
-// takes the prefix, and Esc closes the field. WP-BR2 replaces this field with the "Branch type" chips.
-function BranchLine({ t, size, prefix, onPrefix }: { t: TaskDto; size: TaskSize; prefix: string | null; onPrefix: (p: string) => void }) {
-  const settings = useSettings();
-  // null: the field is closed.
-  const [draft, setDraft] = useState<string | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const change = useRef<HTMLButtonElement>(null);
-  const field = useRef<HTMLInputElement>(null);
-  const stored = prefix ?? settings.data?.taskBranchPrefixes[0];
-  const close = () => {
-    setDraft(null);
-    setProblem(null);
-    requestAnimationFrame(() => change.current?.focus());
-  };
-  const submit = () => {
-    if (draft === null) return;
-    const p = prefixProblem(draft);
-    setProblem(p);
-    if (p) return field.current?.focus();
-    onPrefix(draft);
-    close();
-  };
-  const shown = draft !== null && prefixProblem(draft) === null ? draft : stored;
-  const error = problem;
-  return (
-    <FieldSet className="gap-1.5">
-      <FieldLegend className="text-sm font-semibold">Branch</FieldLegend>
-      {settings.error ? (
-        <p role="alert" className="m-0 text-sm text-destructive">
-          Cannot read the branch prefix. {settings.error.message}
-        </p>
-      ) : shown === undefined ? (
-        <Skeleton className="h-5 w-72 max-w-full" />
-      ) : (
-        <>
-          <p className="m-0 text-sm">
-            <span className="text-ink-2">{size === "small" ? "The change goes to" : "The branches of this task start with"}</span>{" "}
-            <code id="task-branch" translate="no" className="font-mono text-xs [overflow-wrap:anywhere]">
-              {plannedBranch(shown, t, size)}
-            </code>
-          </p>
-          <p className="m-0 text-xs text-muted-foreground">If a branch with this name exists, the app adds -2, -3, and so on.</p>
-        </>
-      )}
-      {draft === null ? (
-        stored !== undefined && (
-          <Button ref={change} type="button" variant="outline" size="xs" className="mt-0.5 self-start" onClick={() => setDraft(stored)}>
-            Change the prefix
-          </Button>
-        )
-      ) : (
-        <div className="mt-1 grid gap-1.5">
-          <div className="flex flex-wrap items-end gap-2">
-            <Field data-invalid={error ? true : undefined} className="w-48 gap-1.5">
-              <FieldLabel htmlFor="task-prefix">Branch prefix</FieldLabel>
-              <Input
-                ref={field}
-                id="task-prefix"
-                name="branchPrefix"
-                autoFocus
-                autoComplete="off"
-                spellCheck={false}
-                maxLength={PREFIX_MAX}
-                aria-invalid={error ? true : undefined}
-                aria-describedby={error ? "task-prefix-help task-prefix-error" : "task-prefix-help"}
-                className="h-8 font-mono"
-                value={draft}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  setProblem(null);
-                }}
-                onKeyDown={(e) => {
-                  // Enter must not submit the plan form around this field.
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    submit();
-                  } else if (e.key === "Escape") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    close();
-                  }
-                }}
-              />
-            </Field>
-            <Button type="button" variant="outline" onClick={submit}>
-              Save the prefix
-            </Button>
-            <Button type="button" variant="ghost" onClick={close}>
-              Cancel
-            </Button>
-          </div>
-          <FieldDescription id="task-prefix-help">For example feature/ or task/. It applies to this task only.</FieldDescription>
-          {error && <FieldError id="task-prefix-error">{error}</FieldError>}
-        </div>
-      )}
-    </FieldSet>
   );
 }
 

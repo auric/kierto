@@ -2,10 +2,13 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Server state of the tasks (docs/plans/review-v2/spec.md section 6.11). Keys: ['tasks'], ['task', id], ['task', id, 'diff', head],
-// ['task', id, 'run', run], ['task-settings', project, repo]. live.ts refetches ['tasks'] and ['task', id] when SSE `changed` names the
-// task.
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+// ['task', id, 'run', run], ['task', id, 'branch', prefix], ['task-settings', project, repo], ['branches', project, repo, filter].
+// live.ts refetches ['tasks'] and ['task', id] with the keys under it when SSE `changed` names the task.
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import type {
+  BranchCheckDto,
+  BranchSearchDto,
   RepoTaskSettingsDto,
   RunDetail,
   TaskAnswersInput,
@@ -48,6 +51,47 @@ export const useTaskRun = (id: number, run: number | null) =>
       read<RunDetail>(await api.api.tasks[":id"].runs[":run"].$get({ param: { id: String(id), run: String(run ?? 0) } })),
   });
 
+// spec.md section 6.16.3: typing in the base picker waits this long before a read.
+export const TYPE_WAIT_MS = 250;
+
+function useDebounced<T>(value: T, ms: number): T {
+  const [out, setOut] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setOut(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return out;
+}
+
+// GET /api/repos/:project/:repo/branches: one page of the branch search. filter: the text of that page, for its no-match sentence.
+// The list keeps the previous page while the next one loads.
+export function useBranches(project: string, repo: string, text: string) {
+  const filter = useDebounced(text, TYPE_WAIT_MS);
+  return useQuery({
+    queryKey: ["branches", project, repo, filter],
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+    queryFn: async () => ({
+      ...(await read<BranchSearchDto>(
+        await api.api.repos[":project"][":repo"].branches.$get({ param: { project, repo }, query: { filter } }),
+      )),
+      filter,
+    }),
+  });
+}
+
+// GET /api/tasks/:id/branch (spec.md section 6.16.4): where the planned name exists on the server. prefix null: no valid prefix, so
+// no read. checked: the prefix of the current answer, which a typed prefix reaches after the wait.
+export function useBranchCheck(id: number, prefix: string | null) {
+  const checked = useDebounced(prefix, TYPE_WAIT_MS);
+  const q = useQuery({
+    queryKey: ["task", id, "branch", checked],
+    enabled: checked !== null,
+    queryFn: async () => read<BranchCheckDto>(await api.api.tasks[":id"].branch.$get({ param: id$(id), query: { prefix: checked ?? "" } })),
+  });
+  return { ...q, checked };
+}
+
 const repoSettings$ = () => api.api.repos[":project"][":repo"]["task-settings"];
 
 export const useRepoTaskSettings = (project: string, repo: string) =>
@@ -65,6 +109,7 @@ export async function createTask(input: TaskCreateInput): Promise<TaskDto> {
 export type TaskAction =
   | { kind: "answers"; input: Omit<TaskAnswersInput, "version"> }
   | { kind: "plan"; input: Omit<TaskPlanInput, "version"> }
+  | { kind: "base"; branch: string }
   | { kind: "docs"; doc: TaskDoc; text: string }
   | { kind: "size"; size: TaskSize }
   | { kind: "pause" | "stop" | "resume" | "close" }
@@ -83,6 +128,9 @@ async function send(t: TaskDto, a: TaskAction): Promise<TaskDto> {
       return read(await tasks.answers.$post({ param, json: { version, ...a.input } }));
     case "plan":
       return read(await tasks.plan.$post({ param, json: { version, ...a.input } }));
+    // 200, or 202 when the plan runs again on the new base. Both hold the task.
+    case "base":
+      return read(await tasks.base.$put({ param, json: { version, branch: a.branch } }));
     case "docs":
       return read(await tasks.docs.$put({ param, json: { version, doc: a.doc, text: a.text } }));
     case "size":

@@ -457,8 +457,12 @@ r[key("GET", `${A.path}/comments/1000010`)] = () => (sc.reply === "deleted" ? NO
 // ---------- Build a Jira task (docs/plans/review-v2/spec.md section 6.9): the PR create of PROJ1/sample-repo-2 ----------
 // The push goes to the local git remote (repoRemote below). The open-PR list and the repository GET stay absent, as before, so the PR
 // context of the other tests does not change. A created PR gets an empty activity page, so its sync is complete.
-// The default branch of the repository is the target of PR A, so a task builds there (spec.md section 6.16.3).
-const taskRepo = repoWrites(fake, "PROJ1", "sample-repo-2", { defaultBranch: (A.pr.toRef as unknown as { displayId: string }).displayId });
+// The default branch of the repository is the target of PR A, so a task builds there (spec.md section 6.16.3). The branch search
+// also lists main of the local remote, so the base picker has a second branch.
+const taskRepo = repoWrites(fake, "PROJ1", "sample-repo-2", {
+  defaultBranch: (A.pr.toRef as unknown as { displayId: string }).displayId,
+  branches: ["main"],
+});
 delete r[key("GET", `${taskRepo.path}/pull-requests`)];
 delete r[key("GET", taskRepo.path)];
 const createTaskPr = r[key("POST", `${taskRepo.path}/pull-requests`)];
