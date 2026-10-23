@@ -263,7 +263,7 @@ run start (reply, discuss, review, fix, ask)
 | Bitbucket | src/server/bitbucket/provider.ts | listOpenPullRequests (S20) and buildStats (S16). listChanges and getPullRequest exist. |
 | Schemas | src/shared/review.ts, src/shared/dto.ts | noteProposal, cites, notes; NoteDto and the route inputs. |
 | Notes | src/server/review/notes.ts, notes-routes.ts (new) | Validation of proposals and cites, the CRUD routes, PR link states. |
-| Storage | migration 032 | pr_note. |
+| Storage | migration 031 | pr_note. |
 | UI | src/web/pr/Notes.tsx (new), src/web/pr/PrDetail.tsx, src/web/review/ReplyDraft.tsx | The Notes block, the suggestion row and the cites line on the draft card. |
 
 Ask follow-ups (D14 to D19):
@@ -435,7 +435,7 @@ sync (comment_new on an own PR, mode draft or post)
 | Outbox | src/server/publish/outbox.ts | Rows with auto 1 and not_before. Fresh thread read before the send. Mark from the Autopilot settings. Cancel and delete. |
 | Bitbucket | src/server/bitbucket/provider.ts | deleteComment (S18), listOpenPullRequests (S20), user type on comment authors (S19). |
 | Dependencies | src/server/autopilot/deps.ts (new); sync | A cheap GET of each blocking PR per cycle. Event dependency_merged. Level 3 hands the merge to the part 6 loop. |
-| Storage | migration 033 or the next free number (032 went to part 2) | pr_autopilot, autopilot_queue, autopilot_turn, pr_dependency (pr_note comes from part 2); review_run kind autopilot; post auto, not_before, deleted_at; event kinds. |
+| Storage | the next free migration number (031 and 032 went to part 2) | pr_autopilot, autopilot_queue, autopilot_turn, pr_dependency (pr_note comes from part 2); review_run kind autopilot; post auto, not_before, deleted_at; event kinds. |
 | UI | src/web/autopilot/ (new), PR header, src/web/settings/, inbox PrRow, src/web/notify.ts | Switch, status sentence, activity list, notes, dependency line, Settings section, row badge. |
 
 Run state: the queue row, the run row, and the turn rows hold all state. A restart keeps the queue and marks a running autopilot run failed (kind restart). The next scheduler pass runs it again when the comments are still unanswered.
@@ -449,9 +449,9 @@ Cost: one autopilot run per burst of comments, about one reply-run cost. A guard
 - Retire: a shipped security or over profile whose every field equals its version 4 value leaves the list. An edited one stays as the user's own profile and gets no later upgrades. pr_brief.profile with a removed ID falls back to the default (profileOf, catalog.ts:141). Old runs keep profile_name.
 - Explain: the explain profile stays as the setup of "Explain this PR". Its prompt and effort upgrade field by field. Old explain runs (kind review, explain 1) keep their old run line.
 - Results: new keys of finding, verify, and summary parse with defaults. A finding without verify shows as "Not checked", in the main list as today.
-- Database: 030 rebuilds review_run for kinds explain and discuss and adds prompt_version, item, and discuss_json. 031 rebuilds review_run again for kinds interview, spec, and implement, makes pr nullable, adds task, and adds the task tables (spec.md section 8). 032 adds pr_note (part 2, spec.md section 2.9) with no rebuild. db.ts sets the version by list order, so the file that merges first takes the lower free number: if WP-PN merges before WP-B0, it becomes 031 and part 6 takes 032. The part 7 migration (on hold) takes the next free number, 033 or later, and no longer creates pr_note.
+- Database: 030 rebuilds review_run for kinds explain and discuss and adds prompt_version, item, and discuss_json. 031 adds pr_note (part 2, spec.md section 2.9) with no rebuild. 032 adds review_run.parent_run for Ask follow-ups with no rebuild. Part 6 rebuilds review_run again for kinds interview, spec, and implement, makes pr nullable, adds task, and adds the task tables (spec.md section 8). db.ts sets the version by list order, so WP-B0 takes the next free number when it merges: 033 unless WP-D2 takes it. The part 7 migration (on hold) takes the next free number after that and no longer creates pr_note.
 - PR notes: existing PRs have no notes. Old reply drafts and discuss turns read cites and notes as empty.
-- Ask follow-ups: WP-AF adds review_run.parent_run and the unique index review_run_parent with ALTER TABLE ADD COLUMN and CREATE UNIQUE INDEX in the next free migration, with no rebuild. 030 stays as WP-R1 built it. db.ts sets the version by list order, so the file takes the number after the newest merged migration (after WP-PN's pr_note file, because WP-AF merges after WP-PN). If WP-PN's migration is still unmerged when WP-AF merges, the two statements join that file instead. Old ask runs read parent_run NULL, so each one shows as a conversation of one question.
+- Ask follow-ups: WP-AF adds review_run.parent_run and the unique index review_run_parent with ALTER TABLE ADD COLUMN and CREATE UNIQUE INDEX in migration 032 (the next free number at merge), with no rebuild. 030 stays as WP-R1 built it. db.ts sets the version by list order, so the file takes the number after the newest merged migration (after WP-PN's pr_note file, because WP-AF merges after WP-PN). If WP-PN's migration is still unmerged when WP-AF merges, the two statements join that file instead. Old ask runs read parent_run NULL, so each one shows as a conversation of one question.
 - Autopilot (on hold): every existing PR reads as mode off. No old data changes meaning. The AI mark setting keeps its meaning for manual confirms.
 
 ## 7. Risks
@@ -574,5 +574,5 @@ The user decided Q25 to Q27 on 2026-10-22. Q25 changes a BRIEF hard rule and con
 
 38. Q38 Part 7 Autopilot: on hold. The user paused autopilot; a human posts every reply. Keep the part 7 text for later. Its waves leave the active order (tasks.md section 1). Its migration takes the next free number when it resumes. Gate G9 and the pr_note table move to part 2.
 39. Q39 PR context and PR notes join part 2 (D6 to D13, spec.md sections 2.7 to 2.13). No memory: the app rebuilds the files before every run, with no Claude call. A proposed note counts only after the user clicks Keep.
-40. Q40 Choices made in the plan, with reasons in D7, D9, and D11 (the user can change them): Ask gets the PR context and Explain does not; other open PRs come from stored rows plus new Bitbucket reads behind Gate G9 and G12; kept notes go into their own file without the UNTRUSTED banner; migration 032 is reserved for pr_note.
+40. Q40 Choices made in the plan, with reasons in D7, D9, and D11 (the user can change them): Ask gets the PR context and Explain does not; other open PRs come from stored rows plus new Bitbucket reads behind Gate G9 and G12; kept notes go into their own file without the UNTRUSTED banner; migration 032 is reserved for pr_note (it merged as 031).
 41. Q41 Ask follow-ups join part 2 (decided by the user, 2026-10-22; D14 to D19, spec.md sections 2.14 to 2.18). The last 3 Ask turns of a conversation go into the Ask stdin as data. "New question" starts without them. Choices made in the plan, with reasons in D15, D17, and D18: history.md stays unchanged; parent_run comes with ALTER TABLE in the next free migration (030 is built); a follow-up keeps the profile of its parent.

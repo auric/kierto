@@ -2,6 +2,8 @@
 
 Status: decided, 2026-10-22. design.md gives the decisions; section 10 holds the user's answers of 2026-10-22. spec.md gives the behavior and the acceptance criteria (AC-…). The user approved Q1 to Q5 on 2026-10-22. Part 6 starts only after Gate WP-G0 passes, and write runs only after Gate B17 passes (Q1). Part 7 (Autopilot replies, section 5) was added on 2026-10-22 after the user's decisions Q25 to Q27. Post mode ships only after Gate G-EVAL-A and the user smoke UA1. Part 7 is on hold since 2026-10-22 (design.md section 10.3), and its waves are not in the active order. Part 2 gained "PR context and PR notes" on 2026-10-22: WP-PG (W2) and WP-PN (W3). Part 2 gained "Ask follow-ups" later the same day: WP-AF (W3, after WP-PN).
 
+Progress (2026-10-23, HEAD 4b04c77): parts 1 to 4 are merged except WP-D2 (in progress) and WP-D3. Part 6 has WP-D6 and WP-B1 (provider and push only). Other merged commits: the build moved to Bun 1.4.4 (7cf674f); the eval rebuilds an earlier shipped profile (9a5cefe) and follows the check phase (8566b7c). Migrations: 030 review v2, 031 pr_note, 032 ask_parent. WP-B0 takes the next free number when it merges (033 unless WP-D2 takes it).
+
 ## 0. Rules for every work package
 
 - Read CLAUDE.md of the repository first. In a worktree, also read the CLAUDE.md of the main checkout (first path of `git worktree list`). Read the three plan files.
@@ -47,7 +49,7 @@ Part 7 waves (parallel worktrees next to part 6; section 5):
 | Wave | Packages | Needs |
 |---|---|---|
 | WA0 | WP-DA ∥ WP-GA | the user's decisions Q25 to Q27 (2026-10-22); WP-D2 merged (part 2 reply work) |
-| WA1 | WP-A1 | WP-B0 merged (migration 031 and the review_run rebuild); WP-D2 |
+| WA1 | WP-A1 | WP-B0 merged (the task migration and the review_run rebuild); WP-D2 |
 | WA2 | WP-A2 ∥ WP-A4 | WP-A1; Gate G9 recorded by WP-PG (else context/open-prs.md stays absent) |
 | WA3 | WP-A3 | WP-A2 |
 | UA1 | User smoke docs/smoke-autopilot.md part 1 (draft mode on a test PR) | WA3 |
@@ -74,20 +76,20 @@ Shared-file ownership (merge order):
 | src/shared/review.ts, src/shared/dto.ts, migrations 030 | WP-R1 → WP-R2 → WP-R3 → WP-PN → WP-X1 → WP-D2 → WP-M2 (additive only after WP-R1) |
 | src/server/review/catalog.ts, prompt.ts, context-files.ts | WP-R1 → WP-R2 → WP-R3 → WP-PN → WP-AF → WP-X1 → WP-D2 |
 | src/server/review/jobs.ts, judge.ts, validate.ts | WP-R2 → WP-R3 → WP-PN → WP-AF (jobs.ts only) → WP-X1 → WP-D2 → WP-B0 |
-| src/web/ask/* (AskPanel.tsx, model.ts, data.ts), tests/web/ask.test.ts, tests/e2e/ask.e2e.ts, the ask_parent migration (next free number) | WP-AF |
+| src/web/ask/* (AskPanel.tsx, model.ts, data.ts), tests/web/ask.test.ts, tests/e2e/ask.e2e.ts, migration 032 (ask_parent) | WP-AF |
 | src/server/review/items.ts | WP-M2 → WP-D2 |
 | src/shared/outcome.ts (new), src/web/review/outcome.ts, src/web/fix/model.ts, src/web/pr/threads.ts | WP-PN (the move), then any later owner |
-| migration 032 (pr_note), src/server/review/{pr-context.ts, notes.ts, notes-routes.ts}, src/web/pr/Notes.tsx | WP-PN |
+| migration 031 (pr_note), src/server/review/{pr-context.ts, notes.ts, notes-routes.ts}, src/web/pr/Notes.tsx | WP-PN |
 | src/web/review/ReplyDraft.tsx | WP-PN → WP-D3 |
 | src/web/review/Drafts.tsx, Brief.tsx, RunLine.tsx | WP-R4 → WP-D3 |
 | src/web/pr/Markdown.tsx | WP-X2 |
 | src/server/bitbucket/* | WP-PN (listOpenPullRequests, buildStats; reads only) → WP-B1 |
 | scripts/eval/* | WP-M1 → WP-PN (`--replies` mode, adds only) |
-| migration 031, src/shared/task.ts, src/server/tasks/machine.ts, the xstate dependency | WP-B0 (later owners add events and guards only, with the table test) |
+| the task migration (next free number, 033 unless WP-D2 takes it), src/shared/task.ts, src/server/tasks/machine.ts, the xstate dependency | WP-B0 (later owners add events and guards only, with the table test) |
 | src/server/tasks/* | WP-B2 → WP-B3 → WP-B4 → WP-B6 → WP-B8 |
 | src/web/tasks/* | WP-B5 → WP-B7 → WP-B9 → WP-B10 |
 | tests/e2e/serve.ts, control.ts, tests/support/fake-claude.ts, fake-bitbucket.ts | WP-R1 → WP-PN → WP-B1 → WP-A1 (on hold) (the later owner adds only) |
-| migration 033 or the next free number, src/shared/autopilot.ts (on hold) | WP-A1 → WP-A5 (additive only after WP-A1) |
+| the part 7 migration (next free number), src/shared/autopilot.ts (on hold) | WP-A1 → WP-A5 (additive only after WP-A1) |
 | src/server/autopilot/* (on hold) | WP-A2 → WP-A5 → WP-A7 → WP-A8 |
 | src/web/autopilot/* (on hold) | WP-A3 → WP-A6 |
 | src/server/review/jobs.ts, catalog.ts, prompt.ts, src/server/publish/outbox.ts, src/server/sync/engine.ts (part 7 additions, on hold) | WP-A2 → WP-A5 → WP-A7, additive only. The later merger of part 6 and part 7 rebases. |
@@ -127,14 +129,14 @@ Shared-file ownership (merge order):
 - Tests: db.test.ts for 030 (spec.md section 8). catalog and settings tests: AC-R11, AC-R12, AC-X8; a version 4 config with every profile edited keeps all four; a version 5 config changes nothing; profileRevision of an unchanged version 4 profile stays the same when the new fields hold their defaults. review.test.ts: AC-R14 (draft-07, required keys, old results parse).
 - Control mutation: compare modules with === in upgradeProfile. AC-R11 must fail.
 
-### WP-R2. Finder prompts, modules, delegation, and scoped rules (implementer-xhigh, W3)
+### WP-R2. Finder prompts, modules, delegation, and scoped rules (implementer-xhigh, W3; done, d77b92b)
 
 - Files: src/server/review/catalog.ts (FINDER_RULES, DO_NOT_FLAG, rubric with the volume nit line, MODULES, contextBlock, mainAgent and reviewerAgent for review runs, DELEGATE without the check line); src/server/review/prompt.ts (Tools line text kept; no PR text in stdin); src/server/review/jobs.ts (agents by diff size, module and context flags into the agent builders, prompt_version on insert); src/server/review/instructions.ts (scoped CLAUDE.md of changed folders, scope headers, instructions_json scopes); src/server/review/improve.ts (Improve prompt shows the new shared rules and the module names); src/server/review/context-files.ts (history.md writer labels); tests/review/{prompt.test.ts, delegate.test.ts (new), instructions.test.ts, improve.test.ts, history.test.ts}.
 - Behavior: spec.md sections 1.3, 1.5, 1.8 (history.md), AC-R2, AC-R3 (reviewer part), AC-R13, AC-R15, AC-R16.
 - Tests: the prompt snapshot per profile, module set, and volume; no "Give no finding to fill the list" in review agents; ask, reply, and fix agents unchanged (snapshot); delegation at 200 and 1,300 changed lines and in modes off and always; scoped instructions for a change in src/server/ load src/server/CLAUDE.md of the target head and not web/CLAUDE.md.
 - Control mutation: give the Agent tool for every diff size. The 200-line delegation test must fail.
 
-### WP-R3. Verify phase, validation, dedupe, and caps (implementer-xhigh, W3 after WP-R2)
+### WP-R3. Verify phase, validation, dedupe, and caps (implementer-xhigh, W3 after WP-R2; done, a22b0b9)
 
 - Files: src/server/review/jobs.ts (verify step after the finder, before the workspace leaves; phase "checking"; VERIFY_MAX_TURNS; cancel between phases); src/server/review/judge.ts (merge of the finder result and the verdicts, caps, items, summary verify and phases); src/server/review/validate.ts (changed-line test, cause anchor, rule quote check, drop reasons unchanged and rule); src/server/review/context-files.ts (candidatesFile); src/server/review/catalog.ts (verifyAgent, verifierAgent); src/server/review/stream.ts (phase tag on events, if needed); src/shared/dto.ts (Dropped reasons, RunDto phase); tests/review/{verify.test.ts (new), validate.test.ts, judge.test.ts, jobs.test.ts}.
 - Behavior: spec.md sections 1.6, 1.7, 1.8, 1.9. AC-R1, AC-R3 (verify part), AC-R4 to AC-R10.
@@ -142,14 +144,14 @@ Shared-file ownership (merge order):
 - Control mutations: skip the cap for unsure (AC-R5 fails); drop the changed-line test (AC-R7 fails).
 - Risk: the workspace removal moves after phase 2. Check the restart recovery and the held.ws path.
 
-### WP-M2. Outcome tracking and stats (implementer, W3; done, merge pending)
+### WP-M2. Outcome tracking and stats (implementer, W3; done, 02c0950)
 
 - Files: src/server/review/items.ts (action reason); src/server/review/stats.ts (new); src/server/review/routes.ts (GET /api/stats/review); src/shared/dto.ts (ReviewStatsDto, reason action); src/web/review/Drafts.tsx (discard reason chips, small part only); src/web/settings/ReviewQuality.tsx (new); tests/review/stats.test.ts (new); tests/e2e/m4.e2e.ts or a new stats.e2e.ts. Ports 7527/7528/7529.
 - Behavior: spec.md sections 4.1, 4.2. AC-M4, AC-M5.
 - Gates: screenshots and README for the chips and the Settings table.
 - Control mutation: count refuted items as discarded by the user. The stats test must fail.
 
-### WP-PG. Gate checks G9 and G12 for the PR context (implementer, W2; done, merge pending)
+### WP-PG. Gate checks G9 and G12 for the PR context (implementer, W2; done, 0752f61)
 
 - Files: scripts/gate/bitbucket-write.ts (adds G9, moved from WP-GA, and G12), docs/gate-v2.md (rows), integration-check.md (rows G9 and G12, "not run").
 - G9: GET the open PRs of the test repository with limit 50. Record the shape: id, title, author, state, fromRef, toRef, updatedDate, isLastPage.
@@ -157,21 +159,21 @@ Shared-file ownership (merge order):
 - Each check has `--dry-run`. Output sanitizing as B1 to B16. Separate authorization as G1 to G7.
 - Tests: argument parsing and dry-run output only.
 
-### WP-PN. PR context and PR notes (implementer-xhigh, W3, parallel worktree, ports 7517/7518/7519)
+### WP-PN. PR context and PR notes (implementer-xhigh, W3, parallel worktree, ports 7517/7518/7519; done, b7da9c0)
 
-- Files: src/shared/outcome.ts (new: threadOutcome and its pure helpers moved from src/web/review/outcome.ts, src/web/fix/model.ts, src/web/pr/threads.ts, src/web/review/model.ts; the web modules re-export them); src/server/review/context-files.ts (prContextFile, notesFile, caps); src/server/review/pr-context.ts (new: loadPrContext, peer cache); src/server/review/fix-routes.ts (the fix rows of GET fixes as one exported function); src/server/review/jobs.ts (both files for reply, review, re-review, fix, and ask runs; focus threads; log counts; apply cites and proposals of reply runs); src/server/review/prompt.ts (two Tools lines); src/server/review/catalog.ts (PR_CONTEXT_RULES in the context block, NOTES_RULES in replyAgent); src/server/review/validate.ts (reply cites); src/server/review/notes.ts and notes-routes.ts (new); src/server/app.ts (mount the notes routes); src/server/bitbucket/provider.ts and schemas (listOpenPullRequests, buildStats; reads only); src/shared/review.ts (noteProposal, cites, notes, constants; discussResult gets notes and cites with defaults); src/shared/dto.ts (NoteDto, route inputs, ReviewItemDto notes and cites); src/server/storage/migrations/032_pr_notes.sql; src/server/storage/db.ts; src/web/pr/Notes.tsx (new), src/web/pr/PrDetail.tsx (the block), src/web/review/ReplyDraft.tsx (suggestion row, cites line); tests/support/fake-bitbucket.ts (open-PR list, changes of any PR, build stats); tests/support/fake-claude.ts (notes and cites echo); scripts/eval/{run.ts, score.ts} (`--replies`) and fixtures/eval/replies/{general-decision, general-decision-control}/ (new); tests/review/{pr-context.test.ts, notes.test.ts, outcome-parity.test.ts} (new), tests/web/outcome.test.ts (imports), tests/storage/db.test.ts, tests/eval/replies.test.ts (new), tests/e2e/notes.e2e.ts (new); BRIEF.md (the spec.md section 10 row "part 2, PR context and notes"); CHANGELOG.md.
+- Files: src/shared/outcome.ts (new: threadOutcome and its pure helpers moved from src/web/review/outcome.ts, src/web/fix/model.ts, src/web/pr/threads.ts, src/web/review/model.ts; the web modules re-export them); src/server/review/context-files.ts (prContextFile, notesFile, caps); src/server/review/pr-context.ts (new: loadPrContext, peer cache); src/server/review/fix-routes.ts (the fix rows of GET fixes as one exported function); src/server/review/jobs.ts (both files for reply, review, re-review, fix, and ask runs; focus threads; log counts; apply cites and proposals of reply runs); src/server/review/prompt.ts (two Tools lines); src/server/review/catalog.ts (PR_CONTEXT_RULES in the context block, NOTES_RULES in replyAgent); src/server/review/validate.ts (reply cites); src/server/review/notes.ts and notes-routes.ts (new); src/server/app.ts (mount the notes routes); src/server/bitbucket/provider.ts and schemas (listOpenPullRequests, buildStats; reads only); src/shared/review.ts (noteProposal, cites, notes, constants; discussResult gets notes and cites with defaults); src/shared/dto.ts (NoteDto, route inputs, ReviewItemDto notes and cites); src/server/storage/migrations/031_pr_notes.sql; src/server/storage/db.ts; src/web/pr/Notes.tsx (new), src/web/pr/PrDetail.tsx (the block), src/web/review/ReplyDraft.tsx (suggestion row, cites line); tests/support/fake-bitbucket.ts (open-PR list, changes of any PR, build stats); tests/support/fake-claude.ts (notes and cites echo); scripts/eval/{run.ts, score.ts} (`--replies`) and fixtures/eval/replies/{general-decision, general-decision-control}/ (new); tests/review/{pr-context.test.ts, notes.test.ts, outcome-parity.test.ts} (new), tests/web/outcome.test.ts (imports), tests/storage/db.test.ts, tests/eval/replies.test.ts (new), tests/e2e/notes.e2e.ts (new); BRIEF.md (the spec.md section 10 row "part 2, PR context and notes"); CHANGELOG.md.
 - Behavior: spec.md sections 2.7 to 2.13. AC-P1 to AC-P12.
 - Depends: WP-R1 merged (migration 030 and the discussResult schema). UG recorded for the Bitbucket peer reads (G9, G12); else the loader uses stored rows only and the file says so. Merge after WP-R3 and rebase on it: WP-R2 and WP-R3 own catalog.ts, prompt.ts, jobs.ts, and context-files.ts in the same wave. WP-PN adds to those files only.
 - Hand-offs: WP-D2 adds pr-context.md and notes.md to discuss runs, the focus thread of a posted finding, and the apply of discuss cites and proposals (discuss_json). WP-D3 shows the suggestion row and the cites line on a discuss answer. WP-X1 gives Explain neither file. WP-B1 reuses provider.buildStats. WP-AF rebases on WP-PN and adds the Ask conversation section next to the PR context of ask runs.
-- Tests: the builder over fixed rows (layout, banner, focus full text, digest lines, sort, every cap and count line, same bytes twice, deleted threads gone, no proposed or dismissed note); the State line equals threadOutcome over the outcome.test.ts cases; peer overlap with stored rows, with fake-Bitbucket rows, with a rename, a failed list, and a timeout; stdin canaries in a comment and in a proposed note; proposals: the user-message rule, repeats, the cap, the PR link rule, one transaction with the drafts; cites drops; the routes (version, cap, 404 link, Undo); db.test.ts for 032 (spec.md section 8 rules); the eval scorer with a fixed result file and `--replies` without `--real` exits 2; e2e of AC-P12 with axe.
+- Tests: the builder over fixed rows (layout, banner, focus full text, digest lines, sort, every cap and count line, same bytes twice, deleted threads gone, no proposed or dismissed note); the State line equals threadOutcome over the outcome.test.ts cases; peer overlap with stored rows, with fake-Bitbucket rows, with a rename, a failed list, and a timeout; stdin canaries in a comment and in a proposed note; proposals: the user-message rule, repeats, the cap, the PR link rule, one transaction with the drafts; cites drops; the routes (version, cap, 404 link, Undo); db.test.ts for 031 (spec.md section 8 rules); the eval scorer with a fixed result file and `--replies` without `--real` exits 2; e2e of AC-P12 with axe.
 - Control mutations: let a proposed note into notes.md (AC-P7 fails); skip the user-message check of proposals (AC-P9 fails); sort other threads oldest first (AC-P4 fails).
 - Gates: screenshots (Notes block with a kept note and a suggestion, a draft card with a suggestion and a cites line), README section "PR notes", web-design-guidelines, axe. docs/smoke-v2.md part E (WP-CLOSE writes the final text): a real PR with a decision in the general thread, Draft replies on an inline thread, the cites line, Keep a suggestion, and a second run that sees it.
 - Eval: the user runs `bun run eval -- --replies --real --repeat 2` after WP-PN. Recommended pass: the general-decision case gives judgement invalid with cites 230 in both repeats, and the control case gives valid or partly.
 
-### WP-AF. Ask follow-ups (frontend-implementer, W3 after WP-PN merges, ports 7607/7608/7609)
+### WP-AF. Ask follow-ups (frontend-implementer, W3 after WP-PN merges, ports 7607/7608/7609; done, 2378dc5)
 
 - Own package, not part of WP-PN: WP-PN is the largest package of the wave, and follow-ups share files with it but no logic. Its server part is small, so one frontend-implementer does both parts.
-- Files: src/server/review/context-files.ts (askConversation, ASK_TURNS, ASK_TURN_QUESTION_BYTES, ASK_TURN_ANSWER_BYTES; historyFile also returns the kept ask run IDs, and its callers in jobs.ts adapt); src/server/review/prompt.ts (buildAskPrompt conversation input, the section in common()); src/server/review/catalog.ts (askAgent followUp line); src/server/review/jobs.ts (ask with parent: checks, profile of the parent, key, parent_run on insert, log line); src/server/review/run-rows.ts (asks with parent_run, the chain query); src/server/review/routes.ts (askInput parent, the 400 and 409 answers); src/shared/dto.ts (askInput parent, AskDto parent); src/web/ask/{AskPanel.tsx (conversations, Follow up box, New question, prefill), model.ts (askConversations), data.ts (useStartAsk parent, the moved-on toast)}; tests/review/{prompt.test.ts, history.test.ts, ask-followup.test.ts (new)}; tests/web/ask.test.ts; tests/e2e/ask.e2e.ts; tests/support/fake-claude.ts (only if the e2e needs a scripted follow-up answer); src/server/storage/migrations/<next free number>_ask_parent.sql (new), src/server/storage/db.ts, tests/storage/db.test.ts; CHANGELOG.md.
+- Files: src/server/review/context-files.ts (askConversation, ASK_TURNS, ASK_TURN_QUESTION_BYTES, ASK_TURN_ANSWER_BYTES; historyFile also returns the kept ask run IDs, and its callers in jobs.ts adapt); src/server/review/prompt.ts (buildAskPrompt conversation input, the section in common()); src/server/review/catalog.ts (askAgent followUp line); src/server/review/jobs.ts (ask with parent: checks, profile of the parent, key, parent_run on insert, log line); src/server/review/run-rows.ts (asks with parent_run, the chain query); src/server/review/routes.ts (askInput parent, the 400 and 409 answers); src/shared/dto.ts (askInput parent, AskDto parent); src/web/ask/{AskPanel.tsx (conversations, Follow up box, New question, prefill), model.ts (askConversations), data.ts (useStartAsk parent, the moved-on toast)}; tests/review/{prompt.test.ts, history.test.ts, ask-followup.test.ts (new)}; tests/web/ask.test.ts; tests/e2e/ask.e2e.ts; tests/support/fake-claude.ts (only if the e2e needs a scripted follow-up answer); src/server/storage/migrations/032_ask_parent.sql (new), src/server/storage/db.ts, tests/storage/db.test.ts; CHANGELOG.md.
 - Behavior: spec.md sections 2.14 to 2.18. AC-F1 to AC-F10.
 - Depends: WP-R1 merged (migration 030). WP-PN merged: it changes prompt.ts, context-files.ts, and jobs.ts first, and ask runs get pr-context.md and notes.md from it.
 - Migration: a new file with the next free number (spec.md section 8): ALTER TABLE ADD COLUMN parent_run and CREATE UNIQUE INDEX review_run_parent, no rebuild, with its db.test.ts case (version, child rows kept, foreign_key_check empty, second open changes nothing). Never edit 030. If WP-PN's migration is still unmerged, the two statements join that file.
@@ -180,20 +182,20 @@ Shared-file ownership (merge order):
 - Control mutations: send the conversation on a new question (AC-F2 fails); drop the unique index (AC-F5 db case fails); show turns newest first (AC-F1 fails).
 - Gates: screenshots (Ask panel with a conversation of 2 turns and the Follow up box), README section "Ask" updated, web-design-guidelines on the Ask panel, axe. docs/smoke-v2.md part E (WP-CLOSE writes the final text): the follow-up step of spec.md section 2.18.
 
-### WP-R4. Review UI v2 (frontend-implementer, W4, ports 7537/7538/7539)
+### WP-R4. Review UI v2 (frontend-implementer, W4, ports 7537/7538/7539; done, 5db3bbf)
 
 - Files: src/web/review/{Brief.tsx (checkboxes, More checks, volume control, one primary), Drafts.tsx (ledger, groups by check and volume, fold, check chip, trigger line, check reason line), RunLine.tsx (phase line, time per phase, refuted and duplicate list with Restore, "The check did not finish" line), model.ts (display group rules from spec.md section 1.4, plain-word labels)}; src/web/diff/FileDiff.tsx (check chip on diff cards); tests/web/review-v2.test.ts (new); tests/e2e/review-v2.e2e.ts (new).
 - Behavior: spec.md sections 1.1, 1.4, 1.9. AC-UX1 to AC-UX3 and AC-UX10 for the brief and Drafts.
 - Tests: pure display rules per volume; e2e: a scripted two-phase run, then the ledger, the fold, a refuted item in the run record, Restore, keys a, d, e on a fold item.
 - Gates: screenshots (brief, Drafts with fold, run record), README section "Review", web-design-guidelines.
 
-### WP-X1. Explain server (implementer, W4)
+### WP-X1. Explain server (implementer, W4; done, 296a51e)
 
 - Files: src/server/review/catalog.ts (explainAgent, Explain lens); src/server/review/prompt.ts (buildExplainPrompt); src/server/review/jobs.ts (kind explain spec branch, no history or questions files); src/server/review/judge.ts (judgeExplain, link and fence checks); src/server/review/routes.ts (POST and GET /api/prs/:id/explain); src/shared/dto.ts (ExplainDto); tests/review/explain.test.ts (new).
 - Behavior: spec.md sections 3.2 to 3.4. AC-X2, AC-X3 (server part), AC-X4, AC-X7 (server part). Explain runs get no pr-context.md and no notes.md (AC-P3).
 - Control mutation: accept a link to an unchanged file. AC-X3 must fail.
 
-### WP-X2. Explain page and Mermaid (frontend-implementer, W5, ports 7547/7548/7549)
+### WP-X2. Explain page and Mermaid (frontend-implementer, W5, ports 7547/7548/7549; done, 4b04c77)
 
 - Files: src/web/explain/{ExplainPage.tsx, mermaid.ts, links.ts} (new); src/web/pr/Markdown.tsx (links and diagrams props); src/web/pr/PrDetail.tsx and src/web/shell routes (the /explain suffix, Back, key w); src/web/keys.ts (w); package.json and bun.lock (mermaid, exact pin); THIRD_PARTY_NOTICES.md (`bun run notices`); tests/web/mermaid.test.ts (strip and cap rules); tests/e2e/explain.e2e.ts (new).
 - Behavior: spec.md sections 3.1, 3.5. AC-X1, AC-X3 (UI part), AC-X5, AC-X6.
@@ -201,7 +203,7 @@ Shared-file ownership (merge order):
 - Gates: screenshots (Explain page, light and dark), README section "Explain this PR", `bun run notices`, tests/build/compiled.test.ts still green.
 - Risk: mermaid text measuring under the CSP. Record the console. The fallback keeps the page readable.
 
-### WP-D2. Discuss server (implementer-xhigh, W5)
+### WP-D2. Discuss server (implementer-xhigh, W5; in progress)
 
 - Files: src/server/review/catalog.ts (discussAgent); src/server/review/prompt.ts (buildDiscussPrompt); src/server/review/context-files.ts (findingFile, discussionFile); src/server/review/jobs.ts (kind discuss, item, key, apply at the end); src/server/review/items.ts (use-revision and keep-mine for findings, withdrawn Restore); src/server/review/drafts.ts (origin discuss writer rank); src/server/review/routes.ts (POST and GET /api/items/:id/discuss); src/server/publish/outbox.ts and the history and count queries (skip finding revisions); tests/review/discuss.test.ts (new), items.test.ts.
 - Behavior: spec.md sections 2.2 to 2.5. AC-D1 to AC-D8. The discuss parts of sections 2.7 to 2.9 (WP-PN hand-off): pr-context.md and notes.md, the focus thread of a posted finding, NOTES_RULES in discussAgent, and the apply of cites and note proposals with the WP-PN validation.
@@ -221,20 +223,20 @@ Shared-file ownership (merge order):
 
 ## 3. Work packages: part 6
 
-### WP-D6. Docs for part 6 (implementer, W7)
+### WP-D6. Docs for part 6 (implementer, W7; done, fe1dee5)
 
 - Files: BRIEF.md (spec.md section 10 rows for part 6, with the decisions Q1 to Q5 of design.md section 10), CLAUDE.md (hard rules: the write-run and push exceptions, the layout src/server/tasks/ and src/web/tasks/), integration-check.md (rows B17 to B20 and G1 to G7 with their results).
 - Tests: none.
 
 ### WP-B0. Task contracts and the run table change (implementer-xhigh, W7)
 
-- Files: src/server/storage/migrations/031_task.sql; src/server/storage/db.ts; src/shared/task.ts (new: schemas of spec.md section 6.5, states, constants); src/server/tasks/machine.ts (new: taskMachine, partMachine, machineMermaid; spec.md section 6.2); package.json and bun.lock (xstate, an exact pin, 5.19.0 or later); THIRD_PARTY_NOTICES.md (`bun run notices`); tests/tasks/machine.test.ts (new); src/shared/dto.ts (TaskDto, TaskRowDto, route inputs of spec.md section 6.11, RunKind adds interview, spec, implement); every file with a review_run query (src/server/inbox/stale.ts, src/server/publish/{outbox.ts, routes.ts}, src/server/review/{consult.ts, context-files.ts, drafts.ts, fix-routes.ts, history.ts, items.ts, jobs.ts, run-rows.ts}); tests/storage/db.test.ts; tests/review/task-rows.test.ts (new).
-- Behavior: spec.md sections 6.2 (the machine), 6.3, and 8 (031). A review_run row with task set and pr NULL never shows in a PR view, a run list, Ready to post, the stats, or the restart recovery of PR runs. The restart recovery marks running task runs failed with kind restart.
-- Tests: db.test.ts for 031; one test per listed file with a task run row present (44 queries; the report lists each query and its test). machine.test.ts: an expected table of every (state, event) pair of both machines, from spec.md section 6.2; for each allowed pair, `snapshot.can` is true and `transition` gives the expected state; for each refused pair, `snapshot.can` is false and `transition` keeps the state; each guard case (size small against medium and large, the gate result, stopped_from); the machine config has no entry, exit, or transition actions and no invoke; no source file under src/ imports `createActor`; the machineMermaid snapshot.
+- Files: src/server/storage/migrations/<next free number>_task.sql (033 unless WP-D2 takes it); src/server/storage/db.ts; src/shared/task.ts (new: schemas of spec.md section 6.5, states, constants); src/server/tasks/machine.ts (new: taskMachine, partMachine, machineMermaid; spec.md section 6.2); package.json and bun.lock (xstate, an exact pin, 5.19.0 or later); THIRD_PARTY_NOTICES.md (`bun run notices`); tests/tasks/machine.test.ts (new); src/shared/dto.ts (TaskDto, TaskRowDto, route inputs of spec.md section 6.11, RunKind adds interview, spec, implement); every file with a review_run query (src/server/inbox/stale.ts, src/server/publish/{outbox.ts, routes.ts}, src/server/review/{consult.ts, context-files.ts, drafts.ts, fix-routes.ts, history.ts, items.ts, jobs.ts, run-rows.ts}); tests/storage/db.test.ts; tests/review/task-rows.test.ts (new).
+- Behavior: spec.md sections 6.2 (the machine), 6.3, and 8 (the task migration). A review_run row with task set and pr NULL never shows in a PR view, a run list, Ready to post, the stats, or the restart recovery of PR runs. The restart recovery marks running task runs failed with kind restart.
+- Tests: db.test.ts for the task migration; one test per listed file with a task run row present (44 queries; the report lists each query and its test). machine.test.ts: an expected table of every (state, event) pair of both machines, from spec.md section 6.2; for each allowed pair, `snapshot.can` is true and `transition` gives the expected state; for each refused pair, `snapshot.can` is false and `transition` keeps the state; each guard case (size small against medium and large, the gate result, stopped_from); the machine config has no entry, exit, or transition actions and no invoke; no source file under src/ imports `createActor`; the machineMermaid snapshot.
 - Gate: tests/build/compiled.test.ts stays green with xstate in the compiled binary (the Bun support proof). The report quotes the pinned version and the notices diff.
 - Control mutations: drop the `pr IS NOT NULL` filter of the run list (its test must fail); remove the size guard of APPROVE (the small and medium rows of the machine table must fail).
 
-### WP-B1. Bitbucket write calls and push (implementer-xhigh, W8, ports 7567/7568/7569)
+### WP-B1. Bitbucket write calls and push (implementer-xhigh, W8, ports 7567/7568/7569; provider and push done, c2eaea9; routes and UI left)
 
 - Files: src/server/bitbucket/{provider.ts (createPullRequest, updatePullRequest, repoRemote; buildStats comes from WP-PN), schemas, errors}; src/server/tasks/push.ts (new: refspec guard, lease rules, GIT_CONFIG env token); src/server/review/git.ts (push env helper, if needed); tests/support/fake-bitbucket.ts (the four endpoints, a git smart-HTTP push target or a local bare repo stand-in); tests/bitbucket/write.test.ts (new); tests/tasks/push.test.ts (new).
 - Behavior: spec.md sections 6.8 (push), 6.9. AC-B16, AC-B17, AC-B22 (push part), AC-B23.
@@ -364,9 +366,9 @@ Rules of section 0 apply. Each package names the spec.md section 11 parts that i
 
 ### WP-A1. Contracts for Autopilot (implementer-xhigh, WA1)
 
-- Files: src/shared/autopilot.ts (new: constants, classes, schemas, autopilotSettings); src/shared/review.ts (reply payload origin autopilot and the autopilot field, with defaults); src/shared/dto.ts (AutopilotDto, TurnDto, NoteDto, DependencyDto, route inputs of spec.md section 11.12, RunKind adds autopilot, ClaimedEvent kinds, PrRow autopilot fields, settings input); src/server/storage/migrations/033_autopilot.sql (or the next free number); src/server/storage/db.ts; src/server/settings.ts (autopilot in localFields, with the prefix rule); src/web/review/model.ts (RUN_TEXT and KIND_LABEL for autopilot); tests/support/fake-claude.ts (autopilot and guard echo by schema); tests/support/fake-bitbucket.ts (DELETE comment with the reply refusal, open-PR list, user type).
+- Files: src/shared/autopilot.ts (new: constants, classes, schemas, autopilotSettings); src/shared/review.ts (reply payload origin autopilot and the autopilot field, with defaults); src/shared/dto.ts (AutopilotDto, TurnDto, NoteDto, DependencyDto, route inputs of spec.md section 11.12, RunKind adds autopilot, ClaimedEvent kinds, PrRow autopilot fields, settings input); src/server/storage/migrations/<next free number>_autopilot.sql; src/server/storage/db.ts; src/server/settings.ts (autopilot in localFields, with the prefix rule); src/web/review/model.ts (RUN_TEXT and KIND_LABEL for autopilot); tests/support/fake-claude.ts (autopilot and guard echo by schema); tests/support/fake-bitbucket.ts (DELETE comment with the reply refusal, open-PR list, user type).
 - Behavior: spec.md sections 11.6, 11.11, the settings part of 11.12.
-- Tests: db.test.ts for 033 (spec.md section 8 rules: child rows kept, foreign_key_check empty, CHECKs refuse a bogus kind, a second open changes nothing); autopilot.test.ts (draft-07 schemas, defaults, old configs parse, the prefix rule refuses "", " ", and "--"); settings test (markAi off keeps the Autopilot prefix).
+- Tests: db.test.ts for the part 7 migration (spec.md section 8 rules: child rows kept, foreign_key_check empty, CHECKs refuse a bogus kind, a second open changes nothing); autopilot.test.ts (draft-07 schemas, defaults, old configs parse, the prefix rule refuses "", " ", and "--"); settings test (markAi off keeps the Autopilot prefix).
 - Control mutation: accept an empty prefix. AC-A15 must fail.
 
 ### WP-A2. Level 1 server: trigger, queue, run, drafts (implementer-xhigh, WA2)

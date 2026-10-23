@@ -10,7 +10,7 @@ Status: decided, 2026-10-22. design.md gives the reasons, the alternatives, and 
 
 | Constant | Value | Where |
 |---|---|---|
-| REVIEW_PROMPT_VERSION | "2.0" (version 1 rows read as "1") | src/shared/review.ts |
+| REVIEW_PROMPT_VERSION | "2.2" (2.0 finder prompts, 2.1 verify phase, 2.2 PR context rules; version 1 rows read as "1") | src/shared/review.ts |
 | REVIEWER_MIN_LINES, REVIEWER_MIN_FILES | 1,200 changed lines, 30 files | src/server/review/catalog.ts |
 | VERIFY_SPLIT, VERIFY_BATCH | 12 candidates, 6 per rl-verifier call | catalog.ts |
 | VERIFY_MAX_TURNS | min(profile.maxTurns, 10 + 3 × candidates), at least 12 | jobs.ts |
@@ -288,7 +288,7 @@ Order of severities: blocker > major > minor > nit. The display group comes from
 12. AC-R12. A version 4 general profile with an edited prompt keeps the prompt and gets the new modules, volume, and efforts.
 13. AC-R13. rl-reviewer and rl-verify prompts hold the pr.md line, the history line (when history.md exists), and the do-not-flag list.
 14. AC-R14. The CLI schema of a review run is valid draft-07, lists the new keys as required, and an older stored result without them parses.
-15. AC-R15. Each run row stores prompt_version "2.0". A row with NULL reads as "1".
+15. AC-R15. Each run row stores prompt_version REVIEW_PROMPT_VERSION (now "2.2"). A row with NULL reads as "1".
 16. AC-R16. history.md shows "refuted by the check" for a refuted item, and the finder history rule names only "discarded by the user".
 
 ## 2. Part 2: Discuss a finding
@@ -509,7 +509,7 @@ stdin and log:
 
 ### 2.9 PR notes: data, schemas, and routes
 
-Data (migration 032_pr_notes.sql; the number is reserved, and design.md section 6 gives the merge-order rule):
+Data (migration 031_pr_notes.sql; design.md section 6 gives the merge-order rule):
 
 ```sql
 CREATE TABLE pr_note (
@@ -966,7 +966,7 @@ The machine (src/server/tasks/machine.ts, XState v5 as a pure function; design.m
 - API names (XState docs "Pure transitions", stately.ai/docs/pure-transitions, and the core changelog 5.19.0): `transition(logic, snapshot, event)` returns `[nextSnapshot, actions]` and executes no action; `initialTransition(logic, input?)` returns `[initialSnapshot, actions]`. `machine.resolveState({ value, context? })` builds a snapshot from a stored value (stately.ai/docs/persistence). `snapshot.can(event)` returns true when the event changes the state and runs the guards (stately.ai/docs/states).
 - Diagram: machineMermaid(machine) (pure) prints a Mermaid stateDiagram-v2 from machine.config. A snapshot test keeps the diagram of the README section "Build a Jira task" equal to the machine.
 
-### 6.3 Data model (migration 031)
+### 6.3 Data model (the next free migration number, 033 unless WP-D2 takes it)
 
 ```sql
 CREATE TABLE task (
@@ -1529,10 +1529,10 @@ Large task (a feature with an API change, 4 parts):
 | File | Content |
 |---|---|
 | 030_review_v2.sql | Rebuild review_run (as 025) with kind adding 'explain' and 'discuss'. New columns: prompt_version TEXT, item INTEGER REFERENCES review_item (id) ON DELETE SET NULL, discuss_json TEXT, explain_json TEXT. Index review_run_item ON review_run (item) WHERE item IS NOT NULL. |
-| 031_task.sql | Rebuild review_run with pr nullable, task INTEGER REFERENCES task (id) ON DELETE CASCADE, CHECK (pr IS NOT NULL OR task IS NOT NULL), kind adding 'interview', 'spec', 'implement'. Create task, task_question, task_part, task_step, task_event, repo_task_settings (section 6.3). |
-| 032_pr_notes.sql | Create pr_note and its index (section 2.9). No rebuild. db.ts sets the version by list order, not by the file number. If WP-PN merges before WP-B0, it takes 031, and WP-B0 renumbers to 032. |
-| next free number, for example 033_ask_parent.sql (WP-AF) | `ALTER TABLE review_run ADD COLUMN parent_run INTEGER REFERENCES review_run (id) ON DELETE SET NULL;` and `CREATE UNIQUE INDEX review_run_parent ON review_run (parent_run) WHERE parent_run IS NOT NULL;` No rebuild. It takes the number after the newest merged migration. If WP-PN's pr_note file is still unmerged, the two statements join that file. A later file renumbers by the list-order rule. |
-| 033_autopilot.sql (on hold) | Rebuild review_run with kind adding 'autopilot' and the column autopilot_json. Rebuild event with kind adding 'autopilot_draft', 'autopilot_posted', 'dependency_merged'. post gains auto, not_before, deleted_at. Create pr_autopilot, autopilot_queue, autopilot_turn, pr_dependency (section 11.11). pr_note comes from 032. It takes the next free number when part 7 resumes. |
+| 031_pr_notes.sql (WP-PN, merged) | Create pr_note and its index (section 2.9). No rebuild. |
+| 032_ask_parent.sql (WP-AF, merged) | `ALTER TABLE review_run ADD COLUMN parent_run INTEGER REFERENCES review_run (id) ON DELETE SET NULL;` and `CREATE UNIQUE INDEX review_run_parent ON review_run (parent_run) WHERE parent_run IS NOT NULL;` No rebuild. |
+| next free number, 033_task.sql unless WP-D2 takes 033 (WP-B0) | Rebuild review_run with pr nullable, task INTEGER REFERENCES task (id) ON DELETE CASCADE, CHECK (pr IS NOT NULL OR task IS NOT NULL), kind adding 'interview', 'spec', 'implement'. Create task, task_question, task_part, task_step, task_event, repo_task_settings (section 6.3). |
+| next free number, autopilot (on hold) | Rebuild review_run with kind adding 'autopilot' and the column autopilot_json. Rebuild event with kind adding 'autopilot_draft', 'autopilot_posted', 'dependency_merged'. post gains auto, not_before, deleted_at. Create pr_autopilot, autopilot_queue, autopilot_turn, pr_dependency (section 11.11). pr_note comes from 031. It takes the next free number when part 7 resumes. |
 
 db.test.ts per migration: the version number, a database of the version before with runs, events, items, posts, fix rows, and consult rows keeps every child row; foreign_key_check is empty; the CHECK takes the new kinds and refuses a bogus one; a second open changes nothing.
 
@@ -1573,7 +1573,7 @@ The review start route keeps its input. Modules and volume come from the profile
 
 On hold (2026-10-22): the user paused autopilot; a human posts every reply. Keep for later.
 
-When part 7 resumes, these parts come from part 2 and replace the matching text below: the pr_note table, the notes routes, and the Notes block (sections 2.7 to 2.9). context/notes.md of section 11.4 is the part 2 notes file, and a proposed note is a part 2 suggestion with source claude. Part 7 adds no notes column. Its migration takes the next free number (033 or later). Gate G9 moved to part 2 (tasks.md WP-PG).
+When part 7 resumes, these parts come from part 2 and replace the matching text below: the pr_note table, the notes routes, and the Notes block (sections 2.7 to 2.9). context/notes.md of section 11.4 is the part 2 notes file, and a proposed note is a part 2 suggestion with source claude. Part 7 adds no notes column. Its migration takes the next free number after part 6. Gate G9 moved to part 2 (tasks.md WP-PG).
 
 design.md section 4.6 gives the decisions A1 to A16 and section 10.1 the user's decisions Q25 to Q27. Level 1 is the draft mode. Level 2 is the post mode. Level 3 belongs to part 6 and covers only task PRs.
 
@@ -1833,9 +1833,9 @@ Guard agent (guardAgent):
 - Levels 1 and 2: the notification and the status sentence "PR #45 merged. This PR can go on." Nothing else happens.
 - Level 3 (task PRs, WP-A8, needs WP-B8): in post mode, a merged dependency starts a task step "update". The part 6 loop merges the target branch into the part branch in the part worktree, runs a fix step for conflicts, runs the checks, pushes with the lease of the last pushed hash, and posts one marked comment that names the reviewers (Q37). A conflict that the fix step cannot solve blocks the task with "Needs you".
 
-### 11.11 Data model (migration 033 or the next free number; on hold)
+### 11.11 Data model (the next free migration number; on hold)
 
-pr_note moved to part 2 (section 2.9, migration 032). The CREATE TABLE pr_note below is the old part 7 draft. Do not build it. Part 2 uses source 'claude' for 'autopilot' and state for kept.
+pr_note moved to part 2 (section 2.9, migration 031). The CREATE TABLE pr_note below is the old part 7 draft. Do not build it. Part 2 uses source 'claude' for 'autopilot' and state for kept.
 
 ```sql
 CREATE TABLE pr_autopilot (
