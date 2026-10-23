@@ -933,7 +933,7 @@ Task states (task.state):
 | failed | yes | yes | yes | An error that Resume cannot fix, such as a deleted repository. |
 | stopped | yes | yes | yes | The user stopped it, or a restart or usage limit stopped it. Resume continues. |
 
-task.blocked holds the reason when the loop waits for the user: {kind: "question" | "red" | "blocker" | "budget" | "size" | "spec_change" | "denied_path" | "push" | "slot" | "error", step, text}. It is null while Claude or the app works, and while the app waits for colleagues.
+task.blocked holds the reason when the loop waits for the user: {kind: "question" | "red" | "blocker" | "budget" | "size" | "spec_change" | "denied_path" | "push" | "slot" | "preflight" | "error", step, text}. preflight comes from section 6.16.7. It is null while Claude or the app works, and while the app waits for colleagues.
 
 Part states (task_part.state): planned → implementing → self_reviewed → pr_open → changes_requested → approved → merged. Side states: declined, abandoned (a spike, or a part that a replan removed). approved means the PR gate passed: approvals, no "Needs work", no open blocker task, and builds green or none. A new colleague comment or a "Needs work" moves approved back to changes_requested.
 
@@ -1035,7 +1035,8 @@ CREATE TABLE repo_task_settings (
 - review_run is rebuilt (as in 025_session.sql): pr becomes nullable; task INTEGER REFERENCES task (id) ON DELETE CASCADE; CHECK (pr IS NOT NULL OR task IS NOT NULL); kind adds interview, spec, implement. A self-review run is kind review with task set and pr NULL. Every query that reads review_run gets a test with a task row present (tasks.md WP-B0).
 - step detail_json: commands [{name, argv, exit, ms, tail}], diffStat {files, added, removed, lines}, findings [item IDs], question ID, specChange {paths}, deniedPaths, patch (file name of saved changes), notes.
 - commands_json entries: {id, name, kind: "setup" | "build" | "test" | "lint", argv: string[1..32], timeoutSec 1..3600}. Each argv entry is at most 1,000 characters. No shell form exists.
-- settings_json (task overrides): {lineBudget?, maxOpen?, approvals?, autoOpen?: false, pauseAfterTask?: false, reviewers?: string[], partTimeMin?: 120}.
+- settings_json (task overrides): {lineBudget?, maxOpen?, approvals?, autoOpen?: false, pauseAfterTask?: false, reviewers?: string[], partTimeMin?: 120, branchPrefix?, existing?: "continue" | "new"}.
+- Section 6.16.9 adds task_repo, task_pr, and repo_task_settings.last_base in the next free migration. repo_task_settings.branch_prefix stays in the table unused (section 6.16.1). task.target_branch holds the base branch of the main repository.
 
 ### 6.4 Spec files: the change plan format
 
@@ -1296,7 +1297,7 @@ part state self_reviewed         -> primary "Open PR for part k of n" (or open a
 
 - Worktree: `git --git-dir=<cache> worktree add --no-checkout <path> <branch>`, then `git sparse-checkout set --no-cone` with `/*`, `!/.claude/`, `!**/.claude/`, `!/.mcp.json`, `!**/.mcp.json`, `!/.codegraph/`, `!**/CLAUDE.md`, `!**/CLAUDE.local.md`, `!**/AGENTS.md`, `!/.gitmodules`, `!/.githooks/`, `!/.husky/`, then `git checkout`. Worktree config: `core.symlinks=false`, `core.autocrlf=false`, `core.hooksPath=<empty app folder>`.
 - After each Claude step: `git status --porcelain=v1 -z --untracked-files=all`. Each path passes deniedPath (edits.ts) and the sparse patterns, and it is not a link. Else: `git reset --hard <last commit>`, `git clean -fd`, save the patch first, blocked denied_path.
-- Branch names: `<prefix><KEY>-spec`, `<prefix><KEY>-<n>-<slug>`, small `<prefix><KEY>-<slug>`. slug: lowercase ASCII letters, digits, and hyphens from the title, at most 40 characters. A name that exists on the remote (`git ls-remote --heads`) gets `-2`, `-3`.
+- Branch names: `<prefix><KEY>-spec`, `<prefix><KEY>-<n>-<slug>`, small `<prefix><KEY>-<slug>`. slug: lowercase ASCII letters, digits, and hyphens from the full title, with no length cut; the whole name stops at BRANCH_MAX (section 6.16.2). The prefix is the task's pick from the global list (section 6.16.1). A name that exists on the remote (`git ls-remote --heads`) gets "Continue on <branch>" or "Start a new branch" with `-2`, `-3` (section 6.16.4).
 - Push (src/server/tasks/push.ts): `git --git-dir=<cache> push <url> <commit>:refs/heads/<branch>` with the token in the GIT_CONFIG env (git.ts:46). Every push has an explicit lease. A first push uses `--force-with-lease=refs/heads/<branch>:` (empty lease: the branch must not exist). A later push uses `--force-with-lease=refs/heads/<branch>:<pushed>`, the last pushed commit. The refspec never has a `+`: git then ignores the lease and overwrites the commits of another person (tests/tasks/push.test.ts). An explicit lease allows any update that matches it, so a normal push first checks the fast-forward: `git rev-list --count <commit>..<pushed>` must be 0. Else the push returns "needs force" and sends nothing. A rebase push needs the confirm. It skips only the fast-forward check and keeps the lease, so it never overwrites a newer push of a colleague. The app refuses a branch that is not a task_part.branch of this task, and the target branch of the repository, before git runs. A lease failure (stale lease, with a rebase push too): "Someone else pushed to <branch>. Get their commits first." with the primary "Get their commits" (fetch, then rebase the local commits on the remote head with no force).
 - Rebase: `git rebase --onto <new base> <old base> <branch>` in the part worktree. A conflict runs `git rebase --abort` and blocks with "Part 3 does not apply on the new part 2. Claude can fix the conflict." The primary is "Let Claude fix it". It makes a fresh worktree on the new base and applies the part's diff with `git apply --3way`. Then a fix step gets the conflict files in failure.md.
 - Stack order (Gate G5, integration-check.md "Review v2"): when the target branch of an open PR is deleted, Bitbucket declines that PR within 30 s and keeps the deleted branch as its toRef. The app retargets an upper PR to the target branch before the lower branch goes away, for example before a lower PR merges with "delete source branch". The app never deletes a lower branch while an upper PR targets it. A declined upper PR gets the side state declined and the offer "Open the PR again". It reopens the PR on the target branch, or creates a new PR when Bitbucket refuses the reopen. A reopen of a PR with a deleted toRef is unverified.
@@ -1310,6 +1311,8 @@ part state self_reviewed         -> primary "Open PR for part k of n" (or open a
 | buildStats | GET /rest/build-status/1.0/commits/stats/{commitId} → `{successful, inProgress, failed}` | part gate | 7.21 build docs (LICENSED). DC 9.x: Gate G3. |
 | repository | GET /rest/api/1.0/projects/{p}/repos/{r} → links.clone http | remote of a task without a PR | Not checked in docs here: Gate G1. |
 | push | git push from the cache, token in the GIT_CONFIG env | branches | Needs Repository write: Gate G1. |
+
+Section 6.16.10 adds the reads for the base branch, the branch search, the write permission, the branch restrictions, the repository list, and the merge commit (Gates G13 to G17).
 
 - A response with a missing PR (404), a version conflict (409), or no permission (401, 403) maps to one sentence and one button: "The token cannot create pull requests in PROJ/repo. Give it Repository write in Bitbucket, then try again." with "Try again".
 - A create that gets 409, or an answer with an unknown outcome (for example a timeout), reads the open PRs of the branch. It returns the open PR from the same branch to the same target and links that one. It never posts a second create.
@@ -1327,7 +1330,7 @@ part state self_reviewed         -> primary "Open PR for part k of n" (or open a
 
 | Route | Body or query | Result |
 |---|---|---|
-| POST /api/tasks | `{project, repo, key: /^[A-Z][A-Z0-9_]+-[0-9]+$/, originPr?: id, target?: branch}` | 201 TaskDto, interview started; 200 with the open task of the same key |
+| POST /api/tasks | `{project, repo, key: /^[A-Z][A-Z0-9_]+-[0-9]+$/, originPr?: id}` (section 6.16.3 drops `target`) | 201 TaskDto, interview started; 200 with the open task of the same key |
 | GET /api/tasks | `?state=open|all` | TaskRowDto[] |
 | GET /api/tasks/:id | | TaskDto (parts, open questions, recent steps, docs, gates, budgets) |
 | POST /api/tasks/:id/answers | `{version, answers: [{question: id, choice?: int, text?: string max 2000}], recommended?: true}` | 202, next run started |
@@ -1342,14 +1345,16 @@ part state self_reviewed         -> primary "Open PR for part k of n" (or open a
 | POST /api/tasks/:id/spec-change/:step | `{version, accept: boolean}` | 200 |
 | POST /api/tasks/:id/pause, /resume, /stop, /close | `{version}` | 200 |
 | GET /api/tasks/:id/parts/:part/diff | | DiffDto (existing rows) |
-| GET, PUT /api/repos/:project/:repo/task-settings | repo_task_settings fields | 200 |
+| GET, PUT /api/repos/:project/:repo/task-settings | repo_task_settings fields (no branchPrefix, section 6.16.1) | 200 |
+
+Section 6.16.11 adds the routes for the branch search, the branch check, the base change, the repository proposals, "Push and open N PRs", the rebase onto a moved base, and the pointer move.
 
 - Every mutation checks task.version and returns 409 with the current TaskDto on a mismatch.
 - Fix on a task PR: the Apply dialog of a fix run on a PR whose branch is a task_part branch commits into that part's worktree (mode "task"). The push stays a separate click: "Push to <branch>".
 
 ### 6.12 UI: the Task view
 
-- Start: the Jira chip menu item "Build this task" (one click: POST /api/tasks, then the Task view). The sidebar view "Tasks" with "Build a Jira task" (key, repository picked from the known ones, target branch from the remote HEAD).
+- Start: the Jira chip menu item "Build this task" (one click: POST /api/tasks, then the Task view). The sidebar view "Tasks" with "Build a Jira task" (key and "Main repository", picked from the known ones). The base branch comes from section 6.16.3, and the plan screen shows the branch type, the base picker, the existing-branch choice, and the proposed repositories (section 6.16).
 - Route `/tasks/:id`. Layout: a header (key, title, size line), the step strip, one status sentence, one primary button, a More menu, then the content of the current step. Tabs under the content, all secondary: Questions, Spec, Spec PR (medium, large), Plan, Log, Diff.
 - Step strip per size: small "Questions › Plan › Build › Done"; medium "Questions › Plan › Spec review › Build › Done"; large "Questions › Plan › Spec review › Build parts (2 of 4) › Done". The current step is bold with aria-current="step".
 
@@ -1375,6 +1380,13 @@ Primary button per state:
 | blocked size | "Needs you: this PR would have 520 changed lines, over your 400 limit." | "Split into parts" | Keep one PR, Change the limit |
 | blocked spec_change | "Needs you: Claude proposes a change to the spec." | "Review the change" | Reject, Stop |
 | blocked slot | "Waiting for your review of PR 12 to finish." | none | Stop |
+| blocked preflight, no write | "Needs you: the token cannot push to PROJ/repo. Give it Repository write in Bitbucket, then try again." | "Try again" | Stop |
+| blocked preflight, base gone | "Needs you: develop no longer exists in PROJ/repo. Pick another base branch." | "Pick a base branch" | Stop |
+| blocked preflight, branch rule | "Needs you: a branch rule in PROJ/repo forbids pushes to <branch>. Pick another prefix." | "Change the branch" | Stop |
+| blocked size, large with repos | "Needs you: large tasks change one repository for now. Make it medium, or split the task." | "Make it medium" | Close the task |
+| implementing, base moved | "develop has 5 new commits since the build started." | "Rebase onto it" | Open the PR as is |
+| implementing, PRs partly open | "2 of 3 PRs are open. The PR for PROJ/lib failed." | "Try again for PROJ/lib" | Go to the PRs |
+| ready, submodule merged | "The PROJ/lib PR merged. PROJ/app still points at the task branch commit." | "Point PROJ/app at the merged commit" | Go to the PR |
 | stopped | "Stopped at: part 2, task T2.3, running the tests." | "Resume" | Close the task |
 | ready | "All PRs are open. Waiting for the review of part 4." | "Go to the PR" | Close the task |
 | done | "Done. All 4 PRs merged." | "Close the task" | none |
@@ -1384,7 +1396,7 @@ Primary button per state:
 - Plan tab: parts with their state chips in plain words ("Planned", "Building", "Checked by Claude", "In review", "Changes asked", "Approved", "Merged"), each part's tasks with check marks, its lines against the budget ("340 of 400 lines"), and its time and usage.
 - Log tab: the steps, newest first, with the commands, exit codes, output tails (collapsed), and links to the run logs (RunLog.tsx).
 - Diff tab: the part diff with the existing diff rows.
-- Open-PR confirm (outward, one dialog): "Push <branch> and open a PR into <target>?", the title, the reviewers (chips, editable), the file count and lines, and the primary "Push and open PR".
+- Open-PR confirm (outward, one dialog): "Push <branch> and open a PR into <target>?", the title, the reviewers (chips, editable), the file count and lines, and the primary "Push and open PR". A task with several changed repositories shows one row per repository and "Push and open N PRs" (section 6.16.8).
 - Force confirm: "Part 3 must be rebased on the new main. This rewrites the commits that Anna reviews. Push anyway?" with "Rebase and push".
 - First-use warning (inside the plan approval, once per repository): "The app will run these commands in a copy of the repository: bun test, bun run lint. They run code that Claude writes. On Windows nothing limits what that code can read or reach. Run this only for code you would run yourself." with the checkbox "I understand" and the command list with checkboxes.
 - Keys: the existing j and k move over the steps and parts. Enter opens the primary action. Esc leaves the view. No new global key.
@@ -1437,6 +1449,191 @@ Primary button per state:
 21. AC-B21. Notifications fire only for needs_you, part_ready, and spec_approved, once each, in one tab.
 22. AC-B22. The token is never in argv, in the worktree, in the env of a check command, in SQLite, or in a log (spy test on spawn and the run folder scan).
 23. AC-B23. The Bitbucket client maps 401, 403, 404, and 409 of create and update to one sentence and one button each.
+
+Section 6.16.13 holds AC-B24 to AC-B45.
+
+### 6.16 Branches, base branch, and several repositories (design.md B16 to B21, section 10.4, user decisions of 2026-10-23)
+
+Constants: BRANCH_MAX = 100 (characters of the whole branch name, with a suffix), PREFIX_MAX = 40, PREFIXES_MAX = 10, BRANCH_PAGE = 25, REPO_LIST_MAX = 1,000 (10 pages of 100), PROPOSALS_MAX = 2 (other repositories per spec run).
+
+#### 6.16.1 Branch prefix
+
+- Settings > Tasks holds one global list "Branch prefixes" in config.json (settingsInput key `taskBranchPrefixes`): 1 to PREFIXES_MAX entries, each 1 to PREFIX_MAX characters, unique, and valid when `<prefix>x` passes refOk (src/shared/dto.ts, git-check-ref-format). Default: `["feature/", "bugfix/", "hotfix/"]`.
+- Settings UI: one row per prefix with "Move up", "Move down", and "Remove", then "Add a prefix". The hint says "The first prefix starts selected on the plan screen." Errors: "Invalid branch prefix.", "This prefix is already in the list.", "Keep at least one prefix.", "At most 10 prefixes."
+- Plan screen: the group "Branch type" shows each prefix as a chip (radio semantics, arrow keys move) plus "Other…". The first chip starts selected. "Other…" shows the text field "Prefix" with the same rule and the error "Invalid branch prefix.". The pick goes into task.settings_json.branchPrefix with the plan approval. A task without a pick (created before this change) uses its stored part branches unchanged.
+- Migration: the per-repository prefix is dropped. repo_task_settings.branch_prefix stays in the table, and no code reads or writes it. PUT /api/repos/:project/:repo/task-settings no longer takes branchPrefix (zod strips it). "Change the prefix" and useSaveBranchPrefix go away.
+
+#### 6.16.2 Branch name
+
+- slug(summary): lowercase; each run of characters outside `[a-z0-9]` becomes one hyphen; leading and trailing hyphens go. An empty result gives `task` (part: `part`). No length cut here.
+- Names: small `<prefix><KEY>-<slug>`, part `<prefix><KEY>-<n>-<slug of the part title>`, spec `<prefix><KEY>-spec`.
+- Cap: when the name with its suffix (`-2` … `-99`) is longer than BRANCH_MAX, the app cuts the slug at the last hyphen that keeps the name within BRANCH_MAX. A slug without such a hyphen is cut at the limit. The name never ends with a hyphen. Limits behind the value: git-check-ref-format sets no length limit; NTFS and ext4 allow 255 bytes per path component; the cache keeps loose refs under `<dataDir>/git/<project>/<repo>.git/refs/heads/`, and Windows paths without core.longpaths stop at 260 characters. A Bitbucket limit for ref names is not documented (not verified).
+- Example: KEY ABC-123, summary "[server][linux] M3: Crash capture and dump generation on Linux", prefix `feature/` gives `feature/ABC-123-server-linux-m3-crash-capture-and-dump-generation-on-linux` (74 characters, no cut).
+- Every repository of a task uses the same branch name.
+
+#### 6.16.3 Base branch
+
+- Preselection: repo_task_settings.last_base when the branch search finds exactly that name, else the default branch of GET .../default-branch (Gate G13). When that read fails, the app falls back to `git ls-remote --symref <url> HEAD` (workspace.ts remoteHead). The origin PR's target no longer sets the base.
+- The New task form drops "Target branch". It keeps "Jira key" and "Main repository". The interview and the spec run read the sanitized snapshot of the preselected base head.
+- Picker (plan screen, one per repository of the task): a combobox "Base branch" with the placeholder "Search branches". It lists GET /api/repos/:project/:repo/branches?filter=<text> (provider.listBranches: filterText, boostMatches=true, orderBy=MODIFICATION, limit BRANCH_PAGE). Typing waits 250 ms before a read. The default branch carries "(default)". A short page says "Type to see more branches." No match: "No branch matches "<text>"." A failed read: "Cannot read the branches of PROJ/repo. <reason>" with "Try again".
+- A pick stores repo_task_settings.last_base at the plan approval and sets task.target_branch (main repository) or task_repo.base_branch (other repositories). Every PR of a repository targets its base branch.
+- A base change after the plan exists asks "The plan was written on develop. Write it again on release/2.1?" with "Write the plan again" and "Cancel". Confirm starts the spec run again on the new base head. The answers stay.
+
+#### 6.16.4 Existing branch on the server
+
+- The branch check runs on the plan screen and again before the first push: `git ls-remote --heads <url> refs/heads/<name>` for each repository of the task that has access edit.
+- When the name exists in any repository, the plan screen shows "<branch> already exists on the server." with two radio buttons: "Continue on <branch>" (selected; hint "Build on top of its commits. The app never overwrites them.") and "Start a new branch (<branch>-2)". The pick goes into task.settings_json.existing ("continue" or "new").
+- Continue: the app fetches the remote branch into the cache. The part branch starts at the remote head where the branch exists, and at the base head elsewhere. base_commit is `git merge-base <base head> <remote head>`, so the line budget counts the whole PR diff. The first push uses the fetched head as its lease, never an empty lease. An open PR from that branch to the base branch gets linked, not created again (section 6.9, the 409 rule). A remote that moved after the fetch fails the lease: "Someone else pushed to <branch>. Get their commits first." (section 6.8).
+- New: the first suffix `-2` … `-99` that is free in every repository of the task. All repositories keep one name.
+
+#### 6.16.5 Repositories of a task
+
+- The New task form names the main repository (task.project, task.repo; task_repo role main).
+- Submodules: at workspace prepare, the app reads the gitlinks (mode 160000) of the base commit with `git ls-tree -r -z <base>` and their URLs with `git config --blob <base>:.gitmodules --null --list`. A relative URL resolves against the parent's http clone URL (git-submodule(1), "relative URL"). The app never runs `git submodule`, never runs hooks, and never reads `.gitmodules` from disk (the sparse checkout hides it).
+- Mapping without guesses: the app takes the last two path segments of the URL as the candidate project key and slug, reads GET /rest/api/1.0/projects/{p}/repos/{r}, and accepts the match only when one of its links.clone hrefs equals the submodule URL after removing user info and lowercasing scheme and host. Same server: the matched http link has the origin of the configured Bitbucket URL.
+- Access per repository (task_repo.access, task_repo.reason):
+
+| Case | Access | Reason shown |
+|---|---|---|
+| main, or an added repository | edit | |
+| first-level submodule, same server, write permission | edit | |
+| first-level submodule without write permission (G15) | read | "The token cannot push to it." |
+| deeper submodule, same server | read | "It is a nested submodule. Only first-level submodules are editable." |
+| submodule of another server | none (empty folder) | "It comes from another server." |
+| submodule URL that maps to no Bitbucket repository | none (empty folder) | "Its URL matches no repository on your Bitbucket server." |
+| the same repository a second time | read | "The same repository is already in the task at <path>." |
+
+- Fetch: each repository with access edit or read gets its own bare cache (cachePath) and fetches its base branch. A submodule fetches the branches that hold the pinned commit: the base branch first, then all heads when the pinned commit is still missing. A fetch by commit ID is not used (Bitbucket support for it is not verified). A pinned commit that no branch holds gives access none with "Its pinned commit is on no branch of the server."
+- Worktrees: main at `part-<n>/repo`; a submodule at its path inside the parent worktree (`git worktree add` from its own cache at the pinned commit, on the task branch for access edit, detached for access read); an added repository at `part-<n>/repos/<project>/<slug>`. The implement run cwd stays the part folder, so `--restricted` reads cover all of them. Each worktree gets the sparse patterns, core.symlinks=false, core.autocrlf=false, and the empty core.hooksPath of section 6.8.
+- Snapshots: the interview and spec runs get each repository with access edit or read as a sanitized read-only folder at the same relative path. The review snapshot of a PR, and the own review of a part, keep "No submodules" (BRIEF section 3.5): the own review runs once per changed repository on that repository's base..head.
+- context/repos.md (written by the app, untrusted data) lists each repository of the task with its path, access, base branch, and reason. The implement prompt says that only repositories with access edit may change.
+- Proposals: the spec run gets context/repo-list.md: the repositories with REPO_WRITE from GET /rest/api/1.0/repos?permission=REPO_WRITE (Gate G16), at most REPO_LIST_MAX, one line "PROJ/slug · name" each. The spec result adds `repos: [{project, repo, reason (max 300 characters)}]`, at most PROPOSALS_MAX. The app drops a proposal that is not in the list, the main repository, or a submodule of the task. The plan screen shows "Claude proposes another repository: PROJ/lib. <reason>" with "Add" and "Skip". Add creates task_repo role added and starts the spec run again with that repository in the snapshot. Skip stores the skip, and the next spec run gets the skipped list. Only added repositories get a worktree, a branch, and a PR.
+- Size: several repositories are allowed for small and medium tasks. A large plan that names another repository, or a large build that changes a submodule, blocks with "Needs you: large tasks change one repository for now. Make it medium, or split the task." and the buttons "Make it medium" and "Close the task".
+
+#### 6.16.6 Build, path check, and commits with several repositories
+
+- Path check after each Claude step: `git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none` in every worktree, deepest first. A change in a repository with access read or none fails the step and resets it (section 6.8): blocked denied_path with "Needs you: Claude changed <path>, which the task cannot change. <reason>". In a parent, the gitlink path of an editable submodule is allowed. Any other rule of section 6.8 applies in each repository.
+- Commit step: deepest repository first. In each repository with changes: `git add -A`, then the commit with the same message. The parent's `git add -A` takes the new gitlink of a changed submodule, so the parent commit points the submodule at its task branch commit. Claude cannot move a gitlink: it has no git write tool, and `.gitmodules` is a denied path.
+- Reset: per repository, deepest first. `git clean -ffd` in a parent keeps the gitlink paths, because they are tracked entries (verify in WP-MR1 tests).
+- Changed repositories: after the build, a repository counts as changed when its task branch head differs from its base_commit and `git diff --numstat <base_commit>..<head>` is not empty. A parent whose only change is a gitlink counts as changed, because the submodule changed.
+- Line budget: the sum over the changed repositories of the section 6.1 count. Gitlink entries do not count.
+
+#### 6.16.7 Pre-flight (before any Claude step of the build, and before each push)
+
+1. Write permission: GET /rest/api/1.0/repos?permission=REPO_WRITE&projectkey=<KEY>&name=<name> (Gate G15) for each repository with access edit. The app keeps the result for 10 minutes. Main or added repository without write: blocked preflight "Needs you: the token cannot push to PROJ/repo. Give it Repository write in Bitbucket, then try again." with "Try again". A first-level submodule without write gets access read.
+2. Base branch: `git ls-remote --heads <url> refs/heads/<base>` per repository. Gone: blocked preflight "Needs you: develop no longer exists in PROJ/repo. Pick another base branch." with "Pick a base branch" (the picker).
+3. Branch rules: GET /rest/branch-permissions/latest/projects/{p}/repos/{r}/restrictions (Gate G15). The search needs REPO_ADMIN (DC 9.6 REST), so a plain token gets 401 and the app skips this check. With 200, a restriction of type read-only, pull-request-only, or no-creates whose matcher type is BRANCH and whose matcher id equals `refs/heads/<task branch>` blocks with "Needs you: a branch rule in PROJ/repo forbids pushes to <branch>. Pick another prefix." and "Change the branch". The app does not evaluate PATTERN, MODEL_BRANCH, or MODEL_CATEGORY matchers: Bitbucket checks them at push time. A refused push keeps the commits and shows Bitbucket's reason (Q48).
+4. The branch check of section 6.16.4.
+
+blocked.kind adds "preflight". The checks send GET requests and `git ls-remote` only. No Claude step runs before they pass.
+
+#### 6.16.8 Open the PRs
+
+- The base moved: before the dialog, the app runs `git ls-remote` for each base. When a base head differs from base_commit, it fetches and counts `git rev-list --count <base_commit>..<new head>`. Status: "develop has 5 new commits since the build started." (one line per repository). Primary "Rebase onto it": `git rebase --onto <new head> <base_commit> <branch>` per repository, deepest first, then the checks again (no Claude step). A conflict uses the section 6.8 path ("Let Claude fix it"). Secondary "Open the PR as is".
+- Dialog "Push and open PRs": one row per changed repository, submodules first, the main repository last. A row shows "PROJ/repo · <branch> → <base> · 3 files, 42 lines", the reviewers (chips; default: the reviewers of the user's newest PR in that repository), and its state: "Waiting", "Pushing", "Opening the PR", "PR #12 open", or "Failed: <sentence>". Primary "Push and open 3 PRs" (one row: "Push and open PR").
+- Order: all pushes first, deepest first. A failed push stops the pushes of the parents, because a parent commit points at the submodule commit. Then the PR creates, submodules first. A failed create does not stop the other creates.
+- Links: each description ends with "Related PRs:" and one line per other PR of the task ("PROJ/lib #41", with its link). After the last create, the app updates the descriptions of the earlier PRs with updatePullRequest (fresh GET, version check; section 6.9).
+- Partial result: the status says "2 of 3 PRs are open. The PR for PROJ/lib failed." with the primary "Try again for PROJ/lib". Each failed row has its own "Try again". A retry never creates a second PR (the 409 rule of section 6.9).
+- Pointer after a submodule merge: the sync sees the submodule PR merged. The status says "The PROJ/lib PR merged. PROJ/app still points at the task branch commit." with the primary "Point PROJ/app at the merged commit". The app reads the merge commit from the PR's properties.mergeCommit.id, else from the MERGED activity's commit.id (Gate G17). It fetches the submodule base branch, checks that the merge commit is on it (`git merge-base --is-ancestor`), commits the gitlink in the parent worktree ("<KEY>: point <path> at the merged commit"), and pushes with the lease after the click. When Bitbucket names no merge commit, the sentence is "Bitbucket did not name the merge commit. Point PROJ/app at the newest develop commit of PROJ/lib?" with the same button. task_pr.pointer_state goes from task_branch to merged_commit.
+
+#### 6.16.9 Data model (the next free migration number)
+
+```sql
+CREATE TABLE task_repo (
+  id INTEGER PRIMARY KEY, task INTEGER NOT NULL REFERENCES task (id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('main','submodule','added')),
+  project TEXT, repo TEXT,           -- NULL for a submodule that maps to no Bitbucket repository
+  url TEXT,                          -- the submodule URL without user info; NULL for main and added
+  parent INTEGER REFERENCES task_repo (id) ON DELETE CASCADE, path TEXT, depth INTEGER NOT NULL DEFAULT 0,
+  access TEXT NOT NULL CHECK (access IN ('edit','read','none')), reason TEXT,
+  base_branch TEXT, base_commit TEXT, pinned TEXT,
+  proposal TEXT CHECK (proposal IN ('proposed','added','skipped')), proposal_reason TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX task_repo_one ON task_repo (task, project, repo) WHERE project IS NOT NULL;
+
+CREATE TABLE task_pr (
+  id INTEGER PRIMARY KEY, part INTEGER NOT NULL REFERENCES task_part (id) ON DELETE CASCADE,
+  task_repo INTEGER NOT NULL REFERENCES task_repo (id) ON DELETE CASCADE,
+  branch TEXT NOT NULL, base_branch TEXT NOT NULL, base_commit TEXT NOT NULL,
+  head TEXT, pushed TEXT, lines INTEGER,
+  pr INTEGER REFERENCES pull_request (id) ON DELETE SET NULL, remote_pr INTEGER,
+  state TEXT NOT NULL CHECK (state IN ('changed','pushed','pr_open','merged','declined','failed')),
+  error TEXT, pointer_state TEXT CHECK (pointer_state IN ('task_branch','merged_commit')),
+  UNIQUE (part, task_repo)
+);
+
+ALTER TABLE repo_task_settings ADD COLUMN last_base TEXT;
+```
+
+- The main repository keeps task.target_branch, task.base_commit, and the task_part columns. task_pr holds the other changed repositories only. task_repo holds every repository, the main one too.
+- task.settings_json adds branchPrefix (string) and existing ("continue" | "new").
+- The spec result schema (section 6.5) adds `repos` (section 6.16.5). TaskDto adds repos[] and prs[].
+
+#### 6.16.10 Bitbucket reads (src/server/bitbucket/, GET only)
+
+| Call | Request | Verified |
+|---|---|---|
+| defaultBranch | GET /rest/api/1.0/projects/{p}/repos/{r}/default-branch → {id, displayId} | 7.21 and DC 9.6 docs (REPO_READ). DC 9.x: Gate G13. The older .../branches/default is deprecated. |
+| listBranches | GET .../branches?filterText=&boostMatches=true&orderBy=MODIFICATION&limit=25 → page of {id, displayId, latestCommit, default flag} | DC 9.6 docs (REPO_READ). The name of the default flag key: Gate G14. |
+| writableRepos | GET /rest/api/1.0/repos?permission=REPO_WRITE[&projectkey=&name=]&start=&limit=100 | DC 9.6 docs (permission REPO_READ, REPO_WRITE, REPO_ADMIN; projectkey since 8.0). Gate G15, G16. |
+| restrictions | GET /rest/branch-permissions/latest/projects/{p}/repos/{r}/restrictions | DC 9.6 docs: needs REPO_ADMIN. Gate G15 records the status for the user's token. |
+| mergeCommit | GET .../pull-requests/{id} (properties.mergeCommit) and GET .../pull-requests/{id}/activities (action MERGED, commit) | Not in the docs schema. Gate G17. |
+
+#### 6.16.11 Routes
+
+| Route | Body or query | Result |
+|---|---|---|
+| POST /api/tasks | drops `target` | as section 6.11 |
+| GET /api/repos/:project/:repo/branches | `?filter=` (0 to 255 characters) | `{defaultBranch: string \| null, branches: [{name, isDefault}], more: boolean}` |
+| GET /api/tasks/:id/branch | `?prefix=&base=` | `{name, exists: [{taskRepo, project, repo, head}], openPr: id \| null, nextFree}` |
+| POST /api/tasks/:id/plan | adds `{prefix, bases: [{taskRepo, branch}], existing: "continue" \| "new"}` | as section 6.11; 409 with the pre-flight sentence |
+| PUT /api/tasks/:id/base | `{version, taskRepo, branch}` | 200; 202 when the plan runs again |
+| POST /api/tasks/:id/repos/:taskRepo | `{version, add: boolean}` | 202 (Add, the spec run starts) or 200 (Skip) |
+| POST /api/tasks/:id/parts/:part/prs | `{version, rows: [{taskRepo, reviewers: slug[] max 20}]}` | 202; one row is a retry |
+| POST /api/tasks/:id/parts/:part/rebase | `{version}` | 202 |
+| POST /api/tasks/:id/prs/:taskPr/pointer | `{version}` | 202 |
+| GET, PUT /api/settings | adds taskBranchPrefixes | 200 |
+
+POST /api/tasks/:id/parts/:part/pr stays for a task with one repository. Every mutation keeps the version check of section 6.11.
+
+#### 6.16.12 Edge cases
+
+- The Jira key does not exist, or the token cannot see it: "Jira has no issue <KEY>, or your Jira token cannot see it." No task is made.
+- The base branch moves during the build: section 6.16.8. The base branch is deleted: pre-flight step 2, also before the push.
+- A submodule URL maps to no Bitbucket repository: access none, an empty folder, and the reason in context/repos.md and on the plan screen.
+- A submodule pointer change without file changes: it cannot come from Claude (no gitlink write). The app changes a pointer only after commits in the submodule, or with "Point … at the merged commit" (Q50).
+- Nested submodules: deeper levels are read-only worktrees (same server) or empty folders (other servers). A deeper level never gets a branch or a PR.
+- The PR of one repository is refused while others opened: the row shows the sentence and "Try again" (section 6.16.8).
+- A submodule PR is declined: its row shows "Declined" and the parent keeps the pointer at the task branch commit. The status offers "Open the PR again".
+- The same repository at two submodule paths: the second one is read-only with its reason.
+- A pinned commit on no branch of the server: access none with its reason.
+- A large task needs another repository: blocked with "Make it medium" (section 6.16.5).
+
+#### 6.16.13 Acceptance criteria
+
+1. AC-B24. Settings > Tasks keeps a list of 1 to 10 prefixes with the default `feature/`, `bugfix/`, `hotfix/`; Move up and Move down change the order; an invalid or duplicate prefix shows its sentence and saves nothing.
+2. AC-B25. The plan screen shows the prefixes as chips with the first one selected, plus "Other…" with the prefix check. The planned name changes as the user picks.
+3. AC-B26. "[server][linux] M3: Crash capture and dump generation on Linux" with ABC-123 and `feature/` gives `feature/ABC-123-server-linux-m3-crash-capture-and-dump-generation-on-linux`. A summary that gives a name over 100 characters is cut at a hyphen, and the name with `-99` stays within 100 characters (unit test).
+4. AC-B27. A stored per-repository prefix changes nothing: a new task starts with the first chip.
+5. AC-B28. The New task form has no "Target branch" field. The base starts at the last pick that still exists, else at the default branch of GET .../default-branch (fake Bitbucket).
+6. AC-B29. The base picker reads the branch search with the typed filter after 250 ms, marks the default branch, and shows the no-match sentence. The PR targets the picked base.
+7. AC-B30. A base change after the plan asks one confirm and starts the spec run again with the answers kept.
+8. AC-B31. An existing remote branch shows "Continue on <branch>" selected. Continue builds on the remote head, and the first push uses that head as its lease (spy on git argv). A colleague push after the fetch fails the lease and never forces.
+9. AC-B32. "Start a new branch" uses the first suffix that is free in every repository of the task.
+10. AC-B33. A main repository with one same-server submodule and one nested submodule gives task_repo rows with access edit and read. A submodule of another origin gives access none with its reason and an empty folder, and no request goes to that origin (fake server counter).
+11. AC-B34. A submodule URL maps only when the repository's REST clone links hold the same URL. A URL with matching path segments on another host maps to nothing.
+12. AC-B35. A fake-CLI step that edits a file in a read-only submodule fails, resets every repository, and shows the reason.
+13. AC-B36. A step that edits the main repository and a first-level submodule makes two commits with the same message, and the parent commit points the gitlink at the submodule commit.
+14. AC-B37. The line budget counts both repositories and leaves out the gitlink.
+15. AC-B38. "Push and open 2 PRs" pushes the submodule branch first, then the main branch, then creates the submodule PR first. Both descriptions link the other PR after the last create.
+16. AC-B39. A refused create for one row leaves the other PR open, shows "2 of 3 PRs are open." and retries only that row, without a second create of the open ones.
+17. AC-B40. A failed submodule push stops the parent push.
+18. AC-B41. After the submodule PR merges (fake MERGED state with properties.mergeCommit), "Point PROJ/app at the merged commit" commits the gitlink at that commit and pushes with a lease after the click.
+19. AC-B42. Pre-flight: a repository without REPO_WRITE blocks before any Claude step (fake CLI call counter stays 0). A 401 on the restriction search skips the rule check. A BRANCH restriction with the exact task branch blocks with "Pick another prefix".
+20. AC-B43. A moved base shows "<base> has N new commits since the build started." with "Rebase onto it" and "Open the PR as is". A deleted base blocks with "Pick a base branch".
+21. AC-B44. A proposal from the spec result shows with Add and Skip. A proposal outside context/repo-list.md is dropped. Only an added repository gets a worktree, a branch, and a PR.
+22. AC-B45. A large plan with a second repository blocks with "large tasks change one repository for now".
 
 ## 7. UX rules check
 
@@ -1534,6 +1731,8 @@ Large task (a feature with an API change, 4 parts):
 | 031_pr_notes.sql (WP-PN, merged) | Create pr_note and its index (section 2.9). No rebuild. |
 | 032_ask_parent.sql (WP-AF, merged) | `ALTER TABLE review_run ADD COLUMN parent_run INTEGER REFERENCES review_run (id) ON DELETE SET NULL;` and `CREATE UNIQUE INDEX review_run_parent ON review_run (parent_run) WHERE parent_run IS NOT NULL;` No rebuild. |
 | next free number, 033_task.sql unless WP-D2 takes 033 (WP-B0) | Rebuild review_run with pr nullable, task INTEGER REFERENCES task (id) ON DELETE CASCADE, CHECK (pr IS NOT NULL OR task IS NOT NULL), kind adding 'interview', 'spec', 'implement'. Create task, task_question, task_part, task_step, task_event, repo_task_settings (section 6.3). |
+| next free number, base branch (WP-BR1) | `ALTER TABLE repo_task_settings ADD COLUMN last_base TEXT;` (section 6.16.9). No rebuild. branch_prefix stays unused. |
+| next free number, task repositories (WP-MR1) | Create task_repo and task_pr and the index task_repo_one (section 6.16.9). A task_repo row role main for each existing task. No rebuild. |
 | next free number, autopilot (on hold) | Rebuild review_run with kind adding 'autopilot' and the column autopilot_json. Rebuild event with kind adding 'autopilot_draft', 'autopilot_posted', 'dependency_merged'. post gains auto, not_before, deleted_at. Create pr_autopilot, autopilot_queue, autopilot_turn, pr_dependency (section 11.11). pr_note comes from 031. It takes the next free number when part 7 resumes. |
 
 db.test.ts per migration: the version number, a database of the version before with runs, events, items, posts, fix rows, and consult rows keeps every child row; foreign_key_check is empty; the CHECK takes the new kinds and refuses a bogus one; a second open changes nothing.
@@ -1547,6 +1746,7 @@ db.test.ts per migration: the version number, a database of the version before w
 | POST /api/items/:id (action reason, use-revision and keep-mine for findings) | 1, 2, 4 |
 | GET /api/stats/review | 4 |
 | /api/tasks… and /api/repos/:project/:repo/task-settings (section 6.11) | 6 |
+| GET /api/repos/:project/:repo/branches; GET /api/tasks/:id/branch; PUT /api/tasks/:id/base; POST /api/tasks/:id/repos/:taskRepo, /parts/:part/prs, /parts/:part/rebase, /prs/:taskPr/pointer; settings key taskBranchPrefixes (section 6.16.11) | 6 |
 | GET, POST /api/prs/:id/notes; PUT, DELETE /api/notes/:id (section 2.9) | 2 |
 | POST /api/prs/:id/ask gains parent; GET /api/prs/:id/asks gives parent (section 2.15) | 2 |
 | /api/prs/:id/autopilot, /api/autopilot/…, /api/prs/:id/dependencies, /api/dependencies/:id, POST /api/items/:id/post-now (section 11.12) | 7 (on hold) |
@@ -1568,6 +1768,7 @@ The review start route keeps its input. Modules and volume come from the profile
 | 9 Backlog | "Learn from discards" stays later. "Accept and discard rates per profile" moves to part 4. "Self-review before I open a PR" and "Draft fixes" partly move to part 6. |
 | 10 Open questions | Q7 colleague's app: point to design.md section 9. |
 | 11 Sources | The research links of design.md section 3. |
+| 2, 3.5, 3.6, 7 Plan (part 6, branches and several repositories, 2026-10-23) | 2: several repositories for small and medium tasks. 3.5: task workspaces check out same-server submodules (first level editable); the review snapshot keeps "No submodules". 3.6 outbound reads: the default branch, the branch search, the repositories with write permission, the branch restrictions, and the merge commit of a merged PR. 7 Plan: task_repo, task_pr, repo_task_settings.last_base, the global prefix list, the new routes. |
 | 3.5, 3.6, 7 Plan (part 2, PR context and notes) | 3.5: runs get context/pr-context.md (untrusted) and context/notes.md (the user's kept notes), rebuilt per run with no LLM call. 3.6 outbound reads: the open-PR list, the change list of an open PR, and build stats of the PR head. 7 Plan: the pr_note table, the notes routes, the cites and notes keys of the reply and discuss results. Ask follow-ups: the last 3 turns of a conversation go into the Ask stdin as data; review_run.parent_run. |
 | 5 Constitution, 3.6, Hard rules (part 7, on hold: do not change BRIEF.md until part 7 resumes) | Principle 1 and the hard rule "Nothing goes to Bitbucket without an explicit user action" add ", unless the user turned on Autopilot for that PR" (Q25, decided 2026-10-22), with the safeguards list of design.md section 10.1. Principle 4 allows reply runs from a sync on PRs in draft or post mode. 3.6 outbound adds comment delete of own Autopilot replies, the open-PR list, and the blocking-PR read. 7 Plan adds run kind autopilot, the guard phase, the part 7 tables, and the Autopilot mark. CLAUDE.md "Hard rules" gets the same rule text. |
 

@@ -4,9 +4,12 @@
 // Gate G1 to G7 (docs/plans/review-v2/tasks.md WP-G0, docs/gate-v2.md): the Bitbucket write facts for building Jira tasks.
 // G1 to G7 WRITE to the server: branches, pull requests, and one branch delete. Run them only on a test repository that you may change.
 // G9 and G12 (WP-PG) only read: the open PRs of the repository and the changes of an open PR without the token user.
+// G13 to G17 (WP-GB) only read: the default branch, the branch search, the write permission and branch restrictions, the
+// repository list, and the merge commit of a merged PR.
 // Usage: bun scripts/gate/bitbucket-write.ts --repo <repository URL> --target <branch> --authorize-writes [--only G1,G2] [G3 ...]
 //          [--reviewer <user slug>] [--build-commit <commit>] [--readonly-token-env <VAR>] [--jira-key <KEY>] [--keep]
 //        bun scripts/gate/bitbucket-write.ts --repo <repository URL> --only G9,G12
+//        bun scripts/gate/bitbucket-write.ts --repo <repository URL> --only G13,G14,G15,G16,G17
 //        bun scripts/gate/bitbucket-write.ts --repo <repository URL> --authorize-writes --cleanup
 //        bun scripts/gate/bitbucket-write.ts --dry-run [--only G1,G2]
 // --dry-run: the same steps against a loopback fake server and a local bare repository. It reads no secret, and nothing leaves the machine.
@@ -29,16 +32,21 @@ const G5_WAIT_MS = 30_000;
 const G5_POLL_MS = 2_000;
 // Every branch that the script creates or deletes has this prefix. The target branch never gets a push.
 const PREFIX = "rl-gate-";
-const CHECKS = ["G1", "G2", "G3", "G4", "G5", "G6", "G7", "G9", "G12"] as const;
+const CHECKS = ["G1", "G2", "G3", "G4", "G5", "G6", "G7", "G9", "G12", "G13", "G14", "G15", "G16", "G17"] as const;
 type CheckId = (typeof CHECKS)[number];
 // These checks send only GET requests. They need no --authorize-writes and no --target.
-const READ_ONLY = new Set<CheckId>(["G9", "G12"]);
+const READ_ONLY = new Set<CheckId>(["G9", "G12", "G13", "G14", "G15", "G16", "G17"]);
 // The open-PR list of G9 and G12: one page, as provider.listOpenPullRequests reads it (spec.md section 2.8).
 const OPEN_PR_LIMIT = 50;
+// G14: the page size of the base branch picker (spec.md section 6.16). G16: the repository pages that the app reads at most.
+const BRANCH_LIMIT = 25;
+const REPO_LIMIT = 100;
+const REPO_PAGES = 10;
 const USAGE = [
   "usage: bun scripts/gate/bitbucket-write.ts --repo <repository URL> --target <branch> --authorize-writes [--only G1,G2] [G3 ...]",
   "         [--reviewer <user slug>] [--build-commit <commit>] [--readonly-token-env <VAR>] [--jira-key <KEY>] [--keep]",
   "       bun scripts/gate/bitbucket-write.ts --repo <repository URL> --only G9,G12",
+  "       bun scripts/gate/bitbucket-write.ts --repo <repository URL> --only G13,G14,G15,G16,G17",
   "       bun scripts/gate/bitbucket-write.ts --repo <repository URL> --authorize-writes --cleanup",
   "       bun scripts/gate/bitbucket-write.ts --dry-run [--only G1,G2]",
 ].join("\n");
@@ -301,6 +309,9 @@ function session(ctx: Ctx) {
     };
   };
   const openPrs = memo(() => call("GET", `${repoPath}/pull-requests?state=OPEN&limit=${OPEN_PR_LIMIT}`));
+  const repository = memo(() => call("GET", repoPath));
+  // GET .../default-branch gives the configured default branch (Bitbucket 7.21 and DC 9.6 REST, REPO_READ).
+  const defaultBranch = memo(() => call("GET", `${repoPath}/default-branch`));
   const lower = memo(async () => branch("lower", await targetHead()));
   const upper = memo(async () => branch("upper", (await lower()).sha));
 
@@ -386,6 +397,8 @@ function session(ctx: Ctx) {
     pushes,
     repoInfo,
     openPrs,
+    repository,
+    defaultBranch,
     lower,
     upper,
     stacked,
@@ -590,6 +603,154 @@ async function g12(s: Session): Promise<Result> {
   };
 }
 
+// ---------- G13 to G17: reads for task branches, base branches, and several repositories (spec.md section 6.16) ----------
+type Ref = { id?: unknown; displayId?: unknown; type?: unknown };
+const SHA = /^[0-9a-f]{40}$/;
+const errs = (body: unknown) => (exceptionNames(body).length ? ` ${exceptionNames(body).join(",")}` : "");
+const isLast = (body: unknown) => (body as { isLastPage?: unknown } | null)?.isLastPage;
+const pageLine = (r: Call) => {
+  const last = isLast(r.body);
+  return `HTTP ${r.status}${errs(r.body)} count=${valuesOf(r.body).length} isLastPage=${typeof last === "boolean" ? last : "absent"}`;
+};
+const pageOk = (r: Call) =>
+  r.status === 200 && Array.isArray((r.body as { values?: unknown } | null)?.values) && typeof isLast(r.body) === "boolean";
+
+async function g13(s: Session): Promise<Result> {
+  const r = await s.defaultBranch();
+  const b = (r.body ?? {}) as Ref;
+  const heads = typeof b.id === "string" && b.id.startsWith("refs/heads/");
+  const ok = r.status === 200 && heads && typeof b.displayId === "string";
+  const old = await s.call("GET", `${s.repoPath}/branches/default`);
+  const o = (old.body ?? {}) as Ref;
+  return {
+    check: "G13",
+    status: ok ? "PASS" : "FAIL",
+    evidence: `default-branch: HTTP ${r.status}${errs(r.body)} keys=${keysOf(r.body).join(",") || "none"} id is refs/heads/=${heads} displayId=${typeof b.displayId === "string"} type=${enumLike(b.type)}; deprecated branches/default: HTTP ${old.status}${errs(old.body)} keys=${keysOf(old.body).join(",") || "none"} same id=${hash(o.id) !== null && hash(o.id) === hash(b.id)}`,
+  };
+}
+
+async function g14(s: Session): Promise<Result> {
+  const d = (await s.defaultBranch()).body as Ref | null;
+  const name = typeof d?.displayId === "string" ? d.displayId : null;
+  if (!name) return { check: "G14", status: "FAIL", evidence: "G13 gave no default branch name, so the filter read has no input." };
+  const list = (q: string) => s.call("GET", `${s.repoPath}/branches?${q}&limit=${BRANCH_LIMIT}`);
+  const all = await list("orderBy=MODIFICATION");
+  const values = valuesOf(all.body) as (Ref & { isDefault?: unknown; default?: unknown })[];
+  const types = [...new Set(values.map((v) => enumLike(v.type)))].sort().join(",") || "none";
+  const flagged = values.filter((v) => v.isDefault === true || v.default === true).length;
+  const hit = await list(`filterText=${encodeURIComponent(name)}&boostMatches=true&orderBy=MODIFICATION`);
+  const exactFirst = (valuesOf(hit.body)[0] as Ref | undefined)?.displayId === name;
+  const none = await list(`filterText=${encodeURIComponent(`${PREFIX}none-${s.stamp}`)}`);
+  const pass = pageOk(all) && pageOk(hit) && exactFirst && pageOk(none) && valuesOf(none.body).length === 0;
+  return {
+    check: "G14",
+    status: pass ? "PASS" : "FAIL",
+    evidence: `branches (orderBy MODIFICATION, limit ${BRANCH_LIMIT}): ${pageLine(all)} branch keys=${keyUnion(values)} types=${types} values with a default flag=${flagged}; filter on the default branch with boostMatches: ${pageLine(hit)} exact match first=${exactFirst}; filter without a match: ${pageLine(none)}`,
+  };
+}
+
+type RepoRow = { slug?: unknown; project?: { key?: unknown }; links?: { clone?: { name?: unknown }[] } };
+const isTestRepo = (s: Session, v: RepoRow) =>
+  v.slug === s.ctx.repo && typeof v.project?.key === "string" && v.project.key.toUpperCase() === s.ctx.project.toUpperCase();
+
+async function g15(s: Session): Promise<Result> {
+  const repo = await s.repository();
+  const name = (repo.body as { name?: unknown } | null)?.name;
+  if (repo.status !== 200 || typeof name !== "string")
+    return {
+      check: "G15",
+      status: "FAIL",
+      evidence: `repository GET: HTTP ${repo.status}${errs(repo.body)} name=${typeof name === "string"}`,
+    };
+  // GET /rest/api/1.0/repos filters by the permission of the token user (REPO_READ, REPO_WRITE, REPO_ADMIN). projectkey needs 8.0.
+  const level = async (permission: string) => {
+    const r = await s.call(
+      "GET",
+      `/rest/api/1.0/repos?permission=${permission}&projectkey=${encodeURIComponent(s.ctx.project)}&name=${encodeURIComponent(name)}&limit=${REPO_LIMIT}`,
+    );
+    const listed = (valuesOf(r.body) as RepoRow[]).some((v) => isTestRepo(s, v));
+    return { r, listed, line: `${permission}: ${pageLine(r)} test repository listed=${listed}` };
+  };
+  const read = await level("REPO_READ");
+  const write = await level("REPO_WRITE");
+  const admin = await level("REPO_ADMIN");
+  // The restriction search needs REPO_ADMIN (DC 9.6 REST). A plain user gets 401: record it.
+  const rr = await s.call(
+    "GET",
+    `/rest/branch-permissions/latest/projects/${encodeURIComponent(s.ctx.project)}/repos/${encodeURIComponent(s.ctx.repo)}/restrictions?limit=${REPO_LIMIT}`,
+  );
+  const rv = valuesOf(rr.body) as { type?: unknown; matcher?: { type?: { id?: unknown } } }[];
+  const rtypes = [...new Set(rv.map((v) => (typeof v.type === "string" && /^[a-z-]+$/.test(v.type) ? v.type : "<value>")))]
+    .sort()
+    .join(",");
+  const mtypes = [...new Set(rv.map((v) => enumLike(v.matcher?.type?.id)))].sort().join(",");
+  const pass = read.r.status === 200 && read.listed && write.r.status === 200 && admin.r.status === 200;
+  return {
+    check: "G15",
+    status: pass ? "PASS" : "FAIL",
+    evidence: `${read.line}; ${write.line}; ${admin.line}; restrictions: ${pageLine(rr)} restriction types=${rtypes || "none"} matcher types=${mtypes || "none"}`,
+  };
+}
+
+async function g16(s: Session): Promise<Result> {
+  let start = 0;
+  let pages = 0;
+  let count = 0;
+  let listed = false;
+  let last: unknown;
+  let status = 0;
+  let exc = "";
+  const rows: RepoRow[] = [];
+  while (pages < REPO_PAGES) {
+    const r = await s.call("GET", `/rest/api/1.0/repos?permission=REPO_WRITE&limit=${REPO_LIMIT}&start=${start}`);
+    pages++;
+    status = r.status;
+    exc = errs(r.body);
+    if (r.status !== 200) break;
+    const v = valuesOf(r.body) as RepoRow[];
+    count += v.length;
+    if (rows.length < REPO_LIMIT) rows.push(...v.slice(0, REPO_LIMIT - rows.length));
+    listed ||= v.some((x) => isTestRepo(s, x));
+    last = isLast(r.body);
+    const next = (r.body as { nextPageStart?: unknown } | null)?.nextPageStart;
+    if (last !== false || typeof next !== "number") break;
+    start = next;
+  }
+  const clones = [
+    ...new Set(
+      rows.flatMap((v) =>
+        (v.links?.clone ?? []).map((l) => (typeof l.name === "string" && /^[a-z0-9]+$/.test(l.name) ? l.name : "<name>")),
+      ),
+    ),
+  ]
+    .sort()
+    .join(",");
+  return {
+    check: "G16",
+    status: status === 200 && typeof last === "boolean" ? "PASS" : "FAIL",
+    evidence: `repositories with REPO_WRITE (limit ${REPO_LIMIT}, at most ${REPO_PAGES} pages): HTTP ${status}${exc} pages=${pages} count=${count} last isLastPage=${typeof last === "boolean" ? last : "absent"} repository keys=${keyUnion(rows)} project keys=${keyUnion(rows.map((v) => v.project))} clone link names=${clones || "none"}; INFO test repository listed=${listed}`,
+  };
+}
+
+async function g17(s: Session): Promise<Result> {
+  const list = await s.call("GET", `${s.repoPath}/pull-requests?state=MERGED&limit=1`);
+  if (list.status !== 200) return { check: "G17", status: "FAIL", evidence: `merged PRs: ${pageLine(list)}` };
+  const pr = valuesOf(list.body)[0] as { id?: unknown; properties?: { mergeCommit?: { id?: unknown } } } | undefined;
+  if (typeof pr?.id !== "number")
+    return { check: "G17", status: "SKIPPED", evidence: "The test repository has no merged PR. Merge one PR there and run again." };
+  const prop = pr.properties?.mergeCommit?.id;
+  const acts = await s.call("GET", `${s.prPath(pr.id)}/activities?limit=${OPEN_PR_LIMIT}`);
+  const merged = (valuesOf(acts.body) as { action?: unknown; commit?: { id?: unknown } }[]).find((a) => a.action === "MERGED");
+  const act = merged?.commit?.id;
+  const hasProp = typeof prop === "string" && SHA.test(prop);
+  const hasAct = typeof act === "string" && SHA.test(act);
+  return {
+    check: "G17",
+    status: acts.status !== 200 ? "FAIL" : hasProp || hasAct ? "PASS" : "INFO",
+    evidence: `newest merged PR: properties keys=${keysOf(pr.properties).join(",") || "none"} mergeCommit keys=${keysOf(pr.properties?.mergeCommit).join(",") || "none"} mergeCommit id=${hasProp}; activities: ${pageLine(acts)} MERGED activity=${!!merged} commit keys=${keysOf(merged?.commit).join(",") || "none"} commit id=${hasAct}; same commit=${hasProp && hasAct && prop === act}`,
+  };
+}
+
 const RUNNERS: Record<CheckId, (s: Session) => Promise<Result>> = {
   G1: g1,
   G2: g2,
@@ -600,6 +761,11 @@ const RUNNERS: Record<CheckId, (s: Session) => Promise<Result>> = {
   G7: g7,
   G9: g9,
   G12: g12,
+  G13: g13,
+  G14: g14,
+  G15: g15,
+  G16: g16,
+  G17: g17,
 };
 
 async function runGate(ctx: Ctx) {
@@ -678,6 +844,26 @@ function fakeServer(token: string, origin: string, buildCommit: string) {
       { path: { toString: "docs/new.md" }, srcPath: { toString: "docs/old.md" }, type: "MOVE" },
     ],
   };
+  // G13 to G17. The branch flag key follows the DC 9.6 RestBranch schema ("default"). The live key is a G14 fact.
+  const branchOf = (name: string) => ({
+    id: `refs/heads/${name}`,
+    displayId: name,
+    type: "BRANCH",
+    latestCommit: buildCommit,
+    latestChangeset: buildCommit,
+    default: name === "main",
+  });
+  const dryRepo = (slug: string, name: string) => ({
+    slug,
+    name,
+    project: { key: "DRY", name: "Dry" },
+    links: { clone: [{ name: "http", href: `http://127.0.0.1/ctx/scm/dry/${slug}.git` }] },
+  });
+  const merged = {
+    ...peer(90, "dry-other", "dry-user"),
+    state: "MERGED",
+    properties: { mergeCommit: { id: buildCommit, displayId: "x" } },
+  };
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -695,9 +881,45 @@ function fakeServer(token: string, origin: string, buildCommit: string) {
         builds.set(bm[1], (builds.get(bm[1]) ?? new Set()).add(b.key));
         return new Response(null, { status: 204 });
       }
+      if (req.method === "GET" && p === "/ctx/rest/api/1.0/repos") {
+        // G15 and G16: the token user may write to dry-repo and dry-lib, and administers nothing.
+        const q = url.searchParams;
+        const all = q.get("permission") === "REPO_ADMIN" ? [] : [dryRepo("dry-repo", "Dry Repo"), dryRepo("dry-lib", "Dry Lib")];
+        const values = all.filter(
+          (r) =>
+            (!q.get("name") || r.name.toLowerCase() === q.get("name")?.toLowerCase()) &&
+            (!q.get("projectkey") || r.project.key === q.get("projectkey")?.toUpperCase()),
+        );
+        return json(200, { size: values.length, limit: 100, start: 0, isLastPage: true, values });
+      }
+      if (req.method === "GET" && p === "/ctx/rest/branch-permissions/latest/projects/DRY/repos/dry-repo/restrictions")
+        return json(401, { errors: [{ exceptionName: "com.atlassian.bitbucket.AuthorisationException" }] });
+      if (req.method === "GET" && (p === `${repoPath}/default-branch` || p === `${repoPath}/branches/default`))
+        return json(200, branchOf("main"));
+      if (req.method === "GET" && p === `${repoPath}/branches`) {
+        const f = url.searchParams.get("filterText")?.toLowerCase() ?? "";
+        const names = ["feature/101", "main", "feature/main-docs"].filter((n) => n.includes(f));
+        if (url.searchParams.get("boostMatches") === "true") names.sort((a, b) => Number(b === f) - Number(a === f));
+        return json(200, { size: names.length, limit: 25, start: 0, isLastPage: true, values: names.map(branchOf) });
+      }
+      if (req.method === "GET" && p === `${repoPath}/pull-requests` && url.searchParams.get("state") === "MERGED")
+        return json(200, { size: 1, limit: 1, start: 0, isLastPage: false, nextPageStart: 1, values: [merged] });
+      if (req.method === "GET" && p === `${repoPath}/pull-requests/90/activities`)
+        return json(200, {
+          size: 2,
+          limit: 50,
+          start: 0,
+          isLastPage: true,
+          values: [
+            { id: 2, action: "MERGED", commit: { id: buildCommit, displayId: buildCommit.slice(0, 11) } },
+            { id: 1, action: "OPENED" },
+          ],
+        });
       if (req.method === "GET" && p === repoPath)
         return json(200, {
           slug: "dry-repo",
+          name: "Dry Repo",
+          project: { key: "DRY" },
           links: {
             clone: [
               { name: "http", href: `${url.origin}/ctx/scm/dry/dry-repo.git` },
@@ -821,7 +1043,7 @@ if (DRY) {
   const writes = cleanupMode || selected.some((c) => !READ_ONLY.has(c));
   if (writes && !flags.has("--authorize-writes"))
     usage(
-      "Refused: G1 to G7 create branches and pull requests and delete a branch. Add --authorize-writes for your test repository, or select only G9,G12.",
+      "Refused: G1 to G7 create branches and pull requests and delete a branch. Add --authorize-writes for your test repository, or select only the read checks G9, G12, and G13 to G17.",
     );
   const repo = parseRepoUrl(opt["--repo"]);
   const target = opt["--target"];

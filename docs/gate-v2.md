@@ -1,6 +1,6 @@
 # Gate v2: CLI and Bitbucket facts for review v2 and task building
 
-This gate records facts that review v2 and the task builder need (docs/plans/review-v2/tasks.md, WP-G0). You run each check on your own machine. B17 to B20 use your Claude Code login. G1 to G7 write to a Bitbucket test repository. G9 and G12 only read from it.
+This gate records facts that review v2 and the task builder need (docs/plans/review-v2/tasks.md, WP-G0). You run each check on your own machine. B17 to B20 use your Claude Code login. G1 to G7 write to a Bitbucket test repository. G9, G12, and G13 to G17 only read from it.
 
 | Checks | Run before | Script |
 |---|---|---|
@@ -11,6 +11,9 @@ This gate records facts that review v2 and the task builder need (docs/plans/rev
 | G4 to G6 | WP-B8 | `scripts/gate/bitbucket-write.ts` |
 | G7 | No fixed point. INFO only. | `scripts/gate/bitbucket-write.ts` |
 | G9, G12 | WP-PN uses the Bitbucket peer reads. Read only. | `scripts/gate/bitbucket-write.ts` |
+| G13, G14 | WP-BR1 merges. Read only. | `scripts/gate/bitbucket-write.ts` |
+| G15 | WP-MR1. Read only. | `scripts/gate/bitbucket-write.ts` |
+| G16, G17 | WP-MR2. Read only. | `scripts/gate/bitbucket-write.ts` |
 
 ## Record the results
 
@@ -123,3 +126,30 @@ G9 and G12 send only GET requests (tasks.md WP-PG, spec.md section 2.8). They ne
 | G12 | Takes the newest PR of the G9 list where the token user (`X-AUSERNAME`) is not the author, a reviewer, or a participant. Reads its changes: `GET .../pull-requests/{id}/changes?limit=50`. Reads the changes of one own PR of the list the same way, if one exists. | HTTP 200, and the page parses with the app schema `page(change)` (path, srcPath, type, isLastPage). The own PR read, if any, must pass the same way. SKIPPED: the list has no PR without you. Fix the setup and run again. |
 
 Record G9 and G12 in their "Review v2" rows of integration-check.md. A FAIL of G9 or G12 means that the PR context lists only PRs from your inbox (spec.md section 2.11).
+
+## Part G, read only: G13 to G17 for branches and several repositories
+
+G13 to G17 send only GET requests (tasks.md WP-GB, spec.md section 6.16). They need no `--authorize-writes` and no `--target`. They need `--repo` with your test repository. Token, origin rule, and output rules are the same as for G1 to G7. A token with Repository read is enough. A token with Repository write makes G15 and G16 show the write facts that the app needs.
+
+### Before you run
+
+1. The test repository must have at least one merged PR for G17. Without one, G17 is SKIPPED.
+2. Use your normal token, not an admin token. G15 must record what a plain user's token gets from the restriction search.
+3. Run the dry run: `bun scripts/gate/bitbucket-write.ts --dry-run --only G13,G14,G15,G16,G17`. It must print `dry run: PASS`.
+
+### Run
+
+- `bun scripts/gate/bitbucket-write.ts --repo <URL> --only G13,G14,G15,G16,G17`
+- The console and `.gate0/bitbucket-write/result.g13-g14-g15-g16-g17.json` hold only status codes, counts, booleans, key names, enum-like values, and restriction type names. They never hold a branch name, a repository name, a project key, or a host.
+
+### What each check does
+
+| Check | What it does | PASS |
+|---|---|---|
+| G13 | Reads `GET /rest/api/1.0/projects/{p}/repos/{r}/default-branch`. Also reads the deprecated `GET .../branches/default` for a comparison. | HTTP 200 with an `id` that starts with `refs/heads/` and a string `displayId`. Record whether the deprecated read gives the same id. |
+| G14 | Reads `GET .../branches?orderBy=MODIFICATION&limit=25`, then the same with `filterText=<default branch>&boostMatches=true`, then a filter that matches nothing. Records the branch keys, the ref types, and how many values carry a default flag. | Each read gives HTTP 200 with `values` and `isLastPage`. The filtered read has the exact match first. The no-match read has 0 values. Record the key name of the default flag (`isDefault` or `default`). |
+| G15 | Reads the repository name, then `GET /rest/api/1.0/repos?permission=<level>&projectkey=<KEY>&name=<name>&limit=100` for REPO_READ, REPO_WRITE, and REPO_ADMIN. Reads `GET /rest/branch-permissions/latest/projects/{p}/repos/{r}/restrictions?limit=100`. | The three permission reads give HTTP 200, and REPO_READ lists the test repository. Record "listed" for REPO_WRITE and REPO_ADMIN. Record the restriction status: the docs say that the search needs REPO_ADMIN, so a plain token should get 401. With 200, record the restriction types and matcher types. |
+| G16 | Reads `GET /rest/api/1.0/repos?permission=REPO_WRITE&limit=100&start=<n>`, at most 10 pages. | HTTP 200 on each page and a boolean `isLastPage`. Record the page count, the repository count, the key names, the clone link names, and whether the test repository is listed. |
+| G17 | Reads the newest merged PR (`GET .../pull-requests?state=MERGED&limit=1`) and its activities (`GET .../pull-requests/{id}/activities?limit=50`). | PASS: `properties.mergeCommit.id` or the commit of the MERGED activity is a 40-character commit ID. INFO: neither field is there, so the app uses the fallback sentence of spec.md section 6.16.8. SKIPPED: no merged PR. |
+
+Record G13 to G17 in their "Review v2" rows of integration-check.md. A FAIL of G13 makes the app use `git ls-remote --symref` for the default branch. A FAIL of G14 blocks the base picker of WP-BR2.

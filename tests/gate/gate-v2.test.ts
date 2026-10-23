@@ -64,14 +64,14 @@ describe("claude-checks.ts B17 to B20", () => {
   });
 });
 
-describe("bitbucket-write.ts G1 to G7, G9, and G12", () => {
+describe("bitbucket-write.ts G1 to G7, G9, G12, and G13 to G17", () => {
   test("a dry run passes all checks against the loopback fake and prints no host", () => {
     const r = run(BITBUCKET_WRITE, ["--dry-run"], GIT_DIR);
     expect(r.err).toBe("");
     expect(r.code).toBe(0);
     for (const id of ["G1", "G2", "G3", "G4", "G5", "G6"]) expect(r.out).toContain(`PASS    ${id} `);
     expect(r.out).toContain("INFO    G7 ");
-    for (const id of ["G9", "G12"]) expect(r.out).toContain(`PASS    ${id} `);
+    for (const id of ["G9", "G12", "G13", "G14", "G15", "G16", "G17"]) expect(r.out).toContain(`PASS    ${id} `);
     expect(r.out).toContain("(stale info)");
     const g3 = r.out.split("\n").find((l) => l.startsWith("PASS    G3 ")) ?? "";
     expect(g3).toContain("of the new gate commit: HTTP 200 keys=failed,inProgress,successful counts=0/0/0");
@@ -110,8 +110,33 @@ describe("bitbucket-write.ts G1 to G7, G9, and G12", () => {
     expect(r.out).toContain("dry run: PASS");
   }, 120_000);
 
+  test("a dry run of the read checks G13 to G17 passes and prints no branch, repository, or project name", () => {
+    const r = run(BITBUCKET_WRITE, ["--dry-run", "G13", "G14", "--only", "g15,g16,g17"], GIT_DIR);
+    expect(r.err).toBe("");
+    expect(r.code).toBe(0);
+    const line = (id: string) => r.out.split("\n").find((l) => l.startsWith(`PASS    ${id} `)) ?? "";
+    expect(line("G13")).toContain("default-branch: HTTP 200");
+    expect(line("G13")).toContain("id is refs/heads/=true displayId=true type=BRANCH");
+    expect(line("G13")).toContain("same id=true");
+    expect(line("G14")).toContain("exact match first=true");
+    expect(line("G14")).toContain("filter without a match: HTTP 200 count=0");
+    expect(line("G15")).toContain("REPO_WRITE: HTTP 200 count=1 isLastPage=true test repository listed=true");
+    expect(line("G15")).toContain("REPO_ADMIN: HTTP 200 count=0 isLastPage=true test repository listed=false");
+    expect(line("G15")).toContain("restrictions: HTTP 401 com.atlassian.bitbucket.AuthorisationException");
+    expect(line("G16")).toContain("pages=1 count=2 last isLastPage=true");
+    expect(line("G16")).toContain("clone link names=http");
+    expect(line("G17")).toContain("mergeCommit id=true");
+    expect(line("G17")).toContain("MERGED activity=true commit keys=displayId,id commit id=true; same commit=true");
+    expect(r.out).not.toContain("G1 ");
+    for (const secret of ["Dry Repo", "dry-lib", "dry-repo", "feature/", "refs/heads/main", "DRY", "127.0.0.1", tmpdir()])
+      expect(r.out).not.toContain(secret);
+    expect(r.out).toContain("dry run: PASS");
+  }, 120_000);
+
   test.each([
     [[], "--repo is required"],
+    [["--repo", REPO, "--only", "G13,G1"], "Refused: G1 to G7 create branches"],
+    [["--only", "G13,G14"], "--repo is required"],
     [["--repo", REPO, "--target", "main"], "Refused: G1 to G7 create branches"],
     [["--repo", REPO, "--only", "G9,G1"], "Refused: G1 to G7 create branches"],
     [["--only", "G9,G12"], "--repo is required"],

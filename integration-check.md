@@ -399,3 +399,8 @@ Run: `bun scripts/gate/claude-checks.ts --only B17,B18,B19,B20`. Bitbucket: `bun
 | G7. Task chip for a PR with a Jira key in its title | NOT RUN | |
 | G9. Open-PR list of the test repository (limit 50): id, title, author, state, fromRef, toRef, updatedDate, isLastPage | NOT RUN | `bun scripts/gate/bitbucket-write.ts --repo <URL> --only G9,G12` (read only). |
 | G12. Changes of an open PR where the token user is not the author, a reviewer, or a participant: path, srcPath, type, isLastPage | NOT RUN | The same run as G9. PASS needs the shape of listChanges of an own PR. |
+| G13. Default branch: GET .../default-branch (id, displayId), compared with the deprecated .../branches/default | NOT RUN | `bun scripts/gate/bitbucket-write.ts --repo <URL> --only G13,G14,G15,G16,G17` (read only). |
+| G14. Branch search: GET .../branches with orderBy, filterText, boostMatches; the default flag key | NOT RUN | The same run as G13. |
+| G15. Repository search by permission (REPO_READ, REPO_WRITE, REPO_ADMIN with projectkey and name) and the restriction search for a plain token | NOT RUN | The same run as G13. Use a token without admin rights. |
+| G16. Repositories with REPO_WRITE: paging, keys, clone link names | NOT RUN | The same run as G13. |
+| G17. Merge commit of a merged PR: properties.mergeCommit and the MERGED activity commit | NOT RUN | The same run as G13. Needs one merged PR in the test repository. |
