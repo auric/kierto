@@ -3,12 +3,12 @@
 
 // Fake `claude` CLI for tests. It replays a recorded stream-json fixture and never calls a model.
 // Usage: bun tests/support/fake-claude.ts <scenario.json> <claude arguments>
-import { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type FakeScenario = {
-  // Each call appends one JSON line: { argv, env, cwd, stdin, pid }. A hang run adds { childPid }.
+  // Each call appends one JSON line: { argv, env, cwd, stdin, pid, context }. A hang run adds { childPid }.
   record: string;
   version?: string;
   // The `auth status` JSON. projectsDirectory also receives the per-cwd session folder.
@@ -52,10 +52,14 @@ export type FakeScenario = {
   cites?: unknown;
   // Fields that replace the scenario fields for a run with that schema, for example a usage limit or a hang in the verify phase only.
   bySchema?: Partial<Record<SchemaKind, Partial<Omit<FakeScenario, "record" | "auth" | "bySchema">>>>;
+  // docs/plans/review-v2/spec.md section 6.7, own review: the structured output of a review run. Absent: the fixture result.
+  review?: unknown;
+  // Fields for the Nth run of one call key (callKey), after bySchema. The last entry repeats. The record file counts the earlier runs.
+  seq?: Record<string, Partial<Omit<FakeScenario, "record" | "auth" | "bySchema" | "seq">>[]>;
 };
 
-export type SchemaKind = "verify" | "explain" | "discuss" | "interview" | "spec" | "implement";
-// The review v2 run kind that a --json-schema shape names, else null.
+export type SchemaKind = "verify" | "explain" | "discuss" | "interview" | "spec" | "implement" | "review";
+// The review v2 run kind that a --json-schema shape names, else null. A re-review has its own key (earlier), so it is no review.
 export const schemaKind = (props: Record<string, unknown>): SchemaKind | null =>
   props.verdicts !== undefined
     ? "verify"
@@ -69,7 +73,18 @@ export const schemaKind = (props: Record<string, unknown>): SchemaKind | null =>
             ? "spec"
             : props.done !== undefined && props.specChange !== undefined
               ? "implement"
-              : null;
+              : props.findings !== undefined && props.earlier === undefined
+                ? "review"
+                : null;
+
+// The key of a run for seq: the schema kind, and for an implement run "implement:<mode>" from the "- Mode:" line of its stdin.
+export function callKey(argv: string[], stdin: string): string | null {
+  const at = argv.indexOf("--json-schema");
+  if (!argv.includes("-p") || at < 0) return null;
+  const kind = schemaKind(JSON.parse(argv[at + 1] ?? "null")?.properties ?? {});
+  if (kind !== "implement") return kind;
+  return `implement:${/^- Mode: (\w+)$/m.exec(stdin)?.[1] ?? "?"}`;
+}
 
 // Each complete record ends with "\n". The last part can be a record that the fake still writes, so it is dropped.
 export function readRecords<T = Record<string, unknown>>(path: string): T[] {
@@ -288,11 +303,28 @@ async function main() {
   const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
   const props = JSON.parse(flag("--json-schema") ?? "null")?.properties ?? {};
   const kind = schemaKind(props);
-  const s: FakeScenario = { ...base, ...(kind ? base.bySchema?.[kind] : undefined) };
-  const record = (x: Record<string, unknown>) => appendFileSync(s.record, `${JSON.stringify(x)}\n`);
   const run = args.includes("-p");
   const stdin = run ? await Bun.stdin.text() : "";
-  record({ argv: args, env: process.env, cwd: process.cwd(), stdin, pid: process.pid });
+  const key = callKey(args, stdin);
+  const list = key ? base.seq?.[key] : undefined;
+  const earlier = list
+    ? readRecords<{ argv?: string[]; stdin?: string }>(base.record).filter(
+        (r) => Array.isArray(r.argv) && callKey(r.argv, r.stdin ?? "") === key,
+      ).length
+    : 0;
+  const s: FakeScenario = {
+    ...base,
+    ...(kind ? base.bySchema?.[kind] : undefined),
+    ...(list?.length ? list[Math.min(earlier, list.length - 1)] : undefined),
+  };
+  const record = (x: Record<string, unknown>) => appendFileSync(s.record, `${JSON.stringify(x)}\n`);
+  // The Markdown files of ./context at the start, by path under it. A run folder goes away after its run.
+  const context: Record<string, string> = {};
+  const ctx = join(process.cwd(), "context");
+  if (run && existsSync(ctx))
+    for (const f of readdirSync(ctx, { recursive: true, encoding: "utf8" }))
+      if (f.endsWith(".md") && statSync(join(ctx, f)).isFile()) context[f.replaceAll("\\", "/")] = readFileSync(join(ctx, f), "utf8");
+  record({ argv: args, env: process.env, cwd: process.cwd(), stdin, pid: process.pid, context });
 
   if (args[0] === "--version") {
     console.log(s.version ?? "2.1.295 (Claude Code)");
@@ -358,6 +390,7 @@ async function main() {
     if (kind === "interview") return s.interview ?? echoInterview(stdin);
     if (kind === "spec") return s.spec ?? echoSpec();
     if (kind === "implement") return s.implement ?? echoImplement();
+    if (kind === "review") return s.review;
     if (props.replies !== undefined) return s.replies ?? echoReplies(stdin, { notes: s.notes, cites: s.cites });
     if (props.earlier !== undefined) return s.rereview ?? echoRereview(stdin, fixture);
     if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);

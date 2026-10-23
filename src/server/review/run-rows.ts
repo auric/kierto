@@ -242,6 +242,9 @@ export const SQL = {
     RETURNING id`,
   taskHeads: `UPDATE review_run SET source_head = $head, target_head = $head, merge_base = $head, range_base = $head, fetch_via = 'branch'
     WHERE id = $id`,
+  // The own review of a task part: head is the part commit, base the commit that the part starts from.
+  taskReviewHeads: `UPDATE review_run SET source_head = $head, target_head = $base, merge_base = $base, range_base = $base,
+      fetch_via = 'branch' WHERE id = $id`,
   // A session run uses no profile and no --model or --effort flag.
   sessionInsert: `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, started_at, effort, consult_json)
     VALUES ($pr, 'session', '', '', $key, $source, $target, 'running', $now, 'default', $consult) RETURNING id`,

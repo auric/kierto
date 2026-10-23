@@ -92,6 +92,8 @@ export type StepMode = (typeof STEP_MODES)[number];
 export const STEP_TIME_MS = 20 * 60_000;
 export const STEP_TURNS: Record<StepMode, number> = { tests: 60, implement: 80, fix: 40 };
 export const PART_TIME_MIN = 120;
+// spec.md section 6.7, Budgets: "Continue with 60 more min?".
+export const MORE_TIME_MIN = 60;
 export const OUTPUT_TAIL = 64 * 1024;
 export const FAILURE_TAIL = 32 * 1024;
 

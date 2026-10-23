@@ -11,6 +11,7 @@ import {
   type RepoTaskSettingsDto,
   type RunConflict,
   repoTaskSettingsInput,
+  specChangeInput,
   type TaskConflict,
   taskAnswersInput,
   taskCreateInput,
@@ -18,11 +19,13 @@ import {
   taskListInput,
   taskPlanInput,
   taskSizeInput,
+  taskVersionInput,
 } from "../../shared/dto";
 import type { Live } from "../live";
 import type { ReviewJobs } from "../review/jobs";
 import type { Settings } from "../settings";
-import { createTaskService, repoSettings, saveRepoSettings, type TaskResult } from "./tasks";
+import { createLoop } from "./loop";
+import { createTaskService, repoSettings, saveRepoSettings, type TaskResult, taskRow } from "./tasks";
 
 const unconfigured = { error: "Configure the Bitbucket URL and token first." } satisfies ApiError;
 const NAME = /^[A-Za-z0-9~_][A-Za-z0-9._~-]{0,254}$/;
@@ -30,6 +33,13 @@ const NAME = /^[A-Za-z0-9~_][A-Za-z0-9._~-]{0,254}$/;
 const idParam = validator("param", (v: Record<string, string>, c) => {
   const id = Number(v.id);
   return Number.isSafeInteger(id) && id > 0 ? { id } : c.json<ApiError>({ error: "Invalid task ID." }, 400);
+});
+const stepParam = validator("param", (v: Record<string, string>, c) => {
+  const id = Number(v.id);
+  const step = Number(v.step);
+  return [id, step].every((n) => Number.isSafeInteger(n) && n > 0)
+    ? { id, step }
+    : c.json<ApiError>({ error: "Invalid task or step ID." }, 400);
 });
 const repoParam = validator("param", (v: Record<string, string>, c) =>
   NAME.test(v.project ?? "") && NAME.test(v.repo ?? "")
@@ -57,6 +67,8 @@ function answer(c: Context, r: TaskResult) {
 export function createTaskRoutes(opts: { review: ReviewJobs; settings: Settings; live: Live }) {
   const { review } = opts;
   const tasks = createTaskService({ review, settings: opts.settings, live: opts.live });
+  const loop = createLoop({ review, settings: opts.settings, live: opts.live });
+  review.onStop(() => loop.shutdown());
   return new Hono()
     .post("/tasks", body(taskCreateInput, "Give a project, a repository, and a Jira key such as ABC-12."), async (c) =>
       answer(c, await tasks.create(c.req.valid("json"))),
@@ -79,7 +91,11 @@ export function createTaskRoutes(opts: { review: ReviewJobs; settings: Settings;
     })
     .post("/tasks/:id/answers", idParam, body(taskAnswersInput, "Invalid answers."), (c) => {
       const db = review.open();
-      return db ? answer(c, tasks.answers(db, c.req.valid("param").id, c.req.valid("json"))) : c.json(unconfigured, 409);
+      if (!db) return c.json(unconfigured, 409);
+      const { id } = c.req.valid("param");
+      // A question of a build step waits in state implementing. The interview asks in state interview.
+      const building = taskRow(db, id)?.state === "implementing";
+      return answer(c, building ? loop.answer(db, id, c.req.valid("json")) : tasks.answers(db, id, c.req.valid("json")));
     })
     .put("/tasks/:id/docs", idParam, body(taskDocInput, "Invalid plan file."), (c) => {
       const db = review.open();
@@ -87,8 +103,40 @@ export function createTaskRoutes(opts: { review: ReviewJobs; settings: Settings;
     })
     .post("/tasks/:id/plan", idParam, body(taskPlanInput, "Invalid plan approval."), (c) => {
       const db = review.open();
-      return db ? answer(c, tasks.plan(db, c.req.valid("param").id, c.req.valid("json"))) : c.json(unconfigured, 409);
+      if (!db) return c.json(unconfigured, 409);
+      const { id } = c.req.valid("param");
+      const r = tasks.plan(db, id, c.req.valid("json"));
+      // spec.md section 6.2: a small plan approval starts part 1.
+      if (r.status === 200 && "task" in r && r.task.state === "implementing") loop.build(db, id);
+      return answer(c, r);
     })
+    .post("/tasks/:id/pause", idParam, body(taskVersionInput, "Give the task version."), (c) => {
+      const db = review.open();
+      return db ? answer(c, loop.pause(db, c.req.valid("param").id, c.req.valid("json"))) : c.json(unconfigured, 409);
+    })
+    .post("/tasks/:id/stop", idParam, body(taskVersionInput, "Give the task version."), (c) => {
+      const db = review.open();
+      return db ? answer(c, loop.stop(db, c.req.valid("param").id, c.req.valid("json"))) : c.json(unconfigured, 409);
+    })
+    .post("/tasks/:id/resume", idParam, body(taskVersionInput, "Give the task version."), (c) => {
+      const db = review.open();
+      if (!db) return c.json(unconfigured, 409);
+      const { id } = c.req.valid("param");
+      const t = taskRow(db, id);
+      const before = t?.state === "stopped" && t.stopped_from !== "implementing";
+      return answer(c, before ? tasks.resume(db, id, c.req.valid("json")) : loop.resume(db, id, c.req.valid("json")));
+    })
+    .post(
+      "/tasks/:id/spec-change/:step",
+      stepParam,
+      body(specChangeInput, "Give the task version and accept true or false."),
+      async (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const { id, step } = c.req.valid("param");
+        return answer(c, await loop.specChange(db, id, step, c.req.valid("json")));
+      },
+    )
     .post("/tasks/:id/size", idParam, body(taskSizeInput, "Pick small, medium, or large."), (c) => {
       const db = review.open();
       return db ? answer(c, tasks.size(db, c.req.valid("param").id, c.req.valid("json"))) : c.json(unconfigured, 409);

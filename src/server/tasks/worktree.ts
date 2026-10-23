@@ -256,6 +256,35 @@ export async function status(wt: Worktree): Promise<StatusEntry[]> {
   return out.filter((e) => e.path);
 }
 
+// A step never needs to write a file that git ignores: `git add -A` leaves it out of the commit, so no review sees it, but a check
+// command can still load it. The cap bounds the memory of the two listings around one step.
+export const MAX_IGNORED = 200_000;
+// The ignored files under repo/ by path, with their kind, size, and mtime.
+export type IgnoredSnapshot = Map<string, string>;
+
+// git-ls-files(1): --others --ignored --exclude-standard lists each ignored file, also inside an ignored folder.
+export async function ignoredSnapshot(wt: Worktree): Promise<IgnoredSnapshot> {
+  const list = (await wtGit(wt, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"])).split("\0").filter(Boolean);
+  if (list.length > MAX_IGNORED)
+    throw new WorkspaceError(`The worktree has more than ${MAX_IGNORED} files that git ignores, so the app cannot check them.`);
+  const out: IgnoredSnapshot = new Map();
+  for (const p of list) {
+    const st = lstatSync(join(wt.repo, p), { throwIfNoEntry: false });
+    if (st) out.set(p, `${st.isSymbolicLink() ? "link" : "file"} ${st.size} ${st.mtimeMs}`);
+  }
+  return out;
+}
+
+// The ignored paths that are new, changed, or gone in after.
+export function ignoredChanges(before: IgnoredSnapshot, after: IgnoredSnapshot): string[] {
+  const out = [...after].filter(([p, v]) => before.get(p) !== v).map(([p]) => p);
+  for (const p of before.keys()) if (!after.has(p)) out.push(p);
+  return out.sort();
+}
+
+// The setup commands ran in this worktree. The mark lives in the git folder of the worktree, so a new worktree has none.
+export const setupMark = (wt: Worktree) => join(wt.admin, "rl-setup-done");
+
 // The paths of p and its parent folders inside repo that are links (symbolic links, and junctions on Windows).
 export function linksOn(repo: string, p: string): string[] {
   const parts = p.replace(/\/+$/, "").split("/");

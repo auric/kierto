@@ -556,12 +556,34 @@ export async function prepareTaskWorkspace(input: TaskWorkspaceInput): Promise<W
     return (await g(["rev-parse", "--verify", "--quiet", `${target}^{commit}`])).trim();
   });
   if (!HEAD.test(head)) throw new WorkspaceError(`The branch ${input.branch} has no commit.`);
+  const at = { sourceHead: head, targetHead: head, mergeBase: head, rangeBase: head, diff: "" };
+  return taskSnapshot({ dataDir, cache, env, runId, task: input.task, files, attachments, long: input.long }, at);
+}
+
+// The run folder of a task run at the commit at.sourceHead of the cache: a sanitized detached worktree and the context files, in the
+// layout of prepareWorkspace.
+async function taskSnapshot(
+  i: {
+    dataDir: string;
+    cache: string;
+    env: Record<string, string>;
+    runId: string;
+    task: number;
+    files: ContextFile[];
+    attachments: AttachmentFile[];
+    long?: LongGit;
+  },
+  at: Pick<Workspace, "sourceHead" | "targetHead" | "mergeBase" | "rangeBase" | "diff">,
+): Promise<Workspace> {
+  const { cache, env } = i;
+  const g = (args: string[]) => git([`--git-dir=${cache}`, ...args], { env });
+  const head = at.sourceHead;
   const keep = async (ref = "base") => {
-    const full = `refs/rl/task/${input.task}/${ref}`;
+    const full = `refs/rl/task/${i.task}/${ref}`;
     if (!REF.test(full)) throw new WorkspaceError(`Invalid ref: ${full}`);
     await locked(cache, () => g(["update-ref", full, head]));
   };
-  const run = join(dataDir, "runs", runId);
+  const run = join(i.dataDir, "runs", i.runId);
   const work = join(run, "work");
   const repo = join(work, "repo");
   const context = join(work, "context");
@@ -578,20 +600,55 @@ export async function prepareTaskWorkspace(input: TaskWorkspaceInput): Promise<W
   try {
     mkdirSync(context, { recursive: true });
     mkdirSync(app, { recursive: true });
-    await git([`--git-dir=${cache}`, "worktree", "add", "--detach", repo, head], { env, ...input.long });
+    await git([`--git-dir=${cache}`, "worktree", "add", "--detach", repo, head], { env, ...i.long });
     const links = (await g(["ls-tree", "-r", "-z", "--full-tree", head]))
       .split("\0")
       .filter((r) => r.startsWith("120000 "))
       .map((r) => r.slice(r.indexOf("\t") + 1));
     await sanitize(repo, links);
-    for (const f of files) writeFileSync(join(context, f.name), UNTRUSTED + f.text);
-    if (attachments.length) await copyAttachments(join(dataDir, "attachments"), join(context, "attachments"), attachments);
-    const at = { sourceHead: head, targetHead: head, mergeBase: head, rangeBase: head };
-    return { run, work, repo, context, app, cache, ...at, via: "branch" as const, diff: "", keep, remove };
+    for (const f of i.files) writeFileSync(join(context, f.name), UNTRUSTED + f.text);
+    if (i.attachments.length) await copyAttachments(join(i.dataDir, "attachments"), join(context, "attachments"), i.attachments);
+    return { run, work, repo, context, app, cache, ...at, via: "branch" as const, keep, remove };
   } catch (e) {
     await remove();
     throw e;
   }
+}
+
+export type CommitWorkspaceInput = {
+  dataDir: string;
+  runId: string;
+  project: string;
+  repo: string;
+  task: number;
+  // The change base..head: two commits of the cache, such as the start and the head of a task part.
+  base: string;
+  head: string;
+  // Names match FILE_NAME. pr.md is allowed: the snapshot has no PR text of its own.
+  files?: ContextFile[];
+  long?: LongGit;
+};
+
+// docs/plans/review-v2/spec.md section 6.7, own review: a sanitized snapshot of a part commit with the diff of base..head. Both commits
+// are already in the cache (the task worktree commits into it), so nothing is fetched.
+export async function prepareCommitWorkspace(input: CommitWorkspaceInput): Promise<Workspace> {
+  const runId = name(input.runId, "run ID");
+  if (!Number.isSafeInteger(input.task) || input.task < 1) throw new WorkspaceError(`Invalid task ID: ${input.task}`);
+  for (const c of [input.base, input.head]) if (!HEAD.test(c)) throw new WorkspaceError(`Invalid commit hash: ${c}`);
+  const files = input.files ?? [];
+  for (const f of files) if (!FILE_NAME.test(f.name)) throw new WorkspaceError(`Invalid context file name: ${f.name}`);
+  const dataDir = longData(input.dataDir);
+  const cache = cachePath(dataDir, { project: input.project, repo: input.repo, id: input.task });
+  if (!existsSync(join(cache, "HEAD"))) throw new WorkspaceError(`The app has no copy of ${input.project}/${input.repo} yet.`);
+  const { env } = gitSetup(dataDir);
+  const g = (args: string[]) => git([`--git-dir=${cache}`, ...args], { env });
+  for (const c of [input.base, input.head]) {
+    const found = await g(["rev-parse", "--verify", "--quiet", `${c}^{commit}`]).catch(() => "");
+    if (found.trim() !== c) throw new WorkspaceError(`The commit ${c.slice(0, 12)} is not in the app copy of the repository.`);
+  }
+  const diff = await g(["diff", ...diffArgs, input.base, input.head]);
+  const at = { sourceHead: input.head, targetHead: input.base, mergeBase: input.base, rangeBase: input.base, diff };
+  return taskSnapshot({ dataDir, cache, env, runId, task: input.task, files, attachments: [], long: input.long }, at);
 }
 
 // Deletes every run folder and prunes the worktree entries of every cache. Call it only when no run is active.

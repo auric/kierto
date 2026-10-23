@@ -1066,8 +1066,8 @@ export type InstructionPreviewDto = {
 export type RunDetail = { run: RunDto; events: RunEvent[]; items: ReviewItemDto[] };
 
 // POST /api/prs/:id/review gives 409 with this body while another review runs (A14).
-// pr null: a task run holds the slot.
-export type RunConflict = ApiError & { running: { run: number; pr: number | null; kind: RunKind } };
+// pr null: a task run holds the slot, and task names its task (POST /api/tasks/:id/pause frees the slot after the step).
+export type RunConflict = ApiError & { running: { run: number; pr: number | null; kind: RunKind; task?: number } };
 
 // sure: false when the source has a precedence that the runner docs do not state.
 export type SettingValue = { value: string; sure: boolean };

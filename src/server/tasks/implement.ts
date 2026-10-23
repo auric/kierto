@@ -15,6 +15,7 @@ import {
   STEP_TIME_MS,
   STEP_TURNS,
   type StepDetail,
+  type StepKind,
   type StepMode,
   type StepState,
   stepDetail,
@@ -32,8 +33,12 @@ import {
   commitStep,
   gitLinkOk,
   headOf,
+  type IgnoredSnapshot,
+  ignoredChanges,
+  ignoredSnapshot,
   linksOn,
   patchFile,
+  removeWorktree,
   resetWorktree,
   restoreGitLink,
   savePatch,
@@ -69,8 +74,8 @@ export const ciPath = (path: string) => {
 
 export type PathProblem = { path: string; reason: string };
 // changed: the paths of `git status` in repo/. links: the links among them and their parent folders. outside: the files in the part
-// folder outside repo/ that the app did not write.
-export type PathCheck = { changed: string[]; problems: PathProblem[]; links: string[]; outside: string[] };
+// folder outside repo/ that the app did not write. ignored: the files that git ignores and the step created, changed, or deleted.
+export type PathCheck = { changed: string[]; problems: PathProblem[]; links: string[]; outside: string[]; ignored: string[] };
 
 // The files in the part folder outside repo/ that differ from the context files of the app. A link counts too.
 function outsideRepo(wt: Worktree, context: ReadonlyMap<string, string>): string[] {
@@ -96,8 +101,13 @@ function outsideRepo(wt: Worktree, context: ReadonlyMap<string, string>): string
 // spec.md section 6.8: after each Claude step, each changed path passes deniedPath (edits.ts) and the sparse patterns, and it is no
 // link. A nested repository, a changed repo/.git file, and a file outside repo/ fail too. A CI configuration path passes only when
 // allow (the Files of the step's task) lists it. context: the files that the app wrote to context/, by path under context/. Absent:
-// no check outside repo/, as before a commit.
-export async function pathCheck(wt: Worktree, o: { allow: readonly string[]; context?: ReadonlyMap<string, string> }): Promise<PathCheck> {
+// no check outside repo/, as before a commit. ignored: the ignored files before the step. A Claude step may change none of them: the
+// allow-list is empty, because a commit never holds an ignored file. The checks write build outputs between the steps, so the
+// listing comes right before the step. Absent: no check, as before a commit.
+export async function pathCheck(
+  wt: Worktree,
+  o: { allow: readonly string[]; context?: ReadonlyMap<string, string>; ignored?: IgnoredSnapshot },
+): Promise<PathCheck> {
   const problems = new Map<string, string>();
   if (!gitLinkOk(wt)) problems.set(".git", "The step changed the git link of the worktree.");
   const allow = new Set(o.allow.map((f) => (repoPath(f) ?? f).split("/").map(fold).join("/")));
@@ -123,13 +133,20 @@ export async function pathCheck(wt: Worktree, o: { allow: readonly string[]; con
   }
   const outside = o.context ? outsideRepo(wt, o.context) : [];
   for (const p of outside) problems.set(`../${p}`, "A step may change files only in repo/.");
-  return { changed, problems: [...problems].map(([path, reason]) => ({ path, reason })), links: [...links], outside };
+  const ignored = o.ignored ? ignoredChanges(o.ignored, await ignoredSnapshot(wt)) : [];
+  for (const p of ignored) if (!problems.has(p)) problems.set(p, "A step may not write a file that git ignores.");
+  return { changed, problems: [...problems].map(([path, reason]) => ({ path, reason })), links: [...links], outside, ignored };
 }
 
 // Fails a step: saves the patch first, removes the files outside repo/ and the links, then resets to last (spec.md section 6.8).
+// A changed ignored file has no copy to restore, so the worktree goes. The next step makes it again from the branch, with its setup.
 export async function undoStep(wt: Worktree, last: string, check: PathCheck, patch: string): Promise<string | null> {
   const saved = await savePatch(wt, patch, check.changed).catch(() => null);
   for (const p of check.outside) await rm(join(wt.dir, p), { force: true });
+  if (check.ignored.length) {
+    await removeWorktree(wt);
+    return saved;
+  }
   if (!gitLinkOk(wt)) await restoreGitLink(wt);
   await resetWorktree(wt, last, check.links);
   return saved;
@@ -236,7 +253,7 @@ const STEP_SQL = {
 export type StepRowInput = {
   task: number;
   part: number | null;
-  kind: "tests" | "implement" | "fix" | "check" | "commit";
+  kind: Exclude<StepKind, "interview" | "spec">;
   run?: number | null;
   attempt?: number;
   item?: string | null;
@@ -257,6 +274,13 @@ export function insertStep(db: Database, s: StepRowInput, now = Date.now()): num
       now,
     }) as { id: number }
   ).id;
+}
+
+// The row of a step that starts its run: the row that waited for the run slot, else a new row.
+export function runningStep(db: Database, s: StepRowInput & { run: number }, waiting: number | null | undefined, now = Date.now()): number {
+  if (waiting == null) return insertStep(db, s, now);
+  db.query("UPDATE task_step SET state = 'running', run = $run, started_at = $now WHERE id = $id").run({ id: waiting, run: s.run, now });
+  return waiting;
 }
 
 export function endStep(db: Database, id: number, state: StepState, detail: Partial<StepDetail>, now = Date.now()) {
@@ -332,6 +356,8 @@ export type StepInput = {
   specDir: string;
   // The effect after the end commit, with the run slot free: the next step of the loop.
   onEnd?: (r: StepOutcome) => void;
+  // The row of this step that waited for the run slot.
+  step?: number | null;
   now?: () => number;
 };
 
@@ -346,7 +372,11 @@ export type StepOutcome = {
   patch: string | null;
 };
 
-export type StepStart = { status: 202; run: number } | { status: 409; conflict: RunConflict } | { status: 409; blocked: TaskBlocked };
+// done: resolves after the run end and onEnd.
+export type StepStart =
+  | { status: 202; run: number; done: Promise<void> }
+  | { status: 409; conflict: RunConflict }
+  | { status: 409; blocked: TaskBlocked };
 
 const deniedText = (p: PathProblem[]) => {
   const names = p.slice(0, 3).map((x) => x.path);
@@ -361,6 +391,17 @@ export async function startStep(i: StepInput): Promise<StepStart> {
   const budget = partBudget(db, i.task, i.part, now());
   if (budget.over) {
     const b: TaskBlocked = { kind: "budget", step: null, text: budget.over };
+    db.transaction(() => {
+      const cur = taskRow(db, i.task);
+      if (cur) setBlocked(db, { task: i.task, version: cur.version }, b, now());
+    })();
+    return { status: 409, blocked: b };
+  }
+  let ignored: IgnoredSnapshot;
+  try {
+    ignored = await ignoredSnapshot(wt);
+  } catch (e) {
+    const b: TaskBlocked = { kind: "error", step: null, text: `Needs you: ${noUrl((e as Error).message)}` };
     db.transaction(() => {
       const cur = taskRow(db, i.task);
       if (cur) setBlocked(db, { task: i.task, version: cur.version }, b, now());
@@ -385,7 +426,7 @@ export async function startStep(i: StepInput): Promise<StepStart> {
     maxTurns: STEP_TURNS[i.mode],
     timeoutMs: stepTimeout(budget),
     started: (d, run) => {
-      step = insertStep(d, { task: i.task, part: i.part.id, kind: i.mode, run, attempt: i.attempt, item: i.item }, now());
+      step = runningStep(d, { task: i.task, part: i.part.id, kind: i.mode, run, attempt: i.attempt, item: i.item }, i.step, now());
     },
     after: async (o, early) => {
       const e =
@@ -394,7 +435,7 @@ export async function startStep(i: StepInput): Promise<StepStart> {
           ? await judgeTask(o, implementResult, "implement", [], [], async (r) => ({ result: r, skipped: [] }))
           : failure("process", "The CLI did not run."));
       try {
-        check = await pathCheck(wt, { allow: i.allow, context });
+        check = await pathCheck(wt, { allow: i.allow, context, ignored });
         if (check.problems.length) patch = await undoStep(wt, last, check, patchFile(i.review.dataDir, db, i.task, step));
       } catch (err) {
         broken = `The app could not check the changed files: ${noUrl((err as Error).message)}`;

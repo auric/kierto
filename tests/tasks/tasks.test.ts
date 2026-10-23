@@ -236,7 +236,8 @@ describe("create and interview (spec.md sections 6.2 and 6.11, AC-B1)", () => {
       expect(task).toContain(`## Task ${ISSUE_KEY}: ${SUMMARY}`);
       // A PR start during the task run names it.
       const busy = await h.json<RunConflict>(`/api/prs/${h.pr}/review`, { method: "POST" });
-      expect([busy.status, busy.body.running]).toEqual([409, { run, pr: null, kind: "interview" }]);
+      expect([busy.status, busy.body.running]).toEqual([409, { run, pr: null, kind: "interview", task: a.body.id }]);
+      expect(busy.body.error).toBe(`Claude is building ${ISSUE_KEY}. Pause building after this step to start your run.`);
       await h.review.stop();
       const t = await h.get(a.body.id);
       expect([t.state, t.stoppedFrom]).toEqual(["stopped", "interview"]);
@@ -304,7 +305,7 @@ describe("create and interview (spec.md sections 6.2 and 6.11, AC-B1)", () => {
   );
 
   test(
-    "a failed interview run stops the task with the reason",
+    "a failed interview run stops the task with the reason; Resume runs the interview again; Stop and Resume keep open questions",
     async () => {
       const h = await setup();
       await h.connectJira();
@@ -314,6 +315,26 @@ describe("create and interview (spec.md sections 6.2 and 6.11, AC-B1)", () => {
       const t = await h.get(c.body.id);
       expect([t.state, t.stoppedFrom, t.blocked?.kind, t.steps[0]?.state]).toEqual(["stopped", "interview", "error", "failed"]);
       expect(t.blocked?.text).toStartWith("The result does not match the interview schema.");
+      h.scenario();
+      const r = await h.json<TaskDto>(`/api/tasks/${c.body.id}/resume`, { body: { version: t.version } });
+      expect([r.status, r.body.state, r.body.blocked]).toEqual([200, "interview", null]);
+      await h.settle();
+      expect(h.runs(c.body.id).map((x) => x.kind)).toEqual(["interview", "interview"]);
+      expect(h.runCalls().at(-1)?.stdin).toContain("- Round: 1");
+      const asked = await h.get(c.body.id);
+      expect(asked.blocked?.kind).toBe("question");
+      const stop = await h.json<TaskDto>(`/api/tasks/${c.body.id}/stop`, { body: { version: asked.version } });
+      expect([stop.status, stop.body.state, stop.body.stoppedFrom, stop.body.blocked]).toEqual([200, "stopped", "interview", null]);
+      const back = await h.json<TaskDto>(`/api/tasks/${c.body.id}/resume`, { body: { version: stop.body.version } });
+      expect([back.status, back.body.state, back.body.blocked?.text]).toEqual([
+        200,
+        "interview",
+        "Claude has 2 questions before it writes the plan.",
+      ]);
+      expect(h.runs(c.body.id).length).toBe(2);
+      // A version mismatch gives 409 with the task.
+      const old = await h.json<TaskConflict>(`/api/tasks/${c.body.id}/stop`, { body: { version: stop.body.version } });
+      expect([old.status, old.body.task.state]).toEqual([409, "interview"]);
     },
     SLOW,
   );

@@ -10,7 +10,9 @@ export type PromptInput = {
   head: string;
   note: string;
   profile: Profile;
-  pr: { project: string; repo: string; prId: number; webUrl: string | null };
+  // null: the own review of a task part (docs/plans/review-v2/spec.md section 6.7). task then names its Jira key.
+  pr: { project: string; repo: string; prId: number; webUrl: string | null } | null;
+  task?: string;
   tasks: PrTask[];
   // ./context/task.md exists.
   taskFile: boolean;
@@ -100,7 +102,9 @@ function common(i: PromptInput, rereview?: { earlier: number[] }, question?: str
     "",
     "# Metadata",
     "",
-    `- Pull request: ${i.pr.project}/${i.pr.repo}#${i.pr.prId}${i.pr.webUrl ? ` ${i.pr.webUrl}` : ""}`,
+    i.pr
+      ? `- Pull request: ${i.pr.project}/${i.pr.repo}#${i.pr.prId}${i.pr.webUrl ? ` ${i.pr.webUrl}` : ""}`
+      : `- Pull request: none yet. The app builds this change for task ${i.task ?? "(unknown)"}, and ./context/pr.md holds the text of its pull request to come.`,
     `- Profile: ${i.profile.name}`,
     `- Task IDs from the pull request fields: ${tasks || "none"}`,
     "",

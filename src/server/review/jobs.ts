@@ -71,6 +71,7 @@ import {
   fixAgent,
   GIT_SERVER,
   type ListTools,
+  type McpUse,
   MIN_EDIT_TURNS,
   mainAgent,
   moduleNotes,
@@ -92,7 +93,7 @@ import {
   withSkills,
   withVerifyDelegation,
 } from "./catalog";
-import { type AgentSpec, createClaudeRunner, RUN_TIMEOUT_MS, type RunnerCheck, type RunOutcome } from "./claude";
+import { type AgentSpec, createClaudeRunner, type McpServerSpec, RUN_TIMEOUT_MS, type RunnerCheck, type RunOutcome } from "./claude";
 import { codegraphEntry, codegraphIndex, indexCodegraph } from "./codegraph";
 import {
   askConversation,
@@ -122,6 +123,7 @@ import {
   cancelledCheck,
   cancelledEnding,
   type Ending,
+  type Found,
   failure,
   judge,
   judgeAsk,
@@ -147,6 +149,7 @@ import {
   buildReplyPrompt,
   buildRereviewPrompt,
   buildVerifyPrompt,
+  type PromptInput,
   type ReplyThread,
 } from "./prompt";
 import { type Carry, carryOver, current, type PostedFinding, resolveProposals } from "./rereview";
@@ -177,6 +180,7 @@ import {
   type GitRemote,
   longPath,
   noUrl,
+  prepareCommitWorkspace,
   prepareTaskWorkspace,
   prepareWorkspace,
   pruneWorkspaces,
@@ -300,6 +304,25 @@ export type ImplementRunStart = {
   finish: (db: Database, run: { id: number; head: string | null }, e: Ending) => (() => void) | undefined;
 };
 
+// docs/plans/review-v2/spec.md section 6.7, own review: the finder and verify phases of a review run on a sanitized snapshot of a part
+// commit of the cache. The change is base..head of the part. files: context/task.md (the task text and the plan files) and context/pr.md
+// (the text of the PR to come), with the UNTRUSTED banner. taskKey: the Jira key for the Metadata line. finish: as TaskRunStart. The
+// items of the run are in review_item before finish runs.
+export type TaskReviewStart = {
+  task: number;
+  kind: "review";
+  key: string;
+  profile: Profile;
+  project: string;
+  repo: string;
+  base: string;
+  head: string;
+  taskKey: string;
+  files: ContextFile[];
+  started: (db: Database, run: number) => void;
+  finish: (db: Database, run: { id: number; head: string | null }, e: Ending) => (() => void) | undefined;
+};
+
 // A task run in the slot. It has no PR.
 type TaskJob = {
   id: number;
@@ -313,10 +336,11 @@ type TaskJob = {
   phase?: RunDto["phase"];
   candidates?: number;
   abort?: AbortController;
-  t: TaskRunStart | ImplementRunStart;
+  t: TaskRunStart | ImplementRunStart | TaskReviewStart;
 };
 
-export type TaskStartResult = { status: 202; run: number } | { status: 409; conflict: RunConflict };
+// done: resolves after the run end and its effect.
+export type TaskStartResult = { status: 202; run: number; done: Promise<void> } | { status: 409; conflict: RunConflict };
 
 export type StartResult =
   | { status: 200 | 202; run: RunDto }
@@ -728,28 +752,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     if (!tools) return cancelled();
     const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...tools.servers };
     const { used, unmarked } = tools;
-    const skills = copySkills(profile.skills, join(ws.work, "skills"), opts.claudeConfigDir ?? claudeConfigDir());
-    for (const g of skills.gaps) log(`Review run ${j.id}: ${g}.`);
-    const isAlways = (id: string) => profile.alwaysSkills.includes(id);
-    if (skills.copied.length)
-      log(
-        `Review run ${j.id} skills: ${skills.copied
-          .map(
-            (s) =>
-              `${s.id}${s.version ? `@${s.version}` : ""}${isAlways(s.id) ? " (always)" : ""} (${s.files} files, ${s.bytes} bytes${s.skipped ? `, ${s.skipped} skipped` : ""})`,
-          )
-          .join(", ")}.`,
-      );
-    j.db.query(SQL.skills).run({ id: j.id, json: JSON.stringify(skills.copied.map((s) => ({ id: s.id, always: isAlways(s.id) }))) });
-    // launch checked the always-use skills. The disk can change before the copy.
-    const lost = profile.alwaysSkills.filter((id) => !skills.copied.some((s) => s.id === id));
-    if (lost.length)
-      return failure(
-        "process",
-        alwaysProblems(lost, opts.claudeConfigDir ?? claudeConfigDir()).join(" ") || alwaysSkillError(lost[0] as string, "the copy failed"),
-      );
-    const folders = skills.copied.map((s) => s.folder);
-    const always = skills.copied.filter((s) => isAlways(s.id)).map((s) => s.folder);
+    const skills = runSkills(j, profile, ws);
+    if (skills.lost) return skills.lost;
+    const { folders, always } = skills;
     // Review and re-review runs only. Explain gives no findings.
     const langs = j.kind === "review" && profile.languageChecks && !profile.explain ? languagesOf(changed) : [];
     if (langs.length) log(`Review run ${j.id} language checks: ${langs.join(", ")}.`);
@@ -866,10 +871,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // The runner ignores a cancel that comes after the process ended.
     if (j.cancelled) return cancelled(o);
     const servers = Object.keys(mcpServers);
-    const unread = unreadAlways(
-      o,
-      skills.copied.filter((s) => isAlways(s.id)),
-    );
+    const unread = unreadAlways(o, skills.alwaysCopied);
     const left = questions?.left
       ? [`${questions.left} threads with your posted questions were left out of ./context/questions.md: it reached its size limit.`]
       : [];
@@ -888,53 +890,116 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const rereview = carry && { carry, items: [...current(j.db, earlier), ...carry.posted].map(earlierItem) };
     const found = await judge(o, ws, profile, servers, gaps, rereview, j.asked, instructions.sources);
     if (!("candidates" in found)) return noted(found);
+    const v = await verifyPhase(j, ws, o, found, {
+      profile,
+      context,
+      input,
+      rereview: !!carry,
+      folders,
+      always,
+      used,
+      instructions,
+      mcpServers,
+    });
+    if ("status" in v) return v;
+    return noted(settle(found, { volume: profile.volume, find, check: v.check, verify: v.verify, written: v.written, servers }));
+  }
 
-    // docs/plans/review-v2/spec.md section 1.6: the verify phase in the same workspace, run row, and run slot.
+  // The skills of the profile in the run folder (review, re-review, and own review of a task part). lost: launch checked the always-use
+  // skills, but the disk can change before the copy.
+  function runSkills(j: Job | TaskJob, profile: Profile, ws: Workspace) {
+    const skills = copySkills(profile.skills, join(ws.work, "skills"), opts.claudeConfigDir ?? claudeConfigDir());
+    for (const g of skills.gaps) log(`Review run ${j.id}: ${g}.`);
+    const isAlways = (id: string) => profile.alwaysSkills.includes(id);
+    if (skills.copied.length)
+      log(
+        `Review run ${j.id} skills: ${skills.copied
+          .map(
+            (s) =>
+              `${s.id}${s.version ? `@${s.version}` : ""}${isAlways(s.id) ? " (always)" : ""} (${s.files} files, ${s.bytes} bytes${s.skipped ? `, ${s.skipped} skipped` : ""})`,
+          )
+          .join(", ")}.`,
+      );
+    j.db.query(SQL.skills).run({ id: j.id, json: JSON.stringify(skills.copied.map((s) => ({ id: s.id, always: isAlways(s.id) }))) });
+    const missing = profile.alwaysSkills.filter((id) => !skills.copied.some((s) => s.id === id));
+    const lost = missing.length
+      ? failure(
+          "process",
+          alwaysProblems(missing, opts.claudeConfigDir ?? claudeConfigDir()).join(" ") ||
+            alwaysSkillError(missing[0] as string, "the copy failed"),
+        )
+      : null;
+    const alwaysCopied = skills.copied.filter((s) => isAlways(s.id));
+    return {
+      gaps: skills.gaps,
+      lost,
+      alwaysCopied,
+      folders: skills.copied.map((s) => s.folder),
+      always: alwaysCopied.map((s) => s.folder),
+    };
+  }
+
+  // docs/plans/review-v2/spec.md section 1.6: the verify phase in the same workspace, run row, and run slot. An Ending: Cancel came.
+  async function verifyPhase(
+    j: Job | TaskJob,
+    ws: Workspace,
+    o: RunOutcome,
+    found: Found,
+    r: {
+      profile: Profile;
+      context: ReviewContext;
+      input: PromptInput;
+      rereview: boolean;
+      folders: string[];
+      always: string[];
+      used: McpUse[];
+      instructions: { text: string };
+      mcpServers: Record<string, McpServerSpec>;
+    },
+  ): Promise<{ check: CheckRun | null; verify: boolean; written: number } | Ending> {
+    const { profile, context, folders, always, used } = r;
     const verify = profile.verifier.mode === "on";
     const file = verify && found.candidates.length ? candidatesFile(found.candidates) : null;
     const written = file?.written ?? 0;
-    let verified: CheckRun | null = null;
-    if (file && written > 0) {
-      writeFileSync(join(ws.context, file.file.name), file.file.text);
-      const split = written > VERIFY_SPLIT;
-      log(`Review run ${j.id}: checks ${written} of ${found.candidates.length} candidates, ${VERIFIER} ${split ? "on" : "off"}.`);
-      j.phase = "checking";
-      j.candidates = written;
-      notify(j.id);
-      const offset = o.events.reduce((m, e) => Math.max(m, e.seq), -1) + 1;
-      const tag = (e: RunEvent): RunEvent => ({
-        ...e,
-        id: CHECK_EVENT + e.id,
-        parent: e.parent === null ? null : CHECK_EVENT + e.parent,
-        seq: e.seq + offset,
-      });
-      const verifier = withInstructions(withMcp(withSkills(verifierAgent(profile, context), folders, always), used), instructions.text);
-      // No await between this check and run(), so a later Cancel reaches the new process.
-      if (j.cancelled) return cancelled(o);
-      const startedAt = now();
-      const o2 = await runner.run(
-        {
-          cwd: ws.work,
-          appDir: ws.app,
-          prompt: buildVerifyPrompt({ ...input, count: written, rereview: !!carry }),
-          schema: verifyJsonSchema(),
-          main: withVerifyDelegation(withMcp(withSkills(verifyAgent(profile, context), folders, always), used), split),
-          maxTurns: verifyMaxTurns(profile, written),
-          model: profile.verifier.model ?? profile.model,
-          effort: verifierEffort(profile),
-          agents: split ? { [VERIFIER]: verifier } : {},
-          mcpServers,
-        },
-        (events) => {
-          j.db.transaction(() => upsertEvents(j.db, j.id, events.map(tag)))();
-          notify(j.id);
-        },
-      );
-      j.db.transaction(() => upsertEvents(j.db, j.id, o2.events.map(tag)))();
-      if (j.cancelled) return cancelledCheck(o, o2);
-      verified = { o: o2, startedAt, endedAt: now(), written };
-    }
-    return noted(settle(found, { volume: profile.volume, find, check: verified, verify, written, servers }));
+    if (!file || written === 0) return { check: null, verify, written };
+    writeFileSync(join(ws.context, file.file.name), file.file.text);
+    const split = written > VERIFY_SPLIT;
+    log(`Review run ${j.id}: checks ${written} of ${found.candidates.length} candidates, ${VERIFIER} ${split ? "on" : "off"}.`);
+    j.phase = "checking";
+    j.candidates = written;
+    notify(j.id);
+    const offset = o.events.reduce((m, e) => Math.max(m, e.seq), -1) + 1;
+    const tag = (e: RunEvent): RunEvent => ({
+      ...e,
+      id: CHECK_EVENT + e.id,
+      parent: e.parent === null ? null : CHECK_EVENT + e.parent,
+      seq: e.seq + offset,
+    });
+    const verifier = withInstructions(withMcp(withSkills(verifierAgent(profile, context), folders, always), used), r.instructions.text);
+    // No await between this check and run(), so a later Cancel reaches the new process.
+    if (j.cancelled) return cancelledEnding(o);
+    const startedAt = now();
+    const o2 = await runner.run(
+      {
+        cwd: ws.work,
+        appDir: ws.app,
+        prompt: buildVerifyPrompt({ ...r.input, count: written, rereview: r.rereview }),
+        schema: verifyJsonSchema(),
+        main: withVerifyDelegation(withMcp(withSkills(verifyAgent(profile, context), folders, always), used), split),
+        maxTurns: verifyMaxTurns(profile, written),
+        model: profile.verifier.model ?? profile.model,
+        effort: verifierEffort(profile),
+        agents: split ? { [VERIFIER]: verifier } : {},
+        mcpServers: r.mcpServers,
+      },
+      (events) => {
+        j.db.transaction(() => upsertEvents(j.db, j.id, events.map(tag)))();
+        notify(j.id);
+      },
+    );
+    j.db.transaction(() => upsertEvents(j.db, j.id, o2.events.map(tag)))();
+    if (j.cancelled) return cancelledCheck(o, o2);
+    return { check: { o: o2, startedAt, endedAt: now(), written }, verify, written };
   }
 
   // docs/plans/session-consult.md part C: a fork of the user's session in a fresh sanitized snapshot of the PR head, never in the
@@ -1139,6 +1204,154 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     return t.after(o, early);
   }
 
+  // docs/plans/review-v2/spec.md section 6.7, own review: the review steps of a PR run on a snapshot of the part commit. The run has no
+  // PR, so it gets no history, questions, PR context, or notes.
+  async function taskReviewSteps(j: TaskJob, t: TaskReviewStart, held: { ws?: Workspace }): Promise<Ending> {
+    const c = await check();
+    if (!c.ok) return failure(c.kind === "auth" ? "auth" : "process", c.message);
+    if (j.cancelled) return cancelledEnding();
+    await prune();
+    j.abort = new AbortController();
+    try {
+      if (j.cancelled) return cancelledEnding();
+      held.ws = await prepareCommitWorkspace({
+        dataDir,
+        runId: String(j.id),
+        project: t.project,
+        repo: t.repo,
+        task: t.task,
+        base: t.base,
+        head: t.head,
+        files: t.files,
+      });
+    } catch (e) {
+      if (j.cancelled) return cancelledEnding();
+      return failure("workspace", noUrl((e as Error).message));
+    } finally {
+      j.abort = undefined;
+    }
+    const ws = held.ws;
+    j.db.query(SQL.taskReviewHeads).run({ id: j.id, head: ws.sourceHead, base: ws.mergeBase });
+    notify(j.id, undefined, t.task);
+    if (j.cancelled) return cancelledEnding();
+    const changed = parseDiff(ws.diff);
+    const instructions = await loadInstructions(
+      j,
+      ws,
+      t,
+      changed.flatMap((f) => [f.path, f.oldPath].filter((p): p is string => p !== null)),
+    );
+    if (j.cancelled) return cancelledEnding();
+    const profile = j.profile;
+    const tools = await profileServers(j, profile, ws, t);
+    if (!tools) return cancelledEnding();
+    const mcpServers = { [GIT_SERVER]: gitMcpServer(ws, MAIN_ENTRY), ...tools.servers };
+    const skills = runSkills(j, profile, ws);
+    if (skills.lost) return skills.lost;
+    const { folders, always } = skills;
+    const langs = profile.languageChecks ? languagesOf(changed) : [];
+    const delegate = delegation(profile, changed);
+    log(
+      `Task run ${j.id}: own review of task ${t.task}, ${t.base.slice(0, 12)}..${t.head.slice(0, 12)}, ${changed.length} changed files, rl-reviewer ${delegate ? `on (${delegate})` : "off"}.`,
+    );
+    const context: ReviewContext = {
+      taskFile: true,
+      attachments: false,
+      history: false,
+      questions: false,
+      rereview: false,
+      instructions: instructions.text !== "",
+      goal: true,
+      prContext: false,
+      notes: false,
+    };
+    const input: PromptInput = {
+      mergeBase: ws.mergeBase,
+      head: ws.sourceHead,
+      note: "",
+      profile,
+      pr: null,
+      task: t.taskKey,
+      tasks: [],
+      taskFile: true,
+      attachments: false,
+      instructions: instructions.text,
+    };
+    j.phase = "finding";
+    notify(j.id, undefined, t.task);
+    const findStart = now();
+    // No await between this check and run(), so a later Cancel reaches the process.
+    if (j.cancelled) return cancelledEnding();
+    const o = await runner.run(
+      {
+        cwd: ws.work,
+        appDir: ws.app,
+        prompt: buildPrompt(input),
+        schema: reviewJsonSchema(false),
+        main: withDelegation(withMcp(withSkills(withLanguages(mainAgent(profile, context), langs), folders, always), tools.used), delegate),
+        maxTurns: profile.maxTurns,
+        model: profile.model,
+        effort: profile.effort,
+        agents: delegate
+          ? {
+              [REVIEWER]: withInstructions(
+                withMcp(withSkills(withLanguages(reviewerAgent(profile, context), langs), folders, always), tools.used),
+                instructions.text,
+              ),
+            }
+          : {},
+        mcpServers,
+      },
+      (events) => {
+        j.db.transaction(() => upsertEvents(j.db, j.id, events))();
+        notify(j.id, undefined, t.task);
+      },
+    );
+    const find: RunPhase = { name: "find", startedAt: findStart, endedAt: now(), usage: usageOf(o) };
+    if (j.cancelled) return cancelledEnding(o);
+    const servers = Object.keys(mcpServers);
+    const noted = (e: Ending): Ending => {
+      e.result?.summary.coverage.notChecked.push(...unreadAlways(o, skills.alwaysCopied), ...moduleNotes(profile, context));
+      if (!tools.unmarked) return e;
+      e.result?.summary.coverage.notChecked.push(tools.unmarked);
+      return { ...e, raw: `${tools.unmarked}\n\n${e.raw}` };
+    };
+    const found = await judge(o, ws, profile, servers, [...tools.gaps, ...skills.gaps], null, [], instructions.sources);
+    if (!("candidates" in found)) return noted(found);
+    const v = await verifyPhase(j, ws, o, found, {
+      profile,
+      context,
+      input,
+      rereview: false,
+      folders,
+      always,
+      used: tools.used,
+      instructions,
+      mcpServers,
+    });
+    if ("status" in v) return v;
+    return noted(settle(found, { volume: profile.volume, find, check: v.check, verify: v.verify, written: v.written, servers }));
+  }
+
+  // The items of a task review run with the item that each duplicate verdict names (spec.md section 1.8).
+  function insertItems(db: Database, run: number, items: NewItem[], links: Map<NewItem, CandidateLink> = new Map()) {
+    const q = db.query(SQL.item);
+    const placed = new Map<number, number>();
+    const dups: [number, number][] = [];
+    for (const it of items) {
+      const id = Number(q.run({ run, ...it }).lastInsertRowid);
+      const l = links.get(it);
+      if (!l) continue;
+      placed.set(l.n, id);
+      if (l.duplicateOf !== null) dups.push([id, l.duplicateOf]);
+    }
+    const dup = db.query(SQL.duplicateOf);
+    for (const [id, n] of dups) {
+      const target = placed.get(n);
+      if (target !== undefined) dup.run({ id, target });
+    }
+  }
+
   // One transaction for the run, its log, and the finish of the task. Returns the effect of the finish.
   function endTask(j: TaskJob, e: Ending, head: string | null): (() => void) | undefined {
     const o = e.outcome;
@@ -1168,6 +1381,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       });
       // Restart recovery can end the row first. Then the task stays as recoverTasks left it.
       if (!done.changes) return undefined;
+      if (j.t.kind === "review") insertItems(j.db, j.id, e.result?.items ?? [], e.result?.links);
       return j.t.finish(j.db, { id: j.id, head }, e);
     })();
     notify(j.id, undefined, j.t.task);
@@ -1180,6 +1394,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     let e: Ending;
     try {
       if (t.kind === "implement") e = await implementSteps(j, t);
+      else if (t.kind === "review") e = await taskReviewSteps(j, t, held);
       else {
         e = await taskSteps(j, t, held);
         if (e.result && t.keep)
@@ -1225,10 +1440,32 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     cancelActive();
   });
 
-  const busyConflict = (j: Job | TaskJob): RunConflict => ({
-    error: "Another review is running.",
-    running: { run: j.id, pr: j.pr, kind: j.kind },
-  });
+  // docs/plans/review-v2/spec.md AC-B18: a start during a step of a task names the pause action of that task.
+  const busyConflict = (j: Job | TaskJob): RunConflict => {
+    if (j.pr !== null) return { error: "Another review is running.", running: { run: j.id, pr: j.pr, kind: j.kind } };
+    const task = j.t.task;
+    const key = (j.db.query("SELECT key FROM task WHERE id = $id").get({ id: task }) as { key: string } | null)?.key ?? `task ${task}`;
+    return {
+      error: `Claude is building ${key}. Pause building after this step to start your run.`,
+      running: { run: j.id, pr: null, kind: j.kind, task },
+    };
+  };
+
+  // docs/plans/review-v2/design.md B12: a task step waits for the free slot. A user start never waits: it gets 409.
+  const waiters = new Set<() => void>();
+  function wake() {
+    if (job) return;
+    for (const w of [...waiters]) {
+      waiters.delete(w);
+      try {
+        w();
+      } catch (e) {
+        log(`A wait for the run slot failed: ${(e as Error).message}`);
+      }
+    }
+  }
+  // stop() awaits these too: the task loop stops its checks and its steps.
+  const stoppers = new Set<() => Promise<void>>();
 
   // The one run slot (A14). The same key returns the running run. null: the slot is free.
   function taken(db: Database, key: string): StartResult | null {
@@ -1243,6 +1480,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     job = j;
     j.done = execute(j, pr, brief).finally(() => {
       if (job === j) job = null;
+      wake();
       // wait() resolves after the final broadcast. The broadcast keeps its NOTIFY_MS spacing.
       if (timer) return new Promise<void>((r) => flushed.push(r));
     });
@@ -1454,11 +1692,26 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       await prune();
       await check().catch((e) => log(`Runner check failed: ${(e as Error).message}`));
     },
-    // Cancels the active run and the running prompt proposal, and waits for their end.
+    // Cancels the active run and the running prompt proposal, stops the task loop, and waits for their end.
     async stop() {
       const j = job;
+      const loops = [...stoppers].map((f) => f());
       cancelActive();
-      await Promise.all([j?.done, improve.stop()]);
+      await Promise.all([j?.done, improve.stop(), ...loops]);
+    },
+    // f runs in stop(). The returned function drops it.
+    onStop(f: () => Promise<void>): () => void {
+      stoppers.add(f);
+      return () => stoppers.delete(f);
+    },
+    // f runs once when the run slot is free: at once when it is free now. The returned function drops the wait.
+    onFree(f: () => void): () => void {
+      if (!job) {
+        queueMicrotask(f);
+        return () => {};
+      }
+      waiters.add(f);
+      return () => waiters.delete(f);
     },
     improve,
     // Resolves when no run is active.
@@ -1773,9 +2026,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
 
     taskRemote,
 
-    // docs/plans/review-v2/spec.md sections 6.2 and 6.7: starts an interview, spec, or implement run of a task in the one slot. The row
-    // has pr NULL.
-    taskRun(db: Database, t: TaskRunStart | ImplementRunStart): TaskStartResult {
+    // docs/plans/review-v2/spec.md sections 6.2 and 6.7: starts an interview, spec, implement, or own review run of a task in the one
+    // slot. The row has pr NULL.
+    taskRun(db: Database, t: TaskRunStart | ImplementRunStart | TaskReviewStart): TaskStartResult {
       if (job) return { status: 409, conflict: busyConflict(job) };
       const p = t.profile;
       const id = db.transaction(() => {
@@ -1798,10 +2051,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       job = j;
       j.done = executeTask(j).finally(() => {
         if (job === j) job = null;
+        wake();
         if (timer) return new Promise<void>((r) => flushed.push(r));
       });
       notify(id, undefined, t.task);
-      return { status: 202, run: id };
+      return { status: 202, run: id, done: j.done };
     },
 
     // pr: the runs of one PR. null: the runs of all PRs. Newest first. A consult run (session-consult.md part C) and the fix run of a

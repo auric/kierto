@@ -355,6 +355,61 @@ describe("implement run", () => {
   );
 
   test(
+    "an ignored file that the step writes or changes fails the step, and the worktree goes; ignored files from before the step pass",
+    async () => {
+      const s = await setup();
+      // A check command wrote this before the step, as a build does. The listing before the step holds it.
+      mkdirSync(join(s.wt.repo, "ignored"), { recursive: true });
+      writeFileSync(join(s.wt.repo, "ignored", "build.log"), "built\n");
+      s.scenario({ writes: [{ path: "repo/src/app.ts", text: "changed\n" }] });
+      const ok = await s.step();
+      expect(ok.outcome?.problems).toEqual([]);
+      expect(ok.outcome?.changed).toEqual(["src/app.ts"]);
+      await resetWorktree(s.wt, s.base);
+      // git status shows none of these paths: .gitignore of the fixture ignores ignored/ and *.log.
+      s.scenario({
+        writes: [
+          { path: "repo/ignored/evil.js", text: "planted\n" },
+          { path: "repo/ignored/build.log", text: "changed by the step\n" },
+          { path: "repo/src/app.ts", text: "changed\n" },
+        ],
+      });
+      const { outcome } = await s.step();
+      const reason = "A step may not write a file that git ignores.";
+      expect(outcome?.problems).toEqual([
+        { path: "ignored/build.log", reason },
+        { path: "ignored/evil.js", reason },
+      ]);
+      expect(outcome?.changed).toEqual([]);
+      const row = s.stepRow(outcome?.step as number);
+      expect(row.state).toBe("failed");
+      expect(JSON.parse(row.detail_json).deniedPaths).toEqual(["ignored/build.log", "ignored/evil.js"]);
+      const b = s.blockedOf();
+      expect(b?.kind).toBe("denied_path");
+      expect(b?.text).toContain("ignored/build.log");
+      // The patch keeps the tracked change. A changed ignored file has no copy to restore, so the worktree is gone.
+      expect(readFileSync(join(s.wt.dir, "..", "patches", `${outcome?.step}.patch`), "utf8")).toContain(
+        "diff --git a/src/app.ts b/src/app.ts",
+      );
+      expect(existsSync(s.wt.dir)).toBe(false);
+      const again = await openWorktree({
+        dataDir: s.dataDir,
+        db: s.db,
+        project: "PROJ",
+        repo: "repo",
+        task: s.task,
+        ord: 1,
+        branch: "feature/K-1-thing",
+        base: s.base,
+      });
+      expect(existsSync(join(again.repo, "ignored"))).toBe(false);
+      expect(await status(again)).toEqual([]);
+      expect(await headOf(again)).toBe(s.base);
+    },
+    SLOW,
+  );
+
+  test(
     "a failed run stops the task with the reason, and the path check still runs",
     async () => {
       const s = await setup();

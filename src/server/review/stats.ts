@@ -27,7 +27,8 @@ const SQL = {
         WHERE p.state = 'confirmed' AND json_extract(j.value, '$.id') = i.id AND c.orphaned_at > p.created_at) AS outdated,
       EXISTS (SELECT 1 FROM review_item c WHERE c.kind = 'finding' AND json_extract(c.payload_json, '$.carried.from') = i.id) AS copied
     FROM review_item i JOIN review_run r ON r.id = i.run
-    WHERE i.kind = 'finding' AND r.kind = 'review' AND r.status IN ('completed', 'incomplete') AND r.started_at >= $since ORDER BY i.id`,
+    WHERE i.kind = 'finding' AND r.pr IS NOT NULL AND r.kind = 'review' AND r.status IN ('completed', 'incomplete') AND r.started_at >= $since
+    ORDER BY i.id`,
 };
 
 type RunRow = {

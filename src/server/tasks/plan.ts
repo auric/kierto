@@ -536,3 +536,30 @@ export function stepFile(p: Plan, taskId: string, attempt: number): ContextFile 
   ].join("\n");
   return { name: "step.md", text };
 }
+
+// step.md of a step for whole plan parts (spec.md section 6.7): the tests step, with the acceptance lines and the tests that the plan
+// names, or the fix of the points of the own review, which stay in ./context/failure.md.
+export function partStepFile(p: Plan, parts: PlanPart[], what: "tests" | "review", attempt: number): ContextFile {
+  const files = new Set(parts.flatMap((x) => x.tasks.flatMap((t) => t.files)).map((f) => repoPath(f) ?? f));
+  const map = p.map.filter((e) => files.has(repoPath(e.path) ?? e.path));
+  const out = [
+    "# Step",
+    "",
+    ...parts.map((x) => `- Part ${x.n} of ${p.parts.length}: ${oneLine(x.title)} (kind: ${x.kind}). Goal: ${oneLine(x.goal)}`),
+    what === "tests"
+      ? "- Task: write the tests of the acceptance lines below. They must fail until the feature exists."
+      : "- Task: fix the points of the review in ./context/failure.md.",
+    `- Attempt: ${attempt}`,
+    "",
+  ];
+  for (const x of parts) {
+    out.push(`## Acceptance of part ${x.n}`, "", ...x.acceptance.map((a) => `- ${a.id} ${oneLine(a.text)}`), "");
+    if (what === "tests" && x.tests.length)
+      out.push(`## Tests of part ${x.n}`, "", ...x.tests.map((t) => `- ${item(t.test, ": proves ")}: proves ${list(t.proves)}`), "");
+  }
+  out.push("## Tasks", "");
+  for (const x of parts)
+    for (const t of x.tasks) out.push(`- ${t.id} ${oneLine(t.title)}. Files: ${list(t.files) || "none"}. Run: ${list(t.run)}.`);
+  out.push("", "## Map entries of these files", "", ...(map.length ? map.map((e) => mapLine(e, p.base)) : ["(none)"]), "");
+  return { name: "step.md", text: out.join("\n") };
+}

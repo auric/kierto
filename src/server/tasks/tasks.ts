@@ -33,7 +33,9 @@ import {
   type InterviewResult,
   interviewJsonSchema,
   interviewResult,
+  MORE_TIME_MIN,
   PART_STATE_TEXT,
+  PART_TIME_MIN,
   type PartState,
   type SizeSource,
   SPEC_TURNS,
@@ -63,7 +65,7 @@ import { gitEnv } from "../review/git";
 import type { ReviewJobs, TaskRunStart } from "../review/jobs";
 import { type Ending, judgeTask } from "../review/judge";
 import { buildInterviewPrompt, buildSpecPrompt } from "../review/prompt";
-import { noUrl, remoteHead } from "../review/workspace";
+import { type ContextFile, noUrl, remoteHead } from "../review/workspace";
 import type { Settings } from "../settings";
 import {
   type Answer,
@@ -112,10 +114,13 @@ const SQL = {
     WHERE id = $id AND version = $version`,
   setPart: "UPDATE task_part SET state = $state, updated_at = $now WHERE id = $id",
   bump: "UPDATE task SET version = version + 1, updated_at = $now WHERE id = $id AND version = $version",
-  // The tasks whose Claude step was running at the last stop.
-  running: `SELECT DISTINCT t.id, t.version FROM task t JOIN review_run r ON r.task = t.id WHERE r.status = 'running' ORDER BY t.id`,
-  failSteps: `UPDATE task_step SET state = 'failed', ended_at = $now
-    WHERE state = 'running' AND run IN (SELECT id FROM review_run WHERE status = 'running' AND task IS NOT NULL)`,
+  // The tasks that worked at the last stop: a running Claude step, a step that ran or waited for the run slot (checks and commits have
+  // no run), or a part that the loop built while no reason blocked it.
+  running: `SELECT t.id, t.version FROM task t WHERE EXISTS (SELECT 1 FROM review_run r WHERE r.task = t.id AND r.status = 'running')
+      OR EXISTS (SELECT 1 FROM task_step s WHERE s.task = t.id AND s.state IN ('waiting', 'running'))
+      OR (t.state = 'implementing' AND t.blocked_json IS NULL AND EXISTS (SELECT 1 FROM task_part p WHERE p.task = t.id AND p.state = 'implementing'))
+    ORDER BY t.id`,
+  failSteps: "UPDATE task_step SET state = 'failed', ended_at = $now WHERE state IN ('waiting', 'running')",
 };
 
 type StateRow = { state: TaskState; stopped_from: TaskState | null; size: TaskSize | null; version: number };
@@ -299,7 +304,9 @@ const settingsOf = (t: TaskRow): TaskSettings => {
 export const budgetOf = (db: Database, t: TaskRow) => settingsOf(t).lineBudget ?? repoSettings(db, t.project, t.repo).lineBudget;
 export const docsOf = (t: TaskRow): Docs | null => (t.docs_json === null ? null : (JSON.parse(t.docs_json) as Docs));
 
-type Patch = Partial<Record<"blocked_json" | "docs_json" | "estimate_json" | "size" | "size_by" | "base_commit", string | null>>;
+type Patch = Partial<
+  Record<"blocked_json" | "docs_json" | "estimate_json" | "size" | "size_by" | "base_commit" | "settings_json", string | null>
+>;
 
 // A version-checked write of task fields that are no state. Returns the new version.
 function patch(db: Database, id: number, version: number, p: Patch, now: number): number {
@@ -319,6 +326,13 @@ const blocked = (b: TaskBlocked | null) => (b === null ? null : JSON.stringify(b
 // Sets task.blocked_json (spec.md section 6.2) with the version check. Returns the new version.
 export const setBlocked = (db: Database, ref: TaskRef, b: TaskBlocked | null, now = Date.now()) =>
   patch(db, ref.task, ref.version, { blocked_json: blocked(b) }, now);
+
+// spec.md section 6.7, Budgets: "Continue with 60 more min?". Each part of the task gets 60 more minutes, and the reason goes.
+export function moreTime(db: Database, ref: TaskRef, now = Date.now()): number {
+  const s = settingsOf(taskRow(db, ref.task) as TaskRow);
+  const settings = JSON.stringify({ ...s, partTimeMin: (s.partTimeMin ?? PART_TIME_MIN) + MORE_TIME_MIN });
+  return patch(db, ref.task, ref.version, { settings_json: settings, blocked_json: null }, now);
+}
 
 // A failed or cancelled run stops the task with its reason. Resume runs the step again. The usage limit stops it too, with the CLI
 // text. A done or failed task keeps its state.
@@ -507,6 +521,21 @@ export type TaskResult =
   | { status: 422; error: string; line: number }
   | { status: 409; error: string; task?: TaskDto; running?: RunConflict["running"] };
 
+// task.md of a task: the one task of its origin PR with its attachments, else the fetched issue with its attachments listed.
+export function taskFilesOf(db: Database, dataDir: string, t: TaskRow) {
+  if (t.origin_pr !== null) return taskContext(db, t.origin_pr, dataDir, t.key);
+  if (t.issue_json === null) return { files: [], attachments: [] };
+  return { files: [issueFile(t.key, JSON.parse(t.issue_json) as IssueContext, t.created_at)], attachments: [] };
+}
+
+// context/answers.md of a build step: the interview answers and the answered questions of the loop.
+export function stepAnswers(db: Database, id: number): ContextFile | null {
+  const rows = (db.query(Q.questions).all({ id }) as (QuestionRow & { source: string })[]).filter(
+    (q) => q.source === "interview" || q.answer_json !== null,
+  );
+  return answersFile(rows, interviewOf(db, id));
+}
+
 export type TaskServiceOptions = {
   review: ReviewJobs;
   settings: Settings;
@@ -525,13 +554,7 @@ export function createTaskService(opts: TaskServiceOptions) {
   });
   const busyResult = (c: RunConflict): TaskResult => ({ status: 409, error: c.error, running: c.running });
   const profile = () => profileOf(settings.profiles(), DEFAULT_PROFILE);
-
-  // task.md of a task: the one task of its origin PR with its attachments, else the fetched issue with its attachments listed.
-  function taskFiles(db: Database, t: TaskRow) {
-    if (t.origin_pr !== null) return taskContext(db, t.origin_pr, review.dataDir, t.key);
-    if (t.issue_json === null) return { files: [], attachments: [] };
-    return { files: [issueFile(t.key, JSON.parse(t.issue_json) as IssueContext, t.created_at)], attachments: [] };
-  }
+  const taskFiles = (db: Database, t: TaskRow) => taskFilesOf(db, review.dataDir, t);
 
   function insertStep(db: Database, task: number, kind: "interview" | "spec", run: number) {
     db.query(Q.stepInsert).get({ task, kind, run, now: now() });
@@ -959,12 +982,48 @@ export function createTaskService(opts: TaskServiceOptions) {
     return { status: 200, task: taskDto(db, taskRow(db, id) as TaskRow) };
   }
 
+  // POST /api/tasks/:id/resume of a task that stopped before its build (spec.md section 6.2): the state before the stop, then the run
+  // that the stop ended. An interview with open questions waits for the answers again. loop.ts resumes a build.
+  function resume(db: Database, id: number, input: { version: number }): TaskResult {
+    const t = load(db, id, input.version, "stopped");
+    if ("status" in t) return t;
+    const from = t.stopped_from;
+    const open = from === "interview" ? openQuestions(db, id) : [];
+    const rerun = (from === "interview" && !open.length) || (from === "spec_draft" && docsOf(t) === null);
+    const busy = rerun ? review.busy() : null;
+    if (busy) return busyResult(busy);
+    try {
+      db.transaction(() => {
+        const at = now();
+        const r = advance(db, { task: id, version: t.version }, { type: "RESUME" }, {}, at);
+        if (r.status !== 200) throw new Refused(r.error);
+        const n = open.length;
+        const step = (open[0] as (QuestionRow & { step: number | null }) | undefined)?.step ?? null;
+        const text = `Claude has ${n} ${n === 1 ? "question" : "questions"} before it writes the plan.`;
+        patch(db, id, r.version, { blocked_json: n ? blocked({ kind: "question", step, text }) : null }, at);
+        if (!rerun) return;
+        const cur = taskRow(db, id) as TaskRow;
+        const s = review.taskRun(
+          db,
+          r.state === "interview" ? interviewRun(db, cur, (interviewOf(db, id)?.round ?? 0) + 1) : specRun(db, cur),
+        );
+        if (s.status !== 202) throw new Refused(s.conflict.error, s.conflict);
+      })();
+    } catch (e) {
+      if (!(e instanceof Refused)) throw e;
+      return e.running ? busyResult(e.running) : conflict(db, t, e.message);
+    }
+    changed(id);
+    return { status: 200, task: taskDto(db, taskRow(db, id) as TaskRow) };
+  }
+
   return {
     create,
     answers,
     size,
     docs,
     plan,
+    resume,
     get(db: Database, id: number): TaskDto | null {
       const t = taskRow(db, id);
       return t && taskDto(db, t);
