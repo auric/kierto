@@ -746,13 +746,18 @@ export function fixAgent(p: Profile, c: RunFiles = {}): AgentSpec {
   };
 }
 
+// docs/plans/review-v2/spec.md section 2.16: the rule of a follow-up, an ask run with a parent.
+export const FOLLOW_UP_RULE =
+  'The question can refer to an earlier answer. Read the turns in the "Conversation so far" section of the user message. Older turns are in ./context/history.md. Answer only the current question in "Your instructions".';
+
 // Plan r2 S-ASK: an ask run gets no subagents, so the caller passes agents {} and the CLI gets no Agent tool.
-export function askAgent(p: Profile, c: RunFiles = {}): AgentSpec {
+export function askAgent(p: Profile, c: RunFiles = {}, followUp = false): AgentSpec {
   return {
     description: "Read-only answers to the user's questions about one pull request.",
     prompt: [
       "You answer the user's question about one pull request. You cannot change files, and you post nothing.",
       "Answer only the question in the user message. Write the answer as short Markdown.",
+      ...(followUp ? [FOLLOW_UP_RULE] : []),
       "Base each claim about the code on code that you read. Say so when you did not check a claim.",
       ...prContextRules(c),
       ...TRUST,

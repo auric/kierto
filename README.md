@@ -157,6 +157,8 @@ When the run gives no fix, the card says why: Already done, Not valid, Out of sc
 
 Press `q` to ask a question about the pull request. The answer stays in PR Review Inbox. Nothing posts.
 
+After an answer, the box is "Follow up". Claude then sees the last three questions and answers of the conversation, so a question such as "and its callers?" works. A follow-up uses the profile of the answer that it follows. "New question" starts a new conversation that does not see the earlier answers. Earlier conversations stay below under "Earlier questions". An answer from an older head says "The head changed since this answer."
+
 ### Project instructions
 
 Each run can read the CLAUDE.md files of your clone, extra text from Settings, and your global CLAUDE.md. CLAUDE.md files in the pull request do not load as instructions. Settings shows the full text that a run gets.

@@ -15,6 +15,7 @@ import {
   fixRunInput,
   improveInput,
   itemActionInput,
+  type MovedConflict,
   replyRunInput,
   reviewRunInput,
   reviewStatsInput,
@@ -110,11 +111,13 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
       (c) => {
         const db = review.open();
         if (!db) return c.json(unconfigured, 409);
-        const { question, profile } = c.req.valid("json");
+        const { question, profile, parent } = c.req.valid("json");
         if (profile && !review.hasProfile(profile)) return c.json<ApiError>({ error: UNKNOWN_PROFILE }, 400);
-        const r = review.ask(db, c.req.valid("param").id, question, profile);
+        const r = review.ask(db, c.req.valid("param").id, question, profile, parent);
         if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
         if ("conflict" in r) return c.json(r.conflict, 409);
+        if (r.moved) return c.json<MovedConflict>({ error: r.error, moved: r.moved }, 409);
+        if (r.status === 400) return c.json({ error: r.error }, 400);
         return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
       },
     )

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Plan r2 UI-ASK: the pure Ask rules. The state of each answer and the busy note.
+// Plan r2 UI-ASK: the pure Ask rules. The state of each answer, the busy note, the conversations, and the box texts.
 import { describe, expect, test } from "bun:test";
 import type { AskDto, RunDto } from "../../src/shared/dto";
-import { askView, busyText } from "../../src/web/ask/model";
+import { askBox, askConversations, askView, busyText } from "../../src/web/ask/model";
 
 const run = (o: Partial<RunDto> = {}): RunDto => ({
   id: 1,
@@ -46,6 +46,7 @@ const run = (o: Partial<RunDto> = {}): RunDto => ({
 const ask = (o: Partial<RunDto> = {}, answer: string | null = "flush() has two callers.\n\nBoth are updated."): AskDto => ({
   run: run(o),
   answer,
+  parent: null,
 });
 
 describe("ask", () => {
@@ -109,5 +110,41 @@ describe("ask", () => {
     );
     expect(busyText("Claude", "review", "PROJ/repo #12")).toBe("Claude is reviewing PROJ/repo #12. One review runs at a time.");
     expect(busyText("Claude", "reply", "PROJ/repo #12")).toBe("Claude is drafting replies for PROJ/repo #12. One review runs at a time.");
+  });
+});
+
+// docs/plans/review-v2/spec.md sections 2.14 and 2.15.
+describe("ask conversations", () => {
+  const turn = (id: number, parent: number | null): AskDto => ({ ...ask({ id }), parent });
+  const ids = (groups: AskDto[][]) => groups.map((g) => g.map((a) => a.run.id));
+
+  test("AC-F9: chains are oldest first, conversations sort by their newest run, and a parent outside the list starts a group", () => {
+    // The server order: newest first. 9 follows 4, 7 follows 5 follows 2, 6 follows run 1, which is outside the list.
+    const list = [turn(9, 4), turn(8, null), turn(7, 5), turn(6, 1), turn(5, 2), turn(4, null), turn(2, null)];
+    expect(ids(askConversations(list))).toEqual([[4, 9], [8], [2, 5, 7], [6]]);
+    expect(askConversations([])).toEqual([]);
+    // Runs from before follow-ups have no parent: one question per conversation, newest first.
+    expect(ids(askConversations([turn(3, null), turn(2, null)]))).toEqual([[3], [2]]);
+  });
+
+  test("the box: Your question without asks, Follow up with the parent profile or the brief fallback, and New question", () => {
+    const o = { runner: "Claude", profile: "Review", gone: false, forge: "Bitbucket" };
+    expect(askBox("first", o)).toEqual({
+      label: "Your question",
+      placeholder: "For example: which callers of the changed function are not updated?",
+      hint: "Claude answers with the Review profile. The answer stays in PR Review Inbox. Nothing posts to Bitbucket.",
+    });
+    expect(askBox("follow", o)).toEqual({
+      label: "Follow up",
+      placeholder: "Ask about the answer above",
+      hint: "Claude answers with the Review profile and sees this conversation. Nothing posts to Bitbucket.",
+    });
+    expect(askBox("follow", { ...o, profile: "General", gone: true }).hint).toBe(
+      "Claude answers with the General profile of the brief: the profile of the earlier answer no longer exists. Claude sees this conversation. Nothing posts to Bitbucket.",
+    );
+    expect(askBox("new", o)).toMatchObject({
+      label: "New question",
+      hint: "Claude starts fresh. It does not see the conversation above. It answers with the Review profile. Nothing posts to Bitbucket.",
+    });
   });
 });

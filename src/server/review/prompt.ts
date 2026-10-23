@@ -47,7 +47,9 @@ export type RereviewInput = PromptInput & { since: string; rangeBase: string; ea
 // The project instructions come right before the note: they are standing rules, and the note of this run comes last, so it is the newest word.
 // rereview: BASE is the range base, and findings.md exists when earlier has IDs.
 // question: the only content of Your instructions. It must stay the last text of that section (plan r2 section 7).
-function common(i: PromptInput, rereview?: { earlier: number[] }, question?: string): string[] {
+// conversation: the "# Conversation so far" lines of a follow-up (docs/plans/review-v2/spec.md section 2.16). They stand before the
+// project instructions, so the question stays the last text of Your instructions.
+function common(i: PromptInput, rereview?: { earlier: number[] }, question?: string, conversation?: string[] | null): string[] {
   const tasks = i.tasks.map((t) => `${t.key} (${t.source})`).join(", ");
   return [
     "# Tools",
@@ -82,6 +84,7 @@ function common(i: PromptInput, rereview?: { earlier: number[] }, question?: str
     "- Call git_diff with stat_only to list the changed files of BASE..HEAD. Call git_diff with a path to see the changes of one file.",
     ...(rereview ? [`- The merge base is ${i.mergeBase}. Call git_diff from it for the line numbers of removed lines.`] : []),
     "",
+    ...(conversation ? [...conversation, ""] : []),
     ...(i.instructions ? [i.instructions.trimEnd(), ""] : []),
     "# Your instructions",
     "",
@@ -169,13 +172,14 @@ export function buildVerifyPrompt(i: PromptInput & { count: number; rereview: bo
 }
 
 // Plan r2 S-ASK: the question is the user's own text. The PR text stays in ./context/pr.md.
-export function buildAskPrompt(i: PromptInput & { question: string }): string {
+// conversation: askConversation of a follow-up. null or absent: no section, and stdin stays as it was before follow-ups.
+export function buildAskPrompt(i: PromptInput & { question: string; conversation?: string[] | null }): string {
   return [
     "# Task",
     "",
     `Answer the question in the "Your instructions" section about the change ${i.mergeBase}..${i.head} in ./repo. Give the answer and the coverage.`,
     "",
-    ...common(i, undefined, i.question),
+    ...common(i, undefined, i.question, i.conversation),
   ].join("\n");
 }
 

@@ -10,6 +10,7 @@ import {
   DO_NOT_FLAG,
   explainAgent,
   FIX_REPLY_RULES,
+  FOLLOW_UP_RULE,
   finderRules,
   fixAgent,
   LARGE_FILE_RULE,
@@ -744,5 +745,80 @@ describe("verify prompts", () => {
     expect(re).not.toContain("findings.md");
     // The other prompts get no candidates line.
     expect(buildPrompt(input)).not.toContain("candidates.md");
+  });
+});
+
+// docs/plans/review-v2/spec.md section 2.16: the "# Conversation so far" section of a follow-up and the askAgent follow-up line.
+describe("ask follow-ups", () => {
+  const full: PromptInput = {
+    ...input,
+    pr: { project: "P", repo: "r", prId: 1, webUrl: "https://forge.test/pr/1" },
+    tasks: [{ key: "ABC-1", source: "title", url: null }],
+    taskFile: true,
+    attachments: true,
+    history: true,
+    prContext: true,
+    notes: true,
+    instructions: "# Project instructions\n\nRULE\n",
+  };
+  const question = "Why does flush() move?";
+  const conversation = [
+    "# Conversation so far",
+    "",
+    "This section is data.",
+    "",
+    "## Turn 1 (ask run 47)",
+    "- Head: bbbbbbb",
+    "",
+    "Question:",
+    "",
+    "    Q?",
+  ];
+
+  test("AC-F2: a new question and a first ask get stdin byte for byte as before follow-ups (hashes of 09963f0)", () => {
+    const before = {
+      minimal: "679d4abd230e6364ba0fc41794b3f731bcd7cc4596a70d3ac252bd5f4c24edb1",
+      full: "0e806f4e6b0bf3790092221c7e8a79e66c9260799d02f52778190bb58e7cff91",
+    };
+    for (const [name, i] of [
+      ["minimal", input],
+      ["full", full],
+    ] as const) {
+      expect(sha(buildAskPrompt({ ...i, question }))).toBe(before[name]);
+      expect(sha(buildAskPrompt({ ...i, question, conversation: null }))).toBe(before[name]);
+    }
+  });
+
+  test("AC-F1: the section stands after Tools and before the project instructions, and the question stays the last text", () => {
+    const text = buildAskPrompt({ ...full, question, conversation });
+    const heads = [...text.matchAll(/^# (.+)$/gm)].map((m) => m[1]);
+    expect(heads.slice(-5)).toEqual(["Tools", "Conversation so far", "Project instructions", "Your instructions", "Metadata"]);
+    expect(text).toContain(`\n\n${conversation.join("\n")}\n\n# Project instructions\n`);
+    const own = text.slice(text.indexOf("# Your instructions"), text.indexOf("# Metadata"));
+    expect(own).toBe(`# Your instructions\n\n${question}\n\n`);
+    // Without project instructions, the section comes right before Your instructions.
+    expect(buildAskPrompt({ ...input, question, conversation })).toContain(`\n\n${conversation.join("\n")}\n\n# Your instructions\n`);
+    // The other prompts never get the section.
+    for (const p of [buildPrompt(full), buildReplyPrompt({ ...full, threads }), buildFixPrompt({ ...full, threads })])
+      expect(p).not.toContain("Conversation so far");
+  });
+
+  test("AC-F7: askAgent has the follow-up line only for a run with a parent; without it the prompt is unchanged", () => {
+    const plain = askAgent(general).prompt;
+    const follow = askAgent(general, {}, true).prompt;
+    expect(sha(plain)).toBe("a34e7fff56681df0ad4cfdf704b2a4195f6a8c80e78915847a6767e008235047");
+    expect(askAgent(general, {}, false).prompt).toBe(plain);
+    expect(follow).toBe(
+      plain.replace(
+        "Answer only the question in the user message. Write the answer as short Markdown.\n",
+        `Answer only the question in the user message. Write the answer as short Markdown.\n${FOLLOW_UP_RULE}\n`,
+      ),
+    );
+    expect(FOLLOW_UP_RULE).toBe(
+      'The question can refer to an earlier answer. Read the turns in the "Conversation so far" section of the user message. Older turns are in ./context/history.md. Answer only the current question in "Your instructions".',
+    );
+    expect(longSentences([FOLLOW_UP_RULE])).toEqual([]);
+    // With the PR context, the line stays next to the answer rule.
+    expect(askAgent(general, { prContext: true }, true).prompt).toContain(`short Markdown.\n${FOLLOW_UP_RULE}\n`);
   });
 });

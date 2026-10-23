@@ -43,8 +43,11 @@ const test = base.extend<{ seen: { urls: string[]; logs: string[] } }>({
 const runLine = (page: Page) => page.locator("#runline");
 // The row of the newest run of one kind. data-run-state: running, done, failed, limit, or cancelled.
 const runRow = (page: Page, kind = "review") => page.locator(`#runline [data-run-kind='${kind}']`);
-const box = (page: Page) => page.getByLabel("Your question");
+// Its label is "Your question", "Follow up", or "New question" (docs/plans/review-v2/spec.md section 2.14).
+const box = (page: Page) => page.locator("#ask-q");
 const answers = (page: Page) => page.locator("[data-ask]");
+const conversations = (page: Page) => page.locator("#ask ol[data-conversation]");
+const asked = (page: Page) => page.waitForRequest((r) => r.method() === "POST" && /\/api\/prs\/\d+\/ask$/.test(r.url()));
 const slot = (page: Page) => page.locator("#ask");
 const strip = (page: Page) => page.locator("nav[aria-label='Pull request summary']");
 const askBtn = (page: Page) => page.locator("#ask-btn");
@@ -106,13 +109,14 @@ test("q opens Ask in the slot, Ctrl+Enter asks, the answer is safe Markdown, and
   await expect(runLog(page)).toHaveCount(0);
   await expect(a.getByRole("button", { name: "Log", exact: true })).toBeFocused();
 
-  // The list shows all answers of this pull request, newest first.
+  // The second question follows up the first answer. The conversation shows its turns oldest first.
+  await expect(page.getByLabel("Follow up")).toBeVisible();
   await box(page).fill(SECOND);
   await page.getByRole("button", { name: "Ask", exact: true }).click();
   await expect(answers(page)).toHaveCount(2);
-  await expect(answers(page).first()).toContainText(SECOND);
-  await expect(answers(page).nth(1)).toContainText(QUESTION);
-  await expect(answers(page).first().getByRole("status")).toContainText(/Claude answered on/, { timeout: RUN_MS });
+  await expect(answers(page).first()).toContainText(QUESTION);
+  await expect(answers(page).nth(1)).toContainText(SECOND);
+  await expect(answers(page).nth(1).getByRole("status")).toContainText(/Claude answered on/, { timeout: RUN_MS });
 
   // Esc closes the slot and gives the focus back to the Ask button. Nothing says "Answering…" when no question runs.
   await box(page).focus();
@@ -184,6 +188,8 @@ test("a 409 keeps the typed question, also after a reload, and a running answer 
   await a.getByRole("button", { name: "Cancel" }).click();
   await expect(a.getByRole("status")).toContainText("You cancelled the question.", { timeout: RUN_MS });
   await expect(runRow(page, "ask")).toContainText(/Cancelled after \d+ tool calls?/);
+  // spec.md section 2.14: the empty box gets the question of the cancelled newest turn, so one Ask sends it again as a follow-up.
+  await expect(page.getByLabel("Follow up")).toHaveValue(QUESTION);
   await page.keyboard.press("Escape");
   await expect(slot(page)).toHaveCount(0);
   await expect(strip(page).getByRole("button", { name: "Answering…" })).toHaveCount(0);
@@ -200,4 +206,90 @@ test("a failed answer shows the reason and its raw output", async ({ page }) => 
   await a.getByRole("button", { name: "Show raw output" }).click();
   await expect(page.locator("#raw-out")).toContainText("# structured_output");
   await expect(page.locator("#raw-copy")).toBeFocused();
+});
+
+// docs/plans/review-v2/spec.md sections 2.14 and 2.18 (AC-F10). mermaid.e2e.ts checks a diagram in a conversation: Mermaid logs CSP
+// messages, and this file fails on any.
+const FOLLOW = "And who calls flush() on shutdown?";
+const FRESH = "Does the cache drop writes?";
+const STALE = "Who else calls it?";
+
+test("q focuses the Follow up box under the newest answer, a follow-up carries its parent, and New question starts a conversation on top", async ({
+  page,
+}) => {
+  await control("claude", { stream: "tree", answer: { answer: ANSWER, coverage: COVERAGE } });
+  await connect(page);
+  await page.keyboard.press("q");
+  await expect(page.getByLabel("Your question")).toBeFocused();
+  await expect(slot(page).getByRole("button", { name: "New question" })).toHaveCount(0);
+  await box(page).fill(QUESTION);
+  const first = asked(page);
+  await box(page).press("Control+Enter");
+  expect((await first).postDataJSON()).toEqual({ question: QUESTION });
+  const a1 = answers(page).first();
+  await expect(a1.getByRole("status")).toContainText(/Claude answered on/, { timeout: RUN_MS });
+  const parent = Number(await a1.getAttribute("data-ask"));
+
+  // The box follows the newest answer and has one primary button.
+  await expect(page.getByLabel("Follow up")).toBeFocused();
+  await expect(box(page)).toHaveAttribute("placeholder", "Ask about the answer above");
+  await expect(slot(page)).toContainText("Claude answers with the Review profile and sees this conversation. Nothing posts to Bitbucket.");
+  await expect(slot(page).locator("[data-primary]")).toHaveCount(1);
+  await expect(slot(page).locator("[data-primary]")).toHaveText("Ask");
+  // q focuses the box under the newest answer.
+  await page.keyboard.press("Escape");
+  await expect(slot(page)).toHaveCount(0);
+  await page.keyboard.press("q");
+  await expect(page.getByLabel("Follow up")).toBeFocused();
+  const [ans, input] = [await a1.boundingBox(), await box(page).boundingBox()];
+  expect((input?.y ?? 0) >= (ans?.y ?? 0) + (ans?.height ?? 0)).toBe(true);
+
+  // Ctrl+Enter sends a follow-up with its parent. The turns show oldest first.
+  await control("claude", { stream: "tree", answer: { answer: "Only the worker calls it.", coverage: COVERAGE } });
+  await box(page).fill(FOLLOW);
+  const second = asked(page);
+  await box(page).press("Control+Enter");
+  expect((await second).postDataJSON()).toEqual({ question: FOLLOW, parent });
+  await expect(page.getByText("Asked. Claude is answering.")).toBeAttached();
+  await expect(box(page)).toBeFocused();
+  await expect(conversations(page)).toHaveCount(1);
+  const turns = conversations(page).first().locator("[data-ask]");
+  await expect(turns).toHaveCount(2);
+  await expect(turns.nth(0)).toContainText(QUESTION);
+  await expect(turns.nth(1)).toContainText(FOLLOW);
+  await expect(turns.nth(1).getByRole("status")).toContainText(/Claude answered on/, { timeout: RUN_MS });
+  await page.locator("#ask").screenshot({ path: test.info().outputPath("ask-follow-up.png") });
+
+  // New question switches the same box. The typed text and the focus stay in the box.
+  await box(page).fill(FRESH);
+  await slot(page).getByRole("button", { name: "New question" }).click();
+  await expect(page.getByLabel("New question")).toBeFocused();
+  await expect(box(page)).toHaveValue(FRESH);
+  await expect(slot(page)).toContainText("Claude starts fresh. It does not see the conversation above.");
+  await expect(slot(page).getByRole("button", { name: "Back to follow up" })).toBeVisible();
+  await expect(slot(page).locator("[data-primary]")).toHaveCount(1);
+  const third = asked(page);
+  await slot(page).getByRole("button", { name: "Ask", exact: true }).click();
+  expect((await third).postDataJSON()).toEqual({ question: FRESH });
+  await expect(page.getByText("New question asked. Claude is answering.")).toBeAttached();
+  // The new answer starts a conversation on top. The earlier one moves under "Earlier questions", read only.
+  await expect(conversations(page)).toHaveCount(2);
+  await expect(conversations(page).first().locator("[data-ask]")).toHaveCount(1);
+  await expect(conversations(page).first()).toContainText(FRESH);
+  const earlier = slot(page).getByRole("region", { name: "Earlier questions" });
+  await expect(earlier.locator("[data-ask]")).toHaveCount(2);
+  await expect(earlier.locator("textarea")).toHaveCount(0);
+  await expect(page.getByLabel("Follow up")).toBeFocused();
+  await expect(conversations(page).first().getByRole("status")).toContainText(/Claude answered on/, { timeout: RUN_MS });
+  await page.locator("#ask").screenshot({ path: test.info().outputPath("ask-earlier.png") });
+
+  // A second tab already followed up this parent: the server answers 409, the toast says so, and the box keeps its text.
+  const route = /\/api\/prs\/\d+\/ask$/;
+  await page.route(route, (r) => r.continue({ postData: JSON.stringify({ ...r.request().postDataJSON(), parent }) }));
+  await box(page).fill(STALE);
+  await box(page).press("Control+Enter");
+  await expect(page.getByText("This conversation moved on in another tab. The newest turn is shown now.")).toBeVisible();
+  await expect(box(page)).toHaveValue(STALE);
+  await page.unroute(route);
+  await expect(answers(page)).toHaveCount(3);
 });

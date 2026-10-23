@@ -135,6 +135,22 @@ test("an Ask answer shows allowed diagrams as images, and a broken or other diag
   await shots("dark");
 });
 
+// docs/plans/review-v2/spec.md section 2.18 (AC-F10): a diagram in the follow-up turn of a conversation, and the earlier turn above it.
+test("a Mermaid answer in a conversation renders as an image", async ({ page }) => {
+  await control("claude", { stream: "tree", answer: { answer: "The worker writes in batches.", coverage: COVERAGE } });
+  await ask(page);
+  await control("claude", { stream: "tree", answer: { answer: `The write path:\n\n\`\`\`mermaid\n${SEQ}\n\`\`\``, coverage: COVERAGE } });
+  await page.getByLabel("Follow up").fill("Draw it.");
+  await page.getByLabel("Follow up").press("Control+Enter");
+  const turns = page.locator("#ask ol[data-conversation]").first().locator("[data-ask]");
+  await expect(turns).toHaveCount(2);
+  const second = turns.nth(1);
+  await expect(second.getByRole("status")).toContainText(/Claude answered on/, { timeout: RUN_MS });
+  await expect(second.locator("figure[data-diagram]")).toHaveAttribute("data-diagram", "image", { timeout: RUN_MS });
+  await expect(second.getByRole("img", { name: "Diagram: sequenceDiagram" })).toHaveAttribute("src", /^data:image\/svg\+xml/);
+  await expect(turns.nth(0)).toContainText("The worker writes in batches.");
+});
+
 test("a page without a diagram does not load the mermaid chunk", async ({ page, seen }) => {
   await control("claude", { stream: "tree", answer: { answer: "No diagram here.\n\n```ts\nconst a = 1;\n```", coverage: COVERAGE } });
   await ask(page);

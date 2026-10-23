@@ -16,6 +16,8 @@ import {
   type BriefInput,
   type ExplainDto,
   type FixDto,
+  MOVED_ON,
+  type MovedConflict,
   type PrTask,
   type ReviewItemDto,
   type RunConflict,
@@ -84,6 +86,7 @@ import {
 import { createClaudeRunner, RUN_TIMEOUT_MS, type RunnerCheck } from "./claude";
 import { codegraphEntry, codegraphIndex, indexCodegraph } from "./codegraph";
 import {
+  askConversation,
   candidatesFile,
   earlierItem,
   findingsFile,
@@ -224,7 +227,8 @@ type Job = {
 export type StartResult =
   | { status: 200 | 202; run: RunDto }
   | { status: 409; conflict: RunConflict }
-  | { status: 400 | 404 | 409; error: string };
+  // moved: an ask whose parent already has a follow-up (docs/plans/review-v2/spec.md section 2.15).
+  | { status: 400 | 404 | 409; error: string; moved?: MovedConflict["moved"] };
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -651,6 +655,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const fix = j.kind === "fix" ? j.threads : null;
     const question = j.question;
     const explain = j.kind === "explain";
+    // docs/plans/review-v2/spec.md section 2.16: a follow-up gets the earlier turns of its conversation in stdin.
+    const conversation = question !== null ? askConversation(j.db, j.id, pr.source_head, history?.asks ?? new Set()) : null;
     const spec = reply
       ? { prompt: buildReplyPrompt({ ...input, threads: reply }), schema: replyJsonSchema(), main: replyAgent(profile, context) }
       : fix
@@ -660,7 +666,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
             main: fixAgent(profile, context),
           }
         : question !== null
-          ? { prompt: buildAskPrompt({ ...input, question }), schema: askJsonSchema(), main: askAgent(profile, context) }
+          ? {
+              prompt: buildAskPrompt({ ...input, question, conversation }),
+              schema: askJsonSchema(),
+              main: askAgent(profile, context, conversation !== null),
+            }
           : carry
             ? {
                 prompt: buildRereviewPrompt({
@@ -912,14 +922,22 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     profile: Profile,
     key: string,
     kind: RunKind,
-    o: { threads?: ReplyThread[]; picked?: boolean; findings?: number[]; anyway?: boolean; carry?: Carry; question?: string } = {},
+    o: {
+      threads?: ReplyThread[];
+      picked?: boolean;
+      findings?: number[];
+      anyway?: boolean;
+      carry?: Carry;
+      question?: string;
+      parent?: number;
+    } = {},
   ): StartResult {
     const busy = taken(db, key);
     if (busy) return busy;
     // A missing always-use skill refuses the start, so no failed run is stored.
     const missing = alwaysProblems(profile.alwaysSkills, opts.claudeConfigDir ?? claudeConfigDir());
     if (missing.length) return { status: 409, error: missing.join(" ") };
-    const { threads = null, picked = false, findings = [], anyway = false, carry = null, question = null } = o;
+    const { threads = null, picked = false, findings = [], anyway = false, carry = null, question = null, parent = null } = o;
     const { id: runId } = db.query(SQL.insert).get({
       pr: pr.id,
       kind,
@@ -939,6 +957,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       effort: profile.effort ?? "default",
       effort_default: profile.effort ? null : runEffort(profile.model),
       prompt_version: REVIEW_PROMPT_VERSION,
+      parent,
     }) as { id: number };
     return begin(
       {
@@ -1162,22 +1181,49 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     },
 
     // Plan r2 S-ASK: answers one question with the brief profile, or the given one, and an empty note. It shares the run slot.
-    ask(db: Database, id: number, question: string, profileId?: string): StartResult {
+    // parent: the ask run that this question follows (docs/plans/review-v2/spec.md section 2.15). Without a body profile, a follow-up
+    // keeps the profile of its parent while the settings hold it.
+    ask(db: Database, id: number, question: string, profileId?: string, parent?: number): StartResult {
       const pr = prRow(db, id);
       if (!pr) return { status: 404, error: "Pull request not found." };
+      const prev =
+        parent === undefined
+          ? null
+          : (db.query(SQL.askParent).get({ id: parent }) as Pick<RunRow, "id" | "pr" | "kind" | "profile"> | null);
+      if (parent !== undefined && (!prev || prev.pr !== id || prev.kind !== "ask"))
+        return { status: 400, error: "This answer belongs to another conversation." };
       const { source_head, target_head } = pr;
       if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
       const brief = briefOf(db, id);
-      const profile = profileOf(settings.profiles(), profileId ?? brief.profile);
-      const key = [id, "ask", source_head, target_head, profile.id, profileRevision(profile), sha256(question)].join(":");
-      return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "ask", { question });
+      const kept = prev && !profileId && settings.profiles().some((p) => p.id === prev.profile) ? prev.profile : null;
+      const profile = profileOf(settings.profiles(), profileId ?? kept ?? brief.profile);
+      const key = [id, "ask", source_head, target_head, profile.id, profileRevision(profile), parent ?? "new", sha256(question)].join(":");
+      if (prev) {
+        const same = taken(db, key);
+        if (same?.status === 200) return same;
+        const next = db.query(SQL.followUp).get({ id: prev.id }) as { id: number } | null;
+        if (next) return { status: 409, error: MOVED_ON, moved: { run: next.id } };
+      }
+      const r = launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "ask", {
+        question,
+        ...(prev && { parent: prev.id }),
+      });
+      if (prev && r.status === 202) {
+        const why = profileId || kept ? "" : ` of the brief: the profile of ask run ${prev.id} no longer exists`;
+        log(`Ask run ${r.run.id} follows ask run ${prev.id} with the ${profile.name} profile${why}.`);
+      }
+      return r;
     },
 
     // The newest ask runs of a PR with their answers. null for an unknown PR.
     asks(db: Database, pr: number): AskDto[] | null {
       if (!prRow(db, pr)) return null;
       const now = effortsNow();
-      return (db.query(`${SQL.run} ${SQL.asks}`).all({ pr }) as RunRow[]).map((r) => ({ run: toRunDto(r, now), answer: r.answer }));
+      return (db.query(`${SQL.run} ${SQL.asks}`).all({ pr }) as RunRow[]).map((r) => ({
+        run: toRunDto(r, now),
+        answer: r.answer,
+        parent: r.parent_run,
+      }));
     },
 
     explain: startExplain,

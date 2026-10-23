@@ -711,10 +711,18 @@ export const replyRunInput = z.object({ threads: z.array(positiveInt).min(1).max
 // ---------- Ask (plan r2 S-ASK) ----------
 
 // POST /api/prs/:id/ask. GET /api/prs/:id/asks gives AskDto[], newest first, at most 20.
-export const askInput = z.object({ question: z.string().trim().min(1).max(MAX_QUESTION), profile: runProfile });
+// parent: the ask run that this question follows (docs/plans/review-v2/spec.md section 2.15). Absent: a new conversation.
+export const askInput = z.object({
+  question: z.string().trim().min(1).max(MAX_QUESTION),
+  profile: runProfile,
+  parent: positiveInt.optional(),
+});
 export type AskInput = z.infer<typeof askInput>;
-// answer: null until the run ends with a valid result.
-export type AskDto = { run: RunDto; answer: string | null };
+// answer: null until the run ends with a valid result. parent: the parent_run of the ask run.
+export type AskDto = { run: RunDto; answer: string | null; parent: number | null };
+// The 409 of an ask whose parent already has a follow-up. run: that follow-up.
+export const MOVED_ON = "This conversation moved on in another tab. The newest turn is shown now.";
+export type MovedConflict = ApiError & { moved: { run: number } };
 
 // ---------- Review v2: Explain and Discuss (docs/plans/review-v2/spec.md sections 2.3 and 3.2) ----------
 

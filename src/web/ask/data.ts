@@ -3,7 +3,7 @@
 
 // Ask server state (plan r2 UI-ASK). Key ['pr', pr, 'asks']: live.ts invalidates it with the PR when a run starts or ends.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AskDto } from "../../shared/dto";
+import type { AskDto, MovedConflict } from "../../shared/dto";
 import { api } from "../api";
 import { started, useStart } from "../review/data";
 import { read } from "../shell/data";
@@ -32,14 +32,33 @@ export function saveDraft(pr: number, text: string) {
 export const useAsks = (pr: number) =>
   useQuery({ queryKey: askKey(pr), queryFn: async () => read<AskDto[]>(await api.api.prs[":id"].asks.$get(param(pr))) });
 
+// The 409 of a follow-up whose parent got a follow-up in another tab (docs/plans/review-v2/spec.md section 2.15).
+export class MovedOn extends Error {
+  constructor(readonly run: number) {
+    super("This conversation moved on in another tab.");
+  }
+}
+
 // POST /api/prs/:id/ask. 202 starts a run. 200 gives the running run of the same question. The new run shows at once.
+// parent: the ask run that the question follows. Absent: a new conversation.
 // A sent question leaves the storage, also when the page left the PR before the answer came. A refused one stays.
 export function useStartAsk(pr: number) {
   const qc = useQueryClient();
-  return useStart(pr, async (question: string) => {
-    const r = await started(await api.api.prs[":id"].ask.$post({ ...param(pr), json: { question } }));
+  return useStart(pr, async ({ question, parent }: { question: string; parent?: number }) => {
+    const res = await api.api.prs[":id"].ask.$post({ ...param(pr), json: { question, ...(parent && { parent }) } });
+    if (res.status === 409) {
+      const body = (await res
+        .clone()
+        .json()
+        .catch(() => null)) as Partial<MovedConflict> | null;
+      if (body?.moved) throw new MovedOn(body.moved.run);
+    }
+    const r = await started(res);
     if (!("run" in r)) return r;
-    qc.setQueryData<AskDto[]>(askKey(pr), (old) => [{ run: r.run, answer: null }, ...(old ?? []).filter((a) => a.run.id !== r.run.id)]);
+    qc.setQueryData<AskDto[]>(askKey(pr), (old) => [
+      { run: r.run, answer: null, parent: parent ?? null },
+      ...(old ?? []).filter((a) => a.run.id !== r.run.id),
+    ]);
     if (loadDraft(pr).trim() === question) saveDraft(pr, "");
     return r;
   });

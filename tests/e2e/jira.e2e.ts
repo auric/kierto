@@ -328,7 +328,8 @@ test("the run buttons and the Ask section share the task chips of the brief, and
   await page.getByLabel("Your question").press("Control+Enter");
   await expect(runRow(page, "ask")).toHaveAttribute("data-run-state", "done", { timeout: RUN_MS });
   await expect(runTasks(page, JIRA_ISSUE, "ask")).toBeVisible();
-  await page.getByLabel("Your question").press("Escape");
+  // After the first answer, the box follows it up (docs/plans/review-v2/spec.md section 2.14).
+  await page.getByLabel("Follow up").press("Escape");
   await expect(runs).toContainText(`${JIRA_ISSUE} · fetched today`);
 });
 

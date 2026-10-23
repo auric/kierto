@@ -75,6 +75,8 @@ export type RunRow = {
   skills_json: string | null;
   // A session run only: SessionRecord.
   consult_json: string | null;
+  // An ask run only: the ask run that it follows (docs/plans/review-v2/spec.md section 2.15).
+  parent_run: number | null;
   findings: number;
 };
 
@@ -149,16 +151,16 @@ export const SQL = {
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
   // model: the --model value until the init event gives the model that ran.
   insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, status, started_at,
-      since_head, question, tasks_json, model, effort, effort_default, prompt_version)
+      since_head, question, tasks_json, model, effort, effort_default, prompt_version, parent_run)
     VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since, $question, $tasks,
-      $model, $effort, $effort_default, $prompt_version)
+      $model, $effort, $effort_default, $prompt_version, $parent)
     RETURNING id`,
   // Plan r3 Feature C: the fetched tasks at the start of a run, in the order of task.md.
   fetched: "SELECT key, fetched_at AS fetchedAt FROM task_context WHERE pr = $pr ORDER BY key",
   run: `SELECT r.id, r.pr, r.kind, r.profile, r.profile_name, r.explain, r.note, r.source_head, r.target_head, r.merge_base, r.fetch_via, r.status, r.error_kind, r.error_text,
       r.session_id, r.cli_version, r.model, r.effort, r.effort_default, r.usage_json, r.summary_json, r.raw_output IS NOT NULL AS has_raw, r.started_at, r.finished_at,
       p.source_head AS pr_source, p.target_head AS pr_target, r.since_head, r.range_base, r.question, r.answer, r.fix_json, r.tasks_json, r.instructions_json, r.skills_json,
-      r.consult_json,
+      r.consult_json, r.parent_run,
       (SELECT COUNT(*) FROM review_item i WHERE i.run = r.id AND i.kind = 'finding'
         AND COALESCE(json_extract(i.payload_json, '$.carried.verdict'), 'open') = 'open'
         AND COALESCE(json_extract(i.payload_json, '$.discardedBy'), '') <> 'verify') AS findings
@@ -220,6 +222,14 @@ export const SQL = {
   historyAsks:
     "WHERE r.pr = $pr AND r.kind = 'ask' AND r.status IN ('completed', 'incomplete') AND r.answer IS NOT NULL ORDER BY r.id DESC",
   historyItems: "SELECT * FROM review_item WHERE run = $run AND kind = 'finding' ORDER BY id",
+  // docs/plans/review-v2/spec.md section 2.15: the parent of a follow-up, and the follow-up that a run already has.
+  askParent: "SELECT id, pr, kind, profile FROM review_run WHERE id = $id",
+  followUp: "SELECT id FROM review_run WHERE parent_run = $id",
+  // The earlier turns of an ask run, newest first. UNION drops a repeated ID, so a parent loop ends the walk.
+  chain: `WITH RECURSIVE up(id) AS (
+      SELECT parent_run FROM review_run WHERE id = $run AND parent_run IS NOT NULL
+      UNION SELECT r.parent_run FROM review_run r JOIN up ON r.id = up.id WHERE r.parent_run IS NOT NULL)
+    SELECT r.id, r.status, r.source_head, r.question, r.answer FROM up JOIN review_run r ON r.id = up.id ORDER BY r.id DESC`,
   // A session run uses no profile and no --model or --effort flag.
   sessionInsert: `INSERT INTO review_run (pr, kind, profile, note, idem_key, source_head, target_head, status, started_at, effort, consult_json)
     VALUES ($pr, 'session', '', '', $key, $source, $target, 'running', $now, 'default', $consult) RETURNING id`,
