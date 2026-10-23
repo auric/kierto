@@ -27,6 +27,26 @@ import {
   type WithdrawnMark,
 } from "./review";
 import type { RunErrorKind, RunEvent, RunStatus } from "./run-log";
+import {
+  commandId,
+  INTERVIEW_QUESTIONS,
+  type PartKind,
+  type PartState,
+  type QuestionSource,
+  type SizeSource,
+  type SpecResult,
+  type StepDetail,
+  type StepKind,
+  type StepState,
+  TASK_DOCS,
+  TASK_SIZES,
+  type TaskBlocked,
+  type TaskDoc,
+  type TaskSettings,
+  type TaskSize,
+  type TaskState,
+  taskCommand,
+} from "./task";
 import type { ExcerptLine, IncompleteReason, Reviewer, Role, User } from "./types";
 
 export type { ExcerptLine };
@@ -1127,3 +1147,179 @@ export type ReviewStatsDto = {
   medianMinutes: number | null;
   usage: { costUsd: number; turns: number };
 };
+
+// ---------- Build a Jira task (docs/plans/review-v2/spec.md sections 6.3 and 6.11) ----------
+
+// spec.md section 6.11. JIRA_KEY above is the rule of a Jira fetch.
+export const TASK_KEY = /^[A-Z][A-Z0-9_]+-[0-9]+$/;
+export const MAX_TASK_REVIEWERS = 20;
+export const MAX_TASK_COMMANDS = 20;
+export const MAX_TASK_DOC = 120_000;
+export const MAX_TASK_ANSWER = 2000;
+
+// git-check-ref-format for a branch name (git-scm.com/docs/git-check-ref-format). git also refuses a branch that starts with "-".
+const refOk = (b: string) =>
+  ![...b].some((ch) => ch <= " " || ch === "\x7f" || "~^:?*[\\".includes(ch)) &&
+  !b.includes("..") &&
+  !b.includes("@{") &&
+  !b.includes("//") &&
+  b !== "@" &&
+  !b.startsWith("-") &&
+  !b.startsWith("/") &&
+  !b.endsWith("/") &&
+  !b.endsWith(".") &&
+  !b.split("/").some((c) => c.startsWith(".") || c.endsWith(".lock"));
+export const branchName = z.string().min(1).max(255).refine(refOk, "Invalid branch name.");
+const repoName = z.string().trim().min(1).max(255);
+const taskReviewers = z.array(z.string().trim().min(1).max(255)).max(MAX_TASK_REVIEWERS);
+const taskSize = z.enum(TASK_SIZES);
+
+// POST /api/tasks. 201 with the new task, or 200 with the open task of the same key.
+export const taskCreateInput = z.object({
+  project: repoName,
+  repo: repoName,
+  key: z.string().regex(TASK_KEY),
+  originPr: positiveInt.optional(),
+  target: branchName.optional(),
+});
+// GET /api/tasks.
+export const taskListInput = z.object({ state: z.enum(["open", "all"]).default("open") });
+// POST /api/tasks/:id/answers. question: a task_question ID. choice: the index of an option. recommended: use every recommended answer.
+export const taskAnswersInput = z.object({
+  version,
+  answers: z
+    .array(
+      z.object({ question: positiveInt, choice: z.number().int().min(0).optional(), text: z.string().max(MAX_TASK_ANSWER).optional() }),
+    )
+    .max(INTERVIEW_QUESTIONS[0]),
+  recommended: z.literal(true).optional(),
+});
+// PUT /api/tasks/:id/docs. 422 with the line of a parse error.
+export const taskDocInput = z.object({ version, doc: z.enum(TASK_DOCS), text: z.string().max(MAX_TASK_DOC) });
+// POST /api/tasks/:id/plan. warning: the first-use warning of the repository is accepted.
+export const taskPlanInput = z.object({
+  version,
+  size: taskSize,
+  commands: z.array(commandId).max(MAX_TASK_COMMANDS),
+  warning: z.literal(true).optional(),
+});
+// POST /api/tasks/:id/spec-pr and POST /api/tasks/:id/parts/:part/pr.
+export const taskReviewersInput = z.object({ version, reviewers: taskReviewers });
+// POST /api/tasks/:id/build. override: start without the approval of the spec PR.
+export const taskBuildInput = z.object({ version, override: z.literal(true).optional() });
+// POST /api/tasks/:id/parts/:part/push. force: the confirmed rebase push. It keeps the lease.
+export const taskPushInput = z.object({ version, force: z.literal(true).optional() });
+// POST /api/tasks/:id/size.
+export const taskSizeInput = z.object({ version, size: taskSize });
+// POST /api/tasks/:id/spec-change/:step.
+export const specChangeInput = z.object({ version, accept: z.boolean() });
+// POST /api/tasks/:id/pause, /resume, /stop, /close, and /parts/:part/retarget.
+export const taskVersionInput = z.object({ version });
+// PUT /api/repos/:project/:repo/task-settings. spec_dir: a relative folder; {key} stands for the Jira key.
+export const repoTaskSettingsInput = z.object({
+  specDir: z
+    .string()
+    .min(1)
+    .max(200)
+    .refine((d) => !/^[/\\]|^[A-Za-z]:|\\/.test(d) && !d.split("/").includes(".."), "Use a relative folder with / separators."),
+  branchPrefix: z
+    .string()
+    .max(100)
+    .refine((p) => p === "" || refOk(`${p}x`), "Invalid branch prefix."),
+  lineBudget: z.number().int().min(1).max(100_000),
+  maxOpen: z.number().int().min(1).max(20),
+  approvals: z.number().int().min(0).max(20),
+  commands: z.array(taskCommand).max(MAX_TASK_COMMANDS),
+  testGlobs: z.array(z.string().min(1).max(200)).max(50).nullable(),
+  excludeGlobs: z.array(z.string().min(1).max(200)).max(50).nullable(),
+  isolateHome: z.boolean(),
+});
+export type TaskCreateInput = z.infer<typeof taskCreateInput>;
+export type TaskAnswersInput = z.infer<typeof taskAnswersInput>;
+export type TaskPlanInput = z.infer<typeof taskPlanInput>;
+export type RepoTaskSettingsInput = z.infer<typeof repoTaskSettingsInput>;
+// warnedAt: the first-use warning of the repository was accepted then.
+export type RepoTaskSettingsDto = RepoTaskSettingsInput & { project: string; repo: string; warnedAt: number | null };
+
+export type TaskQuestionDto = {
+  id: number;
+  source: QuestionSource;
+  round: number;
+  ord: number;
+  text: string;
+  why: string;
+  kind: "choice" | "text";
+  options: { label: string; detail: string }[];
+  recommended: number | null;
+  answer: { choice: number | null; text: string } | null;
+  step: number | null;
+  askedAt: number;
+  answeredAt: number | null;
+};
+
+// pushed: the lease of the next push.
+export type TaskPartDto = {
+  id: number;
+  ord: number;
+  kind: PartKind;
+  title: string;
+  branch: string;
+  baseBranch: string;
+  pr: number | null;
+  remotePr: number | null;
+  state: PartState;
+  head: string | null;
+  pushed: string | null;
+  lines: number | null;
+  usage: RunUsage | null;
+};
+
+export type TaskStepDto = {
+  id: number;
+  part: number | null;
+  ord: number;
+  kind: StepKind;
+  run: number | null;
+  state: StepState;
+  attempt: number;
+  item: string | null;
+  detail: StepDetail;
+  startedAt: number;
+  endedAt: number | null;
+};
+
+// GET /api/tasks. A row of the Tasks view.
+export type TaskRowDto = {
+  id: number;
+  project: string;
+  repo: string;
+  key: string;
+  title: string;
+  state: TaskState;
+  size: TaskSize | null;
+  blocked: TaskBlocked | null;
+  version: number;
+  updatedAt: number;
+  closedAt: number | null;
+};
+
+// GET /api/tasks/:id. docs: the plan files before their first push, null before the spec run.
+export type TaskDto = TaskRowDto & {
+  originPr: number | null;
+  stoppedFrom: TaskState | null;
+  sizeBy: SizeSource | null;
+  targetBranch: string;
+  baseCommit: string | null;
+  specDir: string;
+  specBranch: string | null;
+  estimate: SpecResult["estimate"] | null;
+  settings: TaskSettings;
+  docs: (Partial<Record<TaskDoc, string>> & { version: number }) | null;
+  parts: TaskPartDto[];
+  questions: TaskQuestionDto[];
+  steps: TaskStepDto[];
+  createdAt: number;
+};
+
+// 409 of a task mutation: the version is old, or the state takes no such change. task: the current task.
+export type TaskConflict = ApiError & { task: TaskDto };

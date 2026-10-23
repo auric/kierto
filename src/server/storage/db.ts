@@ -34,6 +34,7 @@ import m029_draft_stale from "./migrations/029_draft_stale.sql" with { type: "te
 import m030_review_v2 from "./migrations/030_review_v2.sql" with { type: "text" };
 import m031_pr_notes from "./migrations/031_pr_notes.sql" with { type: "text" };
 import m032_ask_parent from "./migrations/032_ask_parent.sql" with { type: "text" };
+import m033_task from "./migrations/033_task.sql" with { type: "text" };
 
 // Index i holds the SQL that raises user_version from i to i + 1. The list order, not the file number, sets the version.
 const MIGRATIONS = [
@@ -69,6 +70,7 @@ const MIGRATIONS = [
   m030_review_v2,
   m031_pr_notes,
   m032_ask_parent,
+  m033_task,
 ];
 
 const tables = (db: Database) =>

@@ -29,7 +29,6 @@ import { z } from "zod";
 import { runnerDefaults } from "../../src/server/review/defaults";
 import { EFFORTS } from "../../src/shared/dto";
 import {
-  coverage,
   discussResult,
   explainResult,
   fixJsonSchema,
@@ -38,6 +37,7 @@ import {
   replyResult,
   verifyResult,
 } from "../../src/shared/review";
+import { implementResult, interviewResult, specResult } from "../../src/shared/task";
 
 const ROOT = resolve(import.meta.dir, "../..");
 const OUT = join(ROOT, ".gate0/v3-local");
@@ -1761,99 +1761,7 @@ async function b16() {
 }
 
 // ---------- B17 to B20: review v2 and task runs (docs/plans/review-v2/tasks.md WP-G0, docs/gate-v2.md) ----------
-// shortcut: gate copies of the spec.md section 6.5 schemas. Use the src/shared/task.ts exports after WP-B0.
-// B18 and B20 use the shipped verify, explain, and discuss schemas of src/shared/review.ts.
-const option = z.object({ label: z.string().max(120), detail: z.string().max(300) });
-const interviewResult = z.object({
-  done: z.boolean(),
-  summary: z.string().max(1500),
-  questions: z
-    .array(
-      z.object({
-        id: z.string().regex(/^q[0-9]{1,2}$/),
-        text: z.string().max(300),
-        why: z.string().max(300),
-        kind: z.enum(["choice", "text"]),
-        options: z.array(option).max(5),
-        recommended: z.number().int().min(0).nullable(),
-      }),
-    )
-    .max(8),
-  unknowns: z.array(z.string().max(300)).max(10).default([]),
-  coverage,
-});
-const specResult = z.object({
-  title: z.string().max(200),
-  size: z.enum(["small", "medium", "large"]),
-  estimate: z.object({
-    parts: z.number().int().min(1).max(12),
-    lines: z.number().int().min(1),
-    files: z.number().int().min(1),
-    modules: z.array(z.string().max(60)).max(20),
-    db: z.boolean(),
-    api: z.boolean(),
-    unknowns: z.array(z.string().max(300)).max(10),
-  }),
-  design: z.string().max(40_000),
-  spec: z.string().max(60_000),
-  parts: z
-    .array(
-      z.object({
-        n: z.number().int().min(1),
-        kind: z.enum(["contract", "part", "cleanup", "prep", "spike"]),
-        title: z.string().max(120),
-        goal: z.string().max(300),
-        lines: z.number().int().min(1),
-        acceptance: z
-          .array(z.object({ id: z.string(), text: z.string().max(500) }))
-          .min(1)
-          .max(20),
-        tests: z.array(z.object({ test: z.string().max(300), proves: z.array(z.string()).min(1) })).max(30),
-        tasks: z
-          .array(z.object({ id: z.string(), title: z.string().max(200), files: z.array(z.string()).max(30), done: z.string().max(300) }))
-          .min(1)
-          .max(15),
-      }),
-    )
-    .min(1)
-    .max(12),
-  testing: z.object({
-    commands: z
-      .array(
-        z.object({
-          name: z.string().max(60),
-          kind: z.enum(["setup", "build", "test", "lint"]),
-          argv: z.array(z.string().max(1000)).min(1).max(32),
-        }),
-      )
-      .max(10),
-    services: z.array(z.string().max(200)).max(10),
-    notes: z.string().max(2000),
-  }),
-  flag: z
-    .object({ name: z.string().max(120), removal: z.string().max(300) })
-    .nullable()
-    .default(null),
-  questions: z.array(z.string().max(300)).max(10).default([]),
-  coverage,
-});
-const implementResult = z.object({
-  summary: z.string().max(1000),
-  done: z.boolean(),
-  tests: z.array(z.string()).max(50).default([]),
-  question: z
-    .object({
-      text: z.string().max(300),
-      why: z.string().max(300),
-      options: z.array(option).max(5),
-      recommended: z.number().int().min(0).nullable(),
-    })
-    .nullable()
-    .default(null),
-  specChange: z.string().max(1000).default(""),
-  notes: z.array(z.string().max(500)).max(20).default([]),
-  coverage,
-});
+// B18 and B20 use the shipped verify, explain, and discuss schemas of src/shared/review.ts, and the task schemas of src/shared/task.ts.
 // The CLI checks --json-schema with a draft-07 Ajv (src/shared/review.ts reviewJsonSchema).
 const draft07 = (s: z.ZodType) => z.toJSONSchema(s, { target: "draft-07" }) as Record<string, unknown>;
 const structured = (r: Run | undefined) => r?.results.find((e) => e.structured_output !== undefined)?.structured_output;
@@ -2054,7 +1962,7 @@ async function b20() {
       {
         tag: "spec",
         schema: specResult,
-        ask: 'title "gate b20", size "small", estimate {parts 1, lines 10, files 1, modules [], db false, api false, unknowns []}, design "One line.", spec "One line.", parts = one entry {n 1, kind "part", title "Part one", goal "gate", lines 10, acceptance [{id "A1", text "It works."}], tests [{test "a.test.ts", proves ["A1"]}], tasks [{id "T1.1", title "Do it", files ["src/a.ts"], done "A1 passes"}]}, testing {commands [{name "test", kind "test", argv ["bun", "test"]}], services [], notes ""}, flag null, questions [].',
+        ask: 'title "gate b20", size "small", estimate {parts 1, lines 10, files 1, modules [], db false, api false, unknowns []}, map = one entry {path "src/a.ts", line 1, symbol "main", kind "change", what "gate"}, change "One line.", design null (JSON null), spec null (JSON null), parts = one entry {n 1, kind "part", title "Part one", goal "gate", lines 10, acceptance [{id "A1", text "It works."}], tests [{test "a.test.ts", proves ["A1"]}], tasks [{id "T1.1", title "Do it", files ["src/a.ts"], run ["a.test.ts"], done "A1 passes"}]}, testing {commands [{name "test", kind "test", argv ["bun", "test"]}], services [], notes ""}, flag null, questions [].',
       },
       {
         tag: "implement",

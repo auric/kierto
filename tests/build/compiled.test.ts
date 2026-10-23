@@ -57,23 +57,11 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
   let origin = "";
   let commit = "";
   let session = "";
+  const env: Record<string, string> = {};
 
-  beforeAll(async () => {
-    const stale = newerInput();
-    if (stale) throw new Error(`The binary is older than ${stale}: rebuild with bun run compile.`);
-    root = mkdtempSync(join(tmpdir(), "rl-bin-"));
-    fake = startFakeBitbucket({ routes: { [key("GET", DASHBOARD_PATH)]: { status: 200, body: onePage([]) } } });
-    jira = startFakeJira();
-    // An empty PATH keeps the real claude CLI out of the start-up runner check. Windows spells the name "Path".
-    const emptyPath = join(root, "path");
-    mkdirSync(emptyPath);
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env))
-      if (v !== undefined && k.toUpperCase() !== "PATH" && !k.startsWith("REVIEW_LOOP_")) env[k] = v;
-    Object.assign(env, { PATH: emptyPath, REVIEW_LOOP_PORT: "0", REVIEW_LOOP_DATA_DIR: join(root, "data"), REVIEW_LOOP_SECRETS: "memory" });
+  // Starts one binary on the data folder of root and waits for its start line. The caller kills the process.
+  async function launch() {
     const p = Bun.spawn([BIN], { cwd: root, env, stdin: "ignore", stdout: "pipe", stderr: "inherit" });
-    proc = p;
-
     let out = "";
     const stdout = p.stdout.getReader();
     const decoder = new TextDecoder();
@@ -87,14 +75,34 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
       }
     })();
     const m = await Promise.race([started, p.exited.then(() => null), Bun.sleep(START_MS - 5_000).then(() => null)]);
-    if (!m) throw new Error(`The binary did not start. Output:\n${out}`);
-    origin = m[2] as string;
-    commit = m[1] as string;
-    console.log(`Binary: ${BIN}\nModified: ${statSync(BIN).mtime.toISOString()}\nBuild commit: ${m[1]}\nURL: ${origin}`);
+    if (!m) {
+      p.kill();
+      throw new Error(`The binary did not start. Output:\n${out}`);
+    }
     // Keep the pipe drained, so that a log line never blocks the binary.
     void (async () => {
       while (!(await stdout.read()).done);
     })().catch(() => {});
+    return { proc: p, origin: m[2] as string, commit: m[1] as string };
+  }
+
+  beforeAll(async () => {
+    const stale = newerInput();
+    if (stale) throw new Error(`The binary is older than ${stale}: rebuild with bun run compile.`);
+    root = mkdtempSync(join(tmpdir(), "rl-bin-"));
+    fake = startFakeBitbucket({ routes: { [key("GET", DASHBOARD_PATH)]: { status: 200, body: onePage([]) } } });
+    jira = startFakeJira();
+    // An empty PATH keeps the real claude CLI out of the start-up runner check. Windows spells the name "Path".
+    const emptyPath = join(root, "path");
+    mkdirSync(emptyPath);
+    for (const [k, v] of Object.entries(process.env))
+      if (v !== undefined && k.toUpperCase() !== "PATH" && !k.startsWith("REVIEW_LOOP_")) env[k] = v;
+    Object.assign(env, { PATH: emptyPath, REVIEW_LOOP_PORT: "0", REVIEW_LOOP_DATA_DIR: join(root, "data"), REVIEW_LOOP_SECRETS: "memory" });
+    const first = await launch();
+    proc = first.proc;
+    origin = first.origin;
+    commit = first.commit;
+    console.log(`Binary: ${BIN}\nModified: ${statSync(BIN).mtime.toISOString()}\nBuild commit: ${commit}\nURL: ${origin}`);
     const page = await (await fetch(`${origin}/`)).text();
     session = /<meta name="rl-session" content="([0-9a-f]{64})"/.exec(page)?.[1] ?? "";
   }, START_MS);
@@ -207,4 +215,70 @@ describe.skipIf(!existsSync(BIN))("compiled binary", () => {
       await client.close();
     }
   });
+
+  // docs/plans/review-v2/spec.md section 6.14 through the bundled xstate machine (src/server/tasks/machine.ts): the Bun support proof.
+  test(
+    "a restart stops a task whose Claude step was running, with the bundled xstate machine",
+    async () => {
+      const url = fake?.url as string;
+      expect((await call("PUT", "/api/settings", { baseUrl: url, token: FAKE_TOKEN, notifications: false })).status).toBe(200);
+      // The first binary runs its restart recovery on the first use of the database, so a later row stays for the second binary.
+      expect((await call("GET", "/api/runs")).status).toBe(200);
+      const path = dbPath(join(root, "data"), url);
+      const db = new Database(path);
+      let task = 0;
+      let run = 0;
+      try {
+        db.exec("PRAGMA busy_timeout = 5000");
+        task = (
+          db
+            .query(`INSERT INTO task (project, repo, key, title, state, size, target_branch, spec_dir, version, created_at, updated_at)
+            VALUES ('PROJ', 'repo', 'ABC-7', 'Task', 'implementing', 'small', 'main', 'specs/ABC-7/', 2, 1, 1) RETURNING id`)
+            .get() as { id: number }
+        ).id;
+        run = (
+          db
+            .query(`INSERT INTO review_run (pr, task, kind, profile, note, idem_key, source_head, target_head, status, started_at)
+            VALUES (NULL, ?, 'implement', 'general', '', 'bin-task-run', 'a', 'b', 'running', 1) RETURNING id`)
+            .get(task) as { id: number }
+        ).id;
+        db.query("INSERT INTO task_step (task, ord, kind, run, state, started_at) VALUES (?, 1, 'implement', ?, 'running', 1)").run(
+          task,
+          run,
+        );
+      } finally {
+        db.close();
+      }
+      const read = () => {
+        const d = new Database(path, { readonly: true });
+        try {
+          return {
+            task: d.query("SELECT state, stopped_from, version FROM task WHERE id = ?").get(task),
+            run: d.query("SELECT status, error_kind FROM review_run WHERE id = ?").get(run),
+            step: d.query("SELECT state FROM task_step WHERE run = ?").get(run),
+          };
+        } finally {
+          d.close();
+        }
+      };
+      const second = await launch();
+      try {
+        const end = Date.now() + 5_000;
+        let got = read();
+        while ((got.task as { state: string }).state !== "stopped" && Date.now() < end) {
+          await Bun.sleep(50);
+          got = read();
+        }
+        expect(got).toEqual({
+          task: { state: "stopped", stopped_from: "implementing", version: 3 },
+          run: { status: "failed", error_kind: "restart" },
+          step: { state: "failed" },
+        });
+      } finally {
+        second.proc.kill();
+        await Promise.race([second.proc.exited, Bun.sleep(5_000)]);
+      }
+    },
+    START_MS + 10_000,
+  );
 });

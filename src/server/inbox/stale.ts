@@ -16,9 +16,9 @@ export type OpenDraft = ItemRow & { pr: number };
 type Msg = TurnMsg & { resolver: User | null; resolvedAt: number | null };
 
 const SQL = {
-  // A waiting revision, a discarded or posted draft, and a draft of an undone fix never count. $pr null: every PR.
+  // A waiting revision, a discarded or posted draft, and a draft of an undone fix never count. $pr null: every PR, without task runs.
   open: `SELECT i.*, r.pr FROM review_item i JOIN review_run r ON r.id = i.run
-    WHERE ($pr IS NULL OR r.pr = $pr) AND i.kind = 'reply' AND i.thread IS NOT NULL AND i.status IN ('new', 'accepted')
+    WHERE r.pr IS NOT NULL AND ($pr IS NULL OR r.pr = $pr) AND i.kind = 'reply' AND i.thread IS NOT NULL AND i.status IN ('new', 'accepted')
       AND json_extract(i.payload_json, '$.revises') IS NULL AND NOT ${UNDONE} ORDER BY i.id`,
   thread: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved, thread_resolver_json, thread_resolved_at

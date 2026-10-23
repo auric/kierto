@@ -10,10 +10,10 @@ import { type Carried, displayGroup, type FindingPayload, type SessionMark } fro
 const DAY_MS = 86_400_000;
 
 const SQL = {
-  // Running, failed, and cancelled runs store no findings to triage.
+  // Running, failed, and cancelled runs store no findings to triage. The self-review of a task (pr NULL) counts nowhere.
   runs: `SELECT id, COALESCE(profile_name, profile) AS profile, COALESCE(prompt_version, '1') AS version, summary_json, usage_json,
       started_at, finished_at FROM review_run
-    WHERE kind = 'review' AND status IN ('completed', 'incomplete') AND started_at >= $since ORDER BY id`,
+    WHERE pr IS NOT NULL AND kind = 'review' AND status IN ('completed', 'incomplete') AND started_at >= $since ORDER BY id`,
   // addressed and outdated need a confirmed post that holds the item. A general post holds many items.
   items: `SELECT i.id, i.run, i.status, i.edited, i.payload_json,
       EXISTS (SELECT 1 FROM post p, json_each(p.items_json) j

@@ -216,7 +216,8 @@ export const SQL = {
   // Deleted messages too: the turn rule reads them.
   turns: `SELECT comment_id AS id, root_id AS rootId, author_slug AS authorSlug, author_login AS authorLogin, created_at AS createdAt,
       tombstoned_at IS NOT NULL AS deleted, thread_resolved AS threadResolved FROM comment WHERE pr = $pr`,
-  raw: "SELECT raw_output FROM review_run WHERE id = $id",
+  // SQL.run joins the PR, so the routes of PR runs give 404 for a task run. raw follows them.
+  raw: "SELECT raw_output FROM review_run WHERE id = $id AND pr IS NOT NULL",
   asks: "WHERE r.pr = $pr AND r.kind = 'ask' ORDER BY r.id DESC LIMIT 20",
   // docs/plans/review-v2/spec.md section 3.2: the newest explain run, and the newest one with a result. $key: any key, or one run key.
   explainNewest: "WHERE r.pr = $pr AND r.kind = 'explain' ORDER BY r.id DESC LIMIT 1",

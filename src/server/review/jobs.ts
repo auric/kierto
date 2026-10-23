@@ -58,6 +58,7 @@ import { taskContext } from "../context/task-file";
 import type { Live } from "../live";
 import { log } from "../log";
 import type { Settings } from "../settings";
+import { recoverTasks } from "../tasks/tasks";
 import {
   askAgent,
   createDocServers,
@@ -268,7 +269,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const db = settings.db();
     if (db && !recovered.has(db)) {
       recovered.add(db);
-      db.query(SQL.recover).run({ text: "The app stopped during the run.", now: now() });
+      db.transaction(() => {
+        // recoverTasks finds the tasks by their running runs, so it runs first.
+        recoverTasks(db, now());
+        db.query(SQL.recover).run({ text: "The app stopped during the run.", now: now() });
+      })();
     }
     return db;
   }
@@ -1482,11 +1487,12 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // session import (part D) start no process, so no run list shows them. The fix cards show the fix run of an import.
     // R14: the list of one PR also keeps its newest review run, and its newest review run with a result, when newer runs fill the limit.
     // The UI shows the drafts of the newest review run with a result after a cancelled or failed one.
+    // A task run (pr NULL) is in no list. The limit counts listed runs only.
     runs(db: Database, pr: number | null, limit: number): RunDto[] {
       const listed = "kind <> 'consult' AND NOT (kind = 'fix' AND consult_json IS NOT NULL)";
       const sql =
         pr === null
-          ? `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE ${listed} ORDER BY id DESC LIMIT $limit) ORDER BY r.id DESC`
+          ? `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE pr IS NOT NULL AND ${listed} ORDER BY id DESC LIMIT $limit) ORDER BY r.id DESC`
           : `${SQL.run} WHERE r.id IN (SELECT id FROM review_run WHERE pr = $pr AND ${listed} ORDER BY id DESC LIMIT $limit)
               OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review')
               OR r.id = (SELECT MAX(id) FROM review_run WHERE pr = $pr AND kind = 'review' AND status IN ('completed', 'incomplete'))

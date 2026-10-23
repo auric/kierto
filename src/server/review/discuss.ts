@@ -17,7 +17,8 @@ const SQL = {
   turns: `SELECT id, status, source_head, question, answer, discuss_json, error_text, started_at FROM review_run
     WHERE item = $item AND kind = 'discuss' ORDER BY id`,
   count: "SELECT COUNT(*) AS n FROM review_run WHERE item = $item AND kind = 'discuss'",
-  item: "SELECT i.*, r.pr FROM review_item i JOIN review_run r ON r.id = i.run WHERE i.id = $id",
+  // A finding of a task run (pr NULL) takes no talk.
+  item: "SELECT i.*, r.pr FROM review_item i JOIN review_run r ON r.id = i.run WHERE i.id = $id AND r.pr IS NOT NULL",
   // The newest confirmed post that holds the finding. Its remote comment starts the thread. A general post holds many items.
   post: `SELECT p.remote_id AS root FROM post p, json_each(p.items_json) j
     WHERE p.pr = $pr AND p.state = 'confirmed' AND p.remote_id IS NOT NULL AND p.kind IN ('inline', 'general')

@@ -1,0 +1,304 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Ihor Lifanov
+
+// Build a Jira task (docs/plans/review-v2/spec.md sections 6.2, 6.3, and 6.5): the stored values and the results of the task runs.
+// zod parses the CLI output. The CLI gets z.toJSONSchema(schema, { target: "draft-07" }).
+import { z } from "zod";
+import { coverage } from "./review";
+
+export const TASK_STATES = [
+  "interview",
+  "spec_draft",
+  "spec_pr_open",
+  "spec_approved",
+  "implementing",
+  "ready",
+  "done",
+  "failed",
+  "stopped",
+] as const;
+export type TaskState = (typeof TASK_STATES)[number];
+
+export const PART_STATES = [
+  "planned",
+  "implementing",
+  "self_reviewed",
+  "pr_open",
+  "changes_requested",
+  "approved",
+  "merged",
+  "declined",
+  "abandoned",
+] as const;
+export type PartState = (typeof PART_STATES)[number];
+
+export const STEP_STATES = ["waiting", "running", "ok", "failed", "cancelled", "skipped"] as const;
+export type StepState = (typeof STEP_STATES)[number];
+
+export const TASK_SIZES = ["small", "medium", "large"] as const;
+export type TaskSize = (typeof TASK_SIZES)[number];
+export const SIZE_SOURCES = ["claude", "rule", "user"] as const;
+export type SizeSource = (typeof SIZE_SOURCES)[number];
+
+export const PART_KINDS = ["spec", "contract", "part", "cleanup", "spike", "single"] as const;
+export type PartKind = (typeof PART_KINDS)[number];
+
+export const STEP_KINDS = [
+  "interview",
+  "spec",
+  "tests",
+  "implement",
+  "check",
+  "fix",
+  "review",
+  "commit",
+  "push",
+  "pr",
+  "retarget",
+  "rebase",
+  "replan",
+  "question",
+  "spec_change",
+  "size",
+] as const;
+export type StepKind = (typeof STEP_KINDS)[number];
+
+export const TASK_EVENT_KINDS = ["needs_you", "part_ready", "spec_approved"] as const;
+export type TaskEventKind = (typeof TASK_EVENT_KINDS)[number];
+
+export const QUESTION_SOURCES = ["interview", "loop"] as const;
+export type QuestionSource = (typeof QUESTION_SOURCES)[number];
+
+// The run kinds of task runs. Each task run is a review_run row with task set and pr NULL. A self-review is kind review.
+export const TASK_RUN_KINDS = ["interview", "spec", "implement"] as const;
+export type TaskRunKind = (typeof TASK_RUN_KINDS)[number];
+
+export const TASK_DOCS = ["design", "spec", "tasks", "plan"] as const;
+export type TaskDoc = (typeof TASK_DOCS)[number];
+
+// Round 1 asks at most 8 questions, round 2 at most 4.
+export const INTERVIEW_ROUNDS = 2;
+export const INTERVIEW_QUESTIONS = [8, 4] as const;
+
+// One plain sentence per state. A refused state change returns it with 409.
+export const TASK_STATE_TEXT: Record<TaskState, string> = {
+  interview: "Claude reads the task and asks its questions.",
+  spec_draft: "The plan is not approved yet.",
+  spec_pr_open: "Colleagues review the plan as a PR.",
+  spec_approved: "The plan is approved, and the build has not started.",
+  implementing: "The build runs or waits for you.",
+  ready: "All PRs of the task are open.",
+  done: "The task is done.",
+  failed: "The task failed.",
+  stopped: "The task is stopped.",
+};
+
+// The part chips of the Plan tab (spec.md section 6.12).
+export const PART_STATE_TEXT: Record<PartState, string> = {
+  planned: "Planned",
+  implementing: "Building",
+  self_reviewed: "Checked by Claude",
+  pr_open: "In review",
+  changes_requested: "Changes asked",
+  approved: "Approved",
+  merged: "Merged",
+  declined: "Declined",
+  abandoned: "Dropped",
+};
+
+// ---------- Stored JSON (spec.md section 6.3) ----------
+
+export const BLOCKED_KINDS = [
+  "question",
+  "red",
+  "blocker",
+  "budget",
+  "size",
+  "spec_change",
+  "denied_path",
+  "push",
+  "slot",
+  "error",
+] as const;
+export type BlockedKind = (typeof BLOCKED_KINDS)[number];
+// task.blocked_json: why the loop waits for the user. null while Claude or the app works, and while the app waits for colleagues.
+export const taskBlocked = z.object({ kind: z.enum(BLOCKED_KINDS), step: z.number().int().positive().nullable(), text: z.string() });
+export type TaskBlocked = z.infer<typeof taskBlocked>;
+
+export const COMMAND_KINDS = ["setup", "build", "test", "lint"] as const;
+export type CommandKind = (typeof COMMAND_KINDS)[number];
+export const commandId = z.string().regex(/^[A-Za-z0-9_-]{1,40}$/);
+// repo_task_settings.commands_json. argv lists only: no shell form exists.
+export const taskCommand = z.object({
+  id: commandId,
+  name: z.string().trim().min(1).max(60),
+  kind: z.enum(COMMAND_KINDS),
+  argv: z.array(z.string().min(1).max(1000)).min(1).max(32),
+  timeoutSec: z.number().int().min(1).max(3600),
+});
+export type TaskCommand = z.infer<typeof taskCommand>;
+
+// task.settings_json: the overrides of one task. Absent keys take the repository settings.
+export const taskSettings = z.object({
+  lineBudget: z.number().int().positive().optional(),
+  maxOpen: z.number().int().positive().optional(),
+  approvals: z.number().int().nonnegative().optional(),
+  autoOpen: z.boolean().optional(),
+  pauseAfterTask: z.boolean().optional(),
+  reviewers: z.array(z.string().min(1).max(255)).max(20).optional(),
+  partTimeMin: z.number().int().positive().optional(),
+  // USD. It applies only when the CLI reports a cost (spec.md section 6.7).
+  partCost: z.number().positive().optional(),
+});
+export type TaskSettings = z.infer<typeof taskSettings>;
+
+// task_step.detail_json. Every key has a default, so an older row still parses.
+export const stepDetail = z.object({
+  commands: z
+    .array(z.object({ name: z.string(), argv: z.array(z.string()), exit: z.number().int().nullable(), ms: z.number(), tail: z.string() }))
+    .default([]),
+  diffStat: z
+    .object({ files: z.number().int(), added: z.number().int(), removed: z.number().int(), lines: z.number().int() })
+    .nullable()
+    .default(null),
+  findings: z.array(z.number().int()).default([]),
+  question: z.number().int().nullable().default(null),
+  specChange: z
+    .object({ paths: z.array(z.string()) })
+    .nullable()
+    .default(null),
+  deniedPaths: z.array(z.string()).default([]),
+  patch: z.string().nullable().default(null),
+  notes: z.array(z.string()).default([]),
+});
+export type StepDetail = z.infer<typeof stepDetail>;
+
+// ---------- Run results (spec.md section 6.5) ----------
+
+const option = z.object({ label: z.string().max(120), detail: z.string().max(300) });
+
+export const interviewResult = z.object({
+  done: z.boolean().describe("true when no question would change the plan."),
+  summary: z.string().max(1500).describe("What the task asks for and what you plan to build, in plain words."),
+  questions: z
+    .array(
+      z.object({
+        id: z.string().regex(/^q[0-9]{1,2}$/),
+        text: z.string().max(300),
+        why: z.string().max(300),
+        kind: z.enum(["choice", "text"]),
+        options: z.array(option).max(5),
+        recommended: z.number().int().min(0).nullable(),
+      }),
+    )
+    .max(8),
+  unknowns: z.array(z.string().max(300)).max(10).default([]),
+  coverage,
+});
+export type InterviewResult = z.infer<typeof interviewResult>;
+
+const specPart = z.object({
+  n: z.number().int().min(1),
+  kind: z.enum(["contract", "part", "cleanup", "prep", "spike"]),
+  title: z.string().max(120),
+  goal: z.string().max(300),
+  lines: z.number().int().min(1),
+  acceptance: z
+    .array(z.object({ id: z.string(), text: z.string().max(500) }))
+    .min(1)
+    .max(20),
+  tests: z.array(z.object({ test: z.string().max(300), proves: z.array(z.string()).min(1) })).max(30),
+  tasks: z
+    .array(
+      z.object({
+        id: z.string(),
+        title: z.string().max(200),
+        files: z.array(z.string()).max(30),
+        run: z.array(z.string().max(300)).min(1).max(10),
+        done: z.string().max(300),
+      }),
+    )
+    .min(1)
+    .max(15),
+});
+
+export const specResult = z.object({
+  title: z.string().max(200),
+  size: z.enum(TASK_SIZES),
+  estimate: z.object({
+    parts: z.number().int().min(1).max(12),
+    lines: z.number().int().min(1),
+    files: z.number().int().min(1),
+    modules: z.array(z.string().max(60)).max(20),
+    db: z.boolean(),
+    api: z.boolean(),
+    unknowns: z.array(z.string().max(300)).max(10),
+  }),
+  map: z
+    .array(
+      z.object({
+        path: z.string().max(400),
+        line: z.number().int().min(1).nullable(),
+        symbol: z.string().max(200).default(""),
+        kind: z.enum(["change", "pattern", "test", "caller", "migration", "api"]),
+        what: z.string().max(300),
+      }),
+    )
+    .min(1)
+    .max(40)
+    .describe("The integration map: code that exists at the base commit."),
+  // Small: change holds the Change section, and design and spec stay null. Medium and large: change stays empty.
+  change: z.string().max(2000).default(""),
+  design: z
+    .object({ decision: z.string().max(2000), alternatives: z.string().max(1000).default(""), risks: z.string().max(1500) })
+    .nullable()
+    .default(null),
+  spec: z
+    .object({ behavior: z.string().max(3000), edgeCases: z.string().max(2000), outOfScope: z.string().max(1000) })
+    .nullable()
+    .default(null),
+  parts: z.array(specPart).min(1).max(12),
+  testing: z.object({
+    commands: z
+      .array(z.object({ name: z.string().max(60), kind: z.enum(COMMAND_KINDS), argv: z.array(z.string().max(1000)).min(1).max(32) }))
+      .max(10),
+    services: z.array(z.string().max(200)).max(10),
+    notes: z.string().max(2000),
+  }),
+  flag: z
+    .object({ name: z.string().max(120), removal: z.string().max(300) })
+    .nullable()
+    .default(null),
+  questions: z.array(z.string().max(300)).max(10).default([]),
+  coverage,
+});
+export type SpecResult = z.infer<typeof specResult>;
+
+export const implementResult = z.object({
+  summary: z.string().max(1000),
+  done: z.boolean().describe("true only when the step is complete."),
+  tests: z.array(z.string()).max(50).default([]).describe("The test files that this step added or changed."),
+  question: z
+    .object({
+      text: z.string().max(300),
+      why: z.string().max(300),
+      options: z.array(option).max(5),
+      recommended: z.number().int().min(0).nullable(),
+    })
+    .nullable()
+    .default(null),
+  specChange: z.string().max(1000).default("").describe("Why you changed a plan file. Empty when you did not."),
+  notes: z.array(z.string().max(500)).max(20).default([]),
+  coverage,
+});
+export type ImplementResult = z.infer<typeof implementResult>;
+
+export const replanResult = z.object({
+  changed: z.boolean(),
+  reason: z.string().max(1000),
+  // spec.md section 6.5 reuses specResult.shape.parts, but its min(1) would refuse the empty list of changed false.
+  parts: z.array(specPart).max(12).describe("The remaining parts. Empty when changed is false."),
+  questions: z.array(z.string().max(300)).max(10).default([]),
+  coverage,
+});
+export type ReplanResult = z.infer<typeof replanResult>;

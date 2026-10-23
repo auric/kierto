@@ -33,7 +33,8 @@ export type TriageResult =
   | { status: 409; conflict: ItemConflict };
 
 const SQL = {
-  item: `SELECT i.*, r.pr, ${RUN_COLS} FROM review_item i JOIN review_run r ON r.id = i.run WHERE i.id = $id`,
+  // An item of a task run (pr NULL) takes no PR action.
+  item: `SELECT i.*, r.pr, ${RUN_COLS} FROM review_item i JOIN review_run r ON r.id = i.run WHERE i.id = $id AND r.pr IS NOT NULL`,
   // The revision check and the write are one statement, so two pages cannot both win.
   update: `UPDATE review_item SET status = $status, body = $body, edited = $edited, line = $line, line_end = $line_end,
       anchor_state = $anchor_state, payload_json = $payload_json, revision = revision + 1
