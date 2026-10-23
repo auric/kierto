@@ -166,14 +166,20 @@ export function proposeNotes(list: readonly NoteProposal[], c: ProposalCtx, now:
   return { add, skipped };
 }
 
-// A cite must name another thread of this PR with a live message. own: the thread of the draft.
-export function checkCites(cites: readonly number[], own: number, live: ReadonlySet<number>): { cites: number[]; skipped: string[] } {
+// A cite must name another thread of this PR with a live message. own: the thread of the draft, or null for an answer without a thread.
+// where: the text that names the answer in a drop line.
+export function checkCites(
+  cites: readonly number[],
+  own: number | null,
+  live: ReadonlySet<number>,
+  where = `the reply for thread ${own}`,
+): { cites: number[]; skipped: string[] } {
   const out: number[] = [];
   const skipped: string[] = [];
   for (const c of new Set(cites)) {
     const why =
       c === own ? "it is the thread of the reply" : !live.has(c) ? "no thread of this pull request with a live message has it" : null;
-    if (why) skipped.push(`Cite of thread ${c} in the reply for thread ${own} dropped: ${why}.`);
+    if (why) skipped.push(`Cite of thread ${c} in ${where} dropped: ${why}.`);
     else out.push(c);
   }
   return { cites: out, skipped };
@@ -222,23 +228,27 @@ export function proposalContext(
   };
 }
 
-// Stores the suggestions of a run. Call it in the transaction that stores the drafts of the run. item: the draft of the same run in that
-// thread, else NULL.
-export function storeProposals(db: Database, pr: number, run: number, add: readonly NewNote[], now: number) {
+// Stores the suggestions of a run and gives their IDs. Call it in the transaction that stores the drafts of the run. item: the draft of
+// the same run in that thread, else NULL.
+export function storeProposals(db: Database, pr: number, run: number, add: readonly NewNote[], now: number): number[] {
   const draft = db.query(NOTE_SQL.draftOf);
   const insert = db.query(NOTE_SQL.insert);
-  for (const n of add)
-    insert.run({
-      pr,
-      text: n.text,
-      source: "claude",
-      state: "proposed",
-      thread: n.thread,
-      run,
-      item: (draft.get({ run, thread: n.thread }) as { id: number } | null)?.id ?? null,
-      ...linkParams(n.ref),
-      now,
-    });
+  return add.map(
+    (n) =>
+      (
+        insert.get({
+          pr,
+          text: n.text,
+          source: "claude",
+          state: "proposed",
+          thread: n.thread,
+          run,
+          item: (draft.get({ run, thread: n.thread }) as { id: number } | null)?.id ?? null,
+          ...linkParams(n.ref),
+          now,
+        }) as NoteRow
+      ).id,
+  );
 }
 
 const linkParams = (l: Link | null) => ({

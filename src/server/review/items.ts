@@ -4,6 +4,8 @@
 // Triage of review items (plan v3 WP12): accept, discard, restore, edit, move, and the resolve tick of a reply draft.
 // docs/plans/review-v2/spec.md section 4.1: the discard reason of a finding.
 // docs/plans/thread-outcome.md: Use revision and Keep mine for a revision of the user's draft, and Reply to the newest as is.
+// docs/plans/review-v2/spec.md sections 2.2 and 2.5: Use the new text and Keep mine for a revision of a finding, and the restore of a
+// withdrawn finding.
 import type { Database } from "bun:sqlite";
 import type { ItemActionInput, ItemConflict, ReviewItemDto } from "../../shared/dto";
 import {
@@ -16,6 +18,7 @@ import {
   moveChoices,
   type ReplyPayload,
   type SessionMark,
+  type WithdrawnMark,
 } from "../../shared/review";
 import { newestLive, type TurnMsg } from "../../shared/turn";
 import { replyCurrent } from "../publish/outbox";
@@ -60,29 +63,34 @@ const ROLLBACK = new Error("rollback");
 export function triage(db: Database, id: number, input: ItemActionInput, at = Date.now()): TriageResult {
   const row = db.query(SQL.item).get({ id }) as Row | null;
   if (!row) return { status: 404 };
-  const dto = (r: Row) => (r.kind === "reply" ? withRevision(r, revisions(db, r.pr)) : toItemDto(r));
+  const dto = (r: Row) => (r.kind === "reply" || r.kind === "finding" ? withRevision(r, revisions(db, r.pr)) : toItemDto(r));
   const conflict = (error: string): TriageResult => ({ status: 409, conflict: { error, item: dto(row) } });
   if (row.status === "posted") return conflict("The item is posted.");
   if (row.revision !== input.revision) return conflict(CHANGED);
 
-  // Plan r2 S-RR: a carried finding whose code is gone has no anchor. The post plan cannot place it.
+  const revisionAction = input.action === "use-revision" || input.action === "keep-mine";
+  // Plan r2 S-RR: a carried finding whose code is gone has no anchor. The post plan cannot place it. A revision of such a finding
+  // copies its place, so Use the new text and Keep mine still work.
   if (
     row.kind === "finding" &&
     input.action !== "discard" &&
     input.action !== "reason" &&
+    !revisionAction &&
     (row.path === null || row.side === null || row.line === null)
   )
     return { status: 400, error: "The finding has no place in the code." };
   const next = { ...row };
   const reply = row.kind === "reply" ? (JSON.parse(row.payload_json) as ReplyPayload) : null;
+  const finding = row.kind === "finding" ? (JSON.parse(row.payload_json) as FindingPayload) : null;
   const ticked = reply?.resolveTick === true;
   // A "Fixed in" draft of an undone commit can never post (outbox.ts fixCheck), so it stays discarded.
   if (reply?.fix && input.action !== "discard" && input.action !== "keep-mine" && db.query(SQL.undone).get({ id: reply.fix.id }))
     return conflict("The fix commit was undone, so this draft cannot post. Draft the reply again.");
-  // A waiting revision takes only Use revision and Keep mine. Its own triage would break the one-open-draft rule.
-  if (reply?.revises !== undefined && input.action !== "use-revision" && input.action !== "keep-mine")
-    return { status: 400, error: "Use the revision or keep your draft first." };
-  if (reply?.dropped) return conflict("A newer revision or Keep mine dropped this revision.");
+  // A waiting revision takes only Use revision and Keep mine. Its own triage would break the one-open-draft rule. A revision of a
+  // finding is no finding of its own (docs/plans/review-v2/spec.md section 2.2).
+  if (reply?.revises !== undefined && !revisionAction) return { status: 400, error: "Use the revision or keep your draft first." };
+  if (finding?.revises !== undefined && !revisionAction) return { status: 400, error: "Use the new text or keep yours first." };
+  if (reply?.dropped || finding?.dropped) return conflict("A newer revision or Keep mine dropped this revision.");
   // docs/plans/thread-outcome.md P9: an out-of-date draft cannot post (outbox.ts blockedDrafts), so no action approves its text.
   const approves = input.action === "accept" || input.action === "edit" || input.action === "plain";
   if (reply && approves && !replyCurrent(db, row.pr, reply.replyTo))
@@ -123,21 +131,25 @@ export function triage(db: Database, id: number, input: ItemActionInput, at = Da
       // returns its status and removes it.
       // A "Don't fix" decline (fix-routes.ts) is newer than a fixed mark: a declined proposal has no commit.
       // docs/plans/review-v2/spec.md section 1.8: a restore of a refuted or duplicate finding removes discardedBy and keeps verify.
+      // spec.md section 2.2: a restore of a withdrawn finding returns its earlier status and keeps the mark as restored. A discuss run
+      // withdraws only open findings, so an unrestored mark is the newest discard.
       const p = JSON.parse(row.payload_json) as {
         fixed?: FixedMark;
         session?: SessionMark;
         declined?: { was: ReviewItemDto["status"] };
         discardedBy?: string;
+        withdrawn?: WithdrawnMark;
       };
       const rejected = row.status === "discarded" && p.session?.verdict === "reject" ? p.session : null;
-      next.status = row.status === "discarded" ? (rejected?.was ?? p.declined?.was ?? p.fixed?.was ?? "new") : "new";
+      const withdrawn = row.status === "discarded" && p.withdrawn && !p.withdrawn.restored ? p.withdrawn : null;
+      next.status = row.status === "discarded" ? (rejected?.was ?? p.declined?.was ?? withdrawn?.was ?? p.fixed?.was ?? "new") : "new";
       if (rejected) {
         const { session: _, ...rest } = p;
         next.payload_json = JSON.stringify(rest);
       } else if (row.kind === "finding" && p.discardedBy === "verify") {
         const { discardedBy: _, ...rest } = p;
         next.payload_json = JSON.stringify(rest);
-      }
+      } else if (withdrawn) next.payload_json = JSON.stringify({ ...p, withdrawn: { ...withdrawn, restored: true } });
       break;
     }
     case "edit":
@@ -182,11 +194,12 @@ export function triage(db: Database, id: number, input: ItemActionInput, at = Da
       break;
     }
     case "use-revision":
-      return takeRevision(db, row, reply, input.draft, at);
+      return finding ? takeFindingRevision(db, row, finding, input.draft) : takeRevision(db, row, reply, input.draft, at);
     case "keep-mine": {
-      if (reply?.revises === undefined) return { status: 400, error: "Only a revision of your draft can go." };
+      const of = reply?.revises ?? finding?.revises;
+      if (of === undefined) return { status: 400, error: "Only a revision of your draft can go." };
       if (!db.query(SQL.dropRevision).run({ id, revision: input.revision }).changes) return conflict(CHANGED);
-      const mine = db.query(SQL.item).get({ id: reply.revises }) as Row | null;
+      const mine = db.query(SQL.item).get({ id: of }) as Row | null;
       return { status: 200, item: mine ? dto(mine) : toItemDto(row), pr: row.pr, runs: [row.run] };
     }
     case "reply-to-newest": {
@@ -268,5 +281,44 @@ function takeRevision(db: Database, row: Row, reply: ReplyPayload | null, draft:
   }
   if (!done) return conflict(CHANGED);
   const now = db.query(SQL.item).get({ id: row.id }) as Row;
+  return { status: 200, item: withRevision(now, revisions(db, now.pr)), pr: row.pr, runs: [mine.run] };
+}
+
+// docs/plans/review-v2/spec.md section 2.5: Use the new text of a finding. The finding takes the severity, title, and body of the
+// revision in place, so its ID, place, posts, and talk stay. It becomes new, not accepted, and not edited. The revision stops waiting.
+// draft: the finding revision on screen.
+function takeFindingRevision(db: Database, row: Row, rev: FindingPayload, draft: number): TriageResult {
+  const conflict = (error: string): TriageResult => ({ status: 409, conflict: { error, item: toItemDto(row) } });
+  if (rev.revises === undefined) return { status: 400, error: "Only a new text of a finding can replace it." };
+  const mine = db.query(SQL.item).get({ id: rev.revises }) as Row | null;
+  if (!mine || (mine.status !== "new" && mine.status !== "accepted"))
+    return conflict("The finding is not open now. Keep mine drops the new text.");
+  if (mine.revision !== draft) return conflict("The finding changed on another page. Check it again.");
+  const was = JSON.parse(mine.payload_json) as FindingPayload;
+  const payload: FindingPayload = { ...was, severity: rev.severity, title: rev.title, body: rev.body, revisedBy: row.id };
+  const swap = db.transaction(() => {
+    if (!db.query(SQL.dropRevision).run({ id: row.id, revision: row.revision }).changes) return false;
+    const r = db.query(SQL.update).run({
+      id: mine.id,
+      revision: draft,
+      status: "new",
+      body: row.body,
+      edited: 0,
+      line: mine.line,
+      line_end: mine.line_end,
+      anchor_state: mine.anchor_state,
+      payload_json: JSON.stringify(payload),
+    });
+    if (r.changes) return true;
+    throw ROLLBACK;
+  });
+  let done = false;
+  try {
+    done = swap();
+  } catch (e) {
+    if (e !== ROLLBACK) throw e;
+  }
+  if (!done) return conflict(CHANGED);
+  const now = db.query(SQL.item).get({ id: mine.id }) as Row;
   return { status: 200, item: withRevision(now, revisions(db, now.pr)), pr: row.pr, runs: [mine.run] };
 }

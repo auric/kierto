@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR, S-ASK, r3 S-FIX, review-v2 part 3): brief, start, re-review, ask, explain,
-// reply drafts, fix runs, cancel, run, raw output, item triage, review quality stats, and Improve prompt. Every mutation of PR data
-// broadcasts `changed`.
+// Review API (plan v3 WP10, WP12, replies.md WP17, r2 S-RR, S-ASK, r3 S-FIX, review-v2 parts 2 and 3): brief, start, re-review, ask,
+// explain, discuss, reply drafts, fix runs, cancel, run, raw output, item triage, review quality stats, and Improve prompt. Every
+// mutation of PR data broadcasts `changed`.
 // Improve prompt: a new start replaces the running proposal. Nothing saves until the user applies the proposal.
 import { Hono } from "hono";
 import { validator } from "hono/validator";
@@ -12,7 +12,9 @@ import {
   type ApiError,
   askInput,
   briefInput,
+  discussInput,
   fixRunInput,
+  type ItemConflict,
   improveInput,
   itemActionInput,
   type MovedConflict,
@@ -246,6 +248,30 @@ export function createReviewRoutes(opts: { review: ReviewJobs; live: Live }) {
         return c.json(r.item, 200);
       },
     )
+    .post(
+      "/items/:id/discuss",
+      itemParam,
+      // docs/plans/review-v2/spec.md section 2.3: a talk about one finding. Each message is one discuss run. Nothing posts.
+      validator("json", (v, c) => {
+        const r = discussInput.safeParse(v);
+        return r.success ? r.data : c.json<ApiError>({ error: "Invalid message." }, 400);
+      }),
+      (c) => {
+        const db = review.open();
+        if (!db) return c.json(unconfigured, 409);
+        const { message, revision } = c.req.valid("json");
+        const r = review.discuss(db, c.req.valid("param").id, message, revision);
+        if ("run" in r) return r.status === 202 ? c.json(r.run, 202) : c.json(r.run, 200);
+        if ("conflict" in r) return c.json(r.conflict, 409);
+        if (r.item) return c.json<ItemConflict>({ error: r.error, item: r.item }, 409);
+        return r.status === 404 ? c.json({ error: r.error }, 404) : c.json({ error: r.error }, 409);
+      },
+    )
+    .get("/items/:id/discuss", itemParam, (c) => {
+      const db = review.open();
+      const turns = db && review.turns(db, c.req.valid("param").id);
+      return turns ? c.json(turns, 200) : c.json(notFound("Item"), 404);
+    })
     .post(
       "/profiles/improve",
       validator("json", (v, c) => {

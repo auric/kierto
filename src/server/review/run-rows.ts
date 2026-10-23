@@ -140,6 +140,9 @@ export type FindingRow = ItemRow & { run_pr: number; run_head: string; run_base:
 
 export const NO_ANCHOR = { path: null, side: null, line: null, line_end: null, anchor_state: null, excerpt_json: null } as const;
 
+// docs/plans/review-v2/spec.md section 2.2: a revision of a finding (payload revises) is no finding of its own. The item is joined as i.
+export const NOT_REVISION = "json_extract(i.payload_json, '$.revises') IS NULL";
+
 export const SQL = {
   pr: `SELECT id, project, repo, pr_id, title, description, author_slug, author_name, my_role, state, pr_version, source_head, target_head, source_branch,
       target_branch, web_url, updated_date FROM pull_request WHERE id = $id`,
@@ -150,10 +153,11 @@ export const SQL = {
   saveBrief: `INSERT INTO pr_brief (pr, note, profile, updated_at) VALUES ($pr, $note, $profile, $now)
     ON CONFLICT (pr) DO UPDATE SET note = excluded.note, profile = excluded.profile, updated_at = excluded.updated_at`,
   // model: the --model value until the init event gives the model that ran.
+  // item: the finding of a discuss run (docs/plans/review-v2/spec.md section 2.2).
   insert: `INSERT INTO review_run (pr, kind, profile, profile_name, profile_revision, explain, note, idem_key, source_head, target_head, status, started_at,
-      since_head, question, tasks_json, model, effort, effort_default, prompt_version, parent_run)
+      since_head, question, tasks_json, model, effort, effort_default, prompt_version, parent_run, item)
     VALUES ($pr, $kind, $profile, $profile_name, $profile_revision, $explain, $note, $key, $source, $target, 'running', $now, $since, $question, $tasks,
-      $model, $effort, $effort_default, $prompt_version, $parent)
+      $model, $effort, $effort_default, $prompt_version, $parent, $item)
     RETURNING id`,
   // Plan r3 Feature C: the fetched tasks at the start of a run, in the order of task.md.
   fetched: "SELECT key, fetched_at AS fetchedAt FROM task_context WHERE pr = $pr ORDER BY key",
@@ -163,7 +167,7 @@ export const SQL = {
       r.consult_json, r.parent_run,
       (SELECT COUNT(*) FROM review_item i WHERE i.run = r.id AND i.kind = 'finding'
         AND COALESCE(json_extract(i.payload_json, '$.carried.verdict'), 'open') = 'open'
-        AND COALESCE(json_extract(i.payload_json, '$.discardedBy'), '') <> 'verify') AS findings
+        AND COALESCE(json_extract(i.payload_json, '$.discardedBy'), '') <> 'verify' AND ${NOT_REVISION}) AS findings
     FROM review_run r JOIN pull_request p ON p.id = r.pr`,
   workspace: "UPDATE review_run SET merge_base = $base, range_base = $range, fetch_via = $via WHERE id = $id",
   instructions: "UPDATE review_run SET instructions_json = $json WHERE id = $id",
@@ -221,7 +225,7 @@ export const SQL = {
   explainJson: "SELECT explain_json FROM review_run WHERE id = $id",
   historyAsks:
     "WHERE r.pr = $pr AND r.kind = 'ask' AND r.status IN ('completed', 'incomplete') AND r.answer IS NOT NULL ORDER BY r.id DESC",
-  historyItems: "SELECT * FROM review_item WHERE run = $run AND kind = 'finding' ORDER BY id",
+  historyItems: `SELECT * FROM review_item i WHERE run = $run AND kind = 'finding' AND ${NOT_REVISION} ORDER BY id`,
   // docs/plans/review-v2/spec.md section 2.15: the parent of a follow-up, and the follow-up that a run already has.
   askParent: "SELECT id, pr, kind, profile FROM review_run WHERE id = $id",
   followUp: "SELECT id FROM review_run WHERE parent_run = $id",

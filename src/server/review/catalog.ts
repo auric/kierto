@@ -379,7 +379,7 @@ const prContextRules = (c: RunFiles) => (c.prContext ? PR_CONTEXT_RULES.filter((
 // spec.md section 2.10: the reply and discuss agents. The app checks each cite and each proposal (notes.ts).
 export const NOTES_RULES = [
   "When your answer relies on another thread, put its number into cites.",
-  "Propose a note only for an agreement that a message of the user states or accepts, or for a wait on another pull request. Give the thread number.",
+  "Propose a note for an agreement only when a message of the user states or accepts it. You can also propose a note for a wait on another pull request. Give the thread number.",
   "Write a note as one short sentence. Do not propose a note that ./context/notes.md already holds.",
   "A note counts only after the user keeps it. Never write in a reply that a note is agreed.",
 ];
@@ -749,6 +749,30 @@ export function fixAgent(p: Profile, c: RunFiles = {}): AgentSpec {
 // docs/plans/review-v2/spec.md section 2.16: the rule of a follow-up, an ask run with a parent.
 export const FOLLOW_UP_RULE =
   'The question can refer to an earlier answer. Read the turns in the "Conversation so far" section of the user message. Older turns are in ./context/history.md. Answer only the current question in "Your instructions".';
+
+// docs/plans/review-v2/spec.md section 2.4: one turn of a talk about one finding. No subagents, so the caller passes agents {} and the
+// CLI gets no Agent tool. No profile prompt, as for Ask. The withdrawn line of the spec has 22 words, so it is two sentences here.
+export const DISCUSS_RULES = [
+  "You discuss one review finding with the user. You cannot change files, and you post nothing.",
+  "The finding is in ./context/finding.md. Earlier turns of this talk are in ./context/discussion.md.",
+  "Read the code at the finding and follow its trigger again before you answer.",
+  "Check each claim of the user against the code. Agree only when the code supports the claim.",
+  "Set verdict to upheld when the finding stays right as it is.",
+  "Set verdict to revised when the finding is right but its severity or text must change. Give the full new text in revision.",
+  "Set verdict to withdrawn when the code shows that the finding is wrong. Also use withdrawn when the user's context makes it not apply.",
+  "Answer only the user's message. Write the answer as short Markdown.",
+  "For a posted finding, write reply only when the thread needs an answer from the user. Write it in the user's voice.",
+  "Never write in a reply that the user resolves the thread. Never put secrets into a reply.",
+];
+
+export function discussAgent(p: Profile, c: RunFiles = {}): AgentSpec {
+  return {
+    description: "Read-only talk about one review finding of one pull request.",
+    prompt: [...DISCUSS_RULES, ...prContextRules(c), ...(c.prContext ? NOTES_RULES : []), ...TRUST, COVERAGE_RULE, ...docsRule(p)].join(
+      "\n",
+    ),
+  };
+}
 
 // Plan r2 S-ASK: an ask run gets no subagents, so the caller passes agents {} and the CLI gets no Agent tool.
 export function askAgent(p: Profile, c: RunFiles = {}, followUp = false): AgentSpec {

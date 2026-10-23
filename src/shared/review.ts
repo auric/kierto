@@ -145,9 +145,24 @@ export type Severity = (typeof severities)[number];
 export type Check = "checked" | "unsure" | "unchecked";
 // payload.verify of a finding item with a verdict. duplicateOf: an item ID. by: the agent that gave the verdict.
 export type VerifyMark = Omit<VerifyVerdict, "candidate" | "question" | "duplicateOf"> & { duplicateOf: number | null; by: string };
+// docs/plans/review-v2/spec.md section 2.2: a discuss run withdrew the finding. run: that discuss run. was: the status before.
+// restored: the user restored the finding. The mark stays.
+export type WithdrawnMark = { run: number; reason: string; was: "new" | "accepted"; restored?: true };
 // A finding item payload. finderSeverity: set when the verdict changed the severity. discardedBy "verify": a refuted or duplicate item.
 // A restore removes discardedBy and keeps verify (spec.md section 1.8).
-export type FindingPayload = AnchoredFinding & { verify?: VerifyMark; finderSeverity?: Severity; discardedBy?: "verify" };
+// spec.md section 2.2: a revision of a finding is a discarded finding item with revises (the finding ID) and discussedIn (the discuss
+// run). It waits for Use the new text or Keep mine (items.ts) and never counts as a finding. dropped: Keep mine, Use the new text, or a
+// newer revision ended the wait. revisedBy: on the finding, the revision whose text the user took.
+export type FindingPayload = AnchoredFinding & {
+  verify?: VerifyMark;
+  finderSeverity?: Severity;
+  discardedBy?: "verify";
+  withdrawn?: WithdrawnMark;
+  revises?: number;
+  discussedIn?: number;
+  dropped?: true;
+  revisedBy?: number;
+};
 
 // spec.md section 1.7. A carried finding keeps its kind, so a question verdict on it reads as unsure.
 export const checkOf = (p: { verify?: Pick<VerifyMark, "verdict"> }): Check =>
@@ -225,6 +240,14 @@ export const discussResult = z.object({
 });
 
 export type DiscussResult = z.infer<typeof discussResult>;
+// review_run.discuss_json (spec.md sections 2.2 and 2.9). cites: the checked cites. notes: the IDs of the stored note suggestions.
+// applied: the revision item, the discard of the finding, or the reply draft that the run stored. changed: the finding changed during
+// the run, so the run applied nothing.
+export type DiscussRecord = Pick<DiscussResult, "verdict" | "reason" | "revision" | "reply" | "cites"> & {
+  notes: number[];
+  applied: { revision?: number; discarded?: true; draft?: number };
+  changed?: true;
+};
 
 export const discussJsonSchema = (): Record<string, unknown> => z.toJSONSchema(discussResult, { target: "draft-07" });
 
@@ -315,8 +338,8 @@ export type ReplyDraft = z.infer<typeof replyDraft>;
 export type ReplyResult = z.infer<typeof replyResult>;
 // review: a review run, such as the reply to an answered question. reply: a reply run. fix: a "Fixed in" draft. nofix: the reply of a fix note without a fix. session: an import of
 // your session. resolve: a resolve proposal without a reply. user: a draft that the user wrote. A "Won't fix" draft of a user decline
-// has origin nofix and declined set.
-export const replyOrigins = ["review", "reply", "fix", "nofix", "session", "resolve", "user"] as const;
+// has origin nofix and declined set. discuss: a talk about a posted finding (docs/plans/review-v2/spec.md section 2.5).
+export const replyOrigins = ["review", "reply", "fix", "nofix", "session", "resolve", "user", "discuss"] as const;
 export type ReplyOrigin = (typeof replyOrigins)[number];
 // replyTo: the message that the reply answers. The post uses it as the parent.
 // judgement: absent in drafts stored before Release 3. Read it as null.

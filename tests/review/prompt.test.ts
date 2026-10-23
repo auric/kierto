@@ -7,6 +7,7 @@ import {
   ANSWERED_RULES,
   askAgent,
   contextBlock,
+  DISCUSS_RULES,
   DO_NOT_FLAG,
   explainAgent,
   FIX_REPLY_RULES,
@@ -19,6 +20,8 @@ import {
   moduleNotes,
   moduleSections,
   NO_CONTEXT,
+  NOTES_RULES,
+  PR_CONTEXT_RULES,
   profileRevision,
   RETIRED_PROFILES,
   type ReviewContext,
@@ -50,6 +53,8 @@ import {
 import { SESSION_FIX_RULES } from "../../src/shared/consult";
 import { MODULE_IDS, type ModuleId, VOLUMES } from "../../src/shared/dto";
 import { FIX_WHY_RULES, fixJsonSchema, REVIEW_PROMPT_VERSION, replyJsonSchema, replyResult } from "../../src/shared/review";
+
+console.log(`prompt.test.ts imported from ${Bun.resolveSync("../../src/server/review/catalog", import.meta.dir)}`);
 
 const general = SHIPPED_PROFILES[0] as (typeof SHIPPED_PROFILES)[number];
 const explain = SHIPPED_PROFILES.find((p) => p.explain) as (typeof SHIPPED_PROFILES)[number];
@@ -516,6 +521,10 @@ describe("review v2 finder prompt", () => {
       ...moduleNotes({ modules: ["rules", "intent"] }, NO_CONTEXT),
       ...lines(withVerifyDelegation(verifyAgent(general, FULL), true).prompt),
       ...lines(verifierAgent(general, FULL).prompt),
+      // WP-PN and WP-D2: the PR context and notes lines of every run with pr-context.md, and the lines of the discuss agent.
+      ...PR_CONTEXT_RULES,
+      ...NOTES_RULES,
+      ...DISCUSS_RULES,
     ];
     expect(longSentences(texts)).toEqual([]);
     for (const p of [

@@ -12,6 +12,8 @@ import {
   type AnchoredFinding,
   askResult,
   type Check,
+  type DiscussResult,
+  discussResult,
   type ExplainResult,
   explainResult,
   type FindingPayload,
@@ -72,8 +74,8 @@ export type CarriedMark = CandidateLink & { verify?: VerifyMark; severity: Sever
 
 // checked: the earlier findings of a re-review. fix: the notes and edits of a fix run. links, carried: the verify phase of a review run.
 // notes: the note proposals of a reply run, before the checks of notes.ts proposeNotes (docs/plans/review-v2/spec.md section 2.9).
-// explain: the checked result of an explain run (spec.md section 3.3). usage: the sum of both phases of a review run. Absent: the
-// usage of outcome.
+// explain: the checked result of an explain run (spec.md section 3.3). discuss: the result of a discuss run (spec.md section 2.4);
+// jobs.ts end() applies it. usage: the sum of both phases of a review run. Absent: the usage of outcome.
 export type Ending = {
   status: Exclude<RunStatus, "running">;
   kind: RunErrorKind | null;
@@ -91,6 +93,7 @@ export type Ending = {
     carried?: Map<number, CarriedMark>;
     notes?: NoteProposal[];
     explain?: ExplainResult;
+    discuss?: DiscussResult;
   };
 };
 
@@ -697,6 +700,30 @@ export function judgeReplies(o: RunOutcome, threads: ReplyThread[], servers: str
   });
 }
 
+const firstLine = (s: string) =>
+  s
+    .split("\n")
+    .find((l) => l.trim())
+    ?.trim() ?? "";
+
+// docs/plans/review-v2/spec.md section 2.4: a discuss run stores its answer. jobs.ts end() checks the finding and applies the verdict
+// in the transaction of the run end. A revision counts only with the verdict revised.
+export function judgeDiscuss(o: RunOutcome, servers: string[], gaps: string[]): Ending {
+  const raw = rawOutput(o);
+  if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
+  const parsed = discussResult.safeParse(o.result?.structured_output);
+  if (!parsed.success) return schemaFailure(parsed.error.issues, "discuss", raw, o);
+  const r = parsed.data;
+  const coverage = { ...r.coverage, unavailable: [...r.coverage.unavailable, ...unavailable(o, servers, gaps)] };
+  return ended(raw, o, {
+    summary: { summary: firstLine(r.answer), risks: [], coverage, dropped: [] },
+    items: [],
+    answer: r.answer,
+    notes: r.notes,
+    discuss: { ...r, revision: r.verdict === "revised" ? r.revision : null },
+  });
+}
+
 // Plan r2 S-ASK: an ask run makes no items, so nothing of it can post.
 export function judgeAsk(o: RunOutcome, servers: string[], gaps: string[]): Ending {
   const raw = rawOutput(o);
@@ -704,11 +731,7 @@ export function judgeAsk(o: RunOutcome, servers: string[], gaps: string[]): Endi
   const parsed = askResult.safeParse(o.result?.structured_output);
   if (!parsed.success) return schemaFailure(parsed.error.issues, "ask", raw, o);
   const { answer, coverage } = parsed.data;
-  const summary =
-    answer
-      .split("\n")
-      .find((l) => l.trim())
-      ?.trim() ?? "";
+  const summary = firstLine(answer);
   return ended(raw, o, {
     summary: {
       summary,

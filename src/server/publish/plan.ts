@@ -90,9 +90,13 @@ export function buildPlan(input: PlanInput): PlannedPost[] {
   const sev = (it: ReviewItemDto) => (input.severity ? severityOf(it) : undefined);
   const resolved = new Set(input.resolved);
   const blocked = new Set(input.blocked?.map((b) => b.item));
+  // docs/plans/review-v2/spec.md section 2.2: a revision of a finding never posts. Only Use the new text moves its text to the finding.
+  const revision = (i: ReviewItemDto) => i.kind === "finding" && (i.payload as { revises?: number }).revises !== undefined;
   for (const run of input.runs) {
     const heads = { run: run.id, sourceHead: run.sourceHead, targetHead: run.targetHead, mergeBase: run.mergeBase };
-    const items = input.items.filter((i) => i.run === run.id && i.status === "accepted" && !blocked.has(i.id)).sort((a, b) => a.id - b.id);
+    const items = input.items
+      .filter((i) => i.run === run.id && i.status === "accepted" && !blocked.has(i.id) && !revision(i))
+      .sort((a, b) => a.id - b.id);
     const general: { ref: string; body: string }[] = [];
     const questions: { body: string; why: string }[] = [];
     const generalItems: PlannedPost["items"] = [];

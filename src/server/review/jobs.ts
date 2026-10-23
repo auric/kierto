@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Review jobs (plan v3 WP10), re-reviews (r2 S-RR), ask runs (r2 S-ASK), reply-draft jobs (replies.md WP17), fix runs (r3 S-FIX),
-// session runs (session-consult.md part C), and explain runs (review-v2 spec.md section 3): one run from the stored brief to stored
-// drafts, edits, answers, or a walkthrough. One run at a time.
+// session runs (session-consult.md part C), explain runs (review-v2 spec.md section 3), and discuss runs (spec.md section 2): one run
+// from the stored brief to stored drafts, edits, answers, or a walkthrough. One run at a time.
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -14,6 +14,8 @@ import {
   alwaysSkillError,
   type BriefDto,
   type BriefInput,
+  DISCUSS_FULL,
+  type DiscussTurnDto,
   type ExplainDto,
   type FixDto,
   MOVED_ON,
@@ -31,10 +33,13 @@ import { isMe } from "../../shared/me";
 import {
   askJsonSchema,
   type Carried,
+  discussJsonSchema,
   explainJsonSchema,
   explainResult,
+  type FindingPayload,
   type FixedMark,
   fixJsonSchema,
+  MAX_DISCUSS_MESSAGES,
   MAX_EARLIER,
   MAX_REPLY_THREADS,
   type NoteProposal,
@@ -58,6 +63,7 @@ import {
   createDocServers,
   DEFAULT_PROFILE,
   delegation,
+  discussAgent,
   explainAgent,
   fixAgent,
   GIT_SERVER,
@@ -88,7 +94,9 @@ import { codegraphEntry, codegraphIndex, indexCodegraph } from "./codegraph";
 import {
   askConversation,
   candidatesFile,
+  discussionFile,
   earlierItem,
+  findingFile,
   findingsFile,
   fixStateFile,
   historyFile,
@@ -98,6 +106,7 @@ import {
 } from "./context-files";
 import { runEffort } from "./defaults";
 import { parseDiff } from "./diffmap";
+import { applyDiscuss, type DiscussStart, discussTurns, earlierTurns, findingItem, planDiscuss, postedThread, turnCount } from "./discuss";
 import { currentDrafts, placeReplies, replyOutcome, revisions, touched, withRevision } from "./drafts";
 import { prFixes } from "./fix-routes";
 import { gitEnv } from "./git";
@@ -113,6 +122,7 @@ import {
   failure,
   judge,
   judgeAsk,
+  judgeDiscuss,
   judgeExplain,
   judgeFix,
   judgeReplies,
@@ -127,6 +137,7 @@ import { liveThreads, proposalContext, proposeNotes, storeProposals, suggestions
 import { loadPrContext } from "./pr-context";
 import {
   buildAskPrompt,
+  buildDiscussPrompt,
   buildExplainPrompt,
   buildFixPrompt,
   buildPrompt,
@@ -172,6 +183,8 @@ const MAIN_ENTRY = join(import.meta.dir, "..", "main.ts");
 
 // docs/plans/review-v2/spec.md section 0, VERIFY_MAX_TURNS: min(profile.maxTurns, 10 + 3 × candidates), at least 12.
 export const verifyMaxTurns = (p: Pick<Profile, "maxTurns">, candidates: number) => Math.max(12, Math.min(p.maxTurns, 10 + 3 * candidates));
+// spec.md section 0: a discuss run gets min(profile.maxTurns, DISCUSS_MAX_TURNS).
+export const DISCUSS_MAX_TURNS = 40;
 
 // The source item ID of a carried copy (rereview.ts carryOver).
 const carriedFrom = (it: NewItem) => (JSON.parse(it.payload_json) as { carried?: Carried }).carried?.from;
@@ -222,13 +235,16 @@ type Job = {
   abort?: AbortController;
   // The other open PRs of the run's pr-context.md, for the link rule of note proposals (docs/plans/review-v2/spec.md section 2.9).
   peers?: ReadonlyMap<number, { title: string; state: string }>;
+  // A discuss run only: the finding at the start. threads holds the thread of a posted finding.
+  discuss?: DiscussStart;
 };
 
 export type StartResult =
   | { status: 200 | 202; run: RunDto }
   | { status: 409; conflict: RunConflict }
   // moved: an ask whose parent already has a follow-up (docs/plans/review-v2/spec.md section 2.15).
-  | { status: 400 | 404 | 409; error: string; moved?: MovedConflict["moved"] };
+  // item: a discuss start with a stale finding revision (ItemConflict).
+  | { status: 400 | 404 | 409; error: string; moved?: MovedConflict["moved"]; item?: ReviewItemDto };
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -311,15 +327,20 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
   }
 
   // ---------- PR context and notes (docs/plans/review-v2/spec.md sections 2.7 to 2.9) ----------
-  // Every run kind but Explain gets the file, right before its workspace. Reply and fix runs name their threads as focus.
+  // Every run kind but Explain gets the file, right before its workspace. Reply and fix runs name their threads as focus. A discuss run
+  // names the thread of a posted finding and the paths of the finding.
   async function prContext(j: Job, pr: Heads) {
     if (j.kind === "explain") return null;
     j.abort = new AbortController();
     try {
       const provider = await settings.provider().catch(() => null);
-      const focus = j.kind === "reply" || j.kind === "fix" ? (j.threads ?? []).map((t) => t.thread) : [];
+      const focus = j.kind === "reply" || j.kind === "fix" || j.kind === "discuss" ? (j.threads ?? []).map((t) => t.thread) : [];
       const me = settings.config()?.userSlug ?? null;
-      const c = await loadPrContext(j.db, provider, pr, { threads: focus }, j.abort.signal, { me, dataDir, now: now() });
+      const c = await loadPrContext(j.db, provider, pr, { threads: focus, paths: j.discuss?.paths }, j.abort.signal, {
+        me,
+        dataDir,
+        now: now(),
+      });
       j.peers = c.peers;
       const file = prContextFile(c.input);
       const notes = notesFile(c.notes, pr);
@@ -333,9 +354,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     }
   }
 
-  // The checks of the note proposals of a reply run. A run without a PR row stores none.
+  // The checks of the note proposals of a reply or discuss run. A run without a PR row stores none.
   function proposals(j: Job, list: NoteProposal[]) {
-    const pr = j.kind === "reply" ? prRow(j.db, j.pr) : null;
+    const pr = j.kind === "reply" || j.kind === "discuss" ? prRow(j.db, j.pr) : null;
     if (!pr) return null;
     return proposeNotes(list, proposalContext(j.db, pr, settings.config()?.userSlug ?? null, j.peers ?? new Map()), now());
   }
@@ -349,10 +370,14 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const flagged = j.session ? null : j.profile.effort;
     const ok = j.db.transaction(() => {
       if (o) upsertEvents(j.db, j.id, o.events);
-      const replies = replyOutcome(j.db, j.pr, e.result?.items ?? [], j.threads ?? j.asked, j.picked);
+      // docs/plans/review-v2/spec.md section 2.5: a discuss run plans its writes from the finding as it is now. Its reply draft takes
+      // the writer rules of a reply run.
+      const disc = j.discuss && e.result?.discuss ? planDiscuss(j.db, j, j.discuss, e.result.discuss) : null;
+      const made = disc ? disc.items : (e.result?.items ?? []);
+      const replies = replyOutcome(j.db, j.pr, made, j.threads ?? j.asked, j.picked);
       // docs/plans/review-v2/spec.md section 2.9: the note proposals of a reply run go in with its drafts, in this transaction.
       const proposed = e.result?.notes && proposals(j, e.result.notes);
-      const notes = [...replies.notes, ...(proposed?.skipped ?? [])];
+      const notes = [...replies.notes, ...(proposed?.skipped ?? []), ...(disc?.skipped ?? [])];
       const summary = e.result?.summary;
       const coverage = summary && notes.length ? { ...summary.coverage, skipped: [...summary.coverage.skipped, ...notes] } : null;
       const done = j.db.query(SQL.end).run({
@@ -389,7 +414,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
           start: x.start,
           rows: JSON.stringify(x.rows),
         });
-      const items = placeReplies(j.db, j.pr, e.result?.items ?? [], replies);
+      const items = placeReplies(j.db, j.pr, made, replies);
       const q = j.db.query(SQL.item);
       // docs/plans/review-v2/spec.md section 1.8: payload.verify.duplicateOf holds an item ID, known only after the insert.
       const links = e.result?.links ?? new Map<NewItem, CandidateLink>();
@@ -414,7 +439,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (!j.carry || !e.result) {
         add(items);
         linkDuplicates();
-        if (proposed) storeProposals(j.db, j.pr, j.id, proposed.add, now());
+        const ids = proposed ? storeProposals(j.db, j.pr, j.id, proposed.add, now()) : [];
+        if (disc && j.discuss) applyDiscuss(j.db, j.id, j.discuss, disc, ids);
         return true;
       }
       const c = carryOver(j.db, j.carry, e.result.checked ?? []);
@@ -438,6 +464,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       return true;
     })();
     notify(j.id, j.pr);
+    // The run detail of the finding shows a new revision or the withdrawn mark.
+    if (j.discuss) notify(j.discuss.run);
     return ok;
   }
 
@@ -453,9 +481,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const carry = j.carry;
     const earlier = carry?.items.filter((r) => r.kind === "finding") ?? [];
     const posted = new Set(carry?.posted.map((r) => r.id));
-    // A re-review gets findings.md instead. An explain run gets no history (docs/plans/review-v2/spec.md section 3.2).
+    // A re-review gets findings.md instead. An explain run gets no history (docs/plans/review-v2/spec.md section 3.2). A discuss run gets
+    // finding.md and discussion.md instead (spec.md section 2.4).
     const history =
-      j.kind === "explain"
+      j.kind === "explain" || j.kind === "discuss"
         ? null
         : j.kind !== "review"
           ? historyFile(j.db, j.pr, pr.source_head)
@@ -475,6 +504,10 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     j.asked = questions?.threads ?? [];
     // The findings of a fix run as they are now. A user edit or move after the start counts.
     const fixRows = j.findings.flatMap((id) => (j.db.query(SQL.fixFinding).get({ id }) as FindingRow | null) ?? []);
+    // The context of a discuss turn, built again each turn from the stored finding and the earlier turns. No session resumes.
+    const d = j.discuss;
+    const talked = d ? (j.db.query(SQL.fixFinding).get({ id: d.item }) as FindingRow | null) : null;
+    if (d && !talked) return failure("process", `Finding ${d.item} no longer exists.`);
     const extra = [
       ...(carry && (earlier.length || carry.posted.length)
         ? [
@@ -495,6 +528,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       ...(history ? [history] : []),
       ...(fixState ? [fixState] : []),
       ...(questions?.file ? [questions.file] : []),
+      ...(d && talked ? [findingFile(talked, d.thread?.thread ?? null), discussionFile(earlierTurns(j.db, d.item, j.id), d.item)] : []),
     ];
     const ctx = await prContext(j, pr);
     if (ctx) extra.push(ctx.file);
@@ -685,7 +719,13 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
               }
             : explain
               ? { prompt: buildExplainPrompt(input), schema: explainJsonSchema(), main: explainAgent(profile) }
-              : { prompt: buildPrompt(input), schema: reviewJsonSchema(profile.explain), main: mainAgent(profile, context) };
+              : d
+                ? {
+                    prompt: buildDiscussPrompt({ ...input, message: d.message }),
+                    schema: discussJsonSchema(),
+                    main: discussAgent(profile, context),
+                  }
+                : { prompt: buildPrompt(input), schema: reviewJsonSchema(profile.explain), main: mainAgent(profile, context) };
     // docs/plans/review-v2/spec.md section 1.9: a review run shows phase finding, then checking.
     const finder = j.kind === "review" && !profile.explain;
     if (finder) {
@@ -699,7 +739,11 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         appDir: ws.app,
         ...spec,
         main: withDelegation(withMcp(withSkills(withLanguages(spec.main, langs), folders, always), used), delegate),
-        maxTurns: reply || fix ? Math.max(profile.maxTurns, MIN_EDIT_TURNS) : profile.maxTurns,
+        maxTurns: d
+          ? Math.min(profile.maxTurns, DISCUSS_MAX_TURNS)
+          : reply || fix
+            ? Math.max(profile.maxTurns, MIN_EDIT_TURNS)
+            : profile.maxTurns,
         model: profile.model,
         effort: profile.effort,
         // Only a delegating review gets subagents. With agents {}, the CLI gets no Agent tool.
@@ -736,6 +780,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       e.result?.summary.coverage.notChecked.push(unmarked);
       return { ...e, raw: `${unmarked}\n\n${e.raw}` };
     };
+    if (d) return noted(judgeDiscuss(o, servers, gaps));
     if (reply) return noted(judgeReplies(o, reply, servers, gaps, new Set(liveThreads(j.db, j.pr, null).keys())));
     if (fix) return noted(await judgeFix(o, ws, fix, j.findings, servers, gaps));
     if (question !== null) return noted(judgeAsk(o, servers, gaps));
@@ -930,6 +975,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       carry?: Carry;
       question?: string;
       parent?: number;
+      discuss?: DiscussStart;
     } = {},
   ): StartResult {
     const busy = taken(db, key);
@@ -937,7 +983,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // A missing always-use skill refuses the start, so no failed run is stored.
     const missing = alwaysProblems(profile.alwaysSkills, opts.claudeConfigDir ?? claudeConfigDir());
     if (missing.length) return { status: 409, error: missing.join(" ") };
-    const { threads = null, picked = false, findings = [], anyway = false, carry = null, question = null, parent = null } = o;
+    const { threads = null, picked = false, findings = [], anyway = false, carry = null, question = null, parent = null, discuss } = o;
     const { id: runId } = db.query(SQL.insert).get({
       pr: pr.id,
       kind,
@@ -951,13 +997,15 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       target: pr.target_head,
       now: now(),
       since: carry?.since ?? null,
-      question,
+      // spec.md section 2.2: the question column of a discuss run holds the user message.
+      question: question ?? discuss?.message ?? null,
       tasks: JSON.stringify(db.query(SQL.fetched).all({ pr: pr.id })),
       model: profile.model,
       effort: profile.effort ?? "default",
       effort_default: profile.effort ? null : runEffort(profile.model),
       prompt_version: REVIEW_PROMPT_VERSION,
       parent,
+      item: discuss?.item ?? null,
     }) as { id: number };
     return begin(
       {
@@ -977,6 +1025,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
         session: null,
         cancelled: false,
         done: Promise.resolve(),
+        ...(discuss && { discuss }),
       },
       pr,
       brief,
@@ -1242,6 +1291,42 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       return { explain: { run, result: null, ...(done && earlier && { previous: { run: toRunDto(done, resolve), result: earlier } }) } };
     },
 
+    // docs/plans/review-v2/spec.md section 2.3: one turn of a talk about a finding, with the brief profile (design.md R11). The same
+    // finding and message return the running run. revision: the finding revision on screen. Nothing of a discuss run posts.
+    discuss(db: Database, id: number, message: string, revision: number): StartResult {
+      const it = findingItem(db, id);
+      if (!it) return { status: 404, error: "Item not found." };
+      if (it.kind !== "finding") return { status: 409, error: "Only a finding takes a talk with Claude." };
+      const p = JSON.parse(it.payload_json) as FindingPayload;
+      if (p.revises !== undefined) return { status: 409, error: "This is a new text for a finding. Use it or keep yours first." };
+      const pr = prRow(db, it.pr);
+      if (!pr) return { status: 404, error: "Pull request not found." };
+      const { source_head, target_head } = pr;
+      if (!source_head || !target_head) return { status: 409, error: "Sync the pull request first." };
+      const key = [pr.id, "discuss", id, sha256(message), source_head, target_head].join(":");
+      const same = taken(db, key);
+      if (same?.status === 200) return same;
+      if (turnCount(db, id) >= MAX_DISCUSS_MESSAGES) return { status: 409, error: DISCUSS_FULL };
+      if (it.revision !== revision)
+        return { status: 409, error: "The item changed on another page. Check it again.", item: withRevision(it, revisions(db, pr.id)) };
+      const thread = it.status === "posted" ? postedThread(db, pr.id, id, settings.config()?.userSlug ?? null) : null;
+      // docs/plans/thread-outcome.md section 8: a reply for a draft that the user edited or accepted waits as its revision.
+      const cur = thread ? currentDrafts(db, pr.id).get(thread.thread) : undefined;
+      const threads = thread ? [cur && touched(cur) ? { ...thread, revise: cur.id } : thread] : undefined;
+      const paths = [...new Set([it.path ?? p.path, p.anchor?.oldPath].filter((x): x is string => !!x))];
+      const brief = briefOf(db, pr.id);
+      const profile = profileOf(settings.profiles(), brief.profile);
+      return launch(db, { ...pr, source_head, target_head }, { ...brief, note: "" }, profile, key, "discuss", {
+        ...(threads && { threads }),
+        discuss: { item: id, run: it.run, revision: it.revision, status: it.status, message, thread, paths },
+      });
+    },
+
+    // GET /api/items/:id/discuss: the turns of a finding, oldest first. null for an unknown item.
+    turns(db: Database, id: number): DiscussTurnDto[] | null {
+      return findingItem(db, id) ? discussTurns(db, id) : null;
+    },
+
     // Starts a reply-draft run of the stored brief (plan replies.md WP17). It shares the run slot with reviews.
     // profile: a profile for this run only. Absent: the brief profile.
     draftReplies(db: Database, id: number, list?: number[], profileId?: string): StartResult {
@@ -1414,13 +1499,20 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       const r = runRow(db, id);
       // The DTO kind has no "consult". Only the SQL row can hold it.
       if (!r || (r.kind as string) === "consult") return null;
+      // docs/plans/review-v2/spec.md section 2.2: a revision of a finding is no item of its own. Its open finding carries the newest
+      // waiting one as revised.
+      const rows = db.query(SQL.items).all({ run: id }) as ItemRow[];
+      const finding = (x: ItemRow) => x.kind === "finding";
+      const revs = rows.some(finding) ? revisions(db, r.pr) : new Map<number, ItemRow>();
       return {
         run: withPhase(db, toRunDto(r)),
         events: (db.query(SQL.events).all({ run: id }) as (Omit<RunEvent, "builtin"> & { builtin: number })[]).map((e) => ({
           ...e,
           builtin: e.builtin === 1,
         })),
-        items: (db.query(SQL.items).all({ run: id }) as ItemRow[]).map(toItemDto),
+        items: rows
+          .filter((x) => !finding(x) || (JSON.parse(x.payload_json) as FindingPayload).revises === undefined)
+          .map((x) => (finding(x) ? withRevision(x, revs) : toItemDto(x))),
       };
     },
 

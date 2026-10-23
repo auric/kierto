@@ -190,6 +190,7 @@ const ORIGIN: Record<ReplyOrigin, string> = {
   session: "from your session",
   resolve: "from the re-review",
   user: "written by you",
+  discuss: "from your talk about the finding",
 };
 // thread-outcome.md section 4: a draft stored before origin existed is "Fixed in" with fix, else a reply run.
 const originOf = (p: ReplyPayload): ReplyOrigin => p.origin ?? (p.fix ? "fix" : "reply");

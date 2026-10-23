@@ -14,8 +14,9 @@ export const UNDONE = "EXISTS (SELECT 1 FROM fix_commit f WHERE f.id = json_extr
 const CURRENT_DRAFTS = `SELECT i.*, ${RUN_COLS} FROM review_item i JOIN review_run r ON r.id = i.run
   WHERE r.pr = $pr AND i.kind = 'reply' AND i.thread IS NOT NULL AND NOT ${UNDONE} AND json_extract(i.payload_json, '$.revises') IS NULL
   ORDER BY i.status IN ('new', 'accepted'), i.id`;
+// docs/plans/review-v2/spec.md section 2.2: a finding takes revisions too. Item IDs are unique, so one map holds both kinds.
 const REVISIONS = `SELECT i.*, ${RUN_COLS} FROM review_item i JOIN review_run r ON r.id = i.run
-  WHERE r.pr = $pr AND i.kind = 'reply' AND i.status = 'discarded' AND json_extract(i.payload_json, '$.revises') IS NOT NULL
+  WHERE r.pr = $pr AND i.kind IN ('reply', 'finding') AND i.status = 'discarded' AND json_extract(i.payload_json, '$.revises') IS NOT NULL
     AND json_extract(i.payload_json, '$.dropped') IS NULL AND NOT ${UNDONE} ORDER BY i.id`;
 // A newer draft or revision of a thread drops its waiting revisions. shared/review.ts says why the rows stay.
 export const DROP_REVISIONS = `UPDATE review_item SET payload_json = json_set(payload_json, '$.dropped', json('true')), revision = revision + 1
@@ -32,14 +33,14 @@ export function currentDrafts(db: Database, pr: number): Map<number, ItemRow> {
   return out;
 }
 
-// The newest waiting revision of each draft, by the ID of the draft that it revises.
+// The newest waiting revision of each draft or finding, by the ID of the item that it revises.
 export function revisions(db: Database, pr: number): Map<number, ItemRow> {
   const out = new Map<number, ItemRow>();
   for (const r of db.query(REVISIONS).all({ pr }) as ItemRow[]) out.set((JSON.parse(r.payload_json) as ReplyPayload).revises as number, r);
   return out;
 }
 
-// The DTO of a reply draft with its waiting revision. Only an open draft can take a revision.
+// The DTO of a reply draft or a finding with its waiting revision. Only an open item can take a revision.
 export function withRevision(r: ItemRow, revs: Map<number, ItemRow>): ReviewItemDto {
   const rev = r.status === "new" || r.status === "accepted" ? revs.get(r.id) : undefined;
   return rev ? { ...toItemDto(r), revised: toItemDto(rev) } : toItemDto(r);
@@ -63,7 +64,8 @@ export const revisedText = (thread: number) =>
 export const sameText = (thread: number) => `Thread ${thread}: kept your draft. The revision has the same text.`;
 
 // docs/plans/thread-outcome.md writer priority, after the user (userDraft): "Fixed in", then nofix, then the other writers, then a
-// resolve-only proposal. A lower rank wins. A draft stored before origin existed ranks by its fix field only.
+// resolve-only proposal. A lower rank wins. A draft stored before origin existed ranks by its fix field only. A discuss draft has the
+// rank of a reply run (docs/plans/review-v2/spec.md section 2.5).
 const writerRank = (p: ReplyPayload) => (p.fix ? 2 : p.origin === "nofix" ? 3 : p.origin === "resolve" ? 5 : 4);
 // The current draft is open, untouched, and from a higher writer than the new draft.
 const higherDraft = (r: ItemRow | undefined, payload: string) =>

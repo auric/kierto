@@ -8,11 +8,13 @@ import {
   type AnchoredFinding,
   type Carried,
   type DiffKind,
+  type DiscussRecord,
   type DiscussResult,
   type DiscussVerdict,
   type ExplainResult,
   type FixedMark,
   type FixNote,
+  MAX_DISCUSS_MESSAGES,
   MAX_FIX_EDITS,
   MAX_QUESTION,
   MAX_REPLY_THREADS,
@@ -22,6 +24,7 @@ import {
   type SessionMark,
   type Side,
   type ValidatedResult,
+  type WithdrawnMark,
 } from "./review";
 import type { RunErrorKind, RunEvent, RunStatus } from "./run-log";
 import type { ExcerptLine, IncompleteReason, Reviewer, Role, User } from "./types";
@@ -518,19 +521,21 @@ export type ReviewItemDto = {
   // carried: the item came from the base run of a re-review. fixed: findings only, a fix commit covers the finding.
   // session: the verdict of your session (docs/plans/session-consult.md part C).
   // discardReason: the reason chip of a finding that the user discarded (docs/plans/review-v2/spec.md section 4.1).
+  // withdrawn: findings only, a discuss run withdrew the finding (spec.md section 2.2).
   payload: (AnchoredFinding | Question | ReplyPayload) & {
     carried?: Carried;
     fixed?: FixedMark;
     session?: SessionMark;
     discardReason?: { code: DiscardReason };
+    withdrawn?: WithdrawnMark;
   };
   // Findings only: the current anchor.
   anchor: (Anchor & { side: Side }) | null;
   status: ItemStatus;
   revision: number;
   edited: boolean;
-  // An open reply draft of GET reply-drafts and POST /api/items/:id: the newest revision of it (payload revises) that waits for
-  // Use revision or Keep mine. Absent: none.
+  // An open reply draft of GET reply-drafts and POST /api/items/:id, or an open finding of GET /api/runs/:id and POST /api/items/:id:
+  // the newest revision of it (payload revises) that waits for Use revision or Keep mine. Absent: none.
   revised?: ReviewItemDto;
   // Reply items only: the run that wrote the draft. head: the source head at the run start. finishedAt: null while it runs.
   drafted?: { kind: RunKind; startedAt: number; finishedAt: number | null; head: string };
@@ -732,8 +737,19 @@ export type MovedConflict = ApiError & { moved: { run: number } };
 // changed file (path percent-decoded) and lines that its diff shows on that side. A risk with a path has the lines of its code.
 // POST /api/prs/:id/explain takes reviewRunInput and gives RunDto: 202 for a new run, 200 for the running run or a stored result.
 export type ExplainDto = { run: RunDto; result: ExplainResult | null; previous?: { run: RunDto; result: ExplainResult } };
+// POST /api/items/:id/discuss (spec.md section 2.3). revision: the finding revision on screen. A mismatch gives 409 with ItemConflict.
+// 202 with the run. 200 with the running run of the same item and message. 409: not a finding, a revision, MAX_DISCUSS_MESSAGES, or
+// the run slot is busy (RunConflict).
+export const discussInput = z.object({ message: z.string().trim().min(1).max(MAX_QUESTION), revision: version });
+export type DiscussInput = z.infer<typeof discussInput>;
+export const DISCUSS_FULL = `This talk has reached ${MAX_DISCUSS_MESSAGES} messages. Start a new review for a fresh look.`;
+// The note of a turn whose finding changed during the run (DiscussTurnDto changed).
+export const DISCUSS_CHANGED = "The finding changed while Claude worked. Nothing was applied.";
 // GET /api/items/:id/discuss gives DiscussTurnDto[], oldest first. run: the discuss run. message: the user message. at: ms of the start.
 // answer, verdict, reason, revision: null until the run ends with a valid result. error: the error text of a failed run.
+// cites: the checked thread numbers that the answer relies on. notes: the note suggestions of the run that wait for Keep or Dismiss
+// (spec.md section 2.9). applied: what the run stored: revision, the waiting revision item (the finding DTO carries it as revised);
+// discarded, the finding is withdrawn; draft, the reply draft in the thread of a posted finding. changed: show DISCUSS_CHANGED.
 export type DiscussTurnDto = {
   run: number;
   status: RunStatus;
@@ -744,6 +760,10 @@ export type DiscussTurnDto = {
   revision: DiscussResult["revision"];
   at: number;
   error: string | null;
+  cites: number[];
+  notes: NoteDto[];
+  applied: DiscussRecord["applied"];
+  changed: boolean;
 };
 
 // ---------- Improve prompt (Settings > Review profiles) ----------
