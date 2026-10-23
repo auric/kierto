@@ -917,6 +917,92 @@ if (db && ownPr) {
   });
 }
 
+// PR notes (docs/plans/review-v2/spec.md section 2.7) of my PR "Replace the polling timer": one kept note that waits for a merged PR,
+// and a reply draft in thread ROOT that cites thread HISTORY and suggests a note.
+if (db && ownPr) {
+  const peer = db
+    .query("SELECT project, repo, pr_id, title, state FROM pull_request WHERE id <> $id ORDER BY state = 'MERGED' DESC, id LIMIT 1")
+    .get({ id: ownPr.id }) as { project: string; repo: string; pr_id: number; title: string | null; state: string | null } | null;
+  const note = db.query(
+    `INSERT INTO pr_note (pr, text, source, state, thread, run, item, ref_project, ref_repo, ref_pr, ref_title, ref_state, ref_checked_at, created_at,
+      updated_at) VALUES ($pr, $text, $source, $state, $thread, $run, $item, $project, $repo, $ref, $title, $refState, $checked, $at, $at)`,
+  );
+  note.run({
+    pr: ownPr.id,
+    text: "Ship after the scheduler PR. Keep the old timer until it merges.",
+    source: "user",
+    state: "kept",
+    thread: null,
+    run: null,
+    item: null,
+    project: peer?.project ?? null,
+    repo: peer?.repo ?? null,
+    ref: peer?.pr_id ?? null,
+    title: peer?.title ?? null,
+    refState: peer?.state ?? null,
+    checked: peer ? min(5) : null,
+    at: min(100),
+  });
+  const { id: replyRun } = db
+    .query(
+      `INSERT INTO review_run (pr, profile, note, idem_key, source_head, target_head, status, kind, summary_json, started_at, finished_at)
+      VALUES ($pr, 'general', '', 'demo-notes-reply', $head, $target, 'completed', 'reply', $summary, $start, $end) RETURNING id`,
+    )
+    .get({
+      pr: ownPr.id,
+      head: HEAD_A,
+      target: remote.target,
+      summary: JSON.stringify({
+        summary: "One reply about the dropped tick.",
+        risks: [],
+        coverage: { read: [], skipped: [], unavailable: [], notChecked: [] },
+        dropped: [],
+      }),
+      start: min(2),
+      end: min(1),
+    }) as { id: number };
+  const body = "The old timer stops in dispose() now, so the scheduler gets every tick. See the fix in Alex's thread.";
+  const { id: draft } = db
+    .query(
+      "INSERT INTO review_item (run, kind, payload_json, body, status, thread, edited) VALUES ($run, 'reply', $payload, $body, 'new', $thread, 0) RETURNING id",
+    )
+    .get({
+      run: replyRun,
+      body,
+      thread: ROOT,
+      payload: JSON.stringify({
+        thread: ROOT,
+        action: "reply",
+        body,
+        reason: "Thread 3000 settled the timer: dispose() clears it first.",
+        evidenceStatus: "code",
+        judgement: "invalid",
+        resolve: false,
+        resolveEvidence: "",
+        cites: [HISTORY],
+        replyTo: 1000041,
+        origin: "reply",
+        threadOpen: true,
+      }),
+    }) as { id: number };
+  note.run({
+    pr: ownPr.id,
+    text: "dispose() stops the old timer before the scheduler starts.",
+    source: "claude",
+    state: "proposed",
+    thread: ROOT,
+    run: replyRun,
+    item: draft,
+    project: null,
+    repo: null,
+    ref: null,
+    title: null,
+    refState: null,
+    checked: null,
+    at: min(1),
+  });
+}
+
 const server = startServer({
   port: PORT,
   token: randomBytes(32).toString("hex"),

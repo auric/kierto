@@ -100,8 +100,8 @@ describe("finding v2 (AC-R14)", () => {
     expect(reviewResult.safeParse({ ...V1_RESULT, findings: [{ ...V1_FINDING, cause: { path: "a" } }] }).success).toBe(false);
   });
 
-  test("the review v2 prompts with the verify phase ship as prompt version 2.1 (2.0: the finder prompts alone)", () => {
-    expect(REVIEW_PROMPT_VERSION).toBe("2.1");
+  test("the review v2 prompts with the PR context rules ship as prompt version 2.2 (2.1: without them, 2.0: no verify phase)", () => {
+    expect(REVIEW_PROMPT_VERSION).toBe("2.2");
   });
 });
 
@@ -136,8 +136,16 @@ describe("verify, discuss, and explain schemas", () => {
 
   test("discuss: a result without revision and reply parses with the defaults; the caps hold", () => {
     const d = { answer: "The lock covers it.", verdict: "upheld", reason: "The code guards it.", coverage: NO_COVERAGE };
-    expect(discussResult.parse(d)).toEqual({ ...d, verdict: "upheld", revision: null, reply: "" });
-    const revised = { ...d, verdict: "revised", revision: { severity: "minor", title: "T", body: "B" }, reply: "Thanks." };
+    // WP-PN: notes and cites (spec.md section 2.9) default to empty lists, so stored results and old CLI output parse.
+    expect(discussResult.parse(d)).toEqual({ ...d, verdict: "upheld", revision: null, reply: "", notes: [], cites: [] });
+    const revised = {
+      ...d,
+      verdict: "revised",
+      revision: { severity: "minor", title: "T", body: "B" },
+      reply: "Thanks.",
+      notes: [],
+      cites: [],
+    };
     expect(discussResult.parse(revised)).toEqual(revised as never);
     for (const bad of [{ answer: "x".repeat(8001) }, { verdict: "kept" }, { reason: "x".repeat(501) }, { revision: { severity: "minor" } }])
       expect(discussResult.safeParse({ ...d, ...bad }).success).toBe(false);
@@ -232,10 +240,20 @@ const B20 = {
 const shape = (s: Record<string, unknown>) => JSON.stringify(s, (k, v) => (k === "description" ? undefined : v));
 const draft07 = (s: z.ZodType) => z.toJSONSchema(s, { target: "draft-07" }) as Record<string, unknown>;
 
+// WP-PN (spec.md section 2.9) adds notes and cites to the discuss result. Gate B20 ran the shape without them. Run B20 again before
+// WP-D2 ships the discuss run.
+const PN_KEYS = {
+  notes: z
+    .array(z.object({ text: z.string().min(1).max(500), thread: lineNo, pr: z.number().int().positive().nullable().default(null) }))
+    .max(2)
+    .default([]),
+  cites: z.array(lineNo).max(5).default([]),
+};
+
 test("the shipped verify, explain, and discuss schemas have the shape that gates B18 and B20 accepted", () => {
   expect(shape(verifyJsonSchema())).toBe(shape(draft07(B20.verify)));
   expect(shape(explainJsonSchema())).toBe(shape(draft07(B20.explain)));
-  expect(shape(discussJsonSchema())).toBe(shape(draft07(B20.discuss)));
+  expect(shape(discussJsonSchema())).toBe(shape(draft07(B20.discuss.extend(PN_KEYS))));
 });
 
 describe("profile fields of review v2 (spec.md section 1.2)", () => {

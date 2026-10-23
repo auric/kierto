@@ -38,6 +38,9 @@ export type FakeScenario = {
   verify?: unknown;
   explain?: unknown;
   discuss?: unknown;
+  // docs/plans/review-v2/spec.md section 2.9: the notes of the echo reply result, and the cites of its first reply. Absent: none.
+  notes?: unknown;
+  cites?: unknown;
   // Fields that replace the scenario fields for a run with that schema, for example a usage limit or a hang in the verify phase only.
   bySchema?: Partial<Record<SchemaKind, Partial<Omit<FakeScenario, "record" | "auth" | "bySchema">>>>;
 };
@@ -67,13 +70,15 @@ const NO_COVERAGE = { read: [], skipped: [], unavailable: [], notChecked: [] };
 const JUDGEMENTS = ["valid", "partly", "invalid", "question", null] as const;
 
 // A reply result for each thread of the stdin "Threads:" line. Every third thread gets action none.
-// The judgements cycle valid, partly, invalid, question, null.
-export function echoReplies(stdin: string) {
+// The judgements cycle valid, partly, invalid, question, null. extra: the notes of the result and the cites of the first reply.
+export function echoReplies(stdin: string, extra: { notes?: unknown; cites?: unknown } = {}) {
   const line = /^Threads: (.*)$/m.exec(stdin)?.[1] ?? "";
   const threads = [...line.matchAll(/(\d+) \(answer message (\d+)[^)]*\)/g)].map((m) => ({ thread: Number(m[1]), replyTo: Number(m[2]) }));
   return {
     summary: `Drafted replies for ${threads.length} threads.`,
+    ...(extra.notes !== undefined && { notes: extra.notes }),
     replies: threads.map(({ thread, replyTo }, i) => ({
+      ...(i === 0 && extra.cites !== undefined && { cites: extra.cites }),
       ...(i % 3 === 2
         ? { thread, action: "none", body: "", reason: "The thread needs no answer from you.", evidenceStatus: "unverified" }
         : {
@@ -259,7 +264,7 @@ async function main() {
     }
     if (kind === "explain") return s.explain ?? echoExplain();
     if (kind === "discuss") return s.discuss ?? echoDiscuss(stdin);
-    if (props.replies !== undefined) return s.replies ?? echoReplies(stdin);
+    if (props.replies !== undefined) return s.replies ?? echoReplies(stdin, { notes: s.notes, cites: s.cites });
     if (props.earlier !== undefined) return s.rereview ?? echoRereview(stdin, fixture);
     if (props.answer !== undefined) return s.answer ?? echoAnswer(stdin);
     if (props.edits !== undefined) return s.fix ?? echoFix(stdin);

@@ -216,3 +216,70 @@ export function score(r: EvalResult): Score {
   }
   return { suite, cases };
 }
+
+// ---------- Reply cases (docs/plans/review-v2/spec.md section 2.13, `--replies`) ----------
+
+// judgement: the accepted values. action: the wanted action, absent for any. cites: the threads that the reply must cite.
+export type ReplyExpect = { thread: number; judgement: string[]; action?: "reply" | "none"; cites: number[] };
+export type ReplyCaseInfo = { id: string; title: string; threads: number[]; expect: ReplyExpect[] };
+// replies: one entry per stored reply draft of the run. status error: the harness failed, see error.
+export type ReplyRun = {
+  case: string;
+  repeat: number;
+  run: number | null;
+  status: RunStatus | "error";
+  error: string | null;
+  minutes: number | null;
+  usage: RunUsage | null;
+  replies: { thread: number; judgement: string | null; action: string; cites: number[] }[];
+};
+export type ReplyEvalResult = {
+  format: 1;
+  kind: "replies";
+  createdAt: string;
+  commit: string;
+  dirty: boolean;
+  promptVersion: string;
+  cliVersion: string;
+  runner: "real" | "fake";
+  profile: Record<string, unknown> & { id: string; name: string; revision: string };
+  requested: { model: string; effort: string };
+  repeat: number;
+  cases: ReplyCaseInfo[];
+  runs: ReplyRun[];
+};
+// The share of runs whose replies meet each expectation, per check and in total. null: no run of the case.
+export type ReplyScore = Record<string, { runs: number; judgement: number; action: number; cites: number; pass: number } | null>;
+
+// Judgement, action, and cites only (spec.md section 2.13). A run passes when every expectation of its case holds.
+export function scoreReplies(r: ReplyEvalResult): ReplyScore {
+  const out: ReplyScore = {};
+  for (const c of r.cases) {
+    const runs = r.runs.filter((x) => x.case === c.id);
+    if (!runs.length) {
+      out[c.id] = null;
+      continue;
+    }
+    const checks = runs.map((x) => {
+      const each = c.expect.map((e) => {
+        const got = x.replies.find((y) => y.thread === e.thread);
+        return {
+          judgement: !!got && got.judgement !== null && e.judgement.includes(got.judgement),
+          action: !!got && (e.action === undefined || got.action === e.action),
+          cites: !!got && e.cites.every((t) => got.cites.includes(t)),
+        };
+      });
+      const all = (k: "judgement" | "action" | "cites") => each.every((x) => x[k]);
+      return { judgement: all("judgement"), action: all("action"), cites: all("cites") };
+    });
+    const share = (f: (x: (typeof checks)[number]) => boolean) => checks.filter(f).length / checks.length;
+    out[c.id] = {
+      runs: runs.length,
+      judgement: share((x) => x.judgement),
+      action: share((x) => x.action),
+      cites: share((x) => x.cites),
+      pass: share((x) => x.judgement && x.action && x.cites),
+    };
+  }
+  return out;
+}

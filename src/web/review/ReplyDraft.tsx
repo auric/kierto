@@ -25,6 +25,7 @@ import {
   type LucideIcon,
   MessageCircleQuestionMark,
   MessageSquareReply,
+  NotebookPen,
   PenLine,
   Reply,
   RotateCcw,
@@ -39,7 +40,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import type { MetaDto, ReviewItemDto } from "../../shared/dto";
+import type { MetaDto, NoteDto, ReviewItemDto } from "../../shared/dto";
 import type { Judgement, ReplyOrigin, ReplyPayload } from "../../shared/review";
 import type { Turn } from "../../shared/turn";
 import { askerSide, JUDGEMENT } from "../fix/model";
@@ -106,6 +107,10 @@ export type ReplyCtx = {
   diff: (thread: number) => void;
   // The user's own pull request: the judgement sets the default tick of the Fix list.
   author: boolean;
+  // docs/plans/review-v2/spec.md section 2.7: Keep and Dismiss of a note suggestion on the card, and the threads that cites name.
+  // card: the ID of the card element, for the focus after the choice. name: the starter of a thread, null when it is gone.
+  notes: { choose: (n: NoteDto, state: "kept" | "dismissed", card: string) => void; busy: ReadonlySet<number> };
+  cite: { name: (thread: number) => string | null; go: (thread: number) => void };
 };
 
 // Dashed: a draft that nobody accepted yet. Solid: accepted, so the post bar holds it.
@@ -416,6 +421,8 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
         <p className="rl-indent m-0 mt-px text-ink-2 [overflow-wrap:anywhere]">
           {lead}: <Inline text={p.reason} />
         </p>
+        <Cites p={p} ctx={ctx} />
+        <Suggestions it={it} card={id} ctx={ctx} />
         {stale}
         {code}
       </article>
@@ -475,6 +482,8 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
             {/* A session draft without reply text holds the reason as its body. */}
             {!(session && p.reason.trim() === it.body.trim()) && <Inline text={p.reason} />}
           </p>
+          <Cites p={p} ctx={ctx} />
+          <Suggestions it={it} card={id} ctx={ctx} />
           {props.waiting && (
             <p className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-2">
               <Hourglass aria-hidden className="size-[13px] shrink-0" />
@@ -518,6 +527,54 @@ export const ReplyDraftCard = memo(function ReplyDraftCard(props: {
     </article>
   );
 });
+
+// docs/plans/review-v2/spec.md section 2.7: the note suggestions of the run that made this draft, the same rows as in the Notes block.
+function Suggestions({ it, card, ctx }: { it: ReviewItemDto; card: string; ctx: ReplyCtx }) {
+  const short = ctx.meta.runner.short;
+  return (it.notes ?? []).map((n) => (
+    <p
+      key={n.id}
+      data-note-suggestion={n.id}
+      className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-2"
+    >
+      <NotebookPen aria-hidden className="size-[13px] shrink-0" />
+      <span className="min-w-0 [overflow-wrap:anywhere]">
+        {short} suggests a note: {n.text}
+      </span>
+      <button type="button" disabled={ctx.notes.busy.has(n.id)} className={linkButton} onClick={() => ctx.notes.choose(n, "kept", card)}>
+        Keep
+      </button>
+      <button
+        type="button"
+        disabled={ctx.notes.busy.has(n.id)}
+        className={linkButton}
+        onClick={() => ctx.notes.choose(n, "dismissed", card)}
+      >
+        Dismiss
+      </button>
+    </p>
+  ));
+}
+
+// "Based on the thread of Bob": one link per thread that the reply relies on (payload cites).
+function Cites({ p, ctx }: { p: ReplyPayload; ctx: ReplyCtx }) {
+  const cites = p.cites ?? [];
+  if (!cites.length) return null;
+  return (
+    <p data-cites className="rl-indent m-0 mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-ink-2">
+      <Signpost aria-hidden className="mr-1 size-[13px] shrink-0" />
+      Based on the {cites.length === 1 ? "thread" : "threads"} of
+      {cites.map((t, i) => (
+        <Fragment key={t}>
+          {i > 0 && (i === cites.length - 1 ? " and" : ",")}
+          <button type="button" className={linkButton} onClick={() => ctx.cite.go(t)}>
+            {ctx.cite.name(t) ?? `thread ${t}`}
+          </button>
+        </Fragment>
+      ))}
+    </p>
+  );
+}
 
 // docs/plans/thread-outcome.md: the revision of your draft as a word diff against your text. Struck text leaves, underlined text comes
 // in, so the state never rests on color alone. A revision without text and without a resolve says that no reply is needed.

@@ -3,7 +3,7 @@
 
 // The review half of the detail (plan v3 WP11, replies.md WP18, pr-view-v4 2.6): buttons, brief, run record, drafts, questions,
 // reply drafts, and run log for one PR.
-import { type ReactNode, useMemo, useRef } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import type { CommitDto, MetaDto, PrRow, ReviewItemDto, RunDetail, RunDto } from "../../shared/dto";
@@ -12,6 +12,7 @@ import type { Card } from "../diff/model";
 import { type FixUi, useFix } from "../fix/FixBar";
 import type { Layer } from "../keys";
 import { useMeta } from "../meta";
+import { putNote, useNoteSend } from "../pr/Notes";
 import { ordered, type ThreadModel } from "../pr/threads";
 import type { Hints } from "../shell/Hint";
 import { failText, prKey } from "../shell/model";
@@ -176,6 +177,38 @@ export function useReview(
   const consult = useConsult(pr, { announce: o.announce, openFix: fix.openWith });
   onConsult.current = () => consult.copy("fix-btn");
 
+  // ---------- Note suggestions and cites on the draft cards (docs/plans/review-v2/spec.md section 2.7) ----------
+  const noteSend = useNoteSend(pr.id);
+  const sendNote = useRef(noteSend);
+  sendNote.current = noteSend;
+  const [noteBusy, setNoteBusy] = useState<ReadonlySet<number>>(new Set());
+  const { announce, reveal } = o;
+  const notes = useMemo<ReplyCtx["notes"]>(
+    () => ({
+      busy: noteBusy,
+      // The card keeps the focus: the Notes block is far above it.
+      choose: async (n, state, card) => {
+        setNoteBusy((b) => new Set(b).add(n.id));
+        const r = await sendNote.current(() => putNote(n.id, { version: n.version, state }));
+        setNoteBusy((b) => new Set([...b].filter((x) => x !== n.id)));
+        if (r.error) return void toast.add({ title: r.error });
+        announce(state === "kept" ? "Note kept." : "Suggestion dismissed.");
+        focusAfter({ id: card, block: "nearest", flash: false });
+      },
+    }),
+    [noteBusy, announce, focusAfter],
+  );
+  const cite = useMemo<ReplyCtx["cite"]>(
+    () => ({
+      name: (thread) => {
+        const t = o.threads.find((x) => x.id === thread);
+        return t?.last ? (t.root.who.me ? "you" : t.root.who.name) : null;
+      },
+      go: reveal,
+    }),
+    [o.threads, reveal],
+  );
+
   // ---------- Reply drafts (replies.md step 6) ----------
   const replyCtx = useMemo<ReplyCtx>(
     () => ({
@@ -189,8 +222,10 @@ export function useReview(
       newest: (it) => onTriage.current.newest(it),
       diff: (thread) => onShow.current({ kind: "thread", id: thread }),
       author,
+      notes,
+      cite,
     }),
-    [meta, o.hints, o.announce, triageCtx, onTriage, author],
+    [meta, o.hints, o.announce, triageCtx, onTriage, author, notes, cite],
   );
   const byThread = useMemo(() => replyMap(replies.data), [replies.data]);
   const { cards, drafted, findingCards, need } = useThreadCards(pr, {

@@ -7,6 +7,14 @@
 - The app now builds and runs on Bun 1.4.4. The third-party notices in Settings show the Bun 1.4.4 license. A database upgrade step that fails now stops the upgrade and keeps all data.
 - "Include in runs" on a Jira attachment asks about your company AI policy only the first time. The new switch "Ask before Claude reads a Jira attachment" in Settings, Jira, brings the question back.
 
+### PR notes and PR context
+
+- The PR view has a new Notes block under the description. Add a note, edit it, or delete it with Undo. A note can wait for another PR, and its chip shows when that PR is open, merged, declined, or not found.
+- Claude reads your notes before each review, reply, fix, and Ask run, and follows them. Explain runs do not read them.
+- Draft replies can suggest a note when a thread shows your agreement or a wait for another PR. A suggestion shows on the draft card and in the Notes block with Keep and Dismiss. Claude uses it only after you keep it.
+- Each run now sees every thread of the PR with its outcome, the build state of the head, and other open PRs in your inbox that change the same files. A decision in another thread can change a reply.
+- A reply draft that relies on another thread shows "Based on the thread of" with a link to that thread.
+
 ### Consult your session
 
 - The copied points and the points of "Ask your session" sit in tags with a new random suffix each time. The prompt says that the tag content is data from the pull request, not instructions.

@@ -31,7 +31,7 @@ import {
   fixJsonSchema,
   MAX_EARLIER,
   MAX_REPLY_THREADS,
-  parseFixNotes,
+  type NoteProposal,
   REVIEW_PROMPT_VERSION,
   type ReplyPayload,
   replyJsonSchema,
@@ -77,12 +77,21 @@ import {
   withVerifyDelegation,
 } from "./catalog";
 import { createClaudeRunner, RUN_TIMEOUT_MS, type RunnerCheck } from "./claude";
-import { type FixCommitRow, toFixCommitDto } from "./clone";
 import { codegraphEntry, codegraphIndex, indexCodegraph } from "./codegraph";
-import { candidatesFile, earlierItem, findingsFile, fixStateFile, historyFile, questionsFile } from "./context-files";
+import {
+  candidatesFile,
+  earlierItem,
+  findingsFile,
+  fixStateFile,
+  historyFile,
+  notesFile,
+  prContextFile,
+  questionsFile,
+} from "./context-files";
 import { runEffort } from "./defaults";
 import { parseDiff } from "./diffmap";
 import { currentDrafts, placeReplies, replyOutcome, revisions, touched, withRevision } from "./drafts";
+import { prFixes } from "./fix-routes";
 import { gitEnv } from "./git";
 import { gitMcpServer } from "./git-mcp";
 import { createImprover } from "./improve";
@@ -106,6 +115,8 @@ import {
   usageOf,
 } from "./judge";
 import { languagesOf, withLanguages } from "./languages";
+import { liveThreads, proposalContext, proposeNotes, storeProposals, suggestionsByItem } from "./notes";
+import { loadPrContext } from "./pr-context";
 import {
   buildAskPrompt,
   buildFixPrompt,
@@ -129,7 +140,6 @@ import {
   type SessionRecord,
   type SessionStart,
   SQL,
-  toFixEditDto,
   toItemDto,
   toPullRequest,
   toRunDto,
@@ -137,7 +147,7 @@ import {
 import { alwaysProblems, claudeConfigDir, copySkills } from "./skills";
 import { claudeJsonPath, userServers } from "./user-mcp";
 import type { AskedThread } from "./validate";
-import { cachePath, type GitRemote, longPath, noUrl, prepareWorkspace, pruneWorkspaces, type Workspace } from "./workspace";
+import { type GitRemote, noUrl, prepareWorkspace, pruneWorkspaces, UNTRUSTED, type Workspace } from "./workspace";
 
 // The entry point of the review modules. The routes, the tests, and the scripts import these names from here.
 export { fixStateFile, HISTORY_ASK_BYTES, HISTORY_FINDING_BYTES, historyFile, QUESTIONS_BYTES, questionsFile } from "./context-files";
@@ -201,6 +211,8 @@ type Job = {
   candidates?: number;
   // Stops the step before the CLI starts.
   abort?: AbortController;
+  // The other open PRs of the run's pr-context.md, for the link rule of note proposals (docs/plans/review-v2/spec.md section 2.9).
+  peers?: ReadonlyMap<number, { title: string; state: string }>;
 };
 
 export type StartResult =
@@ -288,6 +300,36 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       });
   }
 
+  // ---------- PR context and notes (docs/plans/review-v2/spec.md sections 2.7 to 2.9) ----------
+  // Every run kind but Explain gets the file, right before its workspace. Reply and fix runs name their threads as focus.
+  async function prContext(j: Job, pr: Heads) {
+    if (j.kind === "review" && j.profile.explain) return null;
+    j.abort = new AbortController();
+    try {
+      const provider = await settings.provider().catch(() => null);
+      const focus = j.kind === "reply" || j.kind === "fix" ? (j.threads ?? []).map((t) => t.thread) : [];
+      const me = settings.config()?.userSlug ?? null;
+      const c = await loadPrContext(j.db, provider, pr, { threads: focus }, j.abort.signal, { me, dataDir, now: now() });
+      j.peers = c.peers;
+      const file = prContextFile(c.input);
+      const notes = notesFile(c.notes, pr);
+      const kb = Math.round(Buffer.byteLength(UNTRUSTED + file.text) / 1024);
+      log(
+        `Review run ${j.id} context: pr-context.md ${kb} KB, ${file.threads} threads${file.left ? ` (${file.left} left out)` : ""}, ${file.peers} other PRs, build ${c.build ? "read" : "not read"}; ${notes ? `notes.md ${c.notes.length} notes` : "no notes.md"}.`,
+      );
+      return { file, notes };
+    } finally {
+      j.abort = undefined;
+    }
+  }
+
+  // The checks of the note proposals of a reply run. A run without a PR row stores none.
+  function proposals(j: Job, list: NoteProposal[]) {
+    const pr = j.kind === "reply" ? prRow(j.db, j.pr) : null;
+    if (!pr) return null;
+    return proposeNotes(list, proposalContext(j.db, pr, settings.config()?.userSlug ?? null, j.peers ?? new Map()), now());
+  }
+
   // One transaction for the run, its log, and its items. Returns false when restart recovery ended the run first.
   function end(j: Job, e: Ending): boolean {
     const o = e.outcome;
@@ -298,7 +340,9 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     const ok = j.db.transaction(() => {
       if (o) upsertEvents(j.db, j.id, o.events);
       const replies = replyOutcome(j.db, j.pr, e.result?.items ?? [], j.threads ?? j.asked, j.picked);
-      const { notes } = replies;
+      // docs/plans/review-v2/spec.md section 2.9: the note proposals of a reply run go in with its drafts, in this transaction.
+      const proposed = e.result?.notes && proposals(j, e.result.notes);
+      const notes = [...replies.notes, ...(proposed?.skipped ?? [])];
       const summary = e.result?.summary;
       const coverage = summary && notes.length ? { ...summary.coverage, skipped: [...summary.coverage.skipped, ...notes] } : null;
       const done = j.db.query(SQL.end).run({
@@ -359,6 +403,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       if (!j.carry || !e.result) {
         add(items);
         linkDuplicates();
+        if (proposed) storeProposals(j.db, j.pr, j.id, proposed.add, now());
         return true;
       }
       const c = carryOver(j.db, j.carry, e.result.checked ?? []);
@@ -438,6 +483,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       ...(fixState ? [fixState] : []),
       ...(questions?.file ? [questions.file] : []),
     ];
+    const ctx = await prContext(j, pr);
+    if (ctx) extra.push(ctx.file);
     // Cancel stops the fetch and `worktree add`. A large repository can take as long as the run may take.
     j.abort = new AbortController();
     try {
@@ -463,6 +510,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     j.db.query(SQL.workspace).run({ id: j.id, base: ws.mergeBase, range: ws.rangeBase, via: ws.via });
     notify(j.id);
     if (j.cancelled) return cancelled();
+    // spec.md section 2.8: the user wrote or kept each note, so notes.md has no UNTRUSTED banner.
+    if (ctx?.notes) writeFileSync(join(ws.context, ctx.notes.name), ctx.notes.text);
 
     const changed = parseDiff(ws.diff);
     // The run reads every source again. The text goes to the prompts and the run folder. SQLite and the log get the paths and sizes only.
@@ -569,6 +618,8 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       rereview: !!carry,
       instructions: instructions.text !== "",
       goal: !!pr.description?.trim() || files.length > 0,
+      prContext: !!ctx,
+      notes: !!ctx?.notes,
     };
     const gaps = [...docs.unavailable, ...user.gaps, ...skills.gaps];
     const input = {
@@ -584,20 +635,22 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       fixState: fixState !== null,
       questions: j.asked.length > 0,
       instructions: instructions.text,
+      prContext: context.prContext,
+      notes: context.notes,
     };
     const reply = j.kind === "reply" ? j.threads : null;
     const fix = j.kind === "fix" ? j.threads : null;
     const question = j.question;
     const spec = reply
-      ? { prompt: buildReplyPrompt({ ...input, threads: reply }), schema: replyJsonSchema(), main: replyAgent(profile) }
+      ? { prompt: buildReplyPrompt({ ...input, threads: reply }), schema: replyJsonSchema(), main: replyAgent(profile, context) }
       : fix
         ? {
             prompt: buildFixPrompt({ ...input, threads: fix, findings: j.findings, anyway: j.anyway }),
             schema: fixJsonSchema(),
-            main: fixAgent(profile),
+            main: fixAgent(profile, context),
           }
         : question !== null
-          ? { prompt: buildAskPrompt({ ...input, question }), schema: askJsonSchema(), main: askAgent(profile) }
+          ? { prompt: buildAskPrompt({ ...input, question }), schema: askJsonSchema(), main: askAgent(profile, context) }
           : carry
             ? {
                 prompt: buildRereviewPrompt({
@@ -661,7 +714,7 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
       e.result?.summary.coverage.notChecked.push(unmarked);
       return { ...e, raw: `${unmarked}\n\n${e.raw}` };
     };
-    if (reply) return noted(judgeReplies(o, reply, servers, gaps));
+    if (reply) return noted(judgeReplies(o, reply, servers, gaps, new Set(liveThreads(j.db, j.pr, null).keys())));
     if (fix) return noted(await judgeFix(o, ws, fix, j.findings, servers, gaps));
     if (question !== null) return noted(judgeAsk(o, servers, gaps));
     const rereview = carry && { carry, items: [...current(j.db, earlier), ...carry.posted].map(earlierItem) };
@@ -1203,25 +1256,23 @@ export function createReviewJobs(opts: ReviewJobsOptions) {
     // The newest fix runs of a PR with their notes, edits, and commits. null for an unknown PR.
     fixes(db: Database, id: number): FixDto[] | null {
       const pr = prRow(db, id);
-      if (!pr) return null;
-      const cache = cachePath(longPath(dataDir), { project: pr.project, repo: pr.repo, id: pr.pr_id });
-      const now = effortsNow();
-      return (db.query(`${SQL.run} ${SQL.fixes}`).all({ pr: id }) as RunRow[]).map((r) => ({
-        run: toRunDto(r, now),
-        threads: parseFixNotes(r.fix_json),
-        edits: (db.query(SQL.fixEdits).all({ run: r.id }) as FixEditRow[]).map(toFixEditDto),
-        commits: (db.query(SQL.fixCommits).all({ run: r.id }) as FixCommitRow[]).map((c) => toFixCommitDto(c, cache)),
-      }));
+      return pr && prFixes(db, dataDir, pr);
     },
 
     // The current reply draft of each thread (currentDrafts), unless it is posted, with its waiting revision. null for an unknown PR.
     replyDrafts(db: Database, pr: number): ReviewItemDto[] | null {
       if (!prRow(db, pr)) return null;
       const revs = revisions(db, pr);
+      // docs/plans/review-v2/spec.md section 2.9: the note suggestions that name each draft.
+      const notes = suggestionsByItem(db, pr);
       return [...currentDrafts(db, pr).values()]
         .filter((r) => r.status !== "posted")
         .sort((a, b) => (a.thread ?? 0) - (b.thread ?? 0))
-        .map((r) => withRevision(r, revs));
+        .map((r) => {
+          const it = withRevision(r, revs);
+          const n = notes.get(r.id);
+          return n ? { ...it, notes: n } : it;
+        });
     },
 
     // The Claude config folder of the runs. The instructions preview reads the global file from it.

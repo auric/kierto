@@ -16,6 +16,7 @@ import {
   MAX_FIX_EDITS,
   MAX_QUESTION,
   MAX_REPLY_THREADS,
+  NOTE_TEXT_MAX,
   type Question,
   type ReplyPayload,
   type SessionMark,
@@ -533,7 +534,57 @@ export type ReviewItemDto = {
   revised?: ReviewItemDto;
   // Reply items only: the run that wrote the draft. head: the source head at the run start. finishedAt: null while it runs.
   drafted?: { kind: RunKind; startedAt: number; finishedAt: number | null; head: string };
+  // GET reply-drafts only: the note suggestions of the run that name this draft (docs/plans/review-v2/spec.md section 2.9).
+  notes?: NoteDto[];
 };
+
+// ---------- PR notes (docs/plans/review-v2/spec.md section 2.9) ----------
+
+// ref: the PR that this PR waits for. state MISSING: Bitbucket gave 404. deletedAt: set only in the answer of DELETE.
+export type NoteRef = {
+  project: string;
+  repo: string;
+  prId: number;
+  title: string | null;
+  state: "OPEN" | "MERGED" | "DECLINED" | "MISSING" | null;
+};
+export type NoteDto = {
+  id: number;
+  text: string;
+  source: "user" | "claude";
+  state: "kept" | "proposed" | "dismissed";
+  thread: number | null;
+  run: number | null;
+  item: number | null;
+  ref: NoteRef | null;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number | null;
+};
+// project and repo default to the PR's own.
+const noteRefInput = z.object({
+  prId: positiveInt,
+  project: z.string().trim().min(1).max(200).optional(),
+  repo: z.string().trim().min(1).max(200).optional(),
+});
+const noteText = z.string().trim().min(1).max(NOTE_TEXT_MAX);
+// POST /api/prs/:id/notes.
+export const noteCreateInput = z.object({ text: noteText, ref: noteRefInput.optional() });
+// PUT /api/notes/:id. ref null drops the link. state: Keep or Dismiss of a suggestion. restore: Undo of a delete.
+export const noteUpdateInput = z.object({
+  version,
+  text: noteText.optional(),
+  ref: noteRefInput.nullable().optional(),
+  state: z.enum(["kept", "dismissed"]).optional(),
+  restore: z.literal(true).optional(),
+});
+// DELETE /api/notes/:id.
+export const noteDeleteInput = z.object({ version });
+export type NoteCreateInput = z.infer<typeof noteCreateInput>;
+export type NoteUpdateInput = z.infer<typeof noteUpdateInput>;
+// A stale version: 409 with the current note.
+export type NoteConflict = ApiError & { note: NoteDto };
 
 // docs/plans/review-v2/spec.md section 4.1: the codes of payload.discardReason. Not a bug, Not worth fixing, Duplicate, Intended, Wrong place.
 export const DISCARD_REASONS = ["bug", "worth", "duplicate", "intended", "place"] as const;

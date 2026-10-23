@@ -17,6 +17,7 @@ import { createConsultRoutes } from "./review/consult-routes";
 import { createDiffRoutes } from "./review/diff-routes";
 import { createFixRoutes } from "./review/fix-routes";
 import { createReviewJobs, type ReviewJobs } from "./review/jobs";
+import { createNotesRoutes } from "./review/notes-routes";
 import { createReviewRoutes } from "./review/routes";
 import { discoverSkills, skillDto } from "./review/skills";
 import { discoverMcpServers, listUserTools, McpListError, readServers } from "./review/user-mcp";
@@ -104,6 +105,7 @@ export function createApp(opts: AppOptions) {
     })
     .route("/api", createInboxRoutes({ settings, sync, live: opts.live }))
     .route("/api", createReviewRoutes({ review, live: opts.live }))
+    .route("/api", createNotesRoutes({ review, settings, live: opts.live }))
     .route("/api", createDiffRoutes({ review }))
     .route("/api", createConsultRoutes({ review, settings, live: opts.live }))
     .route("/api", createFixRoutes({ review, settings, live: opts.live, openFolder: opts.openFolder }))

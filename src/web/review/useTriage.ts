@@ -85,8 +85,9 @@ export function useTriage(
     // Use revision returns the used revision: it takes the place of the draft that held it. A waiting revision is no draft of its own.
     const used = !replyOf(it).revises;
     if (it.kind === "reply")
+      // An item action answers without the note suggestions of GET reply-drafts, so the card keeps them.
       qc.setQueryData<ReviewItemDto[]>(replyKey(pr.id), (old) =>
-        old?.map((x) => (x.id === it.id || (used && x.revised?.id === it.id) ? it : x)),
+        old?.map((x) => (x.id === it.id ? { ...it, ...(x.notes && { notes: x.notes }) } : used && x.revised?.id === it.id ? it : x)),
       );
   };
 

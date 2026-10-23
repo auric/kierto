@@ -36,7 +36,7 @@ const schema = (path: string) => {
 
 test("migration runs on an empty file and creates every M1 table", () => {
   const s = schema(join(dir, "empty.sqlite"));
-  expect(s.version).toBe(30);
+  expect(s.version).toBe(31);
   expect(s.journal).toBe("wal");
   expect(s.fk).toBe(1);
   expect(s.busy).toBe(5000);
@@ -58,6 +58,7 @@ test("migration runs on an empty file and creates every M1 table", () => {
       "repo_clone",
       "fix_edit",
       "fix_commit",
+      "pr_note",
       "task_attachment",
       "pr_branch_link",
     ]),
@@ -118,7 +119,7 @@ test("migration from a version-9 database keeps every run", () => {
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     expect(db.query("SELECT * FROM review_run ORDER BY id").all()).toEqual(
       before.map((r) => ({ ...r, profile_name: null, profile_revision: null, explain: null, ...R2_COLUMNS, ...R3_COLUMNS, ...V2_COLUMNS })),
     );
@@ -191,7 +192,7 @@ test("migration from a version-11 database keeps every run, event, item, and pos
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     expect((db.query("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys).toBe(1);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "review_run")).toEqual([
@@ -261,7 +262,7 @@ test("an orphan row in a table that no migration touches does not block the upgr
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([
       { table: "pr_task", rowid: expect.anything(), parent: "pull_request", fkid: 0 },
     ]);
@@ -316,7 +317,7 @@ test("migration from a version-13 database keeps every run, event, item, and pos
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "review_run")).toEqual([
       ...oldColumns,
@@ -426,7 +427,7 @@ test("migration from a version-22 database keeps every fix edit; an edit names e
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "fix_edit")).toEqual(["id", "run", "ord", "thread", "path", "old", "new", "start", "rows_json", "item"]);
     expect(db.query("SELECT * FROM fix_edit ORDER BY id").all()).toEqual(before.map((r) => ({ ...r, item: null })));
@@ -483,7 +484,7 @@ test("migration from a version-23 database keeps every run and child row; kind c
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     // 025_session.sql adds consult_json. 030_review_v2.sql adds the review v2 columns.
     expect(columns(db, "review_run")).toEqual([...oldColumns, "consult_json", ...V2_NAMES]);
@@ -536,7 +537,7 @@ test("migration from a version-24 database keeps every run and child row; kind s
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "review_run")).toEqual([...oldColumns, "consult_json", ...V2_NAMES]);
     const after = dump(db);
@@ -578,7 +579,7 @@ test("migration from a version-25 database keeps every comment; the resolver col
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     // 029_draft_stale.sql adds orphaned_at.
     expect(columns(db, "comment")).toEqual([...oldColumns, "thread_resolver_json", "thread_resolved_at", "orphaned_at"]);
     expect(db.query("SELECT * FROM comment ORDER BY comment_id").all()).toEqual(
@@ -605,7 +606,7 @@ test("migration from a version-26 database keeps every post; the resolve columns
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     expect(columns(db, "post")).toEqual([...oldColumns, "resolve_root", "resolve_state", "resolve_error"]);
     expect(db.query("SELECT * FROM post ORDER BY id").all()).toEqual(later("post", before));
     db.run("UPDATE post SET resolve_root = 5, resolve_state = 'pending'");
@@ -642,7 +643,7 @@ test("migration from a version-28 database keeps every event and comment; kind d
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "event")).toEqual(eventColumns);
     expect(db.query("SELECT * FROM event ORDER BY id").all()).toEqual(events);
@@ -704,7 +705,7 @@ test("migration from a version-29 database keeps every run and child row; kinds 
 
   const db = openDb(path);
   try {
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
     expect((db.query("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys).toBe(1);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(columns(db, "review_run")).toEqual([...oldColumns, "prompt_version", "item", "discuss_json", "explain_json"]);
@@ -789,4 +790,96 @@ test("a migration statement that fails before the last one rolls back the whole 
   } finally {
     db.close();
   }
+});
+
+// ---------- PR notes (031_pr_notes.sql, docs/plans/review-v2/spec.md sections 2.9 and 8) ----------
+
+const V30 = [
+  ...V23,
+  "024_consult.sql",
+  "025_session.sql",
+  "026_thread_resolver.sql",
+  "027_post_resolve.sql",
+  "028_run_event_agent.sql",
+  "029_draft_stale.sql",
+  "030_review_v2.sql",
+];
+
+test("migration from a version-30 database keeps every row and adds pr_note with its checks", () => {
+  const path = join(dir, "v30.sqlite");
+  const old = new Database(path, { create: true, strict: true });
+  migrate(old, V30);
+  old.exec("PRAGMA user_version = 30");
+  old.exec("PRAGMA foreign_keys = ON");
+  old.exec(`INSERT INTO pull_request (id, project, repo, pr_id) VALUES (1, 'P', 'r', 1), (2, 'P', 'r', 2);
+    INSERT INTO review_run (id, pr, kind, profile, note, idem_key, source_head, target_head, status, started_at, consult_json)
+      VALUES (4, 1, 'reply', 'general', '', 'k1', 'a', 'b', 'completed', 1, NULL),
+             (5, 1, 'consult', '', '', 'consult:1:5', 'a', 'b', 'completed', 2, NULL),
+             (6, 1, 'fix', 'general', '', 'k2', 'a', 'b', 'completed', 3, NULL);
+    INSERT INTO run_event (run, id, seq, tool, target, status, started_at) VALUES (4, 't1', 1, 'Read', 'a.ts', 'ok', 1);
+    INSERT INTO review_item (id, run, kind, payload_json, body, status, thread) VALUES (11, 4, 'reply', '{}', 'r', 'new', 100);
+    INSERT INTO post (id, pr, run, kind, idem_key, body, destination_json, items_json, state, created_at, updated_at)
+      VALUES (21, 1, 4, 'reply', 'reply:11@0', 'r', '{}', '[]', 'confirmed', 1, 1);
+    INSERT INTO fix_edit (id, run, ord, thread, item, path, old, new, start, rows_json) VALUES (3, 6, 0, 100, NULL, 'a.ts', 'x', 'y', 0, '[]');
+    INSERT INTO fix_commit (id, pr, run, idem_key, edits_json, mode, before_head, state, message, created_at, updated_at)
+      VALUES (1, 1, 6, '6:clone:3', '[3]', 'clone', 'a', 'committed', 'm', 1, 1);`);
+  const before = { ...dump(old), fix: old.query("SELECT * FROM fix_edit, fix_commit").all() };
+  old.close();
+
+  const db = openDb(path);
+  try {
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(31);
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect({ ...dump(db), fix: db.query("SELECT * FROM fix_edit, fix_commit").all() }).toEqual(before);
+    expect(db.query("SELECT name FROM sqlite_master WHERE tbl_name = 'pr_note' AND type = 'index'").all()).toEqual([
+      { name: "pr_note_pr" },
+    ]);
+    const add = (o: Record<string, unknown>) =>
+      db
+        .query(`INSERT INTO pr_note (pr, text, source, state, thread, run, item, ref_project, ref_repo, ref_pr, ref_state, created_at, updated_at)
+          VALUES ($pr, $text, $source, $state, $thread, $run, $item, $rp, $rr, $rn, $rs, 1, 1) RETURNING id`)
+        .get({
+          pr: 1,
+          text: "Callers retry.",
+          source: "user",
+          state: "kept",
+          thread: null,
+          run: null,
+          item: null,
+          rp: null,
+          rr: null,
+          rn: null,
+          rs: null,
+          ...o,
+        }) as { id: number };
+    const kept = add({}).id;
+    const proposed = add({ source: "claude", state: "proposed", thread: 100, run: 4, item: 11 }).id;
+    add({ rp: "P", rr: "r", rn: 2, rs: "MERGED" });
+    expect(() => add({ text: "" })).toThrow(/CHECK/);
+    expect(() => add({ text: "x".repeat(501) })).toThrow(/CHECK/);
+    expect(() => add({ source: "bot" })).toThrow(/CHECK/);
+    expect(() => add({ state: "proposed" })).toThrow(/CHECK/);
+    expect(() => add({ source: "claude", state: "gone" })).toThrow(/CHECK/);
+    expect(() => add({ rn: 2 })).toThrow(/CHECK/);
+    expect(() => add({ rp: "P", rr: "r", rn: 2, rs: "CLOSED" })).toThrow(/CHECK/);
+    expect(() => add({ pr: 99 })).toThrow(/FOREIGN KEY/);
+    expect(() => add({ source: "claude", state: "proposed", run: 99 })).toThrow(/FOREIGN KEY/);
+    // A removed draft or run leaves the suggestion with NULL links.
+    db.run("DELETE FROM review_item WHERE id = 11");
+    db.run("DELETE FROM review_run WHERE id = 4");
+    expect(db.query("SELECT id, run, item FROM pr_note WHERE id = $id").get({ id: proposed })).toEqual({
+      id: proposed,
+      run: null,
+      item: null,
+    });
+    // A removed PR removes its notes.
+    db.run("DELETE FROM pull_request WHERE id = 1");
+    expect(db.query("SELECT COUNT(*) AS n FROM pr_note WHERE id IN ($a, $b)").get({ a: kept, b: proposed })).toEqual({ n: 0 });
+  } finally {
+    db.close();
+  }
+
+  // A second open changes nothing.
+  const first = schema(path);
+  expect(schema(path)).toEqual(first);
 });

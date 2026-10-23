@@ -13,8 +13,8 @@ export const MAX_FINDINGS = 100;
 const lineNo = z.number().int().min(1);
 
 // Raise it with each change of the review agent prompts. A run row with prompt_version NULL reads as "1".
-// "2.0": the finder prompts of review v2 without the verify phase. "2.1": with the verify phase.
-export const REVIEW_PROMPT_VERSION = "2.1";
+// "2.0": the finder prompts of review v2 without the verify phase. "2.1": with the verify phase. "2.2": with the PR context rules.
+export const REVIEW_PROMPT_VERSION = "2.2";
 
 const place = {
   path: z.string().describe("File path relative to the repository root, with / separators."),
@@ -177,6 +177,37 @@ export const MAX_DISCUSS_ANSWER = 8000;
 export const discussVerdicts = ["upheld", "revised", "withdrawn"] as const;
 export type DiscussVerdict = (typeof discussVerdicts)[number];
 
+// ---------- PR notes and cites (docs/plans/review-v2/spec.md section 2.9) ----------
+
+export const NOTE_TEXT_MAX = 500;
+export const NOTES_CAP = 30;
+export const MAX_NOTE_PROPOSALS = 2;
+export const MAX_CITES = 5;
+
+export const noteProposal = z.object({
+  text: z.string().min(1).max(NOTE_TEXT_MAX).describe("One sentence: the agreement or the wait that the thread shows."),
+  thread: lineNo.describe("The thread in ./context/pr-context.md that shows it."),
+  pr: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .default(null)
+    .describe("The number of another pull request in ./context/pr-context.md that this pull request waits for. Else null."),
+});
+export type NoteProposal = z.infer<typeof noteProposal>;
+
+const cites = z
+  .array(lineNo)
+  .max(MAX_CITES)
+  .default([])
+  .describe("The numbers of other threads in ./context/pr-context.md whose decision this reply relies on. Else empty.");
+const notes = z
+  .array(noteProposal)
+  .max(MAX_NOTE_PROPOSALS)
+  .default([])
+  .describe("Notes that you propose to the user. Empty when no thread shows an agreement of the user or a wait for another pull request.");
+
 export const discussResult = z.object({
   answer: z.string().max(MAX_DISCUSS_ANSWER).describe("The answer as short Markdown."),
   verdict: z.enum(discussVerdicts),
@@ -189,6 +220,8 @@ export const discussResult = z.object({
     .describe("For revised: the new finding text. Else null."),
   reply: z.string().max(4000).default("").describe("For a posted finding: a reply to the thread in the user's voice, or empty."),
   coverage,
+  notes,
+  cites,
 });
 
 export type DiscussResult = z.infer<typeof discussResult>;
@@ -268,12 +301,14 @@ export const replyDraft = z.object({
     .string()
     .default("")
     .describe("For resolve true: the proof in one line, such as path:line at the head commit or the message that settles it. Else empty."),
+  cites,
 });
 
 export const replyResult = z.object({
   summary: z.string().describe("One line."),
   replies: z.array(replyDraft).max(MAX_REPLY_THREADS),
   coverage,
+  notes,
 });
 
 export type ReplyDraft = z.infer<typeof replyDraft>;
@@ -299,7 +334,9 @@ export type ReplyOrigin = (typeof replyOrigins)[number];
 // existed. A draft that the AI discarded is no user decline (drafts.ts userDraft).
 // touchedAt: the time (ms) of the last accept, edit, plain, reply-to-newest, or use-revision. Absent: no such action since it existed.
 // revisionOf: on a used revision, the ID of the user's draft that it revised (items.ts takeRevision).
-export type ReplyPayload = Omit<ReplyDraft, "judgement" | "resolve" | "resolveEvidence"> & {
+// cites: the other threads whose decision the reply relies on (spec.md section 2.9). Absent in older drafts: read it as [].
+export type ReplyPayload = Omit<ReplyDraft, "judgement" | "resolve" | "resolveEvidence" | "cites"> & {
+  cites?: number[];
   judgement?: Judgement | null;
   replyTo: number;
   fix?: { id: number; commit: string; replaced?: number[] };

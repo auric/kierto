@@ -1,0 +1,25 @@
+{
+  "id": "general-decision",
+  "title": "A decision in the general thread answers an inline request",
+  "pr": {
+    "title": "Give fetchUser a request timeout",
+    "description": "fetchUser now stops a request after 5 seconds. The callers keep their retry loop."
+  },
+  "threads": [
+    {
+      "id": 101,
+      "path": "src/client.ts",
+      "line": 5,
+      "messages": [{ "id": 101, "author": "Carol Diaz", "minutes": 0, "text": "Add a retry around fetchUser." }]
+    },
+    {
+      "id": 230,
+      "messages": [
+        { "id": 230, "author": "Bob Lee", "minutes": 30, "text": "Callers retry. The client must not retry, or we retry 9 times." },
+        { "id": 231, "author": "Eval User", "me": true, "minutes": 40, "text": "Agreed. No retry in the client." }
+      ]
+    }
+  ],
+  "run": [101],
+  "expect": [{ "thread": 101, "judgement": ["invalid"], "action": "reply", "cites": [230] }]
+}

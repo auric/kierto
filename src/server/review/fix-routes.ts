@@ -18,6 +18,7 @@ import {
   type FixCommitInput,
   type FixConflict,
   type FixDeclineInput,
+  type FixDto,
   type FixUndeclineInput,
   fixCommitInput,
   fixDeclineInput,
@@ -57,9 +58,11 @@ import {
   toFixCommitDto,
   treeEntries,
 } from "./clone";
+import { currentDrafts, DROP_REVISIONS, keptText, revisedText, touched, userDraft } from "./drafts";
 import { GitError, git } from "./git";
 import { GLOBAL_FILE, instructionSettings, projectInstructions, saveInstructionSettings } from "./instructions";
-import { currentDrafts, DROP_REVISIONS, keptText, type ReviewJobs, revisedText, touched, userDraft } from "./jobs";
+import type { ReviewJobs } from "./jobs";
+import { effortsNow, type FixEditRow, SQL as RUN_SQL, type RunRow as RunDtoRow, toFixEditDto, toRunDto } from "./run-rows";
 import { cachePath, gitSetup, locked, longPath } from "./workspace";
 
 type PrRow = {
@@ -174,6 +177,19 @@ type DeclineOut = { status: 200; pr: number; runs: number[] } | { status: 404 | 
 const target = (n: FixNote, t: { thread?: number; finding?: number }) =>
   t.thread !== undefined ? n.thread === t.thread : n.finding === t.finding;
 const conflict = (error: string, problems: FixConflict["problems"] = []): Out => ({ status: 409, body: { error, problems } });
+
+// GET /api/prs/:id/fixes: the newest fix runs of a PR with their notes, edits, and commits. The PR context file builds the State line
+// of each thread from the same rows (docs/plans/review-v2/spec.md section 2.8). dataDir: the data folder of the runs.
+export function prFixes(db: Database, dataDir: string, pr: { id: number; project: string; repo: string; pr_id: number }): FixDto[] {
+  const cache = cachePath(longPath(dataDir), { project: pr.project, repo: pr.repo, id: pr.pr_id });
+  const now = effortsNow();
+  return (db.query(`${RUN_SQL.run} ${RUN_SQL.fixes}`).all({ pr: pr.id }) as RunDtoRow[]).map((r) => ({
+    run: toRunDto(r, now),
+    threads: parseFixNotes(r.fix_json),
+    edits: (db.query(RUN_SQL.fixEdits).all({ run: r.id }) as FixEditRow[]).map(toFixEditDto),
+    commits: (db.query(RUN_SQL.fixCommits).all({ run: r.id }) as FixCommitRow[]).map((c) => toFixCommitDto(c, cache)),
+  }));
+}
 
 // openFolder: the tests pass a recorder.
 export function createFixRoutes(opts: {

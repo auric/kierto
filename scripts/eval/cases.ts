@@ -119,7 +119,7 @@ const AUTHOR = {
 
 // A bare repository in root: main holds the base commit, feature and refs/pull-requests/1/from hold base plus head.patch.
 // The git config is isolated, so no user filter or hook changes the files.
-export async function buildRepo(c: EvalCase, root: string) {
+export async function buildRepo(c: Pick<EvalCase, "base" | "dir" | "pr">, root: string) {
   const empty = join(root, "empty.gitconfig");
   writeFileSync(empty, "");
   const url = join(root, "remote.git");

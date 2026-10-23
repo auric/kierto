@@ -114,6 +114,7 @@ It prints one table per metric with the delta, for all cases and for each case. 
 - severity ok: found bugs whose best shown match has at least the minimum severity, over found bugs.
 - candidate recall: bugs that any item matched, refuted and duplicate items included. It shows what a verify phase lost.
 - Since prompt version 2.1, each review runs a finder process and then a check process. A finding that the check refutes or marks duplicate leaves the shown items, so recall drops, but candidate recall still counts it. The result file records the verdict counts as `verify` and the time and usage of each phase as `phases`. The cost is the sum of both phases.
+- Since prompt version 2.2, the finder and the check also read `./context/pr-context.md`, and their agents get the PR context rules (spec.md section 2.10).
 - Each number is the mean over the repeats, with the min and the max.
 
 ## v1 cases
@@ -159,3 +160,14 @@ Each case folder holds:
 - `head.patch`: a unified diff that `git apply` applies to `base/`. Make it with `git diff --no-renames` in a scratch repository. The app diffs with `git diff -M`, so check that a moved file does not pair as a rename (`git diff -M --summary`) when a case needs the whole move in view.
 
 To add a v1 case, keep 150 to 500 changed lines, 1 to 3 bugs, and 1 or 2 traps. A hard case has 150 to 1500 changed lines, 0 to 3 bugs, and 3 or 4 traps. Case IDs are unique over both sets. Then run `bun test tests/eval`. It applies each patch, checks the changed-line count and the limits of the set, and checks that each bug, trap, and alt range holds text on its side.
+
+## Reply cases
+
+`bun run eval -- --replies --real --repeat 2` runs one reply run per case of `fixtures/eval/replies/` (docs/plans/review-v2/spec.md section 2.13). Each case gets a temp repository, a temp database, and the stored threads of its `case.json`. The run drafts replies for the threads of `run`. The score checks the judgement, the action, and the cites of each reply against `expect` only. Nothing posts, and no run reads Bitbucket. `--cases`, `--profile`, `--model`, `--effort`, `--repeat`, `--out`, `--keep`, and `--runner` work as above. Without `--real` or `--runner`, it prints the plan and exits with code 2. The result file ends in `-replies.json`.
+
+| Case | Seeds |
+|---|---|
+| `general-decision` | Inline thread 101 asks for a retry in the client. The newer general thread 230 agrees that the callers retry and the client must not. Pass: thread 101 gets judgement invalid, action reply, and cites 230. |
+| `general-decision-control` | The same code and thread 101 without thread 230. Pass: judgement valid or partly. The pair shows that the decision in the other thread changed the reply. |
+
+A reply case folder holds `case.json` (`scripts/eval/replies.ts` has the schema), `base/`, and `head.patch` as above. The user is the PR author.

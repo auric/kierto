@@ -148,6 +148,8 @@ function setClaude(c: ClaudeScenario) {
     verify: c.verify,
     explain: c.explain,
     discuss: c.discuss,
+    notes: c.notes,
+    cites: c.cites,
     bySchema: c.bySchema ?? { verify: { fixture: CHECK_STREAM } },
     authMethod: c.login,
   });

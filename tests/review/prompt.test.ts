@@ -492,18 +492,19 @@ describe("review v2 finder prompt", () => {
 
   test("a change of the review agent prompts needs a new REVIEW_PROMPT_VERSION", () => {
     // Update the hashes and raise the version together. Stats and the eval compare runs by prompt version.
-    const finder = [mainAgent(allModules, FULL), reviewerAgent(allModules, FULL), withDelegation(mainAgent(general), "always")]
+    // WP-PN: every review run but Explain has ./context/pr-context.md, so the hashes cover the PR context rules.
+    const run = { ...FULL, prContext: true, notes: true };
+    const finder = [mainAgent(allModules, run), reviewerAgent(allModules, run), withDelegation(mainAgent(general), "always")]
       .map((a) => a.prompt)
       .join("\n---\n");
     // WP-R3: the agents of the verify phase are review agents too.
-    const check = [withVerifyDelegation(verifyAgent(allModules, FULL), true), verifierAgent(allModules, FULL)]
+    const check = [withVerifyDelegation(verifyAgent(allModules, run), true), verifierAgent(allModules, run)]
       .map((a) => a.prompt)
       .join("\n---\n");
     expect({ version: REVIEW_PROMPT_VERSION, finder: sha(finder), check: sha(check) }).toEqual({
-      version: "2.1",
-      // The finder agents are the same as in prompt version 2.0.
-      finder: "d509c06598f767e58e58ed052d5d13d091f56b5216a36c334a76aa44562caa65",
-      check: "7a9e0a7914cca637c20673785f0dd8f2c7620ca4e17182ff448a93686e3138af",
+      version: "2.2",
+      finder: "181e470425a0481dd761fc36df7cfbfaee31717d38547f6456cbd6b9cb0ee886",
+      check: "9a5f5490cb6bd0ad329704be829426a3b1a8877d62cbe43cda350a023530ff94",
     });
   });
 

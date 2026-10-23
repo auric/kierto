@@ -63,6 +63,7 @@ const draft = (thread: number, o: Partial<ReplyDraft> = {}): ReplyDraft => ({
   judgement: null,
   resolve: false,
   resolveEvidence: "",
+  cites: [],
   ...o,
 });
 
@@ -951,7 +952,12 @@ describe("validateReplies", () => {
     { thread: 501, replyTo: 502 },
     { thread: 801, replyTo: 805 },
   ];
-  const result = (replies: ReplyDraft[]): ReplyResult => ({ summary: "S.", replies, coverage: { ...emptyCoverage, skipped: ["big.bin"] } });
+  const result = (replies: ReplyDraft[]): ReplyResult => ({
+    summary: "S.",
+    replies,
+    coverage: { ...emptyCoverage, skipped: ["big.bin"] },
+    notes: [],
+  });
 
   test("drops unrequested, second, empty, and oversized replies; lists them and the unanswered threads", () => {
     const v = validateReplies(

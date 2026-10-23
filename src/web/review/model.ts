@@ -19,6 +19,7 @@ import type {
   RunnerDefaults,
   RunUsage,
 } from "../../shared/dto";
+import { plural, shortHash, touchedDraft } from "../../shared/outcome";
 import {
   type Anchor,
   type AnchoredFinding,
@@ -34,9 +35,10 @@ import type { Turn } from "../../shared/turn";
 import { matches } from "../shell/model";
 import { sizeText } from "./tasks";
 
-export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+// src/shared/outcome.ts holds these, so the PR context file of a run uses the same words.
+export { plural, shortHash, touchedDraft };
+
 const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
-export const shortHash = (h: string) => h.slice(0, 7);
 export const lineText = (a: { line: number; lineEnd: number }) => (a.lineEnd > a.line ? `${a.line}–${a.lineEnd}` : `${a.line}`);
 
 // run-log.ts: the agent tool is always "Agent".
@@ -636,9 +638,6 @@ export function cardFocus(o: { before: CardState | null; now: CardState; lost: b
   if (o.gone) return turnedStale(o.before, o.now) ? "again" : "card";
   return o.now.kind === "pending" && o.before?.kind !== "pending" ? "card" : null;
 }
-
-// An open draft that you edited or accepted. A reply run revises it and never replaces it (docs/plans/thread-outcome.md).
-export const touchedDraft = (it: ReviewItemDto) => it.status === "accepted" || (it.status === "new" && it.edited);
 
 // newest: the newest live message of the thread. pending: a reply run that this page started for the thread runs now.
 export function replyCard(it: ReviewItemDto | undefined, newest: number | null, pending: boolean): ReplyCard | null {

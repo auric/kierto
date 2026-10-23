@@ -13,6 +13,7 @@ import {
   type FixNote,
   type FixWhy,
   fixResult,
+  type NoteProposal,
   type Question,
   type ReplyPayload,
   type RereviewResult,
@@ -62,6 +63,7 @@ export type CandidateLink = { n: number; duplicateOf: number | null };
 export type CarriedMark = CandidateLink & { verify?: VerifyMark; severity: Severity; discard: boolean };
 
 // checked: the earlier findings of a re-review. fix: the notes and edits of a fix run. links, carried: the verify phase of a review run.
+// notes: the note proposals of a reply run, before the checks of notes.ts proposeNotes (docs/plans/review-v2/spec.md section 2.9).
 // usage: the sum of both phases of a review run. Absent: the usage of outcome.
 export type Ending = {
   status: Exclude<RunStatus, "running">;
@@ -78,6 +80,7 @@ export type Ending = {
     fix?: { threads: FixNote[]; edits: ValidEdit[] };
     links?: Map<NewItem, CandidateLink>;
     carried?: Map<number, CarriedMark>;
+    notes?: NoteProposal[];
   };
 };
 
@@ -522,14 +525,19 @@ export function cancelledCheck(o: RunOutcome, check: RunOutcome): Ending {
   };
 }
 
-export function judgeReplies(o: RunOutcome, threads: ReplyThread[], servers: string[], gaps: string[]): Ending {
+// live: the threads of the PR with a live message at the run end, for the cite check.
+export function judgeReplies(o: RunOutcome, threads: ReplyThread[], servers: string[], gaps: string[], live: ReadonlySet<number>): Ending {
   const raw = rawOutput(o);
   if (o.status !== "completed") return { status: o.status, kind: o.kind, text: o.text, raw, outcome: o };
   const parsed = replyResult.safeParse(o.result?.structured_output);
   if (!parsed.success) return schemaFailure(parsed.error.issues, "reply", raw, o);
-  const v = validateReplies(parsed.data, threads);
+  const v = validateReplies(parsed.data, threads, live);
   const coverage = { ...v.coverage, unavailable: [...v.coverage.unavailable, ...unavailable(o, servers, gaps)] };
-  return ended(raw, o, { summary: { summary: v.summary, risks: [], coverage, dropped: [] }, items: v.replies.map(replyItem) });
+  return ended(raw, o, {
+    summary: { summary: v.summary, risks: [], coverage, dropped: [] },
+    items: v.replies.map(replyItem),
+    notes: parsed.data.notes,
+  });
 }
 
 // Plan r2 S-ASK: an ask run makes no items, so nothing of it can post.

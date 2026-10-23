@@ -1,0 +1,18 @@
+{
+  "id": "general-decision-control",
+  "title": "The same inline request without the decision in the general thread",
+  "pr": {
+    "title": "Give fetchUser a request timeout",
+    "description": "fetchUser now stops a request after 5 seconds. The callers keep their retry loop."
+  },
+  "threads": [
+    {
+      "id": 101,
+      "path": "src/client.ts",
+      "line": 5,
+      "messages": [{ "id": 101, "author": "Carol Diaz", "minutes": 0, "text": "Add a retry around fetchUser." }]
+    }
+  ],
+  "run": [101],
+  "expect": [{ "thread": 101, "judgement": ["valid", "partly"], "cites": [] }]
+}

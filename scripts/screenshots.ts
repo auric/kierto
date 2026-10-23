@@ -167,6 +167,14 @@ async function shots(browser: Browser) {
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await toTop(history, 120);
   await save(page, "thread-history");
+  // PR notes (scripts/demo.ts): the Notes block with a kept note and a suggestion, and the draft card that cites another thread.
+  await page.locator(`#s-notes [data-note-ref]`).waitFor();
+  await toTop(page.locator("#s-notes"), 64);
+  await save(page, "notes");
+  const card = page.locator("#t-1000003 [data-reply-draft]");
+  await card.locator("[data-note-suggestion]").waitFor();
+  await toTop(page.locator("#t-1000003"), 64);
+  await save(page, "reply-note");
 
   await page.goto(`${BASE}/settings/profiles`);
   await page.locator("#h-profiles").waitFor();

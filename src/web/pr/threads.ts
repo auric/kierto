@@ -307,8 +307,5 @@ export function agoLong(ms: number, now: number): string {
   return `${plural(Math.floor(m / 1440), "day")} ago`;
 }
 
-// One line of plain text, cut at n characters.
-export function snippet(text: string | null, n: number): string {
-  const t = (text ?? "").replace(/`/g, "").replace(/\s+/g, " ").trim();
-  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
-}
+// One line of plain text, cut at n characters. src/shared/outcome.ts holds it, so the PR context file cuts text the same way.
+export { snippet } from "../../shared/outcome";

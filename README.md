@@ -121,6 +121,16 @@ Each thread footer has "Resolve", or "Reopen" on a resolved thread. The key x do
 
 The post confirm lists the drafts that cannot post now in groups by reason: out of date (new messages after the draft), resolved since the draft, a fix commit that is not pushed, or a commit that is not on the branch. Each group says what to do. Each draft links to its thread and has its action: "Reply to the newest as is", "Reopen thread", or "Post as plain reply". Post sends the other drafts. The confirm updates while it is open. The post bar counts the out-of-date drafts, and Ready to post also lists pull requests with only drafts that cannot post. The inbox row says "2 reply drafts out of date" when new messages or a resolve after the draft keep your drafts from posting. A draft that you accepted or edited also gives one notification when another person does that.
 
+### PR notes
+
+The Notes block under the description holds your notes for the pull request, such as "No retry in the client" or "Ship after the scheduler PR". "Add a note" opens a box of up to 500 characters with an optional "Waits for PR #" field. A linked PR shows a chip with its state: open, merged, declined, or not found. Delete asks no confirm and offers Undo for 10 seconds. Claude reads your notes before each review, reply, fix, and Ask run, and follows them. It says so when the code or a newer message contradicts a note.
+
+![The Notes block with a kept note that waits for a merged PR, and a suggestion with Keep, Edit, and Dismiss](docs/screenshots/notes.webp)
+
+Each run also gets a short map of the pull request: the linked tasks, the build state of the head, every thread with its outcome line, and other open pull requests in your inbox that change the same files. So a decision in one thread can change the reply in another. Draft replies can suggest a note when a thread shows your agreement or a wait for another pull request. A suggestion needs a message of yours in its thread, and Claude uses it only after you keep it. It shows on the draft card and in the Notes block with Keep and Dismiss. A draft that relies on another thread says "Based on the thread of" with a link to it.
+
+![A reply draft that cites another thread and suggests a note](docs/screenshots/reply-note.webp)
+
 ### Thread history
 
 The More menu of a thread has "Show history". It opens one time-ordered list under the thread: the messages, the drafts of each writer, your changes to a draft with "Show changes", the revisions, the fix results and commits, the posts that did not finish, and the current resolve. Each line from Claude links to its run log. "Hide history", or Esc in the list, closes it. Bitbucket keeps no record of reopens or earlier text, and PR Review Inbox keeps only the time of your last change to a draft.

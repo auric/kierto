@@ -1,0 +1,11 @@
+diff --git a/src/client.ts b/src/client.ts
+--- a/src/client.ts
++++ b/src/client.ts
+@@ -3,6 +3,6 @@ export type User = { id: string; name: string };
+
+ export async function fetchUser(id: string): Promise<User> {
+-  const res = await fetch(`/api/users/${encodeURIComponent(id)}`);
++  const res = await fetch(`/api/users/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(5000) });
+   if (!res.ok) throw new Error(`fetchUser failed: ${res.status}`);
+   return (await res.json()) as User;
+ }

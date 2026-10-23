@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// The context files that a run reads from ./context (jobs.ts): findings.md, history.md, fix-state.md, questions.md, and candidates.md.
+// The context files that a run reads from ./context (jobs.ts): findings.md, history.md, fix-state.md, questions.md, candidates.md,
+// pr-context.md, and notes.md.
 import type { Database } from "bun:sqlite";
 import { indentBlock, oneLine } from "../../shared/consult";
 import type { RunSummary } from "../../shared/dto";
@@ -16,10 +17,11 @@ import {
   severities,
 } from "../../shared/review";
 import { byThread, newestLive, type TurnMsg } from "../../shared/turn";
+import type { BuildStats } from "../bitbucket/provider";
 import { currentDrafts, touched } from "./drafts";
 import { type ItemRow, type RunRow, SQL } from "./run-rows";
 import type { AskedThread, EarlierItem } from "./validate";
-import type { ContextFile } from "./workspace";
+import { type ContextFile, UNTRUSTED } from "./workspace";
 
 // An earlier finding at the current place of its item. A user move changes the line.
 export function earlierItem(r: ItemRow): EarlierItem {
@@ -360,4 +362,291 @@ export function questionsFile(
     kept.push(b.thread);
   }
   return kept.length ? { threads: kept, file: { name: "questions.md", text: out.join("\n") }, left: 0 } : none;
+}
+
+// ---------- PR context and notes (docs/plans/review-v2/spec.md section 2.8) ----------
+
+export const PR_CONTEXT_BYTES = 48 * 1024;
+export const DESCRIPTION_BYTES = 4 * 1024;
+export const FOCUS_THREADS_BYTES = 24 * 1024;
+export const PEER_SECTION_BYTES = 6 * 1024;
+export const PEER_PRS_READ = 30;
+export const PEER_PRS_SHOWN = 10;
+export const PEER_PATHS_SHOWN = 10;
+export const PEER_READ_MS = 15_000;
+export const SNIPPET_CHARS = 300;
+// Rule 2 of the trim rule: the root and this many newest messages of a focus thread always stay.
+const FOCUS_KEEP = 3;
+
+export type PrContextMsg = { id: number; author: string; mine: boolean; at: number; text: string };
+// place: "general comment", or "inline comment on <path> line <n>" as pr.md names it. path: the file of an inline thread.
+// starter: the author of the root comment, also when it is deleted. msgs: the live messages, oldest first. state: stateText of outcome.ts.
+export type PrContextThread = {
+  id: number;
+  place: string;
+  path: string | null;
+  starter: { author: string; mine: boolean };
+  resolved: boolean;
+  state: string;
+  msgs: PrContextMsg[];
+};
+// paths: the paths of the other PR that equal a path or src_path of this PR.
+export type PeerPr = {
+  prId: number;
+  title: string;
+  author: string;
+  state: string;
+  target: string;
+  updated: number | null;
+  paths: string[];
+};
+// threads: every thread with a live message. focus: the thread IDs of the run. paths: the paths of the focus threads and the discussed
+// finding. peerNotes: the lines after the peer list, such as "Only PRs in your inbox are listed: <reason>.".
+export type PrContextInput = {
+  pr: {
+    project: string;
+    repo: string;
+    prId: number;
+    state: string | null;
+    title: string;
+    author: string;
+    mine: boolean;
+    source: string;
+    sourceHead: string;
+    target: string;
+    targetHead: string;
+    description: string;
+  };
+  tasks: { key: string; summary: string | null }[];
+  build: { stats: BuildStats } | { error: string };
+  threads: PrContextThread[];
+  focus: number[];
+  paths: string[];
+  peers: PeerPr[];
+  peerNotes: string[];
+};
+
+const utc = (ms: number) => `${new Date(ms).toISOString().slice(0, 16)}Z`;
+const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const size = (s: string) => Buffer.byteLength(s);
+const STATES: Record<string, string> = { OPEN: "open", MERGED: "merged", DECLINED: "declined" };
+// The cut keeps whole code points. stream: true holds back a UTF-8 sequence that the cut splits.
+const cutBytes = (s: string, max: number) => {
+  const b = new TextEncoder().encode(s);
+  return b.length <= max ? s : new TextDecoder().decode(b.subarray(0, max), { stream: true });
+};
+const cutChars = (s: string, n: number) => {
+  const c = Array.from(s);
+  return c.length > n ? `${c.slice(0, n - 1).join("")}…` : s;
+};
+const names = (list: string[]) => (list.length < 3 ? list.join(" and ") : `${list.slice(0, -1).join(", ")}, and ${list.at(-1) as string}`);
+const byWho = (m: { author: string; mine: boolean }) => (m.mine ? "the user" : oneLine(m.author));
+const who = (m: { author: string; mine: boolean }) => (m.mine ? "the user" : `${oneLine(m.author)} (another person)`);
+const threadHead = (t: PrContextThread) => `### Thread ${t.id} · ${t.place} · started by ${who(t.starter)}`;
+
+// keep: the IDs of the messages to show. The left-out messages stand between the root and the next shown message.
+function focusLines(t: PrContextThread, keep: ReadonlySet<number>): string[] {
+  const out = [threadHead(t), `- State: ${t.state}`];
+  let gap = 0;
+  for (const m of t.msgs) {
+    if (!keep.has(m.id)) {
+      gap++;
+      continue;
+    }
+    if (gap) out.push("", `${gap} older messages left out. pr.md holds them.`);
+    gap = 0;
+    out.push("", `#### Message ${m.id} by ${who(m)}, ${utc(m.at)}`, "", indentBlock(m.text));
+  }
+  return out;
+}
+
+function digestLines(t: PrContextThread): string[] {
+  const first = t.msgs[0] as PrContextMsg;
+  const last = t.msgs.at(-1) as PrContextMsg;
+  const authors = [...new Set(t.msgs.map(byWho))];
+  const snip = (m: PrContextMsg) => indentBlock(cutChars(m.text, SNIPPET_CHARS));
+  return [
+    threadHead(t),
+    `- Messages: ${t.msgs.length}, by ${names(authors)}. Newest: ${utc(last.at)}.`,
+    `- State: ${t.state}`,
+    ...(t.msgs.length === 1
+      ? [`- Message ${first.id} by ${byWho(first)}:`, "", snip(first)]
+      : [
+          `- First message ${first.id} by ${byWho(first)}:`,
+          "",
+          snip(first),
+          "",
+          `- Newest message ${last.id} by ${byWho(last)}:`,
+          "",
+          snip(last),
+        ]),
+  ];
+}
+
+// Rule 2 of the trim rule: the longest focus thread loses its oldest message after the root, until the threads fit.
+function focusSection(threads: PrContextThread[]): string | null {
+  if (!threads.length) return null;
+  const keep = new Map(threads.map((t) => [t.id, new Set(t.msgs.map((m) => m.id))]));
+  const text = (t: PrContextThread) => focusLines(t, keep.get(t.id) as Set<number>).join("\n");
+  const sizes = new Map(threads.map((t) => [t.id, size(text(t))]));
+  const HEADING = "## Threads that this run works on";
+  const total = () => size(HEADING) + [...sizes.values()].reduce((n, s) => n + s + 2, 0);
+  const droppable = (t: PrContextThread) => {
+    const k = keep.get(t.id) as Set<number>;
+    const newest = new Set(t.msgs.slice(-FOCUS_KEEP).map((m) => m.id));
+    return t.msgs.filter((m) => k.has(m.id) && m.id !== t.id && !newest.has(m.id));
+  };
+  while (total() > FOCUS_THREADS_BYTES) {
+    const open = threads.filter((t) => droppable(t).length);
+    // Ties go to the lower thread ID, so the same rows give the same cut.
+    const t = open.reduce<PrContextThread | null>(
+      (a, b) => (!a || (sizes.get(b.id) as number) > (sizes.get(a.id) as number) ? b : a),
+      null,
+    );
+    if (!t) break;
+    (keep.get(t.id) as Set<number>).delete((droppable(t)[0] as PrContextMsg).id);
+    sizes.set(t.id, size(text(t)));
+  }
+  const out = [HEADING, ...threads.map(text)].join("\n\n");
+  // The root and the newest messages alone can pass the cap. The cut then keeps the file under PR_CONTEXT_BYTES.
+  const CUT = "\n\nThe app cut this section at its size limit. pr.md holds every message.";
+  return size(out) <= FOCUS_THREADS_BYTES ? out : cutBytes(out, FOCUS_THREADS_BYTES - size(CUT)) + CUT;
+}
+
+// Rule 3: overlap count descending, updated time descending, PR number ascending.
+function peerSection(peers: PeerPr[], notes: string[]): { text: string | null; shown: number } {
+  if (!peers.length && !notes.length) return { text: null, shown: 0 };
+  const sorted = [...peers].sort((a, b) => b.paths.length - a.paths.length || (b.updated ?? 0) - (a.updated ?? 0) || a.prId - b.prId);
+  const line = (p: PeerPr) => {
+    const paths = p.paths.slice(0, PEER_PATHS_SHOWN).map(oneLine).join(", ");
+    const more = p.paths.length > PEER_PATHS_SHOWN ? ` +${p.paths.length - PEER_PATHS_SHOWN} more` : "";
+    const updated = p.updated === null ? "" : `, updated ${utcDay(p.updated)}`;
+    return `- #${p.prId} "${oneLine(p.title)}" by ${oneLine(p.author)}, ${STATES[p.state] ?? p.state.toLowerCase()}, into ${oneLine(p.target)}${updated}. Same files: ${paths}${more}.`;
+  };
+  const out = ["## Other open pull requests that change the same files", ""];
+  const tail = [...notes];
+  const LEFT = (n: number) => `${n} more pull requests left out.`;
+  let used = size(out.join("\n")) + size([LEFT(sorted.length), ...tail].join("\n")) + 2;
+  let shown = 0;
+  for (const p of sorted) {
+    const l = line(p);
+    if (shown === PEER_PRS_SHOWN || used + size(l) + 1 > PEER_SECTION_BYTES) break;
+    out.push(l);
+    used += size(l) + 1;
+    shown++;
+  }
+  if (!sorted.length) out.push("None found.");
+  if (shown < sorted.length) tail.unshift(LEFT(sorted.length - shown));
+  if (tail.length) out.push("", ...tail);
+  return { text: out.join("\n"), shown };
+}
+
+// docs/plans/review-v2/spec.md section 2.8. Pure: the same input gives the same bytes. workspace.ts writes the UNTRUSTED banner before
+// the text, and the banner counts toward PR_CONTEXT_BYTES. threads: the shown threads. left: the other threads that the cap left out.
+export function prContextFile(i: PrContextInput): ContextFile & { threads: number; left: number; peers: number } {
+  const p = i.pr;
+  const desc = p.description.trim();
+  const cut = size(desc) > DESCRIPTION_BYTES;
+  const head = [
+    "## Pull request",
+    `- Number: ${oneLine(`${p.project}/${p.repo}#${p.prId}`)}, ${p.state ? (STATES[p.state] ?? p.state.toLowerCase()) : "state unknown"}. Author: ${oneLine(p.author)}${p.mine ? " (the user)" : ""}.`,
+    `- Title: ${oneLine(p.title)}`,
+    `- Source: ${oneLine(p.source)} at ${p.sourceHead.slice(0, 7)}. Target: ${oneLine(p.target)} at ${p.targetHead.slice(0, 7)}.`,
+    ...(desc
+      ? [
+          cut ? `- Description (the first ${DESCRIPTION_BYTES / 1024} KB; pr.md holds all of it):` : "- Description:",
+          "",
+          indentBlock(cut ? cutBytes(desc, DESCRIPTION_BYTES) : desc),
+        ]
+      : ["- Description: none."]),
+  ].join("\n");
+  const tasks = [
+    "## Linked tasks",
+    ...(i.tasks.length ? i.tasks.map((t) => `- ${oneLine(t.key)}${t.summary ? `: ${oneLine(t.summary)}` : ""}`) : ["None."]),
+  ].join("\n");
+  const b = "stats" in i.build ? i.build.stats : null;
+  const counts = b
+    ? [
+        `${b.successful} successful`,
+        `${b.failed} failed`,
+        `${b.inProgress} in progress`,
+        ...(b.cancelled ? [`${b.cancelled} cancelled`] : []),
+        ...(b.unknown ? [`${b.unknown} unknown`] : []),
+      ]
+    : [];
+  const stats = !b
+    ? `Not read: ${(i.build as { error: string }).error}.`
+    : Object.values(b).every((n) => n === 0)
+      ? "No builds reported."
+      : `${counts.join(", ")}.`;
+  const build = ["## Build", `- Head ${p.sourceHead.slice(0, 7)}: ${stats}`].join("\n");
+
+  const focusIds = new Set(i.focus);
+  const focused = i.threads.filter((t) => focusIds.has(t.id)).sort((a, z) => a.id - z.id);
+  const focus = focusSection(focused);
+  const peers = peerSection(i.peers, i.peerNotes);
+
+  // Rule 4: unresolved threads on a focus path, the other unresolved threads, then resolved threads. Newest message first, then ID.
+  const paths = new Set(i.paths);
+  const group = (t: PrContextThread) => (t.resolved ? 2 : t.path !== null && paths.has(t.path) ? 0 : 1);
+  const newest = (t: PrContextThread) => t.msgs.at(-1)?.at ?? 0;
+  const others = i.threads
+    .filter((t) => !focusIds.has(t.id) && t.msgs.length)
+    .sort((a, z) => group(a) - group(z) || newest(z) - newest(a) || z.id - a.id);
+  const heading = focus ? "## Other threads" : "## Threads";
+  const fixed = [head, tasks, build, ...(focus ? [focus] : []), ...(peers.text ? [peers.text] : [])];
+  const LEFT = (n: number) => `${n} more threads left out. pr.md holds every message.`;
+  const room =
+    PR_CONTEXT_BYTES - size(UNTRUSTED) - fixed.reduce((n, s) => n + size(s) + 2, 0) - size(heading) - 2 - size(LEFT(others.length)) - 2;
+  const blocks: string[] = [];
+  let used = 0;
+  for (const t of others) {
+    const text = digestLines(t).join("\n");
+    if (used + size(text) + 2 > room) break;
+    blocks.push(text);
+    used += size(text) + 2;
+  }
+  const left = others.length - blocks.length;
+  const list = [heading, ...(others.length ? blocks : ["None."]), ...(left ? [LEFT(left)] : [])].join("\n\n");
+  const parts = [head, tasks, build, ...(focus ? [focus] : []), list, ...(peers.text ? [peers.text] : [])];
+  let text = `${parts.join("\n\n")}\n`;
+  // Many linked tasks can fill the file alone. The cut keeps the file under PR_CONTEXT_BYTES.
+  const CUT = "\n\nThe app cut this file at its size limit. pr.md holds the rest.\n";
+  if (size(UNTRUSTED + text) > PR_CONTEXT_BYTES) text = cutBytes(text, PR_CONTEXT_BYTES - size(UNTRUSTED) - size(CUT)) + CUT;
+  return { name: "pr-context.md", text, threads: focused.length + blocks.length, left, peers: peers.shown };
+}
+
+// A kept note for context/notes.md. ref: the PR that this PR waits for, with its stored state.
+export type KeptNote = {
+  id: number;
+  createdAt: number;
+  text: string;
+  ref: { project: string; repo: string; prId: number; title: string | null; state: string | null } | null;
+};
+
+const REF_STATES: Record<string, string> = { OPEN: "open", MERGED: "merged", DECLINED: "declined", MISSING: "not found" };
+
+// spec.md section 2.8: kept notes only, oldest first. No UNTRUSTED banner: the user wrote or kept each line, so jobs.ts writes the file
+// itself. own: the PR of the run. A link to another repository names it. null: the PR has no kept note.
+export function notesFile(notes: KeptNote[], own: { project: string; repo: string }): ContextFile | null {
+  if (!notes.length) return null;
+  const line = (n: KeptNote) => {
+    const r = n.ref;
+    const where = r && (r.project !== own.project || r.repo !== own.repo) ? `${r.project}/${r.repo}#${r.prId}` : `#${r?.prId}`;
+    const link = r
+      ? ` Waits for PR ${oneLine(where)}${r.title ? ` "${oneLine(r.title)}"` : ""} (${r.state ? (REF_STATES[r.state] ?? r.state) : "state not read"}).`
+      : "";
+    return `- Note ${n.id} (${utcDay(n.createdAt)}): ${oneLine(n.text)}${link}`;
+  };
+  return {
+    name: "notes.md",
+    text: [
+      "# Notes of the user",
+      "",
+      "The user wrote or kept these notes for this pull request. They are the user's decisions.",
+      "",
+      ...notes.map(line),
+      "",
+    ].join("\n"),
+  };
 }

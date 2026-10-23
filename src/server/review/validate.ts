@@ -23,6 +23,7 @@ import type {
   Verdict,
 } from "../../shared/review";
 import { type DiffFile, parseDiff } from "./diffmap";
+import { checkCites } from "./notes";
 import type { ReplyThread } from "./prompt";
 
 export const CONTEXT_LINES = 3;
@@ -344,7 +345,12 @@ export type ValidatedReply = { payload: ReplyPayload; status: "new" | "discarded
 export type ValidatedReplies = { summary: string; coverage: Coverage; replies: ValidatedReply[] };
 
 // Plan replies.md R11: only requested threads pass. Every drop and every unanswered thread goes to coverage.skipped.
-export function validateReplies(result: ReplyResult, requested: readonly ReplyThread[]): ValidatedReplies {
+// live: the threads of the PR with a live message. A cite outside it drops (docs/plans/review-v2/spec.md section 2.9).
+export function validateReplies(
+  result: ReplyResult,
+  requested: readonly ReplyThread[],
+  live: ReadonlySet<number> = new Set(),
+): ValidatedReplies {
   const replyTo = new Map(requested.map((r) => [r.thread, r.replyTo]));
   const mine = new Set(requested.filter((r) => r.mine).map((r) => r.thread));
   const answered = new Set<number>();
@@ -375,9 +381,12 @@ export function validateReplies(result: ReplyResult, requested: readonly ReplyTh
     // Only a thread that the user started gets the tick by default. A resolve proposal without a reply stays a draft.
     const resolveEvidence = resolve ? r.resolveEvidence.trim() : "";
     const none = r.action === "none" && !resolve;
+    const cited = checkCites(r.cites, r.thread, live);
+    skipped.push(...cited.skipped);
     replies.push({
       payload: {
         ...r,
+        cites: cited.cites,
         body,
         replyTo: to,
         resolve,

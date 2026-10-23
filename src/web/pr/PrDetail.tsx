@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // PR detail (plan v3 WP5, r2 UI-ASK, r2 UI-DIFF, pr-view-v4 section 2): header, status strip, and the panel slot (the brief or Ask),
-// then one column of the run record, Description, Drafts, Threads, Files, and Commits. The run record goes after the Description
-// until a review exists (decision D3).
+// then one column of the run record, Description, Notes, Drafts, Threads, Files, and Commits. The run record goes after the Description
+// until a review exists (decision D3). Notes: docs/plans/review-v2/spec.md section 2.7.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type Ref, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,6 +28,7 @@ import { createHints, SharedHint } from "../shell/Hint";
 import { useMinute } from "../shell/ListPane";
 import { ArchiveNotice, Calm } from "../states";
 import { Header, Strip, webLink } from "./Header";
+import { Notes } from "./Notes";
 import type { ReplyTarget } from "./ReplyComposer";
 import { CommitsFold, Description } from "./Sections";
 import { type ThreadCtx, useSettled } from "./Thread";
@@ -626,6 +627,7 @@ export function PrDetail({
           <>
             {review.reviewed && review.run}
             <Description detail={data} me={me} />
+            <Notes pr={row.id} own={pr} threads={threads} jump={jump} announce={announce} focusAfter={focusAfter} />
             {!review.reviewed && review.run}
             {review.drafts}
             <Threads

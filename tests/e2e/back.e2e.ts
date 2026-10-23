@@ -81,8 +81,9 @@ test("a click opens a PR and a file with their own entries; Back closes the file
   await get.click();
   const file = page.locator("#df-0");
   await expect(file).toBeFocused();
+  // The file header stays in view, so the click below scrolls nothing before it saves the position.
   const top = await pane(page).evaluate((el) => {
-    el.scrollTop = Math.min(120, el.scrollHeight - el.clientHeight);
+    document.getElementById("df-0")?.scrollIntoView({ block: "center" });
     return el.scrollTop;
   });
   expect(top).toBeGreaterThan(20);

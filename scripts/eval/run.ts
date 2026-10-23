@@ -41,7 +41,7 @@ const PROJECT = "EVAL";
 const TASK_KEY = "EVAL-1";
 const PROMPT_VERSION = REVIEW_PROMPT_VERSION;
 
-const USAGE = `Usage: bun run eval -- [--real] [--set ${Object.keys(SETS).join("|")}] [--cases all|id,id] [--profile general] [--profile-version ${PROFILES_VERSION}] [--modules security,api]
+export const USAGE = `Usage: bun run eval -- [--replies] [--real] [--set ${Object.keys(SETS).join("|")}] [--cases all|id,id] [--profile general] [--profile-version ${PROFILES_VERSION}] [--modules security,api]
   [--volume balanced] [--model opus] [--effort ${EFFORTS.join("|")}] [--repeat 2] [--out <folder>] [--keep] [--runner <command> <args...>]
 --real runs the claude CLI on PATH. --runner runs the given CLI instead and must come last. Without both, the plan prints and the exit code is 2.`;
 
@@ -128,7 +128,7 @@ export function parseOptions(argv: string[]): Options | { error: string } {
 
 // The profile of the run with the --modules, --volume, --model, and --effort values. A field that this app version does not know is an error, so a
 // result file never names a setup that did not run.
-function evalProfile(o: Options) {
+export function evalProfile(o: Options) {
   const shipped = SHIPPED_PROFILES.some((p) => p.id === o.profile) && shippedProfileAt(o.profile, o.profileVersion ?? PROFILES_VERSION);
   if (!shipped) return { error: `Unknown profile ${o.profile}. Shipped profiles: ${SHIPPED_PROFILES.map((p) => p.id).join(", ")}.` };
   const extra = {
@@ -161,7 +161,7 @@ function plan(o: Options, cases: EvalCase[], profile: { model: string | null; ef
   return lines.join("\n");
 }
 
-async function checkoutState() {
+export async function checkoutState() {
   const env = gitEnv("/dev/null");
   try {
     const commit = (await git(["-C", REPO, "rev-parse", "--short=12", "HEAD"], { env })).trim();
@@ -366,6 +366,8 @@ function save(file: string, r: EvalResult) {
 }
 
 export async function main(argv: string[]): Promise<number> {
+  // spec.md section 2.13: the reply cases of fixtures/eval/replies.
+  if (argv.includes("--replies")) return (await import("./replies")).mainReplies(argv.filter((a) => a !== "--replies"));
   const o = parseOptions(argv);
   if ("error" in o) {
     console.error(`${o.error}\n${USAGE}`);

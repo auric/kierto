@@ -153,6 +153,9 @@ export type ClaudeScenario = {
   verify?: unknown;
   explain?: unknown;
   discuss?: unknown;
+  // docs/plans/review-v2/spec.md section 2.9: the notes and the first cites of the echo reply result.
+  notes?: unknown;
+  cites?: unknown;
   bySchema?: FakeScenario["bySchema"];
   login?: string;
 };

@@ -2,10 +2,14 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Pure Fix it rules (plan r3 UI-FIX, docs/plans/fix-ux.md). No DOM access, so bun test runs them directly.
-import type { CommitDto, FixCommitDto, FixDto, FixEditDto, ReviewItemDto, RunDto } from "../../shared/dto";
+import type { FixCommitDto, FixDto, FixEditDto, ReviewItemDto } from "../../shared/dto";
+import { type FixNote, type FixTarget, fixState, names, plural, shortHash, snippet, WHY } from "../../shared/outcome";
 import { type AnchoredFinding, type FixWhy, type Judgement, MAX_REPLY_THREADS, type ReplyPayload } from "../../shared/review";
-import { ordered, snippet, type ThreadModel } from "../pr/threads";
-import { lineText, plural, shortHash } from "../review/model";
+import { ordered, type ThreadModel } from "../pr/threads";
+import { lineText } from "../review/model";
+
+// src/shared/outcome.ts holds the fix state rules, so the PR context file of a run uses them too.
+export { type Asked, type FixNote, type FixState, type FixTarget, fixState, fixWaiting, WHY } from "../../shared/outcome";
 
 // Judgement null means "no action": no chip, and no tick at the start of the Fix list.
 export const JUDGEMENT: Record<Judgement, string> = {
@@ -53,12 +57,8 @@ export type FixFindingRow = {
 // rows: the threads. findings: the findings. resolved, deleted: the threads that the list leaves out. A deleted thread has no live message.
 export type FixTargets = { rows: FixRow[]; findings: FixFindingRow[]; resolved: number; deleted: number };
 
-// A point that a fix run can take: a thread, or a review finding that is not posted.
-export type FixTarget = { kind: "thread" | "finding"; id: number };
 // The key of a target in the Fix list and in the IDs of its fix card. A thread keeps its number. A finding gets "f" before its ID.
 export const cardKey = (t: FixTarget) => (t.kind === "thread" ? String(t.id) : `f${t.id}`);
-// FixDto notes and edits name exactly one of thread and finding.
-const names = (x: { thread?: number; finding?: number }, t: FixTarget) => (t.kind === "thread" ? x.thread === t.id : x.finding === t.id);
 const targetOf = (e: FixEditDto): FixTarget =>
   e.thread !== undefined ? { kind: "thread", id: e.thread } : { kind: "finding", id: e.finding as number };
 
@@ -284,50 +284,6 @@ export function commitText(c: FixCommitDto): string {
 
 // ---------- One thread or finding ----------
 
-export type FixNote = FixDto["threads"][number];
-
-// The fix run that this page started, with its threads and findings.
-export type Asked = { run: number; threads: number[]; findings: number[] };
-
-// running: a fix run that this page started for the target runs now. failed: that run failed or was cancelled.
-// none: that run ended without a note or an edit for the target. done: the newest run with a note or an edit for the target.
-// commit: the newest commit of that run that holds an edit of the target and is not undone.
-export type FixState =
-  | { kind: "running" }
-  | { kind: "failed"; run: RunDto }
-  | { kind: "none"; run: RunDto }
-  | { kind: "done"; fix: FixDto; newest: boolean; note: FixNote | null; edits: FixEditDto[]; commit: FixCommitDto | null };
-
-// fixes: GET /api/prs/:id/fixes, newest first.
-export function fixState(fixes: FixDto[] | undefined, target: FixTarget, asked: Asked | null): FixState | null {
-  const list = fixes ?? [];
-  const touches = (f: FixDto) => f.threads.some((n) => names(n, target)) || f.edits.some((e) => names(e, target));
-  if (asked && (target.kind === "thread" ? asked.threads : asked.findings).includes(target.id)) {
-    const own = list.find((f) => f.run.id === asked.run);
-    if (!own || own.run.status === "running") return { kind: "running" };
-    if (own.run.status === "failed" || own.run.status === "cancelled") return { kind: "failed", run: own.run };
-    if (!touches(own)) return { kind: "none", run: own.run };
-  }
-  const i = list.findIndex(touches);
-  const fix = list[i];
-  if (!fix) return null;
-  const edits = fix.edits.filter((e) => names(e, target));
-  const ids = new Set(edits.map((e) => e.id));
-  const commit = fix.commits.find((c) => c.state !== "undone" && c.edits.some((id) => ids.has(id))) ?? null;
-  return { kind: "done", fix, newest: i === 0, note: fix.threads.find((n) => names(n, target)) ?? null, edits, commit };
-}
-
-// docs/plans/thread-outcome.md: the label of a fix card for each why of a note without a fix.
-export const WHY: Record<FixWhy, string> = {
-  already: "Already done",
-  invalid: "Not valid",
-  scope: "Out of scope",
-  unclear: "Unclear",
-  decision: "Needs your decision",
-  risk: "Risky",
-  dropped: "Edits could not be applied",
-};
-
 // The head of a fix card with a note or edits. edits: the edit count of the target in the run.
 // A risk needs your decision too (thread-outcome.md section 3).
 export function cardHead(edits: number, note: FixNote | null): string {
@@ -381,12 +337,4 @@ export function noteDraft(fix: FixDto, note: FixNote | null, target: FixTarget, 
     return it.run === fix.run.id && p.thread === target.id && p.origin === "nofix" && !p.declined;
   };
   return replies?.find(ours) ?? null;
-}
-
-// The "Fixed in" reply posts only when the PR commits hold its commit (outbox.ts fixCheck). Returns the short hash to wait for.
-export function fixWaiting(p: ReplyPayload, commits: CommitDto[] | undefined, fixes: FixDto[] | undefined): string | null {
-  const fix = p.fix;
-  if (!fix || commits?.some((c) => c.hash === fix.commit)) return null;
-  const row = fixes?.flatMap((f) => f.commits).find((c) => c.id === fix.id);
-  return row?.short ?? shortHash(fix.commit);
 }
