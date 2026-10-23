@@ -326,7 +326,8 @@ describe("app-run checks", () => {
     expect(r.exit).toBe(0);
     expect(Buffer.byteLength(r.tail)).toBeLessThanOrEqual(64 * 1024);
     expect(Buffer.byteLength(r.tail)).toBeGreaterThan(60 * 1024);
-    expect(r.tail.endsWith("END")).toBe(true);
+    // stdout and stderr are two pipes: ERR can arrive after END.
+    expect(r.tail.slice(-6)).toContain("END");
     expect(r.tail).toContain("ERR");
   });
 });
@@ -380,4 +381,221 @@ describe("scoped checks (spec.md section 6.4, Run line)", () => {
       expect(r.notes[0]).toContain("The full checks run at the end of the part.");
     }
   });
+
+  // One row per runner: the approved argv, the narrowed argv lists for the Run line, the approved argv lists that already filter,
+  // and the fallback argv for a refused Run line with later = ["tests/two.test.ts"] (null: no scoped command).
+  type Row = {
+    runner: string;
+    approved: string[];
+    run: string[];
+    narrowed: string[][];
+    filtered: string[][];
+    fallback: string[] | null;
+  };
+  const F = "tests/one.test.ts";
+  const rows: Row[] = [
+    {
+      runner: "bun test",
+      approved: ["bun", "test", "--bail"],
+      run: [F, "adds a+b"],
+      narrowed: [
+        ["bun", "test", "--bail", `./${F}`],
+        ["bun", "test", "--bail", "-t", "adds a\\+b"],
+      ],
+      filtered: [
+        ["bun", "test", "--test-name-pattern=x"],
+        ["bun", "test", "tests"],
+      ],
+      fallback: ["bun", "test", "--bail", "--path-ignore-patterns=tests/two.test.ts"],
+    },
+    {
+      runner: "pytest",
+      approved: ["pytest", "-q"],
+      run: [F, "test_add", "test_sub[1-2]"],
+      narrowed: [
+        ["pytest", "-q", F],
+        ["pytest", "-q", "-k", "test_add or test_sub[1-2]"],
+      ],
+      filtered: [
+        ["pytest", "-k", "x"],
+        ["pytest", "-xkfoo"],
+        ["pytest", "tests"],
+        ["pytest", "--", "-k"],
+        ["pytest", "-m", "slow"],
+      ],
+      fallback: ["pytest", "-q", "--ignore=tests/two.test.ts"],
+    },
+    {
+      runner: "python -m pytest",
+      approved: ["python3", "-m", "pytest"],
+      run: ["test_add"],
+      narrowed: [["python3", "-m", "pytest", "-k", "test_add"]],
+      filtered: [["python", "-m", "pytest", "tests"]],
+      fallback: ["python3", "-m", "pytest", "--ignore=tests/two.test.ts"],
+    },
+    {
+      runner: "uv run pytest",
+      approved: ["uv", "run", "pytest"],
+      run: [F],
+      narrowed: [["uv", "run", "pytest", F]],
+      filtered: [["uv", "run", "pytest", "-k=x"]],
+      fallback: ["uv", "run", "pytest", "--ignore=tests/two.test.ts"],
+    },
+    {
+      runner: "jest",
+      approved: ["npx", "jest", "--ci"],
+      run: [F, "adds (a)"],
+      narrowed: [
+        ["npx", "jest", "--ci", "tests/one\\.test\\.ts"],
+        ["npx", "jest", "--ci", "-t", "adds \\(a\\)"],
+      ],
+      filtered: [
+        ["jest", "-t=x"],
+        ["jest", "--testPathPatterns=x"],
+        ["jest", "src"],
+        ["jest", "--runTestsByPath"],
+      ],
+      // --testPathIgnorePatterns replaces the configured list, so the app has no skip option for jest.
+      fallback: null,
+    },
+    {
+      runner: "vitest",
+      approved: ["vitest", "run", "--reporter=dot"],
+      run: [F, "a.b"],
+      narrowed: [
+        ["vitest", "run", "--reporter=dot", F],
+        ["vitest", "run", "--reporter=dot", "-t", "a\\.b"],
+      ],
+      filtered: [["npx", "vitest", "run", "--testNamePattern=x"], ["vitest", "run", "src"], ["vitest"]],
+      fallback: ["vitest", "run", "--reporter=dot", "--exclude", "tests/two.test.ts"],
+    },
+    {
+      runner: "go test",
+      approved: ["go", "test", "-count=1", "./..."],
+      run: ["TestAdd", "TestSub.x"],
+      narrowed: [["go", "test", "-count=1", "./...", "-run", "^(TestAdd|TestSub\\.x)$"]],
+      filtered: [
+        ["go", "test", "-run=X", "./..."],
+        ["go", "test", "./pkg"],
+        ["go", "test", "-tags", "x"],
+      ],
+      fallback: null,
+    },
+    {
+      runner: "cargo test",
+      approved: ["cargo", "test", "--release", "--", "--nocapture"],
+      run: ["adds", "subs"],
+      narrowed: [
+        ["cargo", "test", "--release", "adds", "--", "--nocapture"],
+        ["cargo", "test", "--release", "subs", "--", "--nocapture"],
+      ],
+      filtered: [
+        ["cargo", "test", "adds"],
+        ["cargo", "test", "--", "adds"],
+        ["cargo", "test", "-p", "x"],
+      ],
+      fallback: null,
+    },
+    {
+      runner: "ctest",
+      approved: ["ctest", "--test-dir", "build", "-C", "Release"],
+      run: ["math.add(1)", "a|b"],
+      narrowed: [["ctest", "--test-dir", "build", "-C", "Release", "-R", "^(math\\.add\\(1\\)|a\\|b)$"]],
+      filtered: [
+        ["ctest", "-R", "x"],
+        ["ctest", "-LE", "slow"],
+        ["ctest", "--rerun-failed"],
+        ["ctest", "--", "x"],
+      ],
+      fallback: null,
+    },
+  ];
+
+  for (const row of rows)
+    test(`${row.runner}: narrowing, a refused Run line, an approved filter, and the fallback`, () => {
+      const dir = repo();
+      const env = checkEnv(null);
+      const later = ["tests/two.test.ts"];
+      const t = (argv: string[]): TaskCommand => ({ id: "t", name: "test", kind: "test", argv, timeoutSec: 60 });
+      const narrowed = scopedCommands([t(row.approved)], { run: row.run, later }, dir, env);
+      expect(narrowed.notes).toEqual([]);
+      expect(narrowed.commands.map((c) => c.argv)).toEqual(row.narrowed);
+      // A different program in the Run line refuses it: the fallback skips the test files of the later tasks, where it can.
+      const refused = scopedCommands([t(row.approved)], { run: ["git log"], later }, dir, env);
+      expect(refused.commands.map((c) => c.argv)).toEqual(row.fallback ? [row.fallback] : []);
+      expect(refused.notes[0]).toStartWith('The app refused the Run line of the task: "git log" starts with the program git.');
+      // No later test files: the fallback runs the approved command as it is.
+      expect(scopedCommands([t(row.approved)], { run: ["git log"], later: [] }, dir, env).commands.map((c) => c.argv)).toEqual([
+        row.approved,
+      ]);
+      // A later test name: nothing can skip it.
+      expect(scopedCommands([t(row.approved)], { run: ["git log"], later: ["two works"] }, dir, env).commands).toEqual([]);
+      for (const argv of row.filtered) {
+        const r = scopedCommands([t(argv)], { run: row.run, later }, dir, env);
+        expect({ argv, commands: r.commands }).toEqual({ argv, commands: [] });
+        expect(r.notes[0]).toContain("with no test filter of its own");
+      }
+    });
+
+  test("runner rules: names a runner cannot take, files of name-only runners, and Go packages", () => {
+    const dir = repo();
+    for (const d of ["pkg", "pkg/testdata", "mod", "_skip"]) mkdirSync(join(dir, d), { recursive: true });
+    for (const f of ["pkg/a_test.go", "pkg/b_test.go", "pkg/testdata/c_test.go", "mod/go.mod", "mod/d_test.go", "_skip/e_test.go", "-x.py"])
+      writeFileSync(join(dir, f), "");
+    const env = checkEnv(null);
+    const t = (...argv: string[]): TaskCommand[] => [{ id: "t", name: "test", kind: "test", argv, timeoutSec: 60 }];
+    const run = (tests: TaskCommand[], r: string[], later: string[] = []) => scopedCommands(tests, { run: r, later }, dir, env);
+    const why = (tests: TaskCommand[], r: string[], later: string[] = []) => run(tests, r, later).notes[0] ?? "";
+    // pytest -k takes identifiers only, and "or", "and", "not" are its keywords.
+    expect(why(t("pytest"), ["adds a+b"])).toContain('"adds a+b" is not a pytest -k name');
+    expect(why(t("pytest"), ["not"])).toContain('"not" is not a pytest -k name');
+    // ctest and cargo select tests by name only.
+    expect(why(t("ctest"), [F])).toContain(`"${F}" is a file, and ctest selects tests by name only.`);
+    expect(why(t("cargo", "test"), [F])).toContain(`"${F}" is a file, and cargo test selects tests by name only.`);
+    // A file whose path starts with "-" reads as a flag.
+    expect(runEntries(["-x.py"], dir, env)).toEqual({ error: '"-x.py" is not a test file or a test name.' });
+    expect(runEntries(["./-x.py"], dir, env)).toEqual({ error: '"./-x.py" is not a test file or a test name.' });
+    // go test: a file maps to its package folder when "./..." holds it and no later task can name a test in it.
+    const go = t("go", "test", "./...", "-v");
+    expect(run(go, ["pkg/a_test.go", "TestA"]).commands.map((c) => c.argv)).toEqual([
+      ["go", "test", "./pkg", "-v"],
+      ["go", "test", "./...", "-v", "-run", "^(TestA)$"],
+    ]);
+    expect(why(go, ["pkg/a_test.go"], ["pkg/b_test.go"])).toContain("its package can hold the tests of a later task");
+    expect(why(go, ["pkg/a_test.go"], ["TestB"])).toContain("its package can hold the tests of a later task");
+    for (const f of ["pkg/testdata/c_test.go", "mod/d_test.go", "_skip/e_test.go", F])
+      expect(why(go, [f])).toContain(`"${f}" is not a Go file of a package in ./... .`);
+    expect(why(t("go", "test", "-v"), ["pkg/a_test.go"])).toContain("needs an approved go test command with ./...");
+    // A glob character in a later file: bun and vitest cannot skip it as a literal path.
+    writeFileSync(join(dir, "tests", "[x].test.ts"), "");
+    expect(why(t("vitest", "run"), ["git log"], ["tests/[x].test.ts"])).toContain("cannot skip the test files of the later tasks");
+    // A vitest filter "<file>:<line>" selects a line.
+    if (process.platform !== "win32") {
+      writeFileSync(join(dir, "tests", "y.ts:10"), "");
+      expect(why(t("vitest", "run"), ["tests/y.ts:10"])).toContain("reads as a file and a line for vitest");
+    }
+  });
+
+  // Optional: a real pytest takes the narrowed argv. It skips when pytest is not on PATH.
+  const pytest = Bun.which("pytest");
+  test.skipIf(!pytest)(
+    "a real pytest runs only the tests of the task",
+    async () => {
+      const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "rl-pytest-")));
+      dirs.push(dir);
+      writeFileSync(join(dir, "test_a.py"), "def test_add():\n    assert True\n\ndef test_later():\n    assert False\n");
+      const env = checkEnv(null);
+      const tests: TaskCommand[] = [
+        { id: "t", name: "test", kind: "test", argv: [pytest as string, "-q", "-p", "no:cacheprovider"], timeoutSec: 60 },
+      ];
+      // "-p no:cacheprovider" has a flag value, so the app refuses to narrow it. The flag form with "=" is fine.
+      expect(scopedCommands(tests, { run: ["test_add"], later: [] }, dir, env).commands).toEqual([]);
+      tests[0] = { ...(tests[0] as TaskCommand), argv: [pytest as string, "-q", "-pno:cacheprovider"] };
+      const s = scopedCommands(tests, { run: ["test_add"], later: [] }, dir, env);
+      const r = await runCommand(s.commands[0] as TaskCommand, { cwd: dir, env });
+      expect(r.tail).toContain("1 passed");
+      expect(r.exit).toBe(0);
+    },
+    SLOW,
+  );
 });
