@@ -99,6 +99,31 @@ export const FAILURE_TAIL = 32 * 1024;
 
 export const sizeRank = (s: TaskSize) => TASK_SIZES.indexOf(s);
 
+// spec.md section 6.8: a slug has at most 40 characters.
+const SLUG_MAX = 40;
+
+// spec.md section 6.8: lowercase ASCII letters, digits, and hyphens from the title, at most 40 characters.
+export function slug(title: string) {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, SLUG_MAX)
+    .replace(/-+$/, "");
+}
+
+// spec.md section 6.8: <prefix><KEY>-spec, <prefix><KEY>-<n>-<slug>, and for a small task <prefix><KEY>-<slug>. A title without ASCII
+// letters or digits gives the slug "task" or "part", so the name keeps the form that push.ts checks.
+export function branchName(
+  prefix: string,
+  key: string,
+  part: { kind: "spec" } | { kind: "small"; title: string } | { kind: "part"; n: number; title: string },
+) {
+  if (part.kind === "spec") return `${prefix}${key}-spec`;
+  if (part.kind === "small") return `${prefix}${key}-${slug(part.title) || "task"}`;
+  return `${prefix}${key}-${part.n}-${slug(part.title) || "part"}`;
+}
+
 // spec.md section 6.12: the step strip of the Task view. current: the index of the current step, -1 for a failed task.
 // A task without a size shows the small strip. Large counts the code parts: the first one that did not merge is the current one.
 export function stepStrip(t: {
@@ -219,6 +244,8 @@ export const stepDetail = z.object({
   deniedPaths: z.array(z.string()).default([]),
   patch: z.string().nullable().default(null),
   notes: z.array(z.string()).default([]),
+  // The checks of the tests step: the new tests must fail before the code exists (spec.md section 6.7, AC-B10).
+  expectRed: z.boolean().default(false),
 });
 export type StepDetail = z.infer<typeof stepDetail>;
 

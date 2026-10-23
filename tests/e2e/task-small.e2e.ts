@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // docs/plans/review-v2/spec.md sections 6.12 and 7.2 (WP-B5): the small task walkthrough in the browser. Build on the task chip of a
-// PR, the questions with the recommended answers, the plan approval with the first-use warning, the build with a stop at the line
-// limit and "Keep one PR", "Open the PR" with its confirm, and Close. Runs against serve.ts only: the fake Bitbucket, the fake Jira,
-// the fake CLI, and a local git remote. The approved test command is "bun test" in the task worktree.
+// PR, the questions with the recommended answers, the plan approval with the branch prefix and the first-use warning, the build with a
+// stop at the line limit and "Keep one PR", "Open the PR" with its confirm, and Close. Runs against serve.ts only: the fake Bitbucket,
+// the fake Jira, the fake CLI, and a local git remote. The approved test command is "bun test" in the task worktree.
 import { test as base, expect, type Page } from "@playwright/test";
 import { APP_PORT, control, E2E_JIRA_TOKEN, E2E_TOKEN, FAKE_URL, JIRA_ISSUE, JIRA_URL, makeClone, openApp, taskRemote } from "./control";
 
@@ -132,8 +132,9 @@ test("a small task: chip, questions, plan with the warning, a stop at the line l
   expect((await api(page, "PUT", `/api/prs/${prA}/clone`, { path: await makeClone(1001) })).status).toBe(200);
   const limit = await api(page, "PUT", "/api/repos/PROJ1/sample-repo-2/task-settings", {
     specDir: "specs/{key}/",
-    // The local remote has a branch "feature", so a "feature/" branch cannot exist there (git refs are paths).
-    branchPrefix: "task/",
+    // The local remote has a branch "feature", so a "feature/" branch cannot exist there (git refs are paths). Step 3 changes the
+    // prefix to "task/" on the plan screen.
+    branchPrefix: "feature/",
     lineBudget: LIMIT,
     maxOpen: 2,
     approvals: 1,
@@ -171,6 +172,26 @@ test("a small task: chip, questions, plan with the warning, a stop at the line l
   await expect(page.getByRole("radio", { name: /^Small: one PR/ })).toBeChecked();
   await expect(page.getByRole("checkbox", { name: /bun test/ })).toBeChecked();
   await expect(page.getByText("Before the first build in this repository")).toBeVisible();
+  // The branch from the prefix of the repository. "Change the prefix" saves it with the task settings route, and Enter in its field
+  // does not submit the plan.
+  const planned = page.locator("#task-branch");
+  await expect(planned).toHaveText("feature/ABC-42-flush-the-cache-before-the-write-lock");
+  await page.getByRole("button", { name: "Change the prefix" }).click();
+  const prefix = page.getByLabel("Branch prefix");
+  await expect(prefix).toBeFocused();
+  await prefix.fill("bad..");
+  await page.getByRole("button", { name: "Save the prefix" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Invalid branch prefix." })).toBeVisible();
+  await prefix.fill("task/");
+  await expect(planned).toHaveText("task/ABC-42-flush-the-cache-before-the-write-lock");
+  await prefix.press("Enter");
+  await expect(page.getByRole("button", { name: "Change the prefix" })).toBeFocused();
+  await expect(page.getByRole("alert").filter({ hasText: "tick “I understand” first" })).toHaveCount(0);
+  await expect(primary(page)).toHaveCount(1);
+  expect((await api(page, "GET", "/api/repos/PROJ1/sample-repo-2/task-settings")).json).toMatchObject({
+    branchPrefix: "task/",
+    lineBudget: LIMIT,
+  });
   await primary(page).click();
   await expect(page.getByRole("alert").filter({ hasText: "tick “I understand” first" })).toBeVisible();
   await page.getByRole("checkbox", { name: "I understand" }).check();
@@ -197,6 +218,8 @@ test("a small task: chip, questions, plan with the warning, a stop at the line l
   // The Log tab holds the checks with their output, and the Diff tab the change.
   await page.getByRole("tab", { name: "Log" }).click();
   await expect(page.getByRole("tabpanel").getByText("bun test").first()).toBeVisible();
+  // The red checks of the tests step are no failure.
+  await expect(page.getByRole("tabpanel").getByText("Red as expected").first()).toBeVisible();
   await page.getByRole("tab", { name: "Diff" }).click();
   await expect(page.getByRole("tabpanel").getByText("README.md", { exact: true })).toBeVisible();
 

@@ -421,6 +421,17 @@ describe("the loop of one part (spec.md section 6.7)", () => {
       // The red-first check of the tests step ran the full command, and both new tests failed there.
       const red = s.steps().find((x) => x.kind === "check" && x.item === "P1") as Step;
       expect(JSON.parse(red.detail_json).commands[0].argv).toEqual([process.execPath, "test"]);
+      // Only that check expects red. The Log tab says "Red as expected" for it.
+      const expectRed = s
+        .steps()
+        .filter((x) => x.kind === "check")
+        .map((x) => [x.item, JSON.parse(x.detail_json).expectRed]);
+      expect(expectRed).toEqual([
+        ["P1", true],
+        ["T1.1", false],
+        ["T1.2", false],
+        ["checks", false],
+      ]);
     },
     SLOW,
   );

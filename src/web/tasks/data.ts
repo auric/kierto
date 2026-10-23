@@ -2,9 +2,19 @@
 // Copyright (c) 2026 Ihor Lifanov
 
 // Server state of the tasks (docs/plans/review-v2/spec.md section 6.11). Keys: ['tasks'], ['task', id], ['task', id, 'diff', head],
-// ['task', id, 'run', run]. live.ts refetches ['tasks'] and ['task', id] when SSE `changed` names the task.
+// ['task', id, 'run', run], ['task-settings', project, repo]. live.ts refetches ['tasks'] and ['task', id] when SSE `changed` names the
+// task.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { RunDetail, TaskAnswersInput, TaskCreateInput, TaskDiffDto, TaskDto, TaskPlanInput, TaskRowDto } from "../../shared/dto";
+import type {
+  RepoTaskSettingsDto,
+  RunDetail,
+  TaskAnswersInput,
+  TaskCreateInput,
+  TaskDiffDto,
+  TaskDto,
+  TaskPlanInput,
+  TaskRowDto,
+} from "../../shared/dto";
 import type { TaskDoc, TaskSize } from "../../shared/task";
 import { api } from "../api";
 import { ApiError, read } from "../shell/data";
@@ -37,6 +47,27 @@ export const useTaskRun = (id: number, run: number | null) =>
     queryFn: async () =>
       read<RunDetail>(await api.api.tasks[":id"].runs[":run"].$get({ param: { id: String(id), run: String(run ?? 0) } })),
   });
+
+const repoSettings$ = () => api.api.repos[":project"][":repo"]["task-settings"];
+
+export const useRepoTaskSettings = (project: string, repo: string) =>
+  useQuery({
+    queryKey: ["task-settings", project, repo],
+    queryFn: async () => read<RepoTaskSettingsDto>(await repoSettings$().$get({ param: { project, repo } })),
+  });
+
+// PUT /api/repos/:project/:repo/task-settings takes every field. A fresh read right before the write keeps the other fields as stored.
+export function useSaveBranchPrefix(project: string, repo: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (branchPrefix: string) => {
+      const param = { project, repo };
+      const { project: _p, repo: _r, warnedAt: _w, ...stored } = await read<RepoTaskSettingsDto>(await repoSettings$().$get({ param }));
+      return read<RepoTaskSettingsDto>(await repoSettings$().$put({ param, json: { ...stored, branchPrefix } }));
+    },
+    onSuccess: (dto) => qc.setQueryData(["task-settings", project, repo], dto),
+  });
+}
 
 // POST /api/tasks: 201 with a new task, or 200 with the open task of the same key.
 export async function createTask(input: TaskCreateInput): Promise<TaskDto> {

@@ -185,11 +185,11 @@ Click "Build" on the task chip of a pull request, or open Tasks in the sidebar a
 
 ![The Task view with the step strip, the status sentence, and the questions with the recommended options](docs/screenshots/task-questions.webp)
 
-Then Claude writes a short change plan into `specs/<KEY>/plan.md`: the code to change with file and line, the pattern to copy, the tests to extend, and the tasks. The plan screen shows the size, the line count, and the commands that the plan proposes from the repository files. You pick the commands and approve the plan. Edit changes a plan file before the approval.
+Then Claude writes a short change plan into `specs/<KEY>/plan.md`: the code to change with file and line, the pattern to copy, the tests to extend, and the tasks. The plan screen shows the size, the line count, the branch that the task will use, and the commands that the plan proposes from the repository files. "Change the prefix" sets the branch prefix of the repository (default `feature/`). You pick the commands and approve the plan. Edit changes a plan file before the approval.
 
-![The plan screen with the size, the commands, the first-use warning, and the plan file](docs/screenshots/task-plan.webp)
+![The plan screen with the size, the branch, the commands, the first-use warning, and the plan file](docs/screenshots/task-plan.webp)
 
-The build runs in steps. Claude writes the failing tests first, then the code of each task. After each step, the app runs your approved commands and shows each exit code and output in the Log tab. Each finished task becomes one commit with your name and email. At the end, Claude reviews its own change and fixes the points that its check confirms. The task view always says in one sentence who must act, with one main button. "Pause after this step", Stop, and Resume work at any step. Resume starts the stopped step again from the last commit and keeps the dropped changes as a patch file.
+The build runs in steps. Claude writes the failing tests first, then the code of each task. After each step, the app runs your approved commands and shows each exit code and output in the Log tab. The checks right after the tests step say "Red as expected", because the new tests must fail before the code exists. Each finished task becomes one commit with your name and email. At the end, Claude reviews its own change and fixes the points that its check confirms. The task view always says in one sentence who must act, with one main button. "Pause after this step", Stop, and Resume work at any step. Resume starts the stopped step again from the last commit and keeps the dropped changes as a patch file.
 
 ![The change is ready and checked by Claude, with Open the PR, the build progress, and the Log tab](docs/screenshots/task-build.webp)
 

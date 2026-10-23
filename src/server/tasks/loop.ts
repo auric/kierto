@@ -427,7 +427,7 @@ export function createLoop(opts: LoopOptions) {
   }
 
   // The approved checks with their step row. A stop kills the commands (AC-B19).
-  async function checks(c: Ctx, item: string, kinds = CHECK_KINDS, scope?: Scope) {
+  async function checks(c: Ctx, item: string, kinds = CHECK_KINDS, scope?: Scope, expectRed = false) {
     guard(c);
     const ac = new AbortController();
     aborts.set(c.id, ac);
@@ -446,6 +446,7 @@ export function createLoop(opts: LoopOptions) {
         part: c.part.id,
         item,
         attempt: nextAttempt(c, "check", item),
+        expectRed,
         now,
       });
       changed(c.id);
@@ -533,7 +534,7 @@ export function createLoop(opts: LoopOptions) {
         failure = { name: "failure.md", text: `# Tests step\n\n${why} Change only test files. The test paths are ${where}.\n` };
         continue;
       }
-      const k = await checks(c, item);
+      const k = await checks(c, item, CHECK_KINDS, undefined, true);
       if (k.green) block(c, { kind: "red", step: k.step, text: "Tests pass before the change. See why." });
       await commit(c, item, `${c.t.key} ${item}: Add the failing tests of part ${pp.n}`, allow);
       return;

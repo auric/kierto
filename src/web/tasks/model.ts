@@ -4,8 +4,15 @@
 // The Task view model (docs/plans/review-v2/spec.md sections 6.12 and 7): one status sentence that names who acts or what the app
 // waits for, at most one primary action, and the More actions, per state. Pure: tests/web/tasks-model.test.ts has one test per row.
 // runner: the short name of the CLI from meta, because UI code names no product (tests/ui/names.test.ts).
-import type { TaskDto, TaskPartDto, TaskQuestionDto, TaskRowDto, TaskStepDto } from "../../shared/dto";
-import type { TaskSize } from "../../shared/task";
+import {
+  repoTaskSettingsInput,
+  type TaskDto,
+  type TaskPartDto,
+  type TaskQuestionDto,
+  type TaskRowDto,
+  type TaskStepDto,
+} from "../../shared/dto";
+import { branchName, type TaskSize } from "../../shared/task";
 
 export type ActionKind =
   | "answer"
@@ -356,6 +363,30 @@ export function rowStatus(r: TaskRowDto): { text: string; needsYou: boolean } {
   }
   if (r.state === "ready") return { text: p.merged ? "Merged" : "Waiting for review", needsYou: false };
   return { text: "Waiting for colleagues", needsYou: false };
+}
+
+// The state of a step in the Log tab. The checks of the tests step must fail (StepDetail.expectRed), so their red run is no failure.
+export type StepLook = TaskStepDto["state"] | "expected";
+export const stepLook = (s: Pick<TaskStepDto, "state" | "detail">): StepLook =>
+  s.state === "failed" && s.detail.expectRed ? "expected" : s.state;
+export const STEP_TEXT: Record<StepLook, string> = {
+  ok: "Done",
+  failed: "Failed",
+  expected: "Red as expected",
+  running: "Running",
+  waiting: "Waiting",
+  cancelled: "Cancelled",
+  skipped: "Skipped",
+};
+
+// spec.md section 6.8: the branch of a small task. A larger task gets more branches, and each one starts with <prefix><KEY>-.
+export const plannedBranch = (prefix: string, t: Pick<TaskDto, "key" | "title">, size: TaskSize) =>
+  size === "small" ? branchName(prefix, t.key, { kind: "small", title: t.title }) : `${prefix}${t.key}-`;
+
+// The branch prefix rule of PUT /api/repos/:project/:repo/task-settings (repoTaskSettingsInput), with its sentence.
+export function prefixProblem(prefix: string): string | null {
+  const r = repoTaskSettingsInput.shape.branchPrefix.safeParse(prefix);
+  return r.success ? null : (r.error.issues[0]?.message ?? "Invalid branch prefix.");
 }
 
 // The step strip of the server (stepStrip), with the current step: its index, or -1 for a failed or stopped task.

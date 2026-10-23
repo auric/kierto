@@ -29,8 +29,6 @@ export const SPARSE = [
   "!/.githooks/",
   "!/.husky/",
 ];
-// spec.md section 6.8: a slug has at most 40 characters.
-const SLUG_MAX = 40;
 // A name that exists gets -2, -3, and so on (spec.md section 6.8). The search stops here.
 const MAX_SUFFIX = 99;
 const RM_TREE = { recursive: true, force: true, maxRetries: 3 } as const;
@@ -67,27 +65,8 @@ export const partDir = (dataDir: string, db: Database, task: number, ord: number
 export const patchFile = (dataDir: string, db: Database, task: number, step: number) =>
   join(taskDir(dataDir, db, task), "patches", `${step}.patch`);
 
-// spec.md section 6.8: lowercase ASCII letters, digits, and hyphens from the title, at most 40 characters.
-export function slug(title: string) {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .slice(0, SLUG_MAX)
-    .replace(/-+$/, "");
-}
-
-// spec.md section 6.8: <prefix><KEY>-spec, <prefix><KEY>-<n>-<slug>, and for a small task <prefix><KEY>-<slug>. A title without ASCII
-// letters or digits gives the slug "task" or "part", so the name keeps the form that push.ts checks.
-export function branchName(
-  prefix: string,
-  key: string,
-  part: { kind: "spec" } | { kind: "small"; title: string } | { kind: "part"; n: number; title: string },
-) {
-  if (part.kind === "spec") return `${prefix}${key}-spec`;
-  if (part.kind === "small") return `${prefix}${key}-${slug(part.title) || "task"}`;
-  return `${prefix}${key}-${part.n}-${slug(part.title) || "part"}`;
-}
+// The Task view shows the same name before the build (PlanTab.tsx).
+export { branchName, slug } from "../../shared/task";
 
 // The first of name, name-2, name-3, ... that neither the remote (`git ls-remote --heads`) nor the cache has as a branch.
 export async function freeBranch(dataDir: string, cache: string, remote: BranchRemote, name: string): Promise<string> {

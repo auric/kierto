@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Ihor Lifanov
 
-// The plan approval (docs/plans/review-v2/spec.md sections 6.1, 6.4, and 6.12): the size with its one-line meaning and the rule lines,
-// the approved commands with the first-use warning, and the map check line. The header button "Approve the plan" submits this form.
+// The plan approval (docs/plans/review-v2/spec.md sections 6.1, 6.4, 6.8, and 6.12): the size with its one-line meaning and the rule
+// lines, the branch with the prefix of the repository, the approved commands with the first-use warning, and the map check line. The
+// header button "Approve the plan" submits this form.
 // PlanParts is the Plan tab: the parts with their state in plain words, the tasks with check marks, and the lines against the limit.
 import { Check, Circle } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { FieldLegend, FieldSet } from "@/components/ui/field";
+import { Button } from "@/components/ui/button";
+import { Field, FieldDescription, FieldError, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { TaskDto, TaskPlanInput } from "../../shared/dto";
 import { PART_STATE_TEXT, sizeRank, TASK_SIZES, type TaskSize } from "../../shared/task";
-import { codeParts, SIZE_LINE } from "./model";
+import { useRepoTaskSettings, useSaveBranchPrefix } from "./data";
+import { codeParts, plannedBranch, prefixProblem, SIZE_LINE } from "./model";
 
 export const PLAN_FORM = "task-plan";
 
@@ -102,6 +107,7 @@ export function PlanApproval(props: {
           );
         })}
       </FieldSet>
+      <BranchLine t={t} size={size} />
       {plan.missing > 0 && (
         <p className="m-0 text-sm text-ink-2">
           {plan.missing === 1 ? "1 map line names code that does not exist." : `${plan.missing} map lines name code that does not exist.`}{" "}
@@ -165,6 +171,113 @@ export function PlanApproval(props: {
         </p>
       )}
     </form>
+  );
+}
+
+// spec.md section 6.8: the build names the branch from the prefix of the repository when it starts, so a change here applies to this
+// task. The prefix is a repository setting: later tasks use it too. Enter saves, and Esc closes the field.
+function BranchLine({ t, size }: { t: TaskDto; size: TaskSize }) {
+  const settings = useRepoTaskSettings(t.project, t.repo);
+  const save = useSaveBranchPrefix(t.project, t.repo);
+  // null: the field is closed.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const change = useRef<HTMLButtonElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const stored = settings.data?.branchPrefix;
+  const close = () => {
+    setDraft(null);
+    setProblem(null);
+    save.reset();
+    requestAnimationFrame(() => change.current?.focus());
+  };
+  const submit = () => {
+    if (draft === null) return;
+    const p = prefixProblem(draft);
+    setProblem(p);
+    if (p) return field.current?.focus();
+    save.mutate(draft, { onSuccess: close });
+  };
+  const shown = draft !== null && prefixProblem(draft) === null ? draft : stored;
+  const error = problem ?? save.error?.message ?? null;
+  return (
+    <FieldSet className="gap-1.5">
+      <FieldLegend className="text-sm font-semibold">Branch</FieldLegend>
+      {settings.error ? (
+        <p role="alert" className="m-0 text-sm text-destructive">
+          Cannot read the branch prefix. {settings.error.message}
+        </p>
+      ) : shown === undefined ? (
+        <Skeleton className="h-5 w-72 max-w-full" />
+      ) : (
+        <>
+          <p className="m-0 text-sm">
+            <span className="text-ink-2">{size === "small" ? "The change goes to" : "The branches of this task start with"}</span>{" "}
+            <code id="task-branch" translate="no" className="font-mono text-xs [overflow-wrap:anywhere]">
+              {plannedBranch(shown, t, size)}
+            </code>
+          </p>
+          <p className="m-0 text-xs text-muted-foreground">If a branch with this name exists, the app adds -2, -3, and so on.</p>
+        </>
+      )}
+      {draft === null ? (
+        stored !== undefined && (
+          <Button ref={change} type="button" variant="outline" size="xs" className="mt-0.5 self-start" onClick={() => setDraft(stored)}>
+            Change the prefix
+          </Button>
+        )
+      ) : (
+        <div className="mt-1 grid gap-1.5">
+          <div className="flex flex-wrap items-end gap-2">
+            <Field data-invalid={error ? true : undefined} className="w-48 gap-1.5">
+              <FieldLabel htmlFor="task-prefix">Branch prefix</FieldLabel>
+              <Input
+                ref={field}
+                id="task-prefix"
+                name="branchPrefix"
+                autoFocus
+                autoComplete="off"
+                spellCheck={false}
+                maxLength={100}
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? "task-prefix-help task-prefix-error" : "task-prefix-help"}
+                className="h-8 font-mono"
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  setProblem(null);
+                }}
+                onKeyDown={(e) => {
+                  // Enter must not submit the plan form around this field.
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    submit();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    close();
+                  }
+                }}
+              />
+            </Field>
+            <Button type="button" variant="outline" disabled={save.isPending} onClick={submit}>
+              {save.isPending ? "Saving…" : "Save the prefix"}
+            </Button>
+            <Button type="button" variant="ghost" onClick={close}>
+              Cancel
+            </Button>
+          </div>
+          <FieldDescription id="task-prefix-help">
+            For example feature/ or task/. Leave it empty for no prefix. New tasks in{" "}
+            <span translate="no">
+              {t.project}/{t.repo}
+            </span>{" "}
+            use it too.
+          </FieldDescription>
+          {error && <FieldError id="task-prefix-error">{error}</FieldError>}
+        </div>
+      )}
+    </FieldSet>
   );
 }
 

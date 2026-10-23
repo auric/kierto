@@ -7,6 +7,7 @@ import { CircleAlert, CircleCheck, CircleDashed, CircleMinus, LoaderCircle, Scro
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { TaskDto, TaskStepDto } from "../../shared/dto";
+import { STEP_TEXT, type StepLook, stepLook } from "./model";
 
 const KIND: Record<TaskStepDto["kind"], string> = {
   interview: "Questions",
@@ -27,13 +28,14 @@ const KIND: Record<TaskStepDto["kind"], string> = {
   size: "Line limit",
 };
 
-const STATE: Record<TaskStepDto["state"], { text: string; icon: typeof CircleCheck; className?: string }> = {
-  ok: { text: "Done", icon: CircleCheck },
-  failed: { text: "Failed", icon: CircleAlert, className: "text-destructive" },
-  running: { text: "Running", icon: LoaderCircle, className: "motion-safe:animate-spin" },
-  waiting: { text: "Waiting", icon: CircleDashed },
-  cancelled: { text: "Cancelled", icon: CircleMinus },
-  skipped: { text: "Skipped", icon: CircleMinus },
+const ICON: Record<StepLook, { icon: typeof CircleCheck; className?: string }> = {
+  ok: { icon: CircleCheck },
+  failed: { icon: CircleAlert, className: "text-destructive" },
+  expected: { icon: CircleCheck },
+  running: { icon: LoaderCircle, className: "motion-safe:animate-spin" },
+  waiting: { icon: CircleDashed },
+  cancelled: { icon: CircleMinus },
+  skipped: { icon: CircleMinus },
 };
 
 const seconds = (ms: number) => (ms < 1000 ? `${ms} ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 60_000)} min`);
@@ -45,7 +47,8 @@ export function LogTab({ t, onRunLog }: { t: TaskDto; onRunLog: (run: number) =>
   return (
     <ol aria-label="Steps, newest first" className="m-0 grid list-none gap-2 p-0">
       {t.steps.map((s) => {
-        const st = STATE[s.state];
+        const look = stepLook(s);
+        const st = ICON[look];
         const Icon = st.icon;
         const d = s.detail;
         const ms = s.endedAt === null ? null : s.endedAt - s.startedAt;
@@ -65,7 +68,7 @@ export function LogTab({ t, onRunLog }: { t: TaskDto; onRunLog: (run: number) =>
                   {s.item}
                 </code>
               )}
-              <span className={cn("text-ink-2", s.state === "failed" && "text-destructive")}>{st.text}</span>
+              <span className={cn("text-ink-2", look === "failed" && "text-destructive")}>{STEP_TEXT[look]}</span>
               {s.attempt > 1 && <span className="text-xs text-muted-foreground">try {s.attempt}</span>}
               {ms !== null && <span className="text-xs text-muted-foreground">{seconds(ms)}</span>}
               {s.run !== null && (
@@ -88,7 +91,7 @@ export function LogTab({ t, onRunLog }: { t: TaskDto; onRunLog: (run: number) =>
                   <code translate="no" className="font-mono [overflow-wrap:anywhere] text-ink-2">
                     {c.argv.join(" ")}
                   </code>
-                  <span className={cn(c.exit !== 0 && "font-semibold text-destructive")}>
+                  <span className={cn(c.exit !== 0 && look !== "expected" && "font-semibold text-destructive")}>
                     {c.exit === null ? "stopped" : `exit ${c.exit}`}
                   </span>
                   <span className="text-muted-foreground">{seconds(c.ms)}</span>

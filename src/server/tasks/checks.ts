@@ -435,8 +435,9 @@ export async function runChecks(i: ChecksInput): Promise<ChecksResult> {
 }
 
 // The checks with their step row (kind check) for the Log tab: each command with argv, exit code, time, and the output tail.
+// expectRed: the checks of the tests step, which must fail (StepDetail.expectRed).
 export async function checkStep(
-  i: ChecksInput & { task: number; part: number; item?: string | null; attempt?: number; now?: () => number },
+  i: ChecksInput & { task: number; part: number; item?: string | null; attempt?: number; expectRed?: boolean; now?: () => number },
 ): Promise<ChecksResult & { step: number }> {
   const now = i.now ?? Date.now;
   const step = insertStep(i.db, { task: i.task, part: i.part, kind: "check", item: i.item ?? null, attempt: i.attempt ?? 1 }, now());
@@ -447,7 +448,11 @@ export async function checkStep(
       i.db,
       step,
       !r.commands.length && i.scope ? "skipped" : r.green ? "ok" : r.commands.some((c) => c.stopped) ? "cancelled" : "failed",
-      { commands: r.commands.map(({ name, argv, exit, ms, tail }) => ({ name, argv, exit, ms, tail })), notes: r.notes },
+      {
+        commands: r.commands.map(({ name, argv, exit, ms, tail }) => ({ name, argv, exit, ms, tail })),
+        notes: r.notes,
+        expectRed: i.expectRed ?? false,
+      },
       now(),
     );
   return { ...r, step };

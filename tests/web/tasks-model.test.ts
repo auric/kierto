@@ -6,7 +6,18 @@
 import { describe, expect, test } from "bun:test";
 import type { TaskDto, TaskPartDto, TaskQuestionDto, TaskRowDto, TaskStepDto } from "../../src/shared/dto";
 import { stepDetail } from "../../src/shared/task";
-import { elapsed, planSentence, rowStatus, stoppedAt, type TaskView, taskView } from "../../src/web/tasks/model";
+import {
+  elapsed,
+  plannedBranch,
+  planSentence,
+  prefixProblem,
+  rowStatus,
+  STEP_TEXT,
+  stepLook,
+  stoppedAt,
+  type TaskView,
+  taskView,
+} from "../../src/web/tasks/model";
 
 console.log(`tasks-model.test.ts imported from ${Bun.resolveSync("../../src/web/tasks/model", import.meta.dir)}`);
 
@@ -385,6 +396,35 @@ describe("plain-word helpers", () => {
     expect(planSentence(task({ size: "large", estimate: { ...ESTIMATE, parts: 4, lines: 1300 } }))).toBe(
       "The plan is ready: large, 4 parts, about 1,300 changed lines.",
     );
+  });
+});
+
+describe("the Log tab state of a step (spec.md section 6.7, AC-B10)", () => {
+  const look = (o: Partial<TaskStepDto>) => STEP_TEXT[stepLook(step({ id: 4, kind: "check", item: "P1", ...o }))];
+
+  test("the red checks of the tests step read as expected", () => {
+    expect(look({ state: "failed", detail: stepDetail.parse({ expectRed: true }) })).toBe("Red as expected");
+  });
+
+  test("a red check that no step expects stays a failure, and an old row without the flag too", () => {
+    expect(look({ state: "failed", item: "T1.1", detail: stepDetail.parse({ expectRed: false }) })).toBe("Failed");
+    expect(look({ state: "failed", detail: stepDetail.parse({}) })).toBe("Failed");
+    expect(look({ state: "ok", detail: stepDetail.parse({ expectRed: true }) })).toBe("Done");
+    expect(look({ state: "cancelled", detail: stepDetail.parse({ expectRed: true }) })).toBe("Cancelled");
+  });
+});
+
+describe("the branch line of the plan (spec.md section 6.8)", () => {
+  test("a small task names its branch; a larger one names the start of its branches", () => {
+    expect(plannedBranch("feature/", task(), "small")).toBe("feature/ABC-12-trim-spaces-in-user-names");
+    expect(plannedBranch("", task(), "small")).toBe("ABC-12-trim-spaces-in-user-names");
+    expect(plannedBranch("task/", task({ title: "Додати прапор" }), "small")).toBe("task/ABC-12-task");
+    expect(plannedBranch("feature/", task(), "medium")).toBe("feature/ABC-12-");
+  });
+
+  test("the prefix rule of the task settings route, with its sentence", () => {
+    for (const ok of ["feature/", "task/", "", "users/ada/", "fix-"]) expect(prefixProblem(ok)).toBeNull();
+    for (const bad of ["bad..", "a b", "/task/", "-x", "x~", "a/.b", "a.lock/"]) expect(prefixProblem(bad)).toBe("Invalid branch prefix.");
   });
 });
 
